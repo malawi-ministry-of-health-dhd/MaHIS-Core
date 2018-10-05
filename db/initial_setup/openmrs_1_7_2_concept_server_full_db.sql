@@ -18,7 +18,7 @@
 --
 -- Table structure for table `active_list`
 --
-SET GLOBAL log_bin_trust_function_creators = 1;
+-- SET GLOBAL log_bin_trust_function_creators = 1;
 
 DROP TABLE IF EXISTS `active_list`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
