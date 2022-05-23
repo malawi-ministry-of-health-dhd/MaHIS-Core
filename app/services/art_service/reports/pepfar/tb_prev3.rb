@@ -6,7 +6,7 @@ module ARTService
       ##
       # Patients who started TPT just before the start of the current
       # and have finished within the current reporting period.
-      class TbPrev2
+      class TbPrev3
         attr_reader :start_date, :end_date
 
         include Utils
@@ -28,7 +28,9 @@ module ARTService
           load_patients_into_report(report, patients.three_hp, '3HP') do |patient|
             # 3HP daily dosages vary by patient weight can't use easily use pills
             # to determine course completion
-            patient['total_days_on_medication'].days >= FULL_3HP_COURSE_DAYS
+            divider = (patient['drug_concepts'].include? ',') ? 14.0 : 7.0
+            days_on_medication = (patient['total_days_on_medication'] / divider).round
+            days_on_medication.days >= FULL_3HP_COURSE_DAYS
           end
 
           report
@@ -37,10 +39,12 @@ module ARTService
         private
 
         FULL_6H_COURSE_PILLS = 168
-        FULL_3HP_COURSE_DAYS = (28.days - 1.day) + (56.days - 1.day) # 82 Days
-        # NOTE: Arrived at 82 days above from how 3HP is prescribed. 1st time prescription
-        #       is 1 month (28 days) then 2 months (56 days). And we assume that patients
-        #       start taking medication the very same they are given thus we subtract 1.
+        FULL_3HP_COURSE_DAYS = 12.days
+        # NOTE: Arrived at 12 days above from how 3HP is prescribed. 1st time prescription
+        #       A patient takes 3HP once every week. Therefore it is 4 times a months
+        #       Multiply that with 3 months we arrive at 12
+        #       Hence the patient is taking this drug 12 times to be considered complete on
+        #       3HP
 
         def init_report
           pepfar_age_groups.each_with_object({}) do |age_group, report|
@@ -85,7 +89,7 @@ module ARTService
           tpt_initiation_date = patient['tpt_initiation_date'].to_date
           art_start_date = patient['art_start_date'].to_date
 
-          (tpt_initiation_date >= art_start_date) && (tpt_initiation_date < art_start_date + 90.days)
+          (tpt_initiation_date >= art_start_date) && (tpt_initiation_date < art_start_date + 180.days)
         end
 
         def patients_on_tpt
@@ -119,13 +123,13 @@ module ARTService
               AND prescription_encounter.program_id IN (SELECT program_id FROM program WHERE name = 'HIV Program')
               AND prescription_encounter.encounter_type IN (SELECT encounter_type_id FROM encounter_type WHERE name = 'Treatment')
               AND prescription_encounter.encounter_datetime >= DATE(#{start_date}) - INTERVAL 6 MONTH
-              AND prescription_encounter.encounter_datetime < DATE(#{start_date})
+              AND prescription_encounter.encounter_datetime <= DATE(#{start_date})
               AND prescription_encounter.voided = 0
             INNER JOIN orders
               ON orders.encounter_id = prescription_encounter.encounter_id
               AND orders.order_type_id IN (SELECT order_type_id FROM order_type WHERE name = 'Drug order')
               AND orders.start_date >= DATE(#{start_date}) - INTERVAL 6 MONTH
-              AND orders.start_date < DATE(#{start_date})
+              AND orders.start_date <= DATE(#{start_date})
               AND orders.voided = 0
             INNER JOIN concept_name
               ON concept_name.concept_id = orders.concept_id
