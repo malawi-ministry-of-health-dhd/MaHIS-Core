@@ -1,19 +1,14 @@
 # frozen_string_literal: true
 
-module CxcaService
+module CXCAService
   module Reports
-    module Pepfar
+    module Clinic
       class CxcaScrn
         attr_reader :start_date, :end_date, :report
 
         include Utils
 
-        CxCa_PROGRAM = Program.find_by_name 'CxCa program'
-
-        include Utils
-        include ModelUtils
-
-        CxCa_PROGRAM = 'CxCa program'
+        CxCa_PROGRAM = program 'CxCa program'
 
         TX_GROUPS = {
           first_time_screened: ['initial screening', 'referral'],
@@ -26,21 +21,10 @@ module CxcaService
           negative: ['via negative', 'hpv negative', 'pap smear normal', 'no visible lesion', 'other gynae'],
           suspected: ['suspect cancer']
         }.freeze
-        CxCa_TX_OUTCOMES = {
-          positive: ['via positive', 'hpv positive', 'pap smear abnormal', 'visible lesion'],
-          negative: ['via negative', 'hpv negative', 'pap smear normal', 'no visible lesion', 'other gynae'],
-          suspected: ['suspect cancer']
-        }.freeze
 
         def initialize(start_date:, end_date:)
-          @start_date = start_date.to_date.beginning_of_day
-          @end_date = end_date.to_date.end_of_day
-          @report = {}
-        end
-
-        def initialize(start_date:, end_date:)
-          @start_date = start_date.to_date.beginning_of_day
-          @end_date = end_date.to_date.end_of_day
+          @start_date = start_date.to_date.beginning_of_day.strftime('%Y-%m-%d %H:%M:%S')
+          @end_date = end_date.to_date.end_of_day.strftime('%Y-%m-%d %H:%M:%S')
           @report = {}
         end
 
@@ -64,9 +48,9 @@ module CxcaService
                 q['reason_for_visit']&.strip&.downcase&.in?(values) && q['age_group'] == age_group
               end
               row[name] = {}
-              CxCa_TX_OUTCOMES.each do |(outcome, values)|
+              CxCa_TX_OUTCOMES.each do |(outcome, outcomes)|
                 row[name][outcome] = screened.select do |s|
-                                       s['treatment']&.strip&.downcase&.in?(values)
+                                       s['treatment']&.strip&.downcase&.in?(outcomes)
                                      end.map { |t| t['person_id'] }.uniq
               end
             end
@@ -85,7 +69,7 @@ module CxcaService
             INNER JOIN (
               SELECT e.patient_id, DATE(MAX(e.encounter_datetime)) AS last_visit_date
               FROM encounter e
-              WHERE e.program_id = #{program(CxCa_PROGRAM).id}
+              WHERE e.program_id = #{CxCa_PROGRAM.id}
                 AND e.encounter_datetime >= '#{@start_date}'
                 AND e.encounter_datetime <= '#{@end_date}'
                 AND e.voided = 0
@@ -103,12 +87,6 @@ module CxcaService
               AND reason_name.voided = 0
             LEFT JOIN concept_name screening_name ON screening_name.concept_id = treatment.value_coded
               AND screening_name.voided = 0
-            INNER JOIN (
-              SELECT o.patient_id
-              FROM orders o
-              INNER JOIN drug_order d ON d.order_id = o.order_id AND d.drug_inventory_id IN (SELECT drug_id FROM arv_drug) AND d.quantity > 0
-              GROUP BY o.patient_id
-            ) in_art ON in_art.patient_id = p.person_id
             WHERE p.voided = 0 AND LEFT(p.gender, 1) = 'F'
             GROUP BY p.person_id
           SQL
