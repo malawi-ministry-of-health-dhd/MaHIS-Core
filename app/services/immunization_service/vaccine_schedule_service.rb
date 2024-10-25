@@ -1,6 +1,8 @@
 module ImmunizationService
   module VaccineScheduleService
     # This module is used to get the vaccine schedule for a patient
+    # TODO: This is more of hardcoding for the contants we need to move this to
+    # the database as metadata so that they can be adjusted accordingly.
     ZERO_INDEXED_VACCINES = { bOPV: 'OPV' }.freeze
     ONE_INDEXED_VACCINES = {
       'DPT-HepB-Hib_vac': 'Penta', Rota_liq: 'Rota', PCV13: 'PCV',
@@ -10,6 +12,7 @@ module ImmunizationService
       'TD': 'TD', 'TD (0.5ml)': 'TD (0.5ml)', 'Vit A': 'Vit A'
     }.freeze
     VACCINE_NAME_MAP = { 'Pfizer-BioNTech COVID-19 vaccine': 'Pfizer COVID-19' }.freeze
+    CUSTOM_WINDOW_PERIODS = { 'OPV 0': '14 weeks' }.freeze
 
 
     def self.vaccine_schedule(patient)
@@ -28,12 +31,15 @@ module ImmunizationService
       immunization_with_window = immunizations.flat_map do |immunization_drug|
         vaccines = []
         vaccine_attribute(immunization_drug.concept_id, 'Immunization milestones').each_with_index do |milestone, i|
-         vaccines << {
+          drug_name = vaccine_display_name(immunization_drug.name, i)
+          vaccines << {
             milestone_name: milestone.name,
             sort_weight: milestone.sort_weight,
             drug_id: immunization_drug.drug_id,
-            drug_name: vaccine_display_name(immunization_drug.name, i),
-            window_period: vaccine_attribute(immunization_drug.concept_id, 'Immunization window period').first&.name
+            drug_name:,
+            window_period: CUSTOM_WINDOW_PERIODS[drug_name.to_sym] || vaccine_attribute(immunization_drug.concept_id,
+                                                                                        'Immunization window period')
+                      .first&.name
           }
         end
         vaccines
@@ -45,7 +51,7 @@ module ImmunizationService
   
       return { vaccine_schedule: vaccines }
       # rescue => e
-      {error: e.message}
+      { error: e.message }
       #end
     end
   
