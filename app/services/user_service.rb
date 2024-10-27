@@ -78,6 +78,25 @@ module UserService
     user
   end
 
+  def self.get_user_villages(user, options = {})
+    query = UserVillage.includes(:village)
+                      .where(user_id: user.user_id)
+                      
+    # Apply optional filters
+    query = query.where(active: true) if options[:active_only]
+    query = query.order(created_at: options[:sort_order] || :desc)
+    
+    if options[:include_metadata]
+      query.select('user_villages.*, villages.name as village_name, 
+                   villages.population, villages.district')
+    else
+      query
+    end
+  rescue ActiveRecord::RecordNotFound => e
+    Rails.logger.error("Failed to fetch villages for user #{user.user_id}: #{e.message}")
+    raise VillageQueryError, "Unable to fetch villages for user"
+  end
+
   def self.update_user(user, params)
     # Update person name if specified
     if params.include?(:given_name) || params.include?(:family_name) || params.include?(:location_id)
