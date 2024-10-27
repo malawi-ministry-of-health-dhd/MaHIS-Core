@@ -26,10 +26,10 @@ module Api
       end
 
       def show
-        village = Village.find_by(village_id: params[:id])
+        village = Village.includes(:traditional_authority).find_by(village_id: params[:id])
         
         if village
-          render json: village
+          render json: village.as_json(include: :traditional_authority)
         else
           render json: { error: 'Village not found' }, status: :not_found
         end
