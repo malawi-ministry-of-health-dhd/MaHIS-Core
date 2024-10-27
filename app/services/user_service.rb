@@ -8,7 +8,7 @@ require_relative 'person_service'
 module UserService
   AUTHENTICATION_TOKEN_VALIDITY_PERIOD = 24.hours
   LOGGER = Logger.new $stdout
-  HSA_ROLE = "HSA"
+  HSA_ROLES = ["HSA", "Health Surveillance"]
 
   class UserCreateError < StandardError; end
 
@@ -52,13 +52,14 @@ module UserService
       UserRole.create(role:, user:)
 
       # For users with HSA roles villages will have to be assigned to them 
-      if role.role == HSA_ROLE
+      if HSA_ROLES.include?(role.role)
+        # Create UserVillage records for each village
         villages.each do |village_id|
-          UserVillage.create( 
-            user_id: user.user_id, 
-            village_id: village_id, 
+          UserVillage.create(
+            user_id: user.user_id,
+            village_id: village_id,
             creator: User.current.id
-            )
+          )
         end
       end 
 
