@@ -142,9 +142,14 @@ Rails.application.routes.draw do
           redirect_url = "/api/v1/villages?traditional_authority_id=#{params[:traditional_authority_id]}"
           paginate_url redirect_url, request.params
         end)
+
+        get('/villages/:village_id', to: redirect do |params, request|
+          redirect_url = "/api/v1/villages/#{params[:village_id]}"
+          paginate_url redirect_url, request.params
+        end)      
       end
 
-      resources :villages, only: %i[create index]
+      resources :villages, only: %i[create index show]
 
       get '/encounters/_types' => 'encounter_types#index'
       resources :encounters do
