@@ -3,6 +3,8 @@
 module Api
   module V1
     class UsersController < ApplicationController
+
+      
       DEFAULT_ROLENAME = 'clerk'
 
       skip_before_action :authenticate, only: [:login]
@@ -105,6 +107,13 @@ module Api
         else
           render json: { errors: user.errors }
         end
+      end
+
+      def get_user_villages
+        villages = UserService.get_user_villages(user)
+        render json: { villages: villages }, status: :ok
+      rescue => e
+        render json: { errors: [e.message] }, status: :internal_server_error
       end
 
       private
