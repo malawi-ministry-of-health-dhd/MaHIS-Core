@@ -109,6 +109,14 @@ module Api
         end
       end
 
+      def update_user_villages
+        update_params = params.permit user_village_ids: []
+        user_villages = UserService.update_user_villages(user, update_params[:user_village_ids])
+        render json: { villages: user_villages }, status: :ok
+      rescue => e
+        render json: { errors: [e.message] }, status: :internal_server_error
+      end
+
       def get_user_villages
         villages = UserService.get_user_villages(user)
         render json: { villages: villages }, status: :ok
