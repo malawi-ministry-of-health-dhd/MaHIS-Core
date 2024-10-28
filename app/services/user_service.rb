@@ -8,17 +8,29 @@ require_relative 'person_service'
 module UserService
   AUTHENTICATION_TOKEN_VALIDITY_PERIOD = 24.hours
   LOGGER = Logger.new $stdout
-  HSA_ROLE = "HSA"
+  HSA_ROLES = ["HSA", "Health Surveillance"]
 
   class UserCreateError < StandardError; end
 
   def self.find_users(role: nil)
-    query = User.where(location_id: User.current.location_id)
-    
+    is_super_super_user = false
+    User.current.user_roles.each do |user_role|
+      if user_role.role.role == "Superuser,Superuser,"
+        is_super_super_user = true
+        break
+      end
+    end
+
+    query = if is_super_super_user
+      User.all
+    else
+      User.where(location_id: User.current.location_id)
+    end
+  
     if role
       query = query.joins(:roles).where(user_role: { role: role })
     end
-    
+
     query
   end
 
@@ -52,13 +64,14 @@ module UserService
       UserRole.create(role:, user:)
 
       # For users with HSA roles villages will have to be assigned to them 
-      if role.role == HSA_ROLE
+      if HSA_ROLES.include?(role.role)
+        # Create UserVillage records for each village
         villages.each do |village_id|
-          UserVillage.create( 
-            user_id: user.user_id, 
-            village_id: village_id, 
+          UserVillage.create(
+            user_id: user.user_id,
+            village_id: village_id,
             creator: User.current.id
-            )
+          )
         end
       end 
 
@@ -76,6 +89,50 @@ module UserService
     user.username = new_username
     user.save
     user
+  end
+
+  def self.update_user_villages(user, village_ids)
+    new_village_ids = Array(village_ids).map(&:to_i)
+    
+    current_user_villages = UserVillage.where(user_id: user.user_id)
+    
+    current_village_ids = current_user_villages.pluck(:village_id)
+    
+    villages_to_retire = current_user_villages.where(
+      village_id: current_village_ids - new_village_ids,
+      retired: 0
+    )
+    
+    villages_to_add = new_village_ids - current_village_ids
+    
+    villages_to_retire.update_all(retired: 1) if villages_to_retire.any?
+    
+    villages_to_add.each do |village_id|
+      UserVillage.create(
+        user_id: user.user_id,
+        village_id: village_id,
+        creator: User.current.id
+      )
+    end
+  end
+
+  def self.get_user_villages(user, options = {})
+    query = UserVillage.includes(:village)
+                      .where(user_id: user.user_id)
+                      
+    # Apply optional filters
+    query = query.where(active: true) if options[:active_only]
+    query = query.order(created_at: options[:sort_order] || :desc)
+    
+    if options[:include_metadata]
+      query.select('user_villages.*, villages.name as village_name, 
+                   villages.population, villages.district')
+    else
+      query
+    end
+  rescue ActiveRecord::RecordNotFound => e
+    Rails.logger.error("Failed to fetch villages for user #{user.user_id}: #{e.message}")
+    raise VillageQueryError, "Unable to fetch villages for user"
   end
 
   def self.update_user(user, params)
