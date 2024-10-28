@@ -10,7 +10,7 @@ class PersonService
   PERSON_NAME_FIELDS = %i[given_name family_name middle_name].freeze
   PERSON_ADDRESS_FIELDS = %i[current_district current_traditional_authority
                              current_village home_district
-                             home_traditional_authority home_village].freeze
+                             home_traditional_authority home_village country].freeze
   PERSON_FIELDS = (PERSON_TRUNK_FIELDS + PERSON_NAME_FIELDS + PERSON_ADDRESS_FIELDS).freeze
 
   # Map of API person attributes to database names
