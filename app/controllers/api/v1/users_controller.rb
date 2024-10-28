@@ -118,9 +118,9 @@ module Api
       end
 
       def get_user_villages
-        villages = UserService.get_user_villages(user)
+        villages = UserService.get_user_villages(user).where(retired: 0)
         render json: { villages: villages }, status: :ok
-      rescue => e
+      rescue StandardError => e
         render json: { errors: [e.message] }, status: :internal_server_error
       end
 
