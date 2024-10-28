@@ -13,12 +13,24 @@ module UserService
   class UserCreateError < StandardError; end
 
   def self.find_users(role: nil)
-    query = User.where(location_id: User.current.location_id)
-    
+    is_super_super_user = false
+    User.current.user_roles.each do |user_role|
+      if user_role.role.role == "Superuser,Superuser,"
+        is_super_super_user = true
+        break
+      end
+    end
+
+    query = if is_super_super_user
+      User.all
+    else
+      User.where(location_id: User.current.location_id)
+    end
+  
     if role
       query = query.joins(:roles).where(user_role: { role: role })
     end
-    
+
     query
   end
 
