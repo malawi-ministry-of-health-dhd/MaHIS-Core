@@ -98,8 +98,6 @@ module UserService
     
     current_village_ids = current_user_villages.pluck(:village_id)
     
-    retired_village_ids = current_user_villages.where(retired: 1).pluck(:village_id)
-    
     villages_to_retire = current_user_villages.where(
       village_id: current_village_ids - new_village_ids,
       retired: 0
