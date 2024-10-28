@@ -91,6 +91,33 @@ module UserService
     user
   end
 
+  def self.update_user_villages(user, village_ids)
+    new_village_ids = Array(village_ids).map(&:to_i)
+    
+    current_user_villages = UserVillage.where(user_id: user.user_id)
+    
+    current_village_ids = current_user_villages.pluck(:village_id)
+    
+    retired_village_ids = current_user_villages.where(retired: 1).pluck(:village_id)
+    
+    villages_to_retire = current_user_villages.where(
+      village_id: current_village_ids - new_village_ids,
+      retired: 0
+    )
+    
+    villages_to_add = new_village_ids - current_village_ids
+    
+    villages_to_retire.update_all(retired: 1) if villages_to_retire.any?
+    
+    villages_to_add.each do |village_id|
+      UserVillage.create(
+        user_id: user.user_id,
+        village_id: village_id,
+        creator: User.current.id
+      )
+    end
+  end
+
   def self.get_user_villages(user, options = {})
     query = UserVillage.includes(:village)
                       .where(user_id: user.user_id)
