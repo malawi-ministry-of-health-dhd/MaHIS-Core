@@ -153,6 +153,7 @@ class StockManagementService
     query = query.where("pharmacy_batches.batch_number = ?", filters[:batch_number]) if filters[:batch_number]
     query = query.where("pharmacy_batches.location_id = ?", filters[:location_id]) if filters[:location_id]
     query = query.where('drug.name LIKE ?', "#{filters[:drug_name]}%") if filters[:drug_name]
+    query = query.where('current_quantity > 0')
 
     query
   end
