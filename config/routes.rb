@@ -111,6 +111,9 @@ Rails.application.routes.draw do
       # OPD
       get 'OPD_drugslist' => 'drugs#OPD_drugslist'
 
+      # get drug via drug_id
+      get 'drug' => 'drugs#get_drug_by_id'
+
       #Totals
       get 'totals' => 'totals#index'
 
