@@ -137,6 +137,10 @@ module Api
         render json: levels
       end
 
+      def get_drug_by_id
+        render json: drug, status: :ok
+      end
+
       private
 
       def drug
