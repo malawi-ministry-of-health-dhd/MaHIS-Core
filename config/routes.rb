@@ -207,6 +207,7 @@ Rails.application.routes.draw do
           get '/art_hiv_status', to: 'program_patients#art_hiv_status'
           get '/subsequent_visit', to: 'program_patients#subsequent_visit'
           get '/saved_encounters', to: 'program_patients#saved_encounters'
+          get '/current_states', to: 'patient_states#patient_current_state'
           resources :patient_states, path: :states
           resources :visit, only: %i[index], module: 'programs/patients'
           resources :drug_doses, only: %i[index], module: 'programs/patients'
