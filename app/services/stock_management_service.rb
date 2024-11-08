@@ -163,7 +163,7 @@ class StockManagementService
       <<~SQL
         pharmacy_batch_items.*,
         pharmacy_batch_items.delivered_quantity as delivered_quantity, 
-        pharmacy_batch_items.current_quantity as current_quantity,
+        SUM(pharmacy_batch_items.current_quantity) as current_quantity,
         COALESCE((
           SELECT SUM(quantity)
           FROM pharmacy_batch_item_reallocations
