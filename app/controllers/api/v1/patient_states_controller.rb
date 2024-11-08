@@ -9,6 +9,12 @@ module Api
         render json: states
       end
 
+      def patient_current_state
+        date = params[:date]&.to_date || Date.today
+        states = service.find_patient_state program, patient, date
+        render json: states
+      end
+
       def create
         state, = params.require %i[state]
         date = params[:date]&.to_date || Date.today
