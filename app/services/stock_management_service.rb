@@ -221,8 +221,8 @@ class StockManagementService
     end
 
   query = query.select(select_clause)
-  query = query.group('drug.drug_id, pharmacy_batches.batch_number') if display_details.nil?
-  query = query.group('drug.drug_id') unless display_details.nil?
+  query = query.group('drug.drug_id, pharmacy_batches.batch_number, location_id') if display_details.nil?
+  query = query.group('drug.drug_id, location_id') unless display_details.nil?
 
   query
 end
@@ -448,7 +448,7 @@ end
   end
 
   def find_or_create_batch(batch_number, location_id: nil)
-    batch = PharmacyBatch.find_by_batch_number(batch_number)
+    batch = PharmacyBatch.find_by(batch_number: batch_number, location_id: location_id)
     return batch if batch
 
     PharmacyBatch.create(batch_number:, location_id:)
