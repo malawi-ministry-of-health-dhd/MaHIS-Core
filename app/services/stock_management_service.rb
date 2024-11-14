@@ -221,7 +221,7 @@ class StockManagementService
     end
 
   query = query.select(select_clause)
-  query = query.group('drug.drug_id, pharmacy_batches.batch_number, location_id') if display_details.nil?
+  query = query.group('drug.drug_id, pharmacy_batches.batch_number, delivery_date') if display_details.nil?
   query = query.group('drug.drug_id, location_id') unless display_details.nil?
 
   query
