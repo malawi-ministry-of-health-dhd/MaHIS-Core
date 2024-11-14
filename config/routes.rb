@@ -29,6 +29,7 @@ Rails.application.routes.draw do
       resources :internal_sections, only: %i[index show create update destroy]
       resources :appointments
       resources :dispensations, only: %i[index create destroy]
+      get '/check_username', to: 'users#check_username_exist'
       resources :users do
         post '/activate', to: 'users#activate'
         post '/deactivate', to: 'users#deactivate'
