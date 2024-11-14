@@ -162,7 +162,7 @@ class StockManagementService
     select_clause = if display_details.nil?
       <<~SQL
         pharmacy_batch_items.*,
-        pharmacy_batch_items.delivered_quantity as delivered_quantity, 
+        SUM(pharmacy_batch_items.delivered_quantity) as delivered_quantity, 
         SUM(pharmacy_batch_items.current_quantity) as current_quantity,
         COALESCE((
           SELECT SUM(quantity)
