@@ -135,7 +135,7 @@ class StockManagementService
       .joins('INNER JOIN pharmacy_batches ON pharmacy_batches.id = pharmacy_batch_items.pharmacy_batch_id')
 
     query = apply_filters(query, filters)
-    query = apply_select_and_group(query, filters[:display_details])
+    query = apply_select_and_group(query, filters)
     query = query.having('current_quantity > 0') if filters[:show_depleted] == 'false'
 
     query.order(Arel.sql('pharmacy_batch_items.date_created DESC, pharmacy_batch_items.expiry_date ASC'))
@@ -158,8 +158,8 @@ class StockManagementService
     query
   end
 
-  def apply_select_and_group(query, display_details)
-    select_clause = if display_details.nil?
+  def apply_select_and_group(query, filters)
+    select_clause = if filters[:display_details].nil?
       <<~SQL
         pharmacy_batch_items.*,
         SUM(pharmacy_batch_items.delivered_quantity) as delivered_quantity, 
@@ -221,8 +221,9 @@ class StockManagementService
     end
 
   query = query.select(select_clause)
-  query = query.group('drug.drug_id, pharmacy_batches.batch_number, delivery_date, pharmacy_batch_items.id') if display_details.nil?
-  query = query.group('drug.drug_id, location_id') unless display_details.nil?
+  query = query.group('drug.drug_id, pharmacy_batches.batch_number, delivery_date, pharmacy_batch_items.id') if filters[:display_details].nil? && filters[:drug_id].nil?
+  query = query.group('drug.drug_id, location_id') unless filters[:display_details].nil?
+  query = query.group('drug.drug_id, pharmacy_batches.batch_number') if filters[:drug_id]
 
   query
 end
