@@ -304,5 +304,75 @@ module ImmunizationService
         (age <= window_period.to_f) && (age >= milestone_days)
       end
     end
+
+    def self.generic_vaccine_schedule
+      # Fetch all immunization drugs
+      immunizations = immunization_drugs
+
+      # Filter out female-specific immunizations to ensure it's a general schedule
+      immunizations = filter_female_specific_immunizations(immunizations)
+
+      # For each drug, retrieve milestones and build a generic vaccine schedule
+      immunization_with_window = immunizations.flat_map do |immunization_drug|
+        vaccines = []
+        vaccine_attribute(immunization_drug.concept_id, 'Immunization milestones').each_with_index do |milestone, i|
+          drug_name = vaccine_display_name(immunization_drug.name, i)
+          vaccines << {
+            milestone_name: milestone.name,
+            sort_weight: milestone.sort_weight,
+            drug_id: immunization_drug.drug_id,
+            drug_name: drug_name,
+            window_period: CUSTOM_WINDOW_PERIODS[drug_name.to_sym] || vaccine_attribute(immunization_drug.concept_id, 
+                                                                                        'Immunization window period')
+                      .first&.name
+          }
+        end
+        vaccines
+      end
+
+      # Group immunizations by milestone and sort them by milestone order
+      grouped_immunizations = immunization_with_window.group_by { |immunizations| immunizations[:milestone_name] }
+      sorted_grouped_immunizations = grouped_immunizations.sort_by { |milestone| milestone[1][0][:sort_weight] }.to_h
+
+      # Format the generic vaccine schedule
+      format_generic_schedule(make_unique(sorted_grouped_immunizations))
+    end
+
+    def self.format_generic_schedule(schedule)
+      schedule.map.with_index(1) do |(milestone_name, antigens), index|
+        {
+          visit: index,
+          milestone_status: nil, # No patient-specific milestone status
+          age: milestone_name,
+          antigens: antigens.map do |drug|
+            {
+              drug_id: drug[:drug_id],
+              drug_name: drug[:drug_name],
+              window_period: drug[:window_period],
+              can_administer: nil, # No patient-specific administration capability
+              status: nil,         # No patient-specific status
+              date_administered: nil,
+              administered_by: nil,
+              location_administered: nil,
+              vaccine_batch_number: nil,
+              encounter_id: nil,
+              order_id: nil
+            }
+          end
+        }
+      end
+    end
+
+    # Add other methods like `immunization_drugs`, `make_unique`, and `vaccine_attribute`
+
+    def self.filter_female_specific_immunizations(immunizations)
+      # Exclude female-specific immunizations
+      immunizations.reject do |immunization|
+        ConceptSet.where(concept_set: ConceptName
+                  .where(name: 'Female only immunizations').pluck(:concept_id))
+                  .pluck(:concept_id).include?(immunization.concept_id)
+      end
+    end
+   
   end
 end
