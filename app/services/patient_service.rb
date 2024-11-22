@@ -232,6 +232,31 @@ class PatientService
     ).order('orders.start_date DESC')
   end
 
+  def find_program_drug_orders_awaiting_dispensation(patient, date, program_id: nil)
+    DrugOrder
+      .joins(order: :encounter)
+      .where(
+        'orders.start_date <= ? AND orders.patient_id = ? 
+         AND drug_order.quantity IS NOT NULL 
+         AND encounter.program_id = ?',
+        TimeUtils.day_bounds(date)[1],
+        patient.patient_id,
+        program_id
+      )
+      .where(
+        'NOT EXISTS (
+          SELECT 1 
+          FROM obs 
+          JOIN concept_name ON concept_name.concept_id = obs.concept_id
+          WHERE obs.order_id = orders.order_id
+          AND concept_name.name = ? 
+          AND obs.value_numeric IS NOT NULL
+        )',
+        'AMOUNT DISPENSED'
+      )
+      .order('orders.start_date DESC')
+  end
+
   def drugs_orders_by_program(patient, date, program_id: nil)
     DrugOrder.joins(order: :encounter).where(
       'orders.start_date <= ? AND orders.patient_id = ? AND quantity IS NOT NULL AND encounter.program_id = ?',
