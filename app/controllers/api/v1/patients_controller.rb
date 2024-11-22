@@ -17,9 +17,21 @@ module Api
       include ModelUtils
 
       def index
-        render json: Patient.joins(:patient_programs).all.where("patient_program.location_id = ?", User.current.location_id), status: :ok
+        offset = params[:offset].to_i || 0
+        limit = params[:limit].to_i || 100
+        location_id = params[:location_id]
+    
+        if location_id.blank?
+          render json: { error: 'Location ID is required' }, status: :bad_request and return
+        end
+  
+        patient_details = service.fetch_client_details(offset: offset, limit: limit, location_id:)
+    
+        render json: { patients: patient_details, offset: offset, limit: limit }
+      rescue StandardError => e
+        render json: { error: e.message }, status: :internal_server_error
       end
-
+ 
       def show
         render json: patient
       end
