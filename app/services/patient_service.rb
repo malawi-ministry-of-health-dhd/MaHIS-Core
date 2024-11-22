@@ -82,6 +82,11 @@ class PatientService
     patient
   end
 
+  def fetch_client_details(offset:, limit:, location_id:)
+    patients = fetch_patients_batch(offset:, limit:, location_id:)
+    map_patient_details_with_vaccine_schedule(patients)
+  end
+
   def find_patients_by_npid(npid, voided: false)
     find_patients_by_identifier(npid, *npid_identifier_types.to_a, voided:)
   end
@@ -585,6 +590,23 @@ class PatientService
   end
 
   private
+
+  # Fetch a batch of patients based on the offset and limit
+  def fetch_patients_batch(offset:, limit:, location_id:)
+    Person.joins(patient: :patient_programs)
+          .where("patient_program.location_id = ?", location_id)
+          .offset(offset)
+          .limit(limit)
+  end
+
+  # Map patients with their details including vaccine schedules
+  def map_patient_details_with_vaccine_schedule(patients)
+    patients.map do |patient|
+      patient.as_json.merge(
+        "vaccine_schedule" => ImmunizationService::VaccineScheduleService.vaccine_schedule(patient)
+      )
+    end
+  end
 
   def npid_identifier_types
     @npid_identifier_types = [patient_identifier_type('National id'),
