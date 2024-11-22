@@ -191,6 +191,14 @@ module Api
         render json: drugs_orders
       end
 
+      def find_program_drug_orders_awaiting_dispensation
+        cut_off_date = params[:date]&.to_date || Date.today
+        program_id = params[:program_id]
+        drugs_orders = paginate(service.find_program_drug_orders_awaiting_dispensation(patient, cut_off_date, program_id:))
+
+        render json: drugs_orders
+      end
+
       # Returns all lab orders made since a given date
       def recent_lab_orders
         patient_id, program_id = params.require(%i[patient_id program_id])
