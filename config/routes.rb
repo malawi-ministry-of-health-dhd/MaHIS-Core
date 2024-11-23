@@ -469,4 +469,21 @@ Rails.application.routes.draw do
   delete '/api/v1/eir/session_schedule', to: 'api/v1/session_schedule#destroy'
   put  '/api/v1/eir/session_schedule/:id', to: 'api/v1/session_schedule#update'
 
+  #facility
+  namespace :api do
+    namespace :v1 do
+    resources :facilities do
+      member do
+        get 'nearby', to: 'facilities#nearby'
+      end
+
+      # Optional: Collection routes if you need them
+      collection do
+        get 'search', to: 'facilities#index'  # Alternative search endpoint
+        get 'districts', to: 'facilities#districts' # If you want to list unique districts
+      end
+    end
+  end
+end
+
 end
