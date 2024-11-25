@@ -66,3 +66,6 @@ db/lims_metadata/*.json
 
 # Ignore json files under hts_metadata
 db/hts_metadata/*.json
+
+# f bups
+db/data/facilities/backups/
