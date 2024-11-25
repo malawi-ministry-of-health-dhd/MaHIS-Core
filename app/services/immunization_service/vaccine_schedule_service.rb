@@ -306,12 +306,20 @@ module ImmunizationService
     end
 
     def self.generic_vaccine_schedule
-      # Fetch all immunization drugs
       immunizations = immunization_drugs
-
-      # Filter out female-specific immunizations to ensure it's a general schedule
-      immunizations = filter_female_specific_immunizations(immunizations)
-
+    
+      # Create separate schedules for males and females
+      female_specific_immunizations = filter_male_specific_immunizations(immunizations)
+      male_specific_immunizations = filter_female_specific_immunizations(immunizations)
+    
+      female_schedule = build_generic_schedule(female_specific_immunizations)
+      male_schedule = build_generic_schedule(male_specific_immunizations)
+    
+      { female_schedule:, male_schedule: }
+    end
+    
+    # Helper method to build the generic vaccine schedule
+    def self.build_generic_schedule(immunizations)
       # For each drug, retrieve milestones and build a generic vaccine schedule
       immunization_with_window = immunizations.flat_map do |immunization_drug|
         vaccines = []
@@ -322,18 +330,18 @@ module ImmunizationService
             sort_weight: milestone.sort_weight,
             drug_id: immunization_drug.drug_id,
             drug_name: drug_name,
-            window_period: CUSTOM_WINDOW_PERIODS[drug_name.to_sym] || vaccine_attribute(immunization_drug.concept_id, 
+            window_period: CUSTOM_WINDOW_PERIODS[drug_name.to_sym] || vaccine_attribute(immunization_drug.concept_id,
                                                                                         'Immunization window period')
-                      .first&.name
+                          .first&.name
           }
         end
         vaccines
       end
-
+    
       # Group immunizations by milestone and sort them by milestone order
       grouped_immunizations = immunization_with_window.group_by { |immunizations| immunizations[:milestone_name] }
       sorted_grouped_immunizations = grouped_immunizations.sort_by { |milestone| milestone[1][0][:sort_weight] }.to_h
-
+    
       # Format the generic vaccine schedule
       format_generic_schedule(make_unique(sorted_grouped_immunizations))
     end
@@ -362,9 +370,16 @@ module ImmunizationService
         }
       end
     end
-
-    # Add other methods like `immunization_drugs`, `make_unique`, and `vaccine_attribute`
-
+    
+    # New method to filter male-specific immunizations
+    def self.filter_male_specific_immunizations(immunizations)
+      immunizations.reject do |immunization|
+        ConceptSet.where(concept_set: ConceptName
+                  .where(name: 'Male only immunizations').pluck(:concept_id))
+                  .pluck(:concept_id).include?(immunization.concept_id)
+      end
+    end
+    
     def self.filter_female_specific_immunizations(immunizations)
       # Exclude female-specific immunizations
       immunizations.reject do |immunization|
@@ -372,7 +387,8 @@ module ImmunizationService
                   .where(name: 'Female only immunizations').pluck(:concept_id))
                   .pluck(:concept_id).include?(immunization.concept_id)
       end
-    end
+    end 
+    
    
   end
 end
