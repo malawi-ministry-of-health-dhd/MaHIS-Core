@@ -1,20 +1,38 @@
 class AddFacilityCodeToUsers < ActiveRecord::Migration[7.0]
-  def change
-    # Remove the existing column if it exists
-    remove_column :users, :facility_code if column_exists?(:users, :facility_code)
-    
-    # Add the column with explicit varchar(255) type
-    execute "ALTER TABLE users ADD COLUMN facility_code VARCHAR(255) NULL DEFAULT NULL"
+  def up
+    # Add facility_code column only if it doesn't exist
+    unless column_exists?(:users, :facility_code)
+      add_column :users, :facility_code, :string, 
+        limit: 255, 
+        null: true, 
+        default: nil, 
+        charset: 'utf8mb3', 
+        collation: 'utf8mb3_unicode_ci'
+    end
 
-    # Add an index
-    add_index :users, :facility_code, unique: false
+    # Add index if not exists
+    unless index_exists?(:users, :facility_code)
+      add_index :users, :facility_code
+    end
 
-    # Add foreign key using raw SQL to ensure type compatibility
+    # Remove existing foreign key if it exists
+    execute "ALTER TABLE users DROP FOREIGN KEY fk_users_facility_code" rescue nil
+
+    # Add foreign key
     execute <<-SQL
       ALTER TABLE users
       ADD CONSTRAINT fk_users_facility_code
       FOREIGN KEY (facility_code)
       REFERENCES facilities(code)
+      ON DELETE SET NULL
+      ON UPDATE CASCADE
     SQL
+  end
+
+  def down
+    execute "ALTER TABLE users DROP FOREIGN KEY fk_users_facility_code" rescue nil
+    
+    remove_index :users, :facility_code if index_exists?(:users, :facility_code)
+    remove_column :users, :facility_code if column_exists?(:users, :facility_code)
   end
 end
