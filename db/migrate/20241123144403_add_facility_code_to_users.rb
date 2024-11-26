@@ -1,16 +1,20 @@
 class AddFacilityCodeToUsers < ActiveRecord::Migration[7.0]
   def change
-    # Remove the column if it exists
+    # Remove the existing column if it exists
     remove_column :users, :facility_code if column_exists?(:users, :facility_code)
     
-    # Then add the column
-    add_column :users, :facility_code, :string, null: true, default: nil
+    # Add the column with explicit varchar(255) type
+    execute "ALTER TABLE users ADD COLUMN facility_code VARCHAR(255) NULL DEFAULT NULL"
 
-    add_index :users, :facility_code, unique: false, if_not_exists: true
+    # Add an index
+    add_index :users, :facility_code, unique: false
 
-    add_foreign_key :users, :facilities, 
-      column: :facility_code,
-      primary_key: :code, 
-      name: 'fk_users_facility_code'
+    # Add foreign key using raw SQL to ensure type compatibility
+    execute <<-SQL
+      ALTER TABLE users
+      ADD CONSTRAINT fk_users_facility_code
+      FOREIGN KEY (facility_code)
+      REFERENCES facilities(code)
+    SQL
   end
 end
