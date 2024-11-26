@@ -19,14 +19,14 @@ class AddFacilityCodeToUsers < ActiveRecord::Migration[7.0]
     execute "ALTER TABLE users DROP FOREIGN KEY fk_users_facility_code" rescue nil
 
     # Add foreign key
-    execute <<-SQL
-      ALTER TABLE users
-      ADD CONSTRAINT fk_users_facility_code
-      FOREIGN KEY (facility_code)
-      REFERENCES facilities(code)
-      ON DELETE SET NULL
-      ON UPDATE CASCADE
-    SQL
+    # execute <<-SQL
+    #   ALTER TABLE users
+    #   ADD CONSTRAINT fk_users_facility_code
+    #   FOREIGN KEY (facility_code)
+    #   REFERENCES facilities(code)
+    #   ON DELETE SET NULL
+    #   ON UPDATE CASCADE
+    # SQL
   end
 
   def down
