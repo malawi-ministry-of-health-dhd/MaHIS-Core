@@ -14,6 +14,17 @@ module Api
                 filters_applied: result[:filters_applied]
             }
             end
+
+            # GET /districts
+            def districts
+                service = FacilityService.new
+                districts = service.list_districts
+            
+                render json: {
+                districts: districts,
+                total: districts.count
+                }
+            end
         
             # GET /facilities/:id
             def show
