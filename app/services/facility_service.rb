@@ -22,7 +22,17 @@ class FacilityService
     end
 
     def list_districts
-      Facility.distinct.order(:district).pluck(:district).compact
+      # Use a subquery to get distinct districts
+      Facility.select('district')
+              .distinct
+              .order(:district)
+              .map.with_index do |facility, index|
+        {
+          id: index + 1,  # Incremental ID starting from 1
+          name: facility.district,
+          display_name: facility.district
+        }
+      end.compact
     end
   
     def find_nearby_facilities(facility_id)
