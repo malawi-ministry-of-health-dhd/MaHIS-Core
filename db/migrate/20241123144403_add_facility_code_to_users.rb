@@ -1,6 +1,5 @@
 class AddFacilityCodeToUsers < ActiveRecord::Migration[7.0]
   def up
-    # Add facility_code column only if it doesn't exist
     unless column_exists?(:users, :facility_code)
       add_column :users, :facility_code, :string, 
         limit: 255, 
@@ -10,12 +9,10 @@ class AddFacilityCodeToUsers < ActiveRecord::Migration[7.0]
         collation: 'utf8mb3_unicode_ci'
     end
 
-    # Add index if not exists
     unless index_exists?(:users, :facility_code)
       add_index :users, :facility_code
     end
 
-    # Remove existing foreign key if it exists
     execute "ALTER TABLE users DROP FOREIGN KEY fk_users_facility_code" rescue nil
 
     # Add foreign key
