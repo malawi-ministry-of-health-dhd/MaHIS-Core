@@ -20,6 +20,10 @@ class FacilityService
         filters_applied: filters_applied
       }
     end
+
+    def list_districts
+      Facility.distinct.order(:district).pluck(:district).compact
+    end
   
     def find_nearby_facilities(facility_id)
       facility = Facility.find(facility_id)
