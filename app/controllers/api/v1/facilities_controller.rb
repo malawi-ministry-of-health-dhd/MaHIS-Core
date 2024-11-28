@@ -5,15 +5,22 @@ module Api
         
             # GET /facilities
             def index
-            service = FacilityService.new(search_params)
-            result = service.list_facilities
-        
-            render json: {
+                service = FacilityService.new(search_params)
+                if search_params[:district_name].present?
+                # Filter facilities by district_name
+                result = service.list_facilities_by_district(search_params[:district_name])
+                else
+                # Default behavior
+                result = service.list_facilities
+                end
+            
+                render json: {
                 facilities: serialize_facilities(result[:facilities]),
                 total: result[:total],
                 filters_applied: result[:filters_applied]
-            }
+                }
             end
+  
 
             # GET /districts
             def districts
