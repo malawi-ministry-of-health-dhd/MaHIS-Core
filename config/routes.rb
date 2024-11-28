@@ -293,6 +293,7 @@ Rails.application.routes.draw do
       post '/dde/patients/duplicates', to: 'dde#duplicates_finder'
       get '/dde/patients/matches', to: 'dde#duplicates_match'
       post '/rollback/rollback_patient', to: 'rollback#rollback_patient'
+      get '/dde/patients/sync_npids', to: 'dde#sync_npids'
 
       get '/labels/location', to: 'locations#print_label'
 
