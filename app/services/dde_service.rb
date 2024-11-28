@@ -63,6 +63,13 @@ class DdeService
     response
   end
 
+  def allocate_npids(count)
+    response, status = dde_client.get("/allocate_npids?location_id=#{Location.current.id}&count=#{count}")
+    raise DdeError, "Failed to fetch remaining npids: #{status} - #{response}" unless status == 200 
+    
+    response
+  end
+
   def void_patient(patient, reason)
     raise ArgumentError, "Can't request a DDE void for a non-voided patient" unless patient.voided?
     raise ArgumentError, 'void_reason is required' if reason.blank?
