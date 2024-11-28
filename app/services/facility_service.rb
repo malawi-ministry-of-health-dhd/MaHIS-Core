@@ -34,6 +34,20 @@ class FacilityService
         }
       end.compact
     end
+
+    # Fetch facilities by district_name
+    def list_facilities_by_district(district_name)
+      sanitized_district_name = district_name.to_s.gsub('?', '')
+
+      facilities = Facility.where(district: sanitized_district_name)
+
+      {
+        facilities: facilities,
+        total: facilities.count,
+        filters_applied: { district_name: sanitized_district_name }
+      }
+    end
+
   
     def find_nearby_facilities(facility_id)
       facility = Facility.find(facility_id)
