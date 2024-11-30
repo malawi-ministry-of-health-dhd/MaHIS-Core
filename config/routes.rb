@@ -371,6 +371,7 @@ Rails.application.routes.draw do
   get '/api/v1/art_data_cleaning_tools' => 'api/v1/cleaning#art_tools'
   get '/api/v1/anc_data_cleaning_tools' => 'api/v1/cleaning#anc_tools'
   get '/api/v1/its_data_cleaning_tools' => 'api/v1/cleaning#its_tools'
+  get '/api/v1/sync/patients_ids', to: 'api/v1/sync_patient_records#get_not_sync_ids'
 
   # OPD reports
   get '/api/v1/registration' => 'api/v1/reports#registration'
