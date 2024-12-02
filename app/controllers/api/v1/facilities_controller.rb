@@ -83,9 +83,11 @@ module Api
             private
         
             def set_facility
-            @facility = Facility.find(params[:id])
-            rescue ActiveRecord::RecordNotFound
-            render json: { error: 'Facility not found' }, status: :not_found
+                @facility = Facility.find_by('id = ? OR code = ?', params[:id], params[:id])
+                
+                if @facility.nil?
+                  render json: { error: 'Facility not found' }, status: :not_found
+                end
             end
         
             def facility_params
