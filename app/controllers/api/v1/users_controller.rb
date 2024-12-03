@@ -124,6 +124,19 @@ module Api
         render json: { errors: [e.message] }, status: :internal_server_error
       end
 
+      def check_username_exist
+        username_param = params.permit(:username)
+        if username_param[:username].blank?
+          render json: { errors: ['Username parameter is required'] }, status: :bad_request
+          return
+        end
+        
+        exists = UserService.check_user(username_param[:username])
+        render json: { exists: exists }, status: :ok
+      rescue StandardError => e
+        render json: { errors: [e.message] }, status: :internal_server_error
+      end
+
       private
 
       def validate_roles(roles)

@@ -27,11 +27,7 @@ module Api
       end
 
       def return_data(program_id, date, end_date, search_txt = '')
-        if program_id.to_i == Program.find_by_name('Immunization Program').program_id.to_i
           render json: service.booked_appointments(program_id, date, end_date, search_txt, location_id: User.current.location_id)
-        else
-          render json: service.booked_appointments(program_id, date)
-        end
       end
     end
   end
