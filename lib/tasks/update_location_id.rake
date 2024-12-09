@@ -1,6 +1,6 @@
 # lib/tasks/update_location_id.rake
 namespace :users do
-  desc 'Update user and observation location IDs based on a predefined mapping'
+  desc 'Update user, observation, encounter, and pharmacy batch location IDs based on a predefined mapping'
   task update_location_id: :environment do
     # Start timing the entire process
     start_time = Time.now
@@ -25,7 +25,7 @@ namespace :users do
       717  => "MZ160760", 75   => "LL040214", 8    => "LL040033", 851  => "LL040010",
       857  => "LL040016", 868  => "LL040316", 874  => "MC011376", 875  => "MC010441",
       877  => "MC011131", 905  => "CK270069", 914  => "TH310026", 968  => "BK170054",
-      984  => "ZA230235"
+      984  => "ZA230235", 844  => "LL040434", 700  => "",
     }
 
     # Counters for tracking updates
@@ -35,11 +35,14 @@ namespace :users do
     obs_skipped_count = 0
     encounter_updated_count = 0
     encounter_skipped_count = 0
+    pharmacy_batch_updated_count = 0
+    pharmacy_batch_skipped_count = 0
 
     # Performance tracking
     user_update_start = Time.now
     obs_update_start = nil
     encounter_update_start = nil
+    pharmacy_batch_update_start = nil
 
     puts "\n===== Location ID Update Process ====="
     puts "Started at: #{start_time.strftime('%Y-%m-%d %H:%M:%S')}"
@@ -112,12 +115,36 @@ namespace :users do
     end
 
     encounter_update_end = Time.now
+    pharmacy_batch_update_start = Time.now
+
+    # Update PharmacyBatches
+    puts "\n\n--- Updating PharmacyBatches ---"
+    map_facility.each do |old_location_id, new_facility_code|
+      # Find pharmacy batches with the matching location_id
+      pharmacy_batches = PharmacyBatch.where(location_id: old_location_id)
+      
+      pharmacy_batches.each do |batch|
+        # Update the location_id
+        batch.location_id = new_facility_code
+        
+        if batch.save
+          pharmacy_batch_updated_count += 1
+          print "."
+        else
+          pharmacy_batch_skipped_count += 1
+          puts "\nFailed to update PharmacyBatch #{batch.id}: #{batch.errors.full_messages.join(', ')}"
+        end
+      end
+    end
+
+    pharmacy_batch_update_end = Time.now
     end_time = Time.now
 
     # Calculate durations
     user_update_duration = user_update_end - user_update_start
     obs_update_duration = obs_update_end - obs_update_start
     encounter_update_duration = encounter_update_end - encounter_update_start
+    pharmacy_batch_update_duration = pharmacy_batch_update_end - pharmacy_batch_update_start
     total_duration = end_time - start_time
 
     # Print summary
@@ -128,6 +155,7 @@ namespace :users do
     puts "User Update Duration: #{user_update_duration.round(2)} seconds"
     puts "Observation Update Duration: #{obs_update_duration.round(2)} seconds"
     puts "Encounter Update Duration: #{encounter_update_duration.round(2)} seconds"
+    puts "PharmacyBatch Update Duration: #{pharmacy_batch_update_duration.round(2)} seconds"
     
     puts "\n--- Update Statistics ---"
     puts "Users updated: #{user_updated_count}"
@@ -136,6 +164,8 @@ namespace :users do
     puts "Observations skipped: #{obs_skipped_count}"
     puts "Encounters updated: #{encounter_updated_count}"
     puts "Encounters skipped: #{encounter_skipped_count}"
+    puts "PharmacyBatches updated: #{pharmacy_batch_updated_count}"
+    puts "PharmacyBatches skipped: #{pharmacy_batch_skipped_count}"
 
     # Memory usage (if possible)
     if defined?(Process)
