@@ -10,7 +10,7 @@ module SyncPatientRecordsService
               .joins(patient: :encounters)
               .where('patient_identifier.identifier_type = ?', 3)
               .distinct
-      query= query.where(encounters: { location_id: location_id }) if enable_site_sync.present?
+      query= query.where(encounters: { location_id: location_id }) 
       query = query.where('encounter.encounter_datetime BETWEEN ? AND ?', previous_sync_date, Time.now.strftime("%Y-%m-%d %H:%M:%S")) if previous_sync_date.present?
       latest_encounter_datetime = query.maximum('encounter.encounter_datetime')
       {
