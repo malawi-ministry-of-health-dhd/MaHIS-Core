@@ -2,6 +2,9 @@
 namespace :users do
   desc 'Update user and observation location IDs based on a predefined mapping'
   task update_location_id: :environment do
+    # Start timing the entire process
+    start_time = Time.now
+
     # Mapping of location IDs to new facility codes
     map_facility = {
       582  => "NT121225", 583  => "NT121225", 584  => "NT121225", 6    => "LL040007",
@@ -30,11 +33,20 @@ namespace :users do
     user_skipped_count = 0
     obs_updated_count = 0
     obs_skipped_count = 0
+    encounter_updated_count = 0
+    encounter_skipped_count = 0
 
-    puts "Starting location ID update process..."
+    # Performance tracking
+    user_update_start = Time.now
+    obs_update_start = nil
+    encounter_update_start = nil
+
+    puts "\n===== Location ID Update Process ====="
+    puts "Started at: #{start_time.strftime('%Y-%m-%d %H:%M:%S')}"
+    puts "Total location mappings to process: #{map_facility.size}"
 
     # Update Users
-    puts "\nUpdating Users..."
+    puts "\n--- Updating Users ---"
     map_facility.each do |old_location_id, new_facility_code|
       # Find users with the matching location_id
       users = User.where(location_id: old_location_id)
@@ -45,16 +57,19 @@ namespace :users do
         
         if user.save
           user_updated_count += 1
-          puts "Updated user #{user.id} with location ID #{new_facility_code}"
+          print "."
         else
           user_skipped_count += 1
-          puts "Failed to update user #{user.id}: #{user.errors.full_messages.join(', ')}"
+          puts "\nFailed to update user #{user.id}: #{user.errors.full_messages.join(', ')}"
         end
       end
     end
 
+    user_update_end = Time.now
+    obs_update_start = Time.now
+
     # Update Observations
-    puts "\nUpdating Observations..."
+    puts "\n\n--- Updating Observations ---"
     map_facility.each do |old_location_id, new_facility_code|
       # Find observations with the matching location_id
       observations = Observation.where(location_id: old_location_id)
@@ -65,19 +80,68 @@ namespace :users do
         
         if obs.save
           obs_updated_count += 1
-          puts "Updated observation #{obs.id} with location ID #{new_facility_code}"
+          print "."
         else
           obs_skipped_count += 1
-          puts "Failed to update observation #{obs.id}: #{obs.errors.full_messages.join(', ')}"
+          puts "\nFailed to update observation #{obs.id}: #{obs.errors.full_messages.join(', ')}"
         end
       end
     end
 
+    obs_update_end = Time.now
+    encounter_update_start = Time.now
+
+    # Update Encounters
+    puts "\n\n--- Updating Encounters ---"
+    map_facility.each do |old_location_id, new_facility_code|
+      # Find encounters with the matching location_id
+      encounters = Encounter.where(location_id: old_location_id)
+      
+      encounters.each do |encounter|
+        # Update the location_id
+        encounter.location_id = new_facility_code
+        
+        if encounter.save
+          encounter_updated_count += 1
+          print "."
+        else
+          encounter_skipped_count += 1
+          puts "\nFailed to update Encounter #{encounter.id}: #{encounter.errors.full_messages.join(', ')}"
+        end
+      end
+    end
+
+    encounter_update_end = Time.now
+    end_time = Time.now
+
+    # Calculate durations
+    user_update_duration = user_update_end - user_update_start
+    obs_update_duration = obs_update_end - obs_update_start
+    encounter_update_duration = encounter_update_end - encounter_update_start
+    total_duration = end_time - start_time
+
     # Print summary
-    puts "\nUpdate complete:"
+    puts "\n\n===== Update Complete ====="
+    puts "Finished at: #{end_time.strftime('%Y-%m-%d %H:%M:%S')}"
+    puts "\n--- Performance Summary ---"
+    puts "Total Runtime: #{total_duration.round(2)} seconds"
+    puts "User Update Duration: #{user_update_duration.round(2)} seconds"
+    puts "Observation Update Duration: #{obs_update_duration.round(2)} seconds"
+    puts "Encounter Update Duration: #{encounter_update_duration.round(2)} seconds"
+    
+    puts "\n--- Update Statistics ---"
     puts "Users updated: #{user_updated_count}"
     puts "Users skipped: #{user_skipped_count}"
     puts "Observations updated: #{obs_updated_count}"
     puts "Observations skipped: #{obs_skipped_count}"
+    puts "Encounters updated: #{encounter_updated_count}"
+    puts "Encounters skipped: #{encounter_skipped_count}"
+
+    # Memory usage (if possible)
+    if defined?(Process)
+      memory_usage = `ps -o rss= -p #{Process.pid}`.to_i / 1024.0
+      puts "\n--- System Resources ---"
+      puts "Memory Usage: #{memory_usage.round(2)} MB"
+    end
   end
 end
