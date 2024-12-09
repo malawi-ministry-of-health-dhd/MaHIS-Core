@@ -73,8 +73,9 @@ module Api
         person = Person.find(params.require(:person_id))
         program = Program.find(params.require(:program_id))
         malawi_national_id = params[:malawi_national_ID]
+        npid  = params[:npid]
 
-        render json: service.create_patient(program, person, malawi_national_id), status: :created
+        render json: service.create_patient(program, person, malawi_national_id, npid), status: :created
       end
 
       def update
