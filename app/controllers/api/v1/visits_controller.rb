@@ -4,13 +4,7 @@ module Api
             def check_patient_status
                 patientId = params[:patient_id]
                 visit = Visit.where(patientId: patientId, closedDateTime: nil)
-
-                if visit.empty?
-                    render json: { message: "No Active visit found for patient with Id #{patientId}" }, status: :not_found
-                  else
-                    render json: visit, status: :ok
-                  end
-
+                render json: visit, status: :ok
             end
 
             def create
