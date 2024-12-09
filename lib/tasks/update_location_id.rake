@@ -1,4 +1,5 @@
 # lib/tasks/update_location_id.rake
+# rails users:update_location_id
 namespace :users do
   desc 'Update user, observation, encounter, and pharmacy batch location IDs based on a predefined mapping'
   task update_location_id: :environment do
@@ -25,7 +26,15 @@ namespace :users do
       717  => "MZ160760", 75   => "LL040214", 8    => "LL040033", 851  => "LL040010",
       857  => "LL040016", 868  => "LL040316", 874  => "MC011376", 875  => "MC010441",
       877  => "MC011131", 905  => "CK270069", 914  => "TH310026", 968  => "BK170054",
-      984  => "ZA230235", 844  => "LL040434", 700  => "",
+      984  => "ZA230235", 844  => "LL040434", 1023 => "SA090139", 1024 => "SA090592",
+      1025 => "SA091253", 1027 => "SA090660", 1102 => "ZA231702", 1118 => "MC010232",
+      113  => "SA090280", 98   => "SA090255", 95   => "MC010251", 89   => "SA090240",
+      661  => "SA091404", 628  => "SA091541", 624  => "SA091312", 586  => "NT081226",
+      581  => "NT121225", 543  => "SA091176", 487  => "MW281081", 445  => "BT240998",
+      344  => "SA090792", 337  => "NE290776", 336  => "SA090778", 335  => "SA090773",
+      288  => "SA090663", 272  => "SA090626", 271  => "KU070625", 234  => "SA090559",
+      185  => "MC011376", 13   => "BK170053", 1135 => "SA091699",
+
     }
 
     # Counters for tracking updates
