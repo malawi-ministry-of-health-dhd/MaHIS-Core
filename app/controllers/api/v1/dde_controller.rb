@@ -78,6 +78,9 @@ module Api
 
 
       def duplicates_match
+        base_query = PotentialDuplicate.where(merge_status: false).select(:patient_id_a).distinct
+        total_records = base_query.count
+
         results = paginate(PotentialDuplicate.where(merge_status: false).select(:patient_id_a).distinct).map do |primary_patient_a|
           PotentialDuplicate.where(merge_status: false, patient_id_a: primary_patient_a.patient_id_a)
                                              .group_by(&:patient_id_a)
@@ -130,7 +133,10 @@ module Api
         end
       end
 
-        render json: results, status: :ok
+        render json: {
+          count: total_records,
+          results: results
+        }, status: :ok
       end
 
       def duplicates_finder
