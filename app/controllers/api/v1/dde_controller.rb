@@ -138,6 +138,12 @@ module Api
         render json: global_duplicates, status: :ok
       end
 
+      # Allocates NPIDs to device
+      def sync_npids
+        npids =  service.allocate_npids(params[:count])
+        render json: npids, status: :ok
+      end
+
 
     private
 
