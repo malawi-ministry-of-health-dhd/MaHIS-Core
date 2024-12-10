@@ -8,7 +8,6 @@ class ObservationService
   end
 
   def create_observation(encounter, obs_parameters)
-    print("QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ: ", encounter)
     proccess_obs_creation(encounter, obs_parameters)
     records
   rescue StandardError => e
