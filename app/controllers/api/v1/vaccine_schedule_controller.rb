@@ -7,6 +7,13 @@ class Api::V1::VaccineScheduleController < ApplicationController
     render json: { error: e.message }, status: :unprocessable_entity
   end
 
+  def generic_schedule
+    vaccine_schedule = ImmunizationService::VaccineScheduleService.generic_vaccine_schedule
+    render json: vaccine_schedule, status: :ok
+  rescue StandardError => e
+    render json: { error: e.message }, status: :unprocessable_entity
+  end
+
   private
 
   def immunization_schedule_params
