@@ -295,6 +295,7 @@ Rails.application.routes.draw do
       post '/dde/patients/duplicates', to: 'dde#duplicates_finder'
       get '/dde/patients/matches', to: 'dde#duplicates_match'
       post '/rollback/rollback_patient', to: 'rollback#rollback_patient'
+      get '/dde/patients/sync_npids', to: 'dde#sync_npids'
 
       get '/labels/location', to: 'locations#print_label'
 
@@ -372,6 +373,7 @@ Rails.application.routes.draw do
   get '/api/v1/art_data_cleaning_tools' => 'api/v1/cleaning#art_tools'
   get '/api/v1/anc_data_cleaning_tools' => 'api/v1/cleaning#anc_tools'
   get '/api/v1/its_data_cleaning_tools' => 'api/v1/cleaning#its_tools'
+  post '/api/v1/sync/patients_ids' => 'api/v1/sync_patient_records#get_not_sync_ids'
 
   # OPD reports
   get '/api/v1/registration' => 'api/v1/reports#registration'
@@ -444,6 +446,7 @@ Rails.application.routes.draw do
 
   #EIR
   get '/api/v1/eir/schedule', to: 'api/v1/vaccine_schedule#vaccine_schedule'
+  get '/api/v1/eir/schedule/generic', to: 'api/v1/vaccine_schedule#generic_schedule'
   get '/api/v1/eir/followup', to: 'api/v1/immunization_follow_up#missed_immunizations'
   post '/api/v1/send_sms', to: 'api/v1/send_sms#index'
   post '/api/v1/sms_configuration', to: 'api/v1/send_sms#update'

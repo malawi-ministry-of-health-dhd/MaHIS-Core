@@ -4,7 +4,7 @@ class PatientService
   include ModelUtils
   include TimeUtils
 
-  def create_patient(program, person, malawi_national_id = nil)
+  def create_patient(program, person, malawi_national_id = nil, npid = nil)
     ActiveRecord::Base.transaction do
       patient = Patient.create(patient_id: person.id)
       unless patient.errors.empty?
@@ -13,7 +13,7 @@ class PatientService
 
       if use_dde_service?
         begin
-          assign_patient_dde_npid(patient, program)
+          assign_patient_dde_npid(patient, program, npid)
         rescue StandardError
           create_local_npid(patient, malawi_national_id)
         end
@@ -80,6 +80,11 @@ class PatientService
     dde_service(program).update_patient(patient) if use_dde_service? && dde_patient?(patient)
 
     patient
+  end
+
+  def fetch_client_details(offset:, limit:, location_id:)
+    patients = fetch_patients_batch(offset:, limit:, location_id:)
+    map_patient_details_with_vaccine_schedule(patients)
   end
 
   def find_patients_by_npid(npid, voided: false)
@@ -611,6 +616,23 @@ class PatientService
 
   private
 
+  # Fetch a batch of patients based on the offset and limit
+  def fetch_patients_batch(offset:, limit:, location_id:)
+    Person.joins(patient: :patient_programs)
+          .where("patient_program.location_id = ?", location_id)
+          .offset(offset)
+          .limit(limit)
+  end
+
+  # Map patients with their details including vaccine schedules
+  def map_patient_details_with_vaccine_schedule(patients)
+    patients.map do |patient|
+      patient.as_json.merge(
+        "vaccine_schedule" => ImmunizationService::VaccineScheduleService.vaccine_schedule(patient)
+      )
+    end
+  end
+
   def npid_identifier_types
     @npid_identifier_types = [patient_identifier_type('National id'),
                               patient_identifier_type('Old identification number')]
@@ -646,8 +668,8 @@ class PatientService
   end
 
   # Blesses patient with a DDE npid
-  def assign_patient_dde_npid(patient, program)
-    dde_service(program).create_patient(patient)
+  def assign_patient_dde_npid(patient, program, npid)
+    dde_service(program).create_patient(patient, npid)
   end
 
   # Takes a list of BP readings and groups them into a visit trail.
