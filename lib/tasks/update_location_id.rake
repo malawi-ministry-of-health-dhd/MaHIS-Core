@@ -33,7 +33,8 @@ namespace :users do
       581  => "NT121225", 543  => "SA091176", 487  => "MW281081", 445  => "BT240998",
       344  => "SA090792", 337  => "NE290776", 336  => "SA090778", 335  => "SA090773",
       288  => "SA090663", 272  => "SA090626", 271  => "KU070625", 234  => "SA090559",
-      185  => "MC011376", 13   => "BK170053", 1135 => "SA091699",
+      185  => "MC011376", 13   => "BK170053", 1135 => "SA091699", 114  => "LL040282",
+      257  => "MG200594",
     }
 
     # Dynamically initialized counters
@@ -81,10 +82,10 @@ namespace :users do
     # List of tables to update
     tables_to_update = [
       { name: 'users', model: User },
-      { name: 'stages', model: nil},
+      { name: 'stages', model: Stage},
       { name: 'pharmacy_batches', model: PharmacyBatch },
-      { name: 'visits', model: nil },
-      { name: 'immunization_cache_data', model: nil },
+      { name: 'visits', model: Visit },
+      { name: 'immunization_cache_data', model: ImmunizationCacheDatum },
       { name: 'obs', model: Observation },
       { name: 'encounters', model: Encounter },
     ]
