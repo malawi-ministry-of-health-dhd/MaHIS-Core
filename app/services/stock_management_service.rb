@@ -187,7 +187,8 @@ class StockManagementService
           AND batch_item_id = pharmacy_batch_items.id
         ), 0)  as dispensed_quantity,
         pharmacy_batches.batch_number,
-        COUNT(*) OVER() AS total_count
+        COUNT(*) OVER() AS total_count,
+        MAX(pharmacy_batch_items.date_changed) OVER () as latest_date_changed
       SQL
     else
       <<~SQL
@@ -216,7 +217,8 @@ class StockManagementService
           WHERE (transaction_reason = 'Positive Adjustment' OR transaction_reason = 'Negative Adjustment') 
           AND batch_item_id = pharmacy_batch_items.id
         ), 0)  as dispensed_quantity,
-        COUNT(*) OVER() AS total_count
+        COUNT(*) OVER() AS total_count,
+        MAX(pharmacy_batch_items.date_changed) OVER () as latest_date_changed
       SQL
     end
 
