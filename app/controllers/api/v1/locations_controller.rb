@@ -18,11 +18,15 @@ module Api
       def index
         name = params[:name]
         tag = params[:tag]
-
+        city_village = params[:city_village]
+      
         locations = paginate(Location.order(:name))
+        
         locations = locations.where('name like ?', "%#{name}%") unless name.blank?
         locations = filter_locations_by_tag locations, tag if tag
-
+        
+        locations = locations.where('city_village like ?', "%#{city_village}%") unless city_village.blank?
+      
         render json: locations
       end
 

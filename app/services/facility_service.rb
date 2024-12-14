@@ -20,6 +20,34 @@ class FacilityService
         filters_applied: filters_applied
       }
     end
+
+    def list_districts
+      # Use a subquery to get distinct districts
+      Facility.select('district')
+              .distinct
+              .order(:district)
+              .map.with_index do |facility, index|
+        {
+          id: index + 1,  # Incremental ID starting from 1
+          name: facility.district,
+          display_name: facility.district
+        }
+      end.compact
+    end
+
+    # Fetch facilities by district_name
+    def list_facilities_by_district(district_name)
+      sanitized_district_name = district_name.to_s.gsub('?', '')
+
+      facilities = Facility.where(district: sanitized_district_name)
+
+      {
+        facilities: facilities,
+        total: facilities.count,
+        filters_applied: { district_name: sanitized_district_name }
+      }
+    end
+
   
     def find_nearby_facilities(facility_id)
       facility = Facility.find(facility_id)
