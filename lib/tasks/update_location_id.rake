@@ -3,6 +3,61 @@
 namespace :users do
   desc 'Update location IDs across multiple tables based on a predefined mapping'
   task update_location_id: :environment do
+
+    def bulk_location_update(tables_to_update, map_facility, counters)
+      # Track overall success
+      overall_success = true
+    
+      # Start a database transaction that will cover all updates
+      ActiveRecord::Base.transaction do
+        database_name = ActiveRecord::Base.connection.current_database
+      
+        tables_to_update.each do |table_name|
+          counters[table_name.to_sym] ||= { updated: 0, skipped: 0 }
+      
+          puts "\n--- Updating #{table_name} ---"
+      
+          # Use dynamically retrieved database name
+          base_update_query = "UPDATE `#{database_name}`.`#{table_name}` SET location_id = ?"
+      
+          map_facility.each do |old_location_id, new_facility_code|
+            update_query = "#{base_update_query} WHERE location_id = ?"
+      
+            begin
+              updated_count = ActiveRecord::Base.connection.execute(
+                ActiveRecord::Base.sanitize_sql_array([update_query, new_facility_code, old_location_id])
+              )
+      
+              rows_affected = ActiveRecord::Base.connection.raw_connection.affected_rows
+      
+              counters[table_name.to_sym][:updated] += rows_affected
+              print "."
+            rescue StandardError => e
+              # Log the error and mark overall process as failed
+              puts "\nError updating #{table_name}: #{e.message}"
+              counters[table_name.to_sym][:skipped] += 1
+              
+              # Raise an exception to trigger rollback
+              raise ActiveRecord::Rollback, "Failed to update #{table_name}"
+            end
+          end
+        end
+    
+        # If we've made it this far without raising an exception, commit the transaction
+        # If any error occurred, this block will be skipped and the transaction rolled back
+      end
+    
+      counters
+    rescue => e
+      # Catch any unexpected errors
+      puts "Unexpected error in bulk update: #{e.message}"
+      
+      # Return an empty or error-indicating counter
+      tables_to_update.each_with_object({}) do |table_name, error_counters|
+        error_counters[table_name.to_sym] = { updated: 0, skipped: 0, error: e.message }
+      end
+    end
+
     # Start timing the entire process
     start_time = Time.now
 
@@ -45,85 +100,21 @@ namespace :users do
     puts "Total location mappings to process: #{map_facility.size}"
 
     # Dynamically safe update method
-    def safe_update_records(table_name, map_facility, counters)
-      # Check if table exists
-      unless ActiveRecord::Base.connection.table_exists?(table_name)
-        puts "\n--- Skipping #{table_name} (Table does not exist) ---"
-        return
-      end
 
-      # Initialize counter for this table if not exists
-      counters[table_name.to_sym] ||= { updated: 0, skipped: 0 }
-
-      puts "\n--- Updating #{table_name} ---"
-      
-      map_facility.each do |old_location_id, new_facility_code|
-        # Use direct SQL for tables without models
-        update_query = <<-SQL
-          UPDATE #{table_name} 
-          SET location_id = '#{new_facility_code}' 
-          WHERE location_id = #{old_location_id}
-        SQL
-
-        begin
-          updated_count = ActiveRecord::Base.connection.execute(update_query).cmd_tuples
-          
-          if updated_count > 0
-            counters[table_name.to_sym][:updated] += updated_count
-            print "."
-          end
-        rescue StandardError => e
-          puts "\nError updating #{table_name}: #{e.message}"
-          counters[table_name.to_sym][:skipped] += 1
-        end
-      end
-    end
 
     # List of tables to update
     tables_to_update = [
-      { name: 'users', model: User },
-      { name: 'stages', model: Stage},
-      { name: 'pharmacy_batches', model: PharmacyBatch },
-      { name: 'visits', model: Visit },
-      { name: 'immunization_cache_data', model: ImmunizationCacheDatum },
-      { name: 'obs', model: Observation },
-      { name: 'encounters', model: Encounter },
+      'users', 
+      'stages', 
+      'pharmacy_batches',
+      'visits', 
+      'immunization_cache_data',
+      'obs', 
+      'encounter'
     ]
 
-    # Update records for each table
-    tables_to_update.each do |table|
-      if table[:model]
-        # Use model-based update for defined models
-        def update_records(model_class, map_facility, counters)
-          table_name = model_class.table_name.to_sym
-          # Initialize counter for this table if not exists
-          counters[table_name] ||= { updated: 0, skipped: 0 }
-
-          puts "\n--- Updating #{model_class.name.pluralize} ---"
-          map_facility.each do |old_location_id, new_facility_code|
-            records = model_class.where(location_id: old_location_id)
-            
-            records.find_each do |record|
-              record.location_id = new_facility_code
-              
-              if record.save
-                counters[table_name][:updated] += 1
-                print "."
-              else
-                counters[table_name][:skipped] += 1
-                puts "\nFailed to update #{model_class.name} #{record.id}: #{record.errors.full_messages.join(', ')}"
-              end
-            end
-          end
-        end
-
-        update_records(table[:model], map_facility, counters)
-      else
-        # Use safe SQL update for tables without models
-        safe_update_records(table[:name], map_facility, counters)
-      end
-    end
-
+    result = bulk_location_update(tables_to_update, map_facility, counters)
+ 
     end_time = Time.now
 
     # Calculate durations and print summary
@@ -137,9 +128,13 @@ namespace :users do
 
     # Print update statistics for each model
     puts "\n--- Update Statistics ---"
-    counters.each do |model, count|
-      puts "#{model.to_s.titleize} updated: #{count[:updated]}"
-      puts "#{model.to_s.titleize} skipped: #{count[:skipped]}"
+    # Check results
+    result.each do |table, counts|
+      if counts[:error]
+        puts "Error in #{table}: #{counts[:error]}"
+      else
+        puts "#{table}: Updated #{counts[:updated]} records, Skipped #{counts[:skipped]} records"
+      end
     end
 
     # Memory usage (if possible)
