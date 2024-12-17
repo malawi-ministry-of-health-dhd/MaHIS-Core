@@ -95,14 +95,18 @@ module NameSearchService
     end
 
     def search_full_raw_person_name(given_name: nil, family_name: nil, middle_name: nil, gender: nil)
-      PersonName.joins([person: {patient: :encounters}]).where(
-        '(given_name LIKE ? OR given_name IS NULL) AND
-         (family_name LIKE ? OR family_name IS NULL) AND
-         (middle_name LIKE ? OR middle_name IS NULL) AND
-         (gender LIKE ? OR gender IS NULL)',
-        "#{given_name}%", "#{family_name}%", "#{middle_name}%", "#{gender}%"
-      ).order(Arel.sql("CASE WHEN encounter.location_id = #{User.current.location_id} THEN 0 ELSE 1 END,
-                        given_name, family_name"))
+      PersonName.joins(person: { patient: :encounters })
+        .where(
+          '(given_name LIKE ? OR given_name IS NULL) AND
+           (family_name LIKE ? OR family_name IS NULL) AND
+           (middle_name LIKE ? OR middle_name IS NULL) AND
+           (gender LIKE ? OR gender IS NULL)',
+          "#{given_name}%", "#{family_name}%", "#{middle_name}%", "#{gender}%"
+        ).order(
+          Arel.sql("CASE WHEN encounter.location_id = '#{User.current.location_id}' THEN 0 ELSE 1 END"),
+          given_name: :asc, 
+          family_name: :asc
+        )
     end
   end
 end

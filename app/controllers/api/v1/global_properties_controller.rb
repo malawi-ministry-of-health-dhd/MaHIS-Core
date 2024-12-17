@@ -14,9 +14,7 @@ module Api
         property = GlobalProperty.find_by property: name
         if property
           render json: { property.property => property.property_value }
-        else
-          render json: { errors: ["Property, #{name}, not found"] },
-                 status: :not_found
+     
         end
       end
 
