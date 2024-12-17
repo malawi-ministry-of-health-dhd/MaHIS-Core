@@ -78,6 +78,9 @@ module Api
 
 
       def duplicates_match
+        base_query = PotentialDuplicate.where(merge_status: false).select(:patient_id_a).distinct
+        total_records = base_query.count
+
         results = paginate(PotentialDuplicate.where(merge_status: false).select(:patient_id_a).distinct).map do |primary_patient_a|
           PotentialDuplicate.where(merge_status: false, patient_id_a: primary_patient_a.patient_id_a)
                                              .group_by(&:patient_id_a)
@@ -130,12 +133,21 @@ module Api
         end
       end
 
-        render json: results, status: :ok
+        render json: {
+          count: total_records,
+          results: results
+        }, status: :ok
       end
 
       def duplicates_finder
         global_duplicates = PotentialDuplicateFinderService.duplicates_finder
         render json: global_duplicates, status: :ok
+      end
+
+      # Allocates NPIDs to device
+      def sync_npids
+        npids =  service.allocate_npids(params[:count])
+        render json: npids, status: :ok
       end
 
 

@@ -183,11 +183,13 @@ class StockManagementService
         COALESCE((
           SELECT SUM(quantity) 
           FROM pharmacy_obs 
-          WHERE (transaction_reason = 'Positive Adjustment' OR transaction_reason = 'Negative Adjustment') 
+          WHERE (transaction_reason = 'Positive Adjustment' OR transaction_reason = 'Negative Adjustment' 
+          OR transaction_reason = 'Positive Mathematical Error' OR transaction_reason = 'Negative Mathematical Error') 
           AND batch_item_id = pharmacy_batch_items.id
         ), 0)  as dispensed_quantity,
         pharmacy_batches.batch_number,
-        COUNT(*) OVER() AS total_count
+        COUNT(*) OVER() AS total_count,
+        MAX(pharmacy_batch_items.date_changed) OVER () as latest_date_changed
       SQL
     else
       <<~SQL
@@ -213,15 +215,17 @@ class StockManagementService
         COALESCE((
           SELECT SUM(quantity) 
           FROM pharmacy_obs 
-          WHERE (transaction_reason = 'Positive Adjustment' OR transaction_reason = 'Negative Adjustment') 
+          WHERE (transaction_reason = 'Positive Adjustment' OR transaction_reason = 'Negative Adjustment' 
+          OR transaction_reason = 'Positive Mathematical Error' OR transaction_reason = 'Negative Mathematical Error') 
           AND batch_item_id = pharmacy_batch_items.id
         ), 0)  as dispensed_quantity,
-        COUNT(*) OVER() AS total_count
+        COUNT(*) OVER() AS total_count,
+        MAX(pharmacy_batch_items.date_changed) OVER () as latest_date_changed
       SQL
     end
 
   query = query.select(select_clause)
-  query = query.group('drug.drug_id, pharmacy_batches.batch_number, delivery_date, pharmacy_batch_items.id') if filters[:display_details].nil? && filters[:drug_id].nil?
+  query = query.group('drug.drug_id, pharmacy_batches.batch_number') if filters[:display_details].nil? && filters[:drug_id].nil?
   query = query.group('drug.drug_id, location_id') unless filters[:display_details].nil?
   query = query.group('drug.drug_id, pharmacy_batches.batch_number') if filters[:drug_id]
 

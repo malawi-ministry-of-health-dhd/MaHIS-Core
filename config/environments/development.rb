@@ -9,6 +9,12 @@ Rails.application.configure do
   # since you don't have to restart the web server when you make code changes.
   config.cache_classes = false
 
+  # Logging Level adjust to give you the best for debugging purposes
+  config.log_level = :error
+
+  # Add log rotation
+  config.logger = ActiveSupport::Logger.new(Rails.root.join('log', "#{Rails.env}.log"), 3, 5 * 1024 * 1024) # 3 files, 5 MB each
+
   # Do not eager load code on boot.
   config.eager_load = false
 

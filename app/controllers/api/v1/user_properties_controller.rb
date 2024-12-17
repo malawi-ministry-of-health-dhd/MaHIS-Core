@@ -19,11 +19,7 @@ module Api
 
         property = UserProperty.find_by property: name,
                                         user_id: user
-        if property
-          render json: property
-        else
-          render json: { errors: "Property, #{name} not found" }, status: :not_found
-        end
+        render json: property
       end
 
       def unique_property
