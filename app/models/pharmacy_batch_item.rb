@@ -36,5 +36,8 @@ class PharmacyBatchItem < VoidableRecord
 
   def drug_legacy_name
     drug.name
+  rescue NoMethodError
+    "Unknown Drug"
   end
+  
 end
