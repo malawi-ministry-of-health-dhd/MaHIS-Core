@@ -34,7 +34,7 @@ module UserService
     query
   end
 
-  def self.create_user(username:, password:, given_name:, family_name:, roles:, programs:, location_id:, villages:)
+  def self.create_user(username:, password:, given_name:, family_name:, roles:, programs:, location_id:, villages:, phone:)
 
     person = person_service.create_person(
       birthdate: nil, birthdate_estimated: false, gender: nil
@@ -44,6 +44,9 @@ module UserService
     person_service.create_person_name(
       person, given_name:, family_name:
     )
+
+    person_service.create_person_attributes(person, cell_phone_number: phone)
+
     raise UserCreateError, "Person: #{person.errors}" unless person.errors.empty?
 
     salt = SecureRandom.base64
