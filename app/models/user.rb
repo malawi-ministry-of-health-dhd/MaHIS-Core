@@ -40,8 +40,11 @@ class User < RetirableRecord
         programs: {},
         person: {
           include: {
-            names: {}
-            # person_attributes: {},
+            names: {},
+            person_attributes: {
+              only: [:person_attribute_type_id, :value, :created_at],
+              methods: [:attribute_type_name]
+            }
             # addresses: {}
           }
         }

@@ -5,7 +5,10 @@ class PersonAttribute < VoidableRecord
   self.primary_key = 'person_attribute_id'
 
   belongs_to(:type, class_name: 'PersonAttributeType',
-                    foreign_key: :person_attribute_type_id)
-
+             foreign_key: :person_attribute_type_id)
   belongs_to :person, foreign_key: :person_id
+
+  def attribute_type_name
+    type&.name
+  end
 end
