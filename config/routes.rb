@@ -351,6 +351,8 @@ Rails.application.routes.draw do
   get '/api/v1/patient_weight_for_height_values' => 'api/v1/weight_for_height#index'
   get '/api/v1/presenting_complaints' => 'api/v1/presenting_complaints#show'
   get '/api/v1/concept_set' => 'api/v1/concept_sets#show'
+  get '/api/v1/concept_sets_ids' => 'api/v1/concept_sets#concept_sets_ids'
+  get '/api/v1/concept_names' => 'api/v1/concepts#get_concept_names'
   get '/api/v1/radiology_set' => 'api/v1/concept_sets#radiology_set'
   get '/api/v1/radiology/examinations' => 'api/v1/radiology#examinations'
   get '/api/v1/cervical_cancer_screening' => 'api/v1/cervical_cancer_screening#show'
