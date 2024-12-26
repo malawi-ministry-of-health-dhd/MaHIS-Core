@@ -11,8 +11,18 @@ module Api
           total_village: Village.all.count,
           total_relationships: RelationshipType.all.count,
           total_persons: Person.all.count,
-          total_programs: Program.all.count
+          total_programs: Program.all.count,
+          total_concept_names:  ConceptName.where('voided = 0 AND name IS NOT NULL AND name != ""').count,
+          total_concept_set: concept_sets_count
         }
+      end
+      def concept_sets_count
+        ConceptName
+        .joins("JOIN concept_set ON concept_name.concept_id = concept_set.concept_set")
+        .where(voided: 0)
+        .select("concept_name.concept_id")
+        .group("concept_name.concept_id")
+        .length
       end
     end
   end
