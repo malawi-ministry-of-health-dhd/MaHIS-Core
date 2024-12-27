@@ -28,6 +28,10 @@ module Api
 
         render json: paginate(query)
       end
+      def get_concept_names()
+        query= ConceptName.select('concept_id,name').where('voided = 0 AND name IS NOT NULL AND name != ""')
+        render json: paginate(query)
+      end
     end
   end
 end
