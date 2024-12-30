@@ -143,7 +143,7 @@ Rails.application.routes.draw do
         end)
       end
 
-      resources :traditional_authorities, only: %i[create index] do
+      resources :traditional_authorities, only: %i[create index destroy] do
         get('/villages', to: redirect do |params, request|
           redirect_url = "/api/v1/villages?traditional_authority_id=#{params[:traditional_authority_id]}"
           paginate_url redirect_url, request.params
