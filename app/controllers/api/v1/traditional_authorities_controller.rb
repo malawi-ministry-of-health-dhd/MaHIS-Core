@@ -24,6 +24,19 @@ module Api
           render json: paginate(TraditionalAuthority.where(*inexact_filters).order(:name))
         end
       end
+
+      def destroy
+        trad_auth = TraditionalAuthority.find(params[:id])
+        
+        ActiveRecord::Base.transaction do
+          trad_auth.villages.destroy_all
+          trad_auth.destroy!
+        end
+      
+        render json: { message: "Traditional Authority and associated villages successfully deleted" }, status: :ok
+        rescue ActiveRecord::RecordNotDestroyed => e
+          render json: { error: e.message }, status: :unprocessable_entity
+      end
     end
   end
 end
