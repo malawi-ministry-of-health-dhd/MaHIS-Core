@@ -8,31 +8,35 @@ module Api
         parent_location = params[:parent_location]
         address = params[:addresses_name]
 
-        addAddress address, address_type, parent_location
-        render json: { name: address }
+        data = add_address address, address_type, parent_location
+        render json: { data: data }
       end
 
       private
 
-      def addAddress(name, address_type, parent_location)
-        if address_type == 'TA'
-          ActiveRecord::Base.connection.execute <<~SQL
-            INSERT INTO traditional_authority
-            (name, district_id, creator, date_created)
-            VALUES("#{name}", #{parent_location},#{' '}
-            #{User.current.id},'#{Time.now.strftime('%Y-%m-%d %H:%M:%S')}');
-          SQL
-
-        elsif address_type == 'Village'
-          ActiveRecord::Base.connection.execute <<~SQL
-            INSERT INTO village
-            (name, traditional_authority_id, creator, date_created)
-            VALUES("#{name}", #{parent_location},#{' '}
-            #{User.current.id},'#{Time.now.strftime('%Y-%m-%d %H:%M:%S')}');
-          SQL
-
+      def add_address(name, address_type, parent_location)
+        case address_type
+        when 'TA'
+          record = TraditionalAuthority.create!(
+            name: name,
+            district_id: parent_location,
+            creator: User.current.id,
+            date_created: Time.current
+          )
+        when 'Village'
+          record = Village.create!(
+            name: name,
+            traditional_authority_id: parent_location,
+            creator: User.current.id,
+            date_created: Time.current
+          )
+        else
+          raise ArgumentError, "Invalid address_type: #{address_type}"
         end
+        
+        record
       end
+      
     end
   end
 end
