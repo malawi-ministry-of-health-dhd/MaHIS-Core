@@ -37,6 +37,16 @@ module Api
         rescue ActiveRecord::RecordNotDestroyed => e
           render json: { error: e.message }, status: :unprocessable_entity
       end
+      def update()
+        ta = TraditionalAuthority.find(params[:id])
+        ta.update!(
+          name: params[:name] || ta.name,
+          district_id: params[:district_id] || ta.district_id,
+          date_created: Time.current,
+          creator: User.current.id
+        )
+        render json: { data:ta.reload}
+      end
     end
   end
 end
