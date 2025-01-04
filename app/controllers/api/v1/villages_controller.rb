@@ -34,6 +34,24 @@ module Api
           render json: { error: 'Village not found' }, status: :not_found
         end
       end
+      def destroy
+        trad_auth = Village.find(params[:id])
+        trad_auth.destroy!
+      
+        render json: { message: "Village successfully deleted" }, status: :ok
+        rescue ActiveRecord::RecordNotDestroyed => e
+          render json: { error: e.message }, status: :unprocessable_entity
+      end
+      def update()
+        village = Village.find(params[:id])
+        village.update!(
+          name: params[:name] || village.name,
+          traditional_authority_id: params[:ta_id] || village.traditional_authority_id,
+          date_created: Time.current,
+          creator: User.current.id
+        )
+        render json: { data:village.reload}
+      end
     end
   end
 end
