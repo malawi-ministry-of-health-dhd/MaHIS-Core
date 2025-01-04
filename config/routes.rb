@@ -155,7 +155,7 @@ Rails.application.routes.draw do
         end)      
       end
 
-      resources :villages, only: %i[create index show]
+      resources :villages, only: %i[create index show destroy update]
 
       get '/encounters/_types' => 'encounter_types#index'
       resources :encounters do
