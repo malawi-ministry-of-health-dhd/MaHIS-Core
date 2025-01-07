@@ -18,7 +18,7 @@ module Api
         filters = params.permit(%i[traditional_authority_id village_id name])
 
         if filters.empty?
-          render json: paginate(Village.order(:name))
+          render json: paginate(Village.preload(:traditional_authority).select(:village_id, :name, :traditional_authority_id)).order(:village_id)
         else
           inexact_filters = make_inexact_filters(filters, [:name])
           render json: paginate(Village.where(*inexact_filters).order(:name))
