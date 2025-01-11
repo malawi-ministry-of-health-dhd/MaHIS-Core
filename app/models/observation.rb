@@ -78,8 +78,10 @@ class Observation < VoidableRecord
     drug_order.quantity -= value_numeric
     drug_order.save(validate: false)
 
-    StockUpdateJob.perform_now('reverse_dispensation', user_id: User.current.id, location_id: Location.current.id,
-                                                       dispensation_id: obs_id)
+    # StockUpdateJob.perform_now('reverse_dispensation', user_id: User.current.id, location_id: Location.current.id,
+                                                      #  dispensation_id: obs_id)
+    service.update_stock('reverse_dispensation', obs_id)
+     
     # DispensationService.update_stock_ledgers(:reverse_dispensation, self.id)
   end
 
@@ -135,5 +137,8 @@ class Observation < VoidableRecord
     end
 
     answer
+  end
+  def service
+    StockManagementService.new
   end
 end
