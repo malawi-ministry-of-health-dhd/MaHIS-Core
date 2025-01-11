@@ -162,9 +162,13 @@ module DispensationService
     end
 
     def update_stock_ledgers(action, observation_id)
-      StockUpdateJob.perform_later(action.to_s, user_id: User.current.id,
-                                                location_id: Location.current.id,
-                                                dispensation_id: observation_id)
+      # StockUpdateJob.perform_later(action.to_s, user_id: User.current.id,
+      #                                           location_id: Location.current.id,
+      #                                           dispensation_id: observation_id)
+      service.update_stock(action.to_s,observation_id)
+    end
+    def service
+      StockManagementService.new
     end
   end
 end
