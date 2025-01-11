@@ -21,6 +21,16 @@ class StockManagementService
   STOCK_PREVIOUS_COUNT = 'Tins in previous stock'
   STOCK_CURRENT_COUNT = 'Number of tins currently in  stock (physically counted)'
 
+  def update_stock(action, dispensation_id)
+    case action
+    when 'process_dispensation'
+      process_dispensation(dispensation_id)
+    when 'reverse_dispensation'
+      reverse_dispensation(dispensation_id)
+    else
+      raise "Invalid stock update action: #{action}"
+    end
+  end
   def process_dispensation(dispensation_id)
     dispensation = Observation.find_by(obs_id: dispensation_id)
     raise "Dispensation ##{dispensation_id} not found" unless dispensation
@@ -146,6 +156,7 @@ class StockManagementService
     query = query.where("DATE(pharmacy_batch_items.expiry_date) >= ?", Date.today) if filters[:show_expired] == 'false'
     query = query.where("DATE(pharmacy_batch_items.delivery_date) >= ?", filters[:start_date]) if filters[:start_date]
     query = query.where("DATE(pharmacy_batch_items.delivery_date) <= ?", filters[:end_date]) if filters[:end_date]
+    query = query.where("DATE(pharmacy_batch_items.date_changed) >= ?", filters[:date_changed]) if filters[:date_changed]
     query = query.where(drug_id: filters[:drug_id]) if filters[:drug_id]
     query = query.where(current_quantity: filters[:current_quantity]) if filters[:current_quantity]
     query = query.where(pharmacy_batch_id: filters[:pharmacy_batch_id]) if filters[:pharmacy_batch_id]
@@ -154,6 +165,7 @@ class StockManagementService
     query = query.where("pharmacy_batches.location_id = ?", filters[:location_id]) if filters[:location_id]
     query = query.where('drug.name LIKE ?', "#{filters[:drug_name]}%") if filters[:drug_name]
     query = query.where('current_quantity > 0')
+    query = query.where('expiry_date > ?', "#{ Date.today}")
 
     query
   end
