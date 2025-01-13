@@ -162,7 +162,7 @@ class StockManagementService
     query = query.where(pharmacy_batch_id: filters[:pharmacy_batch_id]) if filters[:pharmacy_batch_id]
     query = query.where(pack_size: filters[:pack_size]) if filters[:pack_size]
     query = query.where("pharmacy_batches.batch_number = ?", filters[:batch_number]) if filters[:batch_number]
-    query = query.where("pharmacy_batches.location_id = ?", filters[:location_id]) if filters[:location_id]
+    query = query.where("pharmacy_batches.location_id = ?", User.current.location_id) 
     query = query.where('drug.name LIKE ?', "#{filters[:drug_name]}%") if filters[:drug_name]
     query = query.where('current_quantity > 0')
     query = query.where('expiry_date > ?', "#{ Date.today}")
