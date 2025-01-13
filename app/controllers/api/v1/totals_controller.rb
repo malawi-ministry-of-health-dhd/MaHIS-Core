@@ -10,7 +10,7 @@ module Api
           total_TA:TraditionalAuthority.all.count,
           total_village: Village.all.count,
           total_relationships: RelationshipType.all.count,
-          total_persons: Person.all.count,
+          total_patients: total_patients,
           total_programs: Program.all.count,
           total_concept_names:  ConceptName.where('voided = 0 AND name IS NOT NULL AND name != ""').count,
           total_concept_set: concept_sets_count
@@ -23,6 +23,9 @@ module Api
         .select("concept_name.concept_id")
         .group("concept_name.concept_id")
         .length
+      end
+      def total_patients
+        Patient.joins(:encounters).where('encounter.location_id = ?', location_id).distinct.count
       end
     end
   end
