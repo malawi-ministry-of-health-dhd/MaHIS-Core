@@ -14,7 +14,8 @@ module SyncPatientRecordsService
       
       {
         not_synced_ids: query.distinct.pluck(:patient_id),
-        latest_encounter_datetime: latest_encounter_datetime
+        latest_encounter_datetime: latest_encounter_datetime,
+        server_patient_count: Patient.joins(:encounters).where('encounter.location_id = ?', location_id ).distinct.count
       }
     end
   end
