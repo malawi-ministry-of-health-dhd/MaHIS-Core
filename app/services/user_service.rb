@@ -6,7 +6,7 @@ require 'securerandom'
 require_relative 'person_service'
 
 module UserService
-  AUTHENTICATION_TOKEN_VALIDITY_PERIOD = 24.hours
+  AUTHENTICATION_TOKEN_VALIDITY_PERIOD = 48.hours
   LOGGER = Logger.new $stdout
   HSA_ROLES = ["HSA", "Health Surveillance"]
 
