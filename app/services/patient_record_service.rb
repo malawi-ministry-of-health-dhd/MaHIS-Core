@@ -267,9 +267,6 @@ module PatientRecordService
       end
     end
 
-    def create_registration_encounter(patient_id)
-      # Implementation for creating registration encounter
-    end
 
     
     def validate_id(national_id:, birth_id:)
@@ -291,12 +288,6 @@ module PatientRecordService
       PatientService.new.find_patients_by_identifier(id, identifier_type).any?
     end
 
-
-
-
-    def save_person_information(record)
-      
-    end
     def create_guardian(patient_id, record)
       return unless record[:save_status_guardian_information] == "pending"
   
@@ -322,7 +313,6 @@ module PatientRecordService
       end
     end
   
-    private
   
     def guardian_info_complete?(record)
       guardian = record.dig(:guardian_information, :unsaved, 0)
