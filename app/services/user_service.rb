@@ -31,7 +31,7 @@ module UserService
       query = query.joins(:roles).where(user_role: { role: role })
     end
 
-    query
+    [query, query.count]
   end
 
   def self.create_user(username:, password:, given_name:, family_name:, roles:, programs:, location_id:, villages:, phone:)
