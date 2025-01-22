@@ -10,7 +10,6 @@ module Api
           total_TA:TraditionalAuthority.all.count,
           total_village: Village.all.count,
           total_relationships: RelationshipType.all.count,
-          total_persons: Person.all.count,
           total_programs: Program.all.count,
           total_concept_names:  ConceptName.where('voided = 0 AND name IS NOT NULL AND name != ""').count,
           total_concept_set: concept_sets_count
