@@ -11,7 +11,12 @@ module Api
 
       def index
         filters = params.permit(:role).to_hash.transform_keys(&:to_sym)
-        render json: service.find_users(**filters)
+        query = service.find_users(**filters) 
+
+        render json: {
+          count: query[1],
+          results: paginate(query[0])
+        }, status: :ok
       end
 
       def show
