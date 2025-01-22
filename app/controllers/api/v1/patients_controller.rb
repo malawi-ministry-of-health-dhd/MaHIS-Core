@@ -36,6 +36,10 @@ module Api
         render json: patient
       end
 
+      def get_patient_record
+        render json: PatientRecordService.build_patient_record(params[:id] || params[:patient_id])
+      end
+
       def search_by_npid
         voided = params[:voided]&.casecmp?('true') || false
         render json: paginate(service.find_patients_by_npid(params.require(:npid), voided:))
