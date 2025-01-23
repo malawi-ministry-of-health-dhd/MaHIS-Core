@@ -10,7 +10,7 @@ module Api
       skip_before_action :authenticate, only: [:login]
 
       def index
-        filters = params.permit(:role).to_hash.transform_keys(&:to_sym)
+        filters = params.permit(:role, :search_string).to_hash.transform_keys(&:to_sym)
         query = service.find_users(**filters) 
 
         render json: {
