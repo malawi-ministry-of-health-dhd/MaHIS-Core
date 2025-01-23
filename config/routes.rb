@@ -80,6 +80,7 @@ Rails.application.routes.draw do
         get '/visits' => 'patients#visits'
         get '/visit' => 'patients#visit'
         get '/get_patient_record' => 'patients#get_patient_record'
+        post '/save_patient_record' => 'patients#save_patient_record'
         get('/appointments', to: redirect do |params, request|
           paginate_url "/api/v1/appointments?patient_id=#{params[:patient_id]}",
                        request.params
