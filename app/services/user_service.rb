@@ -12,26 +12,36 @@ module UserService
 
   class UserCreateError < StandardError; end
 
-  def self.find_users(role: nil)
-    is_super_super_user = false
-    User.current.user_roles.each do |user_role|
-      if user_role.role.role == "Superuser,Superuser,"
-        is_super_super_user = true
-        break
-      end
-    end
-
-    query = if is_super_super_user
-      User.all
-    else
-      User.where(location_id: User.current.location_id)
+  def self.find_users(role: nil, search_string: nil, username: nil)
+    # Check if the current user is a "Superuser,Superuser"
+    is_super_super_user = User.current.user_roles.any? do |user_role|
+      user_role.role.role == "Superuser,Superuser,"
     end
   
+    # Base query: all users for super-super-users, otherwise users in the current location
+    query = if is_super_super_user
+             User.all
+           else
+             User.where(location_id: User.current.location_id)
+           end
+  
+    # Filter by role if provided
     if role
-      query = query.joins(:roles).where(user_role: { role: role })
+      query = query.joins(:roles).where(user_roles: { role: role })
     end
-
-    query
+  
+    # Filter by search_string (e.g., name or email) if provided and not empty
+    if search_string.present?
+      query = query.where("username LIKE ?", "%#{search_string}%")
+    end
+  
+    # Filter by username if provided and not empty
+    if username.present?
+      query = query.where("username LIKE ?", "%#{username}%")
+    end
+  
+    # Return the query and the count of results
+    [query, query.count]
   end
 
   def self.create_user(username:, password:, given_name:, family_name:, roles:, programs:, location_id:, villages:, phone:)
