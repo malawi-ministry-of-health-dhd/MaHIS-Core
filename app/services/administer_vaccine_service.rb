@@ -4,7 +4,7 @@ module AdministerVaccineService
   class << self 
     include ModelUtils
 
-    def administer_vaccine(encounter_id, drug_orders, program_id, obs_archetypes)
+    def administer_vaccine(encounter_id, drug_orders, program_id, obs_archetypes, provider_id)
       validate_program_and_encounter!(program_id, encounter_id)
       validate_batch_numbers!(drug_orders)
 
@@ -17,18 +17,16 @@ module AdministerVaccineService
           )
 
           # Create dispensations
-          dispensation = create_dispensations(orders, drug_orders, program_id)
+          dispensation = create_dispensations(orders, drug_orders, program_id, provider_id)
           raise ActiveRecord::Rollback unless dispensation
 
           # Create observations
           observations = create_observations(encounter_id, obs_archetypes)
           raise ActiveRecord::Rollback if observations.any?(&:nil?)
 
-          render json: orders, status: :created
         rescue StandardError => e
           Rails.logger.error("Failed in administer_vaccine: #{e.message}")
           Rails.logger.error(e.backtrace.join("\n"))
-          render json: { errors: e.message }, status: :unprocessable_entity
           raise ActiveRecord::Rollback
         end
       end
@@ -54,10 +52,10 @@ module AdministerVaccineService
       end
     end
 
-    def create_dispensations(orders, drug_orders, program_id)
+    def create_dispensations(orders, drug_orders, program_id, provider_id)
       dispensations = []
       program = Program.find(program_id)
-      provider = params[:provider_id] ? Person.find(params[:provider_id]) : User.current.person
+      provider = provider_id ? Person.find(provider_id) : User.current.person
 
       orders.each do |order|
         drug_orders.each do |drug_order|

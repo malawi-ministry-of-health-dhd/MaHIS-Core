@@ -227,7 +227,7 @@
             obs = record.dig(:vaccineAdministration, :obs)&.find do |item|
               item[:value_text] == order[:drug_name]
             end
-            AdministerVaccineService.administer_vaccine(encounter_id, [order], record[:program_id], [obs])
+            AdministerVaccineService.administer_vaccine(encounter_id, [order], record[:program_id], [obs], record[:provider_id])
           rescue StandardError => e
             Rails.logger.error("Failed to save vaccine order: #{e.message}")
             Rails.logger.error(e.backtrace.join("\n"))
