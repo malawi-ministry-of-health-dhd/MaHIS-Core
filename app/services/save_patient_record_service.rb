@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
-module SavePatientRecordService
-  class << self 
-    include ModelUtils
+  class SavePatientRecordService 
 
     def create_patient_record(record)
       national_id=record.dig("otherPersonInformation", "national_id")
@@ -11,56 +9,40 @@ module SavePatientRecordService
       
       data = save_person_information(record)
       patient_id = data[:patient_id]
+      
       return unless patient_id
     
       create_guardian(patient_id, record)
       save_birthday_data(patient_id, record)
       save_vitals_data(patient_id, record)
-      save_vaccines(patient_id, record)
-      save_appointments(patient_id, record)
-      send_sms(patient_id, record)
-      void_vaccine(patient_id, record)
+      # save_vaccines(patient_id, record)
+      # save_appointments(patient_id, record)
+      # send_sms(patient_id, record)
+      # void_vaccine(patient_id, record)
     end
 
     def save_person_information(record)
-      puts(record)
       if record[:personInformation] && record[:saveStatusPersonInformation] == "pending"
-        begin
+        
           # Create person and get data
-          data = create_person(record[:personInformation])
-          puts("🚀 ~ data:", data)
-          patient = create_patient(data[:person_id], record)
-          identifier = patient_identifier(patient, 3)
-          patient_id = data[:person_id]
-  
+          person = create_person(record[:personInformation])
+          patient = create_patient(person.person_id, record)
+          identifier = BuildPatientRecordService.patient_identifier(patient, 3)
+          patient_id = person.person_id
   
           # Execute concurrent operations
-          threads = []
-          threads << Thread.new { create_ids(record[:otherPersonInformation], patient_id) }
-          threads << Thread.new { enroll_program(patient_id, record) }
-          threads << Thread.new { create_encounter(patient_id, 5,record)}
-          threads.each(&:join)
+          create_ids(record[:otherPersonInformation], patient_id) 
+          enroll_program(patient_id, record) 
+          create_encounter(patient_id, 5,record)
   
           return { patient_id: patient_id, id: identifier }
-        rescue StandardError => e
-          Rails.logger.error("Failed to save person information: #{e.message}")
-          Rails.logger.error(e.backtrace.join("\n"))
-        end
+      
+        
       end
   
-      { patient_id: record[:patient_id], id: record[:id] }
+      { patient_id: record[:patientID], id: record[:ID] }
     end
 
-    def create_registration_encounter(patient_id,record) 
-      encounter_service =EncounterService.new
-      encounter_service.create(
-          type: EncounterType.find(5),
-          patient: Patient.find(patient_id),
-          program: Program.find(record.program_id),
-          provider: record.provider_id ? Person.find(record.provider_id) : User.current.person,
-          encounter_datetime: TimeUtils.retro_timestamp(record.encounter_datetime&.to_time || Time.now)
-        )
-    end
     def create_person(person_info)
 
       person = Person.transaction do
@@ -74,10 +56,10 @@ module SavePatientRecordService
     end
     def create_patient(person_id, record)
       person = Person.find(person_id)
-      program = Program.find(record.program_id)
+      program = Program.find(record[:program_id])
 
       service = PatientService.new
-      service.create_patient(program, person, "", record.ID)
+      service.create_patient(program, person, "", record[:ID])
     end
 
     def create_ids(otherPersonInformation, patient_id)
@@ -98,24 +80,22 @@ module SavePatientRecordService
     end
 
     def enroll_program( patient_id, record)
-      if PatientProgram.where(program_id: record.program_id, patient_id: patient_id)
+      if PatientProgram.where(program_id: record[:program_id], patient_id: patient_id)
         .exists?
-        render json: { errors: ['Patient already enrolled in program'] },
-        status: :conflict
         return
       end
   
       new_patient_program = PatientProgram.create(
-        program_id: record.program_id,
-        date_enrolled: record.date_enrolled || Time.now,
-        location_id: record.location_id || Location.current.id,
+        program_id: record[:program_id],
+        date_enrolled: record[:date_enrolled] || Time.now,
+        location_id: record[:location_id] || Location.current.id,
         patient_id: patient_id
       )
 
       if new_patient_program.errors.empty?
-        render json: new_patient_program, status: :created
+        Rails.logger.error()
       else
-        render json: new_patient_program.errors, status: :bad_request
+        Rails.logger.error( new_patient_program.errors)
       end
     end
 
@@ -141,60 +121,56 @@ module SavePatientRecordService
     end
 
     def create_guardian(patient_id, record)
-      return unless record[:save_status_guardian_information] == "pending"
+      return unless record[:saveStatusGuardianInformation] == "pending"
   
       if guardian_info_complete?(record)
         begin
-          guardian_data = create_person(record[:guardian_information][:unsaved][0])
-          guardian_id = guardian_data[:person_id]
+          guardian_data = create_person(record[:guardianInformation][:unsaved][0])
+          guardian_id = guardian_data.person_id
           
           create_relation(
             guardian_id: guardian_id,
-            relationship_id: record[:otherPersonInformation][:relationship_id]
+            relationship_type_id: record[:otherPersonInformation][:relationshipID],
+            person_id: patient_id
           )
        
         rescue StandardError => e
           Rails.logger.error("Failed to save guardian information: #{e.message}")
           Rails.logger.error(e.backtrace.join("\n"))
         end
-      else
-        update_save_status(
-          record,
-          save_status_guardian_information: "Not recorded"
-        )
       end
     end
   
   
     def guardian_info_complete?(record)
-      guardian = record.dig(:guardian_information, :unsaved, 0)
-      relationship_id = record.dig(:otherPersonInformation, :relationship_id)
+      guardian = record.dig(:guardianInformation, :unsaved, 0)
+      relationship_id = record.dig(:otherPersonInformation, :relationshipID)
   
       guardian&.dig(:given_name).present? &&
         guardian&.dig(:family_name).present? &&
         relationship_id.present?
     end
   
-    def create_relation( guardian_id:, relationship_type_id:)
+    def create_relation( guardian_id:, relationship_type_id:, person_id:)
       begin
         relationship_type = RelationshipType.find relationship_type_id
         person = Person.find guardian_id
       rescue ActiveRecord::RecordNotFound => e
-        return render json: { errors: e.message }, status: :bad_request
+        Rails.logger.error(  e.message )
       end
-
+      service = PersonRelationshipService.new Person.find(person_id)
       service.create_relationship person, relationship_type
     end
   
     def save_birthday_data(patient_id, record)
-      return unless record[:save_status_birth_registration] == "pending"
+      return unless record[:saveStatusBirthRegistration] == "pending"
   
-      if record[:birth_registration].present? && record[:birth_registration].any?
+      if record[:birthRegistration].present? && record[:birthRegistration].any?
         begin
           encounter_id = create_encounter(patient_id, 5,record)
           save_obs(
             encounter_id: encounter_id,
-            observations: record[:birth_registration]
+            observations: record[:birthRegistration]
           )
         rescue StandardError => e
           Rails.logger.error("Failed to save birth information: #{e.message}")
@@ -208,20 +184,22 @@ module SavePatientRecordService
   
     def create_encounter(patient_id, encounter_type, record)
       encounter_service =EncounterService.new
-      encounter_service.create(
+     encounter = encounter_service.create(
           type: EncounterType.find(encounter_type),
           patient: Patient.find(patient_id),
-          program: Program.find(record.program_id),
-          provider: record.provider_id ? Person.find(record.provider_id) : User.current.person,
-          encounter_datetime: TimeUtils.retro_timestamp(record.encounter_datetime&.to_time || Time.now)
+          program: Program.find(record[:program_id]),
+          provider: record[:provider_id] ? Person.find(record[:provider_id]) : User.current.person,
+          encounter_datetime: TimeUtils.retro_timestamp(record[:encounter_datetime]&.to_time || Time.now),
+          location_id: record[:location_id] || Location.current.id
         )
+        encounter.encounter_id
     end
   
     def save_obs(encounter_id:, observations:)
       encounter = Encounter.find(encounter_id)
       observations.map do |archetype|
         service =ObservationService.new
-        service.create_observation(encounter, archetype)
+        service.create_observation(encounter, archetype.permit!)
       end
     end
     def save_vitals_data(patient_id, record)
@@ -239,17 +217,17 @@ module SavePatientRecordService
       end
     end
     def save_vaccines(patient_id, record)
-      orders = record.dig(:vaccine_administration, :orders)
+      orders = record.dig(:vaccineAdministration, :orders)
       return unless orders&.any?
   
       threads = orders.map do |order|
         Thread.new do
           begin
             encounter_id = create_encounter(patient_id, 25)
-            obs = record.dig(:vaccine_administration, :obs)&.find do |item|
+            obs = record.dig(:vaccineAdministration, :obs)&.find do |item|
               item[:value_text] == order[:drug_name]
             end
-            AdministerVaccineService.administer_vaccine(encounter_id, [order], record.program_id, [obs])
+            AdministerVaccineService.administer_vaccine(encounter_id, [order], record[:program_id], [obs])
           rescue StandardError => e
             Rails.logger.error("Failed to save vaccine order: #{e.message}")
             Rails.logger.error(e.backtrace.join("\n"))
@@ -270,8 +248,8 @@ module SavePatientRecordService
     end
     def send_sms(patient_id, record)
       if record&.sms&.appointment_date
-        patient_details = {cell_phone:record.sms }
-        enqueue_sms(record.sms.appointment_date, patient_details,'send_appointment')
+        patient_details = {cell_phone:record[:sms] }
+        enqueue_sms(record[:sms][:appointment_date], patient_details,'send_appointment')
       end
     end
     def enqueue_sms(date, details, action)
@@ -281,19 +259,19 @@ module SavePatientRecordService
     end
 
     def void_vaccine(patient_id, record)
-      data = record.vaccine_administration.voided
+      data = record[:vaccine_administration][:voided]
       if data&.length&.positive?
         data.map do |item|
           begin
-            order = Order.find(item.order_id)
+            order = Order.find(item[:order_id])
             ActiveRecord::Base.transaction do
-              order.void(item.reason)
-              Observation.where(order_id: order.id).each { |obs| obs.void(item.reason)}
+              order.void(item[:reason])
+              Observation.where(order_id: order.id).each { |obs| obs.void(item[:reason])}
             end
-            render json: order, status: :no_content
+            
     
           rescue ActiveRecord::RecordNotFound
-            render json: { errors: "Order ##{item.order_id} not found" }, status: :not_found
+            Rails.logger.error( "Order ##{item.order_id} not found" )
           rescue => error
             puts error
           end
@@ -304,4 +282,3 @@ module SavePatientRecordService
       PersonService.new
     end
   end
-end
