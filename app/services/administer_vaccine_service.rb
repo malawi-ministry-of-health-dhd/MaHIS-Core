@@ -75,7 +75,7 @@ module AdministerVaccineService
     def create_observations(encounter_id, obs_archetypes)
       encounter = Encounter.find(encounter_id)
       obs_archetypes.map do |archetype|
-        service.create_observation(encounter, archetype)
+        service.create_observation(encounter, archetype.permit!)
       end
     end
 
