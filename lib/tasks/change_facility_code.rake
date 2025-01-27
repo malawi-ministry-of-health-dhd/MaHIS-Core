@@ -5,10 +5,10 @@ namespace :change_facility_codes do
   task update: :environment do
     # Define the mapping of old facility codes to new facility codes
     facility_code_mapping = {
-      "NK100562" => "MC010564",
-      "BT240998" => "SA091908",
-      "NT081005" => "MC011909",
-      "ZA231702" => "SA091910",
+      # "NK100562" => "MC010564",
+      # "BT240998" => "SA091908",
+      # "NT081005" => "MC011909",
+      # "ZA231702" => "SA091910",
     }
 
     # List of tables to update
