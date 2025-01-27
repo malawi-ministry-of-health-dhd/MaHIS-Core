@@ -9,6 +9,10 @@ module BuildPatientRecordService
         patientID: patient_id,
         ID: patient_identifier(record, 3),
         NcdID: patient_identifier(record, 31),
+        program_id: "",
+        provider_id: "",
+        location_id: "",
+        encounter_datetime: "",
         personInformation: {
             given_name: record.person.names[0].given_name,
             middle_name: record.person.names[0].middle_name,
@@ -56,10 +60,9 @@ module BuildPatientRecordService
             saved: [],
             unsaved: [],
         },
-        saveStatusPersonInformation: "complete",
-        saveStatusGuardianInformation: "complete",
-        saveStatusBirthRegistration: "complete",
-        date_created: ""
+        saveStatusPersonInformation: "",
+        saveStatusGuardianInformation: "",
+        saveStatusBirthRegistration: "",
       }
     end
     def get_attribute(item, name)
