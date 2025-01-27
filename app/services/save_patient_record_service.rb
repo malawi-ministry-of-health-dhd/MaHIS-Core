@@ -15,10 +15,10 @@
       create_guardian(patient_id, record)
       save_birthday_data(patient_id, record)
       save_vitals_data(patient_id, record)
-      # save_vaccines(patient_id, record)
-      # save_appointments(patient_id, record)
-      # send_sms(patient_id, record)
-      # void_vaccine(patient_id, record)
+      save_vaccines(patient_id, record)
+      save_appointments(patient_id, record)
+      send_sms(patient_id, record)
+      void_vaccine(patient_id, record)
     end
 
     def save_person_information(record)
@@ -220,10 +220,9 @@
       orders = record.dig(:vaccineAdministration, :orders)
       return unless orders&.any?
   
-      threads = orders.map do |order|
-        Thread.new do
+        orders.map do |order|
           begin
-            encounter_id = create_encounter(patient_id, 25)
+            encounter_id = create_encounter(patient_id, 25,record)
             obs = record.dig(:vaccineAdministration, :obs)&.find do |item|
               item[:value_text] == order[:drug_name]
             end
@@ -232,24 +231,25 @@
             Rails.logger.error("Failed to save vaccine order: #{e.message}")
             Rails.logger.error(e.backtrace.join("\n"))
           end
-        end
+        
       end
   
-      threads.each(&:join)
     end
     def save_appointments(patient_id, record)
-      if record&.appointments&.unsaved&.length&.positive?
-        encounter_id = create_encounter(patient_id, 7)
-        save_obs({
+      if record[:appointments][:unsaved]&.any?
+        encounter_id = create_encounter(patient_id, 7, record)
+        save_obs(
           encounter_id: encounter_id,
-          observations: record&.appointments&.unsaved
-        })
+          observations: record[:appointments][:unsaved]
+        )
       end
     end
     def send_sms(patient_id, record)
-      if record&.sms&.appointment_date
-        patient_details = {cell_phone:record[:sms] }
-        enqueue_sms(record[:sms][:appointment_date], patient_details,'send_appointment')
+      if record[:sms][:appointment_date]
+        record[:sms][:cell_phone].map do |phone|
+          patient_details = {cell_phone: phone }
+          enqueue_sms(record[:sms][:appointment_date], patient_details,'send_appointment')
+        end
       end
     end
     def enqueue_sms(date, details, action)
@@ -259,8 +259,8 @@
     end
 
     def void_vaccine(patient_id, record)
-      data = record[:vaccine_administration][:voided]
-      if data&.length&.positive?
+      data = record[:vaccineAdministration][:voided]
+      if data&.any?
         data.map do |item|
           begin
             order = Order.find(item[:order_id])
