@@ -3,41 +3,51 @@
   class SavePatientRecordService 
 
     def create_patient_record(record)
-      national_id=record.dig("otherPersonInformation", "national_id")
-      birth_id=record.dig("otherPersonInformation", "birth_id")
-      return unless validate_id( national_id,birth_id)
-      
-      data = save_person_information(record)
-      patient_id = data[:patient_id]
-      
-      return unless patient_id
+      # Extract required fields
+      required_fields = {
+        program_id: record.dig("program_id"),
+        provider_id: record.dig("provider_id"),
+        location_id: record.dig("location_id"),
+        encounter_datetime: record.dig("encounter_datetime")
+      }
     
-      create_guardian(patient_id, record)
-      save_birthday_data(patient_id, record)
-      save_vitals_data(patient_id, record)
-      save_vaccines(patient_id, record)
-      save_appointments(patient_id, record)
-      send_sms(patient_id, record)
-      void_vaccine(patient_id, record)
+      ids = {
+        national_id: record.dig("otherPersonInformation", "national_id"),
+        birth_id: record.dig("otherPersonInformation", "birth_id")
+      }
+      
+      return if required_fields.values.any? { |value| value.nil? || value.to_s.empty? }
+      return unless validate_id(ids[:national_id], ids[:birth_id])
+      return unless (patient_id = save_person_information(record)[:patient_id])
+    validate_id(ids[:national_id], ids[:birth_id])
+      [
+        :create_guardian,
+        :save_birthday_data,
+        :save_vitals_data,
+        :save_vaccines,
+        :save_appointments,
+        :send_sms,
+        :void_vaccine
+      ].each { |operation| send(operation, patient_id, record) }
+      BuildPatientRecordService.build_patient_record(patient_id)
     end
 
     def save_person_information(record)
       if record[:personInformation] && record[:saveStatusPersonInformation] == "pending"
-        
           # Create person and get data
           person = create_person(record[:personInformation])
           patient = create_patient(person.person_id, record)
           identifier = BuildPatientRecordService.patient_identifier(patient, 3)
           patient_id = person.person_id
   
-          # Execute concurrent operations
           create_ids(record[:otherPersonInformation], patient_id) 
           enroll_program(patient_id, record) 
           create_encounter(patient_id, 5,record)
-  
+          
+          record[:ID] = identifier
+          record[:patientID] = patient_id
+          record[:saveStatusPersonInformation] = "complete"
           return { patient_id: patient_id, id: identifier }
-      
-        
       end
   
       { patient_id: record[:patientID], id: record[:ID] }
@@ -133,7 +143,7 @@
             relationship_type_id: record[:otherPersonInformation][:relationshipID],
             person_id: patient_id
           )
-       
+          record[:saveStatusGuardianInformation] ="complete"
         rescue StandardError => e
           Rails.logger.error("Failed to save guardian information: #{e.message}")
           Rails.logger.error(e.backtrace.join("\n"))
@@ -172,6 +182,7 @@
             encounter_id: encounter_id,
             observations: record[:birthRegistration]
           )
+          record[:saveStatusBirthRegistration] ="complete"
         rescue StandardError => e
           Rails.logger.error("Failed to save birth information: #{e.message}")
           Rails.logger.error(e.backtrace.join("\n"))
@@ -211,6 +222,7 @@
           encounter_id: encounter_id,
           observations: record[:vitals][:unsaved]
         )
+        record[:vitals][:unsaved] =[]
       rescue StandardError => e
         Rails.logger.error("Failed to save vitals information: #{e.message}")
         Rails.logger.error(e.backtrace.join("\n"))
@@ -219,22 +231,29 @@
     def save_vaccines(patient_id, record)
       orders = record.dig(:vaccineAdministration, :orders)
       return unless orders&.any?
-  
-        orders.map do |order|
-          begin
-            encounter_id = create_encounter(patient_id, 25,record)
+    
+      begin
+        ActiveRecord::Base.transaction do
+          orders.each do |order|
+            encounter_id = create_encounter(patient_id, 25, record)
+    
             obs = record.dig(:vaccineAdministration, :obs)&.find do |item|
               item[:value_text] == order[:drug_name]
             end
-            AdministerVaccineService.administer_vaccine(encounter_id, [order], record[:program_id], [obs], record[:provider_id])
-          rescue StandardError => e
-            Rails.logger.error("Failed to save vaccine order: #{e.message}")
-            Rails.logger.error(e.backtrace.join("\n"))
+    
+            AdministerVaccineService.administer_vaccine(encounter_id,[order], record[:program_id],[obs],record[:provider_id] )
           end
-        
+    
+          record[:vaccineAdministration][:obs] = []
+          record[:vaccineAdministration][:orders] = []
+        end
+      rescue StandardError => e
+        Rails.logger.error("Failed to save vaccines: #{e.message}")
+        Rails.logger.error(e.backtrace.join("\n"))
       end
-  
     end
+    
+    
     def save_appointments(patient_id, record)
       if record[:appointments][:unsaved]&.any?
         encounter_id = create_encounter(patient_id, 7, record)
@@ -242,14 +261,19 @@
           encounter_id: encounter_id,
           observations: record[:appointments][:unsaved]
         )
+        record[:appointments][:unsaved] = []
       end
     end
     def send_sms(patient_id, record)
-      if record[:sms][:appointment_date]
-        record[:sms][:cell_phone].map do |phone|
+      appointment_date =record.dig("sms", "appointment_date")
+      cell_phones =record.dig("sms", "cell_phone")
+      if appointment_date && cell_phones
+        cell_phones.map do |phone|
           patient_details = {cell_phone: phone }
-          enqueue_sms(record[:sms][:appointment_date], patient_details,'send_appointment')
+          enqueue_sms(appointment_date, patient_details,'send_appointment')
         end
+        record[:sms][:appointment_date] =""
+        record[:sms][:cell_phone] =[]
       end
     end
     def enqueue_sms(date, details, action)
@@ -259,25 +283,32 @@
     end
 
     def void_vaccine(patient_id, record)
-      data = record[:vaccineAdministration][:voided]
-      if data&.any?
-        data.map do |item|
-          begin
-            order = Order.find(item[:order_id])
-            ActiveRecord::Base.transaction do
-              order.void(item[:reason])
-              Observation.where(order_id: order.id).each { |obs| obs.void(item[:reason])}
-            end
-            
+      data = record.dig(:vaccineAdministration, :voided)
+      return unless data&.any?
     
-          rescue ActiveRecord::RecordNotFound
-            Rails.logger.error( "Order ##{item.order_id} not found" )
-          rescue => error
-            puts error
+      begin
+        ActiveRecord::Base.transaction do
+          data.each do |item|
+            order = Order.find(item[:order_id])
+    
+            # Perform the voiding inside the transaction
+            order.void(item[:reason])
+            Observation.where(order_id: order.id).each { |obs| obs.void(item[:reason]) }
           end
+    
+          # Clear the voided array only if all operations succeed
+          record[:vaccineAdministration][:voided] = []
         end
+      rescue ActiveRecord::RecordNotFound => e
+        Rails.logger.error("Order not found: #{e.message}")
+        record[:vaccineAdministration][:voided] = []
+      rescue StandardError => e
+        Rails.logger.error("Error voiding vaccine: #{e.message}")
+        Rails.logger.error(e.backtrace.join("\n"))
       end
     end
+    
+    
     def person_service
       PersonService.new
     end
