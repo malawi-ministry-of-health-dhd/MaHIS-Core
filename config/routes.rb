@@ -80,7 +80,6 @@ Rails.application.routes.draw do
         get '/visits' => 'patients#visits'
         get '/visit' => 'patients#visit'
         get '/get_patient_record' => 'patients#get_patient_record'
-        post '/save_patient_record' => 'patients#save_patient_record'
         get('/appointments', to: redirect do |params, request|
           paginate_url "/api/v1/appointments?patient_id=#{params[:patient_id]}",
                        request.params
@@ -326,7 +325,8 @@ Rails.application.routes.draw do
       get '/sequences/next_accession_number', to: 'sequences#next_accession_number'
 
       post '/reports/encounters' => 'encounters#count'
-
+      
+      post '/save_patient_record' => 'patients#save_patient_record'
       # drugs_cms routes
       get '/drug_cms/search', to: 'drug_cms#search'
       resources :drug_cms, only: %i[index]
