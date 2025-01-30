@@ -65,18 +65,14 @@ class Api::V1::SyncPatientRecordsController < ApplicationController
       .joins(:encounters)
       .select('patient.patient_id, MAX(encounters.date_created) as latest_encounter_date')
       .where(encounters: { location_id: location_id })
-      
+  
     if previous_sync_date.present?
-      query = query.where(
-        'encounters.date_created BETWEEN ? AND ?',
-        previous_sync_date,
-        Time.current.strftime('%Y-%m-%d %H:%M:%S')
-      )
+      parsed_date = Time.zone.parse(previous_sync_date)
+      query = query.where('encounters.date_created >= ?', parsed_date)
     end
-      
-    query = query.group('patient.patient_id')
-    # Add patient_id to the order to ensure deterministic sorting
-    query.order('latest_encounter_date ASC, patient.patient_id ASC')
+  
+    query.group('patient.patient_id')
+      .order('latest_encounter_date ASC, patient.patient_id ASC')
   end
 
   def fetch_latest_encounter_datetime(query)
