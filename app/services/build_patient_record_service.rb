@@ -1,15 +1,18 @@
 # frozen_string_literal: true
 
-module PatientRecordService
+module BuildPatientRecordService
   class << self 
     include ModelUtils
-
     def build_patient_record(patient_id)
       record =Patient.find(patient_id)
       {
         patientID: patient_id,
         ID: patient_identifier(record, 3),
         NcdID: patient_identifier(record, 31),
+        program_id: "",
+        provider_id: "",
+        location_id: "",
+        encounter_datetime: "",
         personInformation: {
             given_name: record.person.names[0].given_name,
             middle_name: record.person.names[0].middle_name,
@@ -39,8 +42,8 @@ module PatientRecordService
         },
         birthRegistration: extract_observations(patient_id,5,[11764, 11759, 3753], "value_text"),
         otherPersonInformation: {
-            nationalID: "",
-            birthID: "",
+            national_id: "",
+            birth_id: "",
             relationshipID: "",
         },
         vitals: {
@@ -57,10 +60,9 @@ module PatientRecordService
             saved: [],
             unsaved: [],
         },
-        saveStatusPersonInformation: "complete",
-        saveStatusGuardianInformation: "complete",
-        saveStatusBirthRegistration: "complete",
-        date_created: ""
+        saveStatusPersonInformation: "",
+        saveStatusGuardianInformation: "",
+        saveStatusBirthRegistration: "",
       }
     end
     def get_attribute(item, name)
@@ -124,7 +126,6 @@ module PatientRecordService
         }
       end
     end
-    
     def extract_observations(patient_id,encounter_type,concept_ids, obs_type)
       encounters = Encounter.where(patient_id: patient_id, encounter_type: encounter_type)
       encounters.flat_map do |encounter|
@@ -148,7 +149,5 @@ module PatientRecordService
                  end
       end
     end
-    
-   
   end
 end

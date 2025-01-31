@@ -8,7 +8,7 @@ class PatientProgram < VoidableRecord
 
   belongs_to :patient
   belongs_to :program
-  belongs_to :location
+  belongs_to :location, optional: true
   has_many :patient_states, class_name: 'PatientState', dependent: :destroy
 
   def as_json(options = {})
