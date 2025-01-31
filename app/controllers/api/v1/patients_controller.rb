@@ -37,7 +37,11 @@ module Api
       end
 
       def get_patient_record
-        render json: PatientRecordService.build_patient_record(params[:id] || params[:patient_id])
+        render json: BuildPatientRecordService.build_patient_record(params[:id] || params[:patient_id])
+      end
+
+      def save_patient_record
+        render json: SavePatientRecordService.new.create_patient_record(params[:record])
       end
 
       def search_by_npid

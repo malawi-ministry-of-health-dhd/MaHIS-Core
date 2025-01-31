@@ -15,7 +15,7 @@ class EncounterService
     query.order(encounter_datetime: :desc).first
   end
 
-  def create(type:, patient:, program:, encounter_datetime: nil, provider: nil)
+  def create(type:, patient:, program:, encounter_datetime: nil, provider: nil,  location_id: nil)
     encounter_datetime ||= Time.now
     provider ||= User.current.person
     
@@ -29,11 +29,10 @@ class EncounterService
       end
       return encounter if encounter
     end
-
     Encounter.create(
       type:, patient:, provider:,
       encounter_datetime:, program:,
-      location_id: User.current.location_id
+      location_id: location_id || User.current.location_id
     )
   end
 
