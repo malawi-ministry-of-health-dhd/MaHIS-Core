@@ -95,17 +95,18 @@
         return
       end
   
-      new_patient_program = PatientProgram.create(
+      new_patient_program = PatientProgram.create!(
         program_id: record[:program_id],
         date_enrolled: record[:date_enrolled] || Time.now,
-        location_id: record[:location_id] || Location.current.id,
+        location_id: record[:location_id] ,
         patient_id: patient_id
       )
 
       if new_patient_program.errors.empty?
-        Rails.logger.error()
+        Rails.logger.info("Successfully created patient program")
       else
-        Rails.logger.error( new_patient_program.errors)
+        Rails.logger.error(new_patient_program.errors.full_messages)
+        raise new_patient_program.errors.full_messages.join(", ")
       end
     end
 
