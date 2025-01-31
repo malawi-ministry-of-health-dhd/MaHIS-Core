@@ -5,5 +5,5 @@ class ProgramLocationRestriction < ApplicationRecord
   self.primary_key = 'program_location_restriction_id'
 
   belongs_to :program
-  belongs_to :location
+  belongs_to :location, optional: true
 end
