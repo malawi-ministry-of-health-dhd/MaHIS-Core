@@ -97,7 +97,7 @@
   
       new_patient_program = PatientProgram.create!(
         program_id: record[:program_id],
-        date_enrolled: record[:date_enrolled] || Time.now,
+        date_enrolled: record[:encounter_datetime] || Time.now,
         location_id: record[:location_id] ,
         patient_id: patient_id
       )
@@ -181,7 +181,8 @@
           encounter_id = create_encounter(patient_id, 5,record)
           save_obs(
             encounter_id: encounter_id,
-            observations: record[:birthRegistration]
+            observations: record[:birthRegistration],
+            location_id: record[:location_id]
           )
           record[:saveStatusBirthRegistration] ="complete"
         rescue StandardError => e
@@ -207,9 +208,10 @@
         encounter.encounter_id
     end
   
-    def save_obs(encounter_id:, observations:)
+    def save_obs(encounter_id:, observations:, location_id: nil)
       encounter = Encounter.find(encounter_id)
       observations.map do |archetype|
+        archetype[:location_id] = location_id
         service =ObservationService.new
         service.create_observation(encounter, archetype.permit!)
       end
@@ -221,7 +223,8 @@
         encounter_id = create_encounter(patient_id, 6, record)
         save_obs(
           encounter_id: encounter_id,
-          observations: record[:vitals][:unsaved]
+          observations: record[:vitals][:unsaved],
+          location_id: record[:location_id]
         )
         record[:vitals][:unsaved] =[]
       rescue StandardError => e
@@ -242,7 +245,7 @@
               item[:value_text] == order[:drug_name]
             end
     
-            AdministerVaccineService.administer_vaccine(encounter_id,[order], record[:program_id],[obs],record[:provider_id] )
+            AdministerVaccineService.administer_vaccine(encounter_id,[order], record[:program_id],[obs],record[:provider_id],record[:location_id] )
           end
     
           record[:vaccineAdministration][:obs] = []
@@ -260,7 +263,8 @@
         encounter_id = create_encounter(patient_id, 7, record)
         save_obs(
           encounter_id: encounter_id,
-          observations: record[:appointments][:unsaved]
+          observations: record[:appointments][:unsaved],
+          location_id: record[:location_id]
         )
         record[:appointments][:unsaved] = []
       end
