@@ -4,7 +4,7 @@ module AdministerVaccineService
   class << self 
     include ModelUtils
 
-    def administer_vaccine(encounter_id, drug_orders, program_id, obs_archetypes, provider_id)
+    def administer_vaccine(encounter_id, drug_orders, program_id, obs_archetypes, provider_id, location_id = nil)
       validate_program_and_encounter!(program_id, encounter_id)
       validate_batch_numbers!(drug_orders)
 
@@ -21,7 +21,7 @@ module AdministerVaccineService
           raise ActiveRecord::Rollback unless dispensation
 
           # Create observations
-          observations = create_observations(encounter_id, obs_archetypes)
+          observations = create_observations(encounter_id, obs_archetypes, location_id)
           raise ActiveRecord::Rollback if observations.any?(&:nil?)
 
         rescue StandardError => e
@@ -72,9 +72,10 @@ module AdministerVaccineService
       DispensationService.create(program, dispensations, provider)
     end
 
-    def create_observations(encounter_id, obs_archetypes)
+    def create_observations(encounter_id, obs_archetypes, location_id)
       encounter = Encounter.find(encounter_id)
       obs_archetypes.map do |archetype|
+        archetype[:location_id] = location_id
         service.create_observation(encounter, archetype.permit!)
       end
     end
