@@ -11,6 +11,11 @@ module Api
         render json: response
       end
 
+      def get_test_types
+        render json: Lab::ConceptsService.test_types.unscope(:select,
+                                                             :group).select('concept_name.concept_id, concept_name.name, concept_set.concept_set')
+      end
+
       def panels
         test_type = params.require(:test_type)
         response = engine.panels test_type
