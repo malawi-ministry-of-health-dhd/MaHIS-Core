@@ -88,7 +88,8 @@ Rails.application.routes.draw do
         get '/drugs_received', to: 'patients#drugs_received'
         get '/last_drugs_received', to: 'patients#last_drugs_received'
         get '/drugs_orders_by_program', to: 'patients#drugs_orders_by_program'
-        get '/find_program_drug_orders_awaiting_dispensation', to: 'patients#find_program_drug_orders_awaiting_dispensation'
+        get '/find_program_drug_orders_awaiting_dispensation',
+            to: 'patients#find_program_drug_orders_awaiting_dispensation'
         get '/recent_lab_orders', to: 'patients#recent_lab_orders'
         get '/current_bp_drugs', to: 'patients#current_bp_drugs'
         get '/last_bp_drugs_dispensation', to: 'patients#last_bp_drugs'
@@ -117,7 +118,7 @@ Rails.application.routes.draw do
       # get drug via drug_id
       get 'drug' => 'drugs#get_drug_by_id'
 
-      #Totals
+      # Totals
       get 'totals' => 'totals#index'
 
       # Locations
@@ -153,7 +154,7 @@ Rails.application.routes.draw do
         get('/villages/:village_id', to: redirect do |params, request|
           redirect_url = "/api/v1/villages/#{params[:village_id]}"
           paginate_url redirect_url, request.params
-        end)      
+        end)
       end
 
       resources :villages, only: %i[create index show destroy update]
@@ -325,7 +326,7 @@ Rails.application.routes.draw do
       get '/sequences/next_accession_number', to: 'sequences#next_accession_number'
 
       post '/reports/encounters' => 'encounters#count'
-      
+
       post '/save_patient_record' => 'patients#save_patient_record'
       # drugs_cms routes
       get '/drug_cms/search', to: 'drug_cms#search'
@@ -358,6 +359,8 @@ Rails.application.routes.draw do
   get '/api/v1/radiology_set' => 'api/v1/concept_sets#radiology_set'
   get '/api/v1/radiology/examinations' => 'api/v1/radiology#examinations'
   get '/api/v1/cervical_cancer_screening' => 'api/v1/cervical_cancer_screening#show'
+
+  get '/api/v1/get_test_types' => 'api/v1/lab_test_types#get_test_types'
 
   get '/api/v1/dashboard_stats' => 'api/v1/reports#index'
   get '/api/v1/mahis_dashboard' => 'api/v1/reports#mahis_dashboard'
@@ -448,7 +451,7 @@ Rails.application.routes.draw do
 
   post 'api/v1/sync_to_ait', to: 'api/v1/patients#sync_to_ait'
 
-  #EIR
+  # EIR
   get '/api/v1/eir/schedule', to: 'api/v1/vaccine_schedule#vaccine_schedule'
   get '/api/v1/eir/schedule/generic', to: 'api/v1/vaccine_schedule#generic_schedule'
   get '/api/v1/eir/followup', to: 'api/v1/immunization_follow_up#missed_immunizations'
@@ -457,40 +460,38 @@ Rails.application.routes.draw do
   get '/api/v1/configurations', to: 'api/v1/send_sms#show'
   get '/api/v1/cancel_appointment', to: 'api/v1/send_sms#cancel'
 
-
   # OPD visits implementation
   post '/api/v1/visits', to: 'api/v1/visits#create'
   patch '/api/v1/visits/:id/close', to: 'api/v1/visits#close'
-  get '/api/v1/visits', to: 'api/v1/visits#index'    
+  get '/api/v1/visits', to: 'api/v1/visits#index'
 
   get '/api/v1/check_patient_status/:patient_id', to: 'api/v1/visits#check_patient_status'
 
   namespace :api do
     namespace :v1 do
-      resources :stages, only: [:index, :show, :create]
+      resources :stages, only: %i[index show create]
     end
   end
 
   post '/api/v1/eir/session_schedule', to: 'api/v1/session_schedule#create'
   get '/api/v1/eir/session_schedule', to: 'api/v1/session_schedule#index'
   delete '/api/v1/eir/session_schedule', to: 'api/v1/session_schedule#destroy'
-  put  '/api/v1/eir/session_schedule/:id', to: 'api/v1/session_schedule#update'
+  put '/api/v1/eir/session_schedule/:id', to: 'api/v1/session_schedule#update'
 
-  #facility
+  # facility
   namespace :api do
     namespace :v1 do
-    resources :facilities do
-      member do
-        get 'nearby', to: 'facilities#nearby'
-      end
+      resources :facilities do
+        member do
+          get 'nearby', to: 'facilities#nearby'
+        end
 
-      # Optional: Collection routes if you need them
-      collection do
-        get 'search', to: 'facilities#index'  # Alternative search endpoint
-        get 'districts', to: 'facilities#districts' # If you want to list unique districts
+        # Optional: Collection routes if you need them
+        collection do
+          get 'search', to: 'facilities#index' # Alternative search endpoint
+          get 'districts', to: 'facilities#districts' # If you want to list unique districts
+        end
       end
     end
   end
-end
-
 end

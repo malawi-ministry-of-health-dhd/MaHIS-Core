@@ -40,15 +40,14 @@ module BuildPatientRecordService
           saved: get_guardians(patient_id),
           unsaved: []
         },
-        birthRegistration: extract_observations(patient_id, EncounterType.find_by_name('REGISTRATION').id,
-                                                'value_text'),
+        birthRegistration: extract_observations(patient_id, EncounterType.find_by_name('REGISTRATION').id),
         otherPersonInformation: {
           national_id: '',
           birth_id: '',
           relationshipID: ''
         },
         vitals: {
-          saved: extract_observations(patient_id, EncounterType.find_by_name('VITALS').id, 'value_numeric'),
+          saved: extract_observations(patient_id, EncounterType.find_by_name('VITALS').id),
           unsaved: []
         },
         vaccineSchedule: ImmunizationService::VaccineScheduleService.vaccine_schedule(Person.find(patient_id)),
@@ -62,15 +61,17 @@ module BuildPatientRecordService
           unsaved: []
         },
         diagnosis: {
-          saved: extract_observations(patient_id, EncounterType.find_by_name('DIAGNOSIS').id, 'value_coded'),
+          saved: extract_observations(patient_id, EncounterType.find_by_name('DIAGNOSIS').id),
           unsaved: []
         },
         screening: {
-          saved: extract_observations(patient_id, EncounterType.find_by_name('SCREENING').id, 'value_text'),
+          saved: [extract_observations(patient_id, EncounterType.find_by_name('SCREENING').id, nil, true) +
+            extract_observations(patient_id, EncounterType.find_by_name('SCREENING').id,
+                                 { concept_id: concept_name_to_id('CVD') })].flatten,
           unsaved: []
         },
         substanceAbuse: {
-          saved: extract_observations(patient_id, EncounterType.find_by_name('ASSESSMENT').id, 'value_coded'),
+          saved: extract_observations(patient_id, EncounterType.find_by_name('ASSESSMENT').id),
           unsaved: []
         },
         saveStatusPersonInformation: '',
@@ -143,37 +144,54 @@ module BuildPatientRecordService
       end
     end
 
-    def extract_observations(patient_id, encounter_type, obs_type)
+    def extract_observations(patient_id, encounter_type, value_filters = nil, has_children = nil)
       encounters = Encounter.where(patient_id: patient_id, encounter_type: encounter_type)
+
       encounters.flat_map do |encounter|
         encounter.observations
-                 .select { |observation| encounter.encounter_id == observation.encounter_id }
-                 .map do |observation|
-                   if obs_type == 'value_text'
-                     {
-                       concept_id: observation.concept_id,
-                       obs_datetime: observation.obs_datetime,
-                       value_text: observation.value_text,
-                       children: observation.children
-                     }
-                   elsif obs_type == 'value_numeric'
-                     {
-                       concept_id: observation.concept_id,
-                       obs_datetime: observation.obs_datetime,
-                       value_numeric: observation.value_numeric,
-                       obs_id: observation.obs_id,
-                       children: observation.children
-                     }
-                   elsif obs_type == 'value_coded'
-                     {
-                       concept_id: observation.concept_id,
-                       obs_datetime: observation.obs_datetime,
-                       value_coded: observation.value_coded,
-                       obs_id: observation.obs_id,
-                       children: observation.children
-                     }
+                 .select do |observation|
+                   if value_filters
+                     matches_filters?(observation, value_filters)
+                   else
+                     !has_children || observation.children.length.positive?
                    end
                  end
+                 .map do |observation|
+          children = if observation.children.length.positive?
+                       observation.children.map do |child|
+                         {
+                           concept_id: child.concept_id,
+                           concept_name: concept_id_to_name(child.concept_id),
+                           obs_datetime: child.obs_datetime,
+                           obs_id: child.obs_id,
+                           children: child.children,
+                           value_coded: child.value_coded,
+                           value_text: child.value_text,
+                           value_numeric: child.value_numeric
+                         }
+                       end
+                     else
+                       []
+                     end
+          {
+            concept_id: observation.concept_id,
+            concept_name: concept_id_to_name(observation.concept_id),
+            obs_datetime: observation.obs_datetime,
+            obs_id: observation.obs_id,
+            children: children,
+            value_coded: observation.value_coded,
+            value_text: observation.value_text,
+            value_numeric: observation.value_numeric
+          }
+        end
+      end
+    end
+
+    def matches_filters?(observation, filters)
+      return true if filters.empty?
+
+      filters.any? do |field, value|
+        observation.send(field) == value
       end
     end
   end
