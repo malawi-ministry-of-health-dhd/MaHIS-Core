@@ -231,7 +231,7 @@ class SavePatientRecordService
   end
 
   def save_substance_abuse_data(patient_id, record)
-    save_clinical_data(:substance_abuse, patient_id, record)
+    save_clinical_data(:substanceAbuse, patient_id, record)
   end
 
   def save_screening_data(patient_id, record)
@@ -239,7 +239,7 @@ class SavePatientRecordService
   end
 
   def save_lab_orders_data(patient_id, record)
-    save_clinical_data(:lab_orders, patient_id, record)
+    save_clinical_data(:labOrders, patient_id, record)
   end
 
   def save_vaccines(patient_id, record)
@@ -327,7 +327,7 @@ class SavePatientRecordService
 
   def save_clinical_data(data_type, patient_id, record)
     data_key = data_type.to_s.underscore.to_sym
-    unsaved_data = record.dig(data_key, :unsaved)
+    unsaved_data = record.dig(data_type, :unsaved)
 
     return unless unsaved_data&.any?
 
@@ -341,9 +341,9 @@ class SavePatientRecordService
         location_id: record[:location_id]
       )
 
-      record[data_key][:unsaved] = []
+      record[data_type][:unsaved] = []
     rescue StandardError => e
-      log_error("Failed to save #{data_key} information", e)
+      log_error("Failed to save #{data_type} information", e)
     end
   end
 
