@@ -5,7 +5,8 @@ ENCOUNTER_TYPE_MAPPING = {
   diagnosis: 'DIAGNOSIS',
   substance_abuse: 'ASSESSMENT',
   screening: 'SCREENING',
-  lab_orders: 'LAB_ORDERS'
+  lab_orders: 'LAB_ORDERS',
+  medication_order:'TREATMENT'
 }.freeze
 class SavePatientRecordService
   def create_patient_record(record)
@@ -39,6 +40,7 @@ class SavePatientRecordService
       save_appointments
       send_sms
       void_vaccine
+      save_medication_order
     ].each { |operation| send(operation, patient_id, record) }
     BuildPatientRecordService.build_patient_record(patient_id)
   end
@@ -323,6 +325,34 @@ class SavePatientRecordService
       Rails.logger.error("Error voiding vaccine: #{e.message}")
       Rails.logger.error(e.backtrace.join("\n"))
     end
+  end
+
+  def save_medication_order(patient_id, record)
+    orders = record.dig(:MedicationOrder, :unsaved)
+    return unless orders&.any?
+
+    begin
+      ActiveRecord::Base.transaction do
+        orders.each do |order|
+          puts "Order #{order }"
+          # encounter_id = create_encounter(patient_id, 25, record)
+
+          # obs = record.dig(:vaccineAdministration, :obs)&.find do |item|
+          #   item[:value_text] == order[:drug_name]
+          # end
+
+          # AdministerVaccineService.administer_vaccine(encounter_id, [order], record[:program_id], [obs],
+          #                                             record[:provider_id], record[:location_id])
+        end
+
+        # record[:vaccineAdministration][:obs] = []
+        # record[:vaccineAdministration][:orders] = []
+      end
+    rescue StandardError => e
+      Rails.logger.error("Failed to create medication order: #{e.message}")
+      Rails.logger.error(e.backtrace.join("\n"))
+    end
+
   end
 
   def save_clinical_data(data_type, patient_id, record)
