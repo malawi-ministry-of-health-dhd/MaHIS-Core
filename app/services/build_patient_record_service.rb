@@ -74,6 +74,10 @@ module BuildPatientRecordService
           saved: extract_observations(patient_id, EncounterType.find_by_name('ASSESSMENT').id),
           unsaved: []
         },
+        MedicationOrder: {
+          saved: [],
+          unsaved: []
+        },
         saveStatusPersonInformation: '',
         saveStatusGuardianInformation: '',
         saveStatusBirthRegistration: ''
