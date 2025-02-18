@@ -330,21 +330,24 @@ class SavePatientRecordService
   def save_medication_order(patient_id, record)
     orders = record.dig(:MedicationOrder, :unsaved)
     return unless orders&.any?
-
+    
     begin
       ActiveRecord::Base.transaction do
         orders.each do |order|
+          puts "#############################################################"
+          puts "#############################################################"
           puts "Order #{order }"
+          
+          # Add breakpoint here
+          
+          
+          # Your commented code continues...
           # encounter_id = create_encounter(patient_id, 25, record)
-
-          # obs = record.dig(:vaccineAdministration, :obs)&.find do |item|
-          #   item[:value_text] == order[:drug_name]
-          # end
-
-          # AdministerVaccineService.administer_vaccine(encounter_id, [order], record[:program_id], [obs],
-          #                                             record[:provider_id], record[:location_id])
+          # ...   
         end
-
+        
+        debugger  # This will pause execution here
+        
         # record[:vaccineAdministration][:obs] = []
         # record[:vaccineAdministration][:orders] = []
       end
@@ -352,7 +355,6 @@ class SavePatientRecordService
       Rails.logger.error("Failed to create medication order: #{e.message}")
       Rails.logger.error(e.backtrace.join("\n"))
     end
-
   end
 
   def save_clinical_data(data_type, patient_id, record)
