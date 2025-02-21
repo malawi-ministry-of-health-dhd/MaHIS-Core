@@ -192,13 +192,18 @@ module BuildPatientRecordService
     end
 
     def get_client_drug_orders(patient_id)
-      filters = {
-        # date: "2024-02-15",
-        # program_id: 3,
-        patient_id: patient_id,
-        # drug_id: 456
-      }
-      DrugOrderService.find(filters).order(Arel.sql('`orders`.`date_created`')).to_a
+      begin
+        filters = {
+          patient_id: patient_id
+        }
+        
+        DrugOrderService.find(filters)
+          .order(Arel.sql('`orders`.`date_created`'))
+          .to_a
+      rescue => e
+        Rails.logger.error("Error fetching drug orders for patient #{patient_id}: #{e.message}")
+        []
+      end
     end
 
     def matches_filters?(observation, filters)
