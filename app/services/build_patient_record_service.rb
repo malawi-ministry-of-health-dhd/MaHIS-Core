@@ -193,9 +193,12 @@ module BuildPatientRecordService
 
     def get_client_drug_orders(patient_id)
       begin
-        filters = {
-          patient_id: patient_id
-        }
+        filters = {         
+          # date: "2024-02-15",
+          # # program_id: 3,
+          patient_id: patient_id,
+          # # drug_id: 456
+        }   
         
         DrugOrderService.find(filters)
           .order(Arel.sql('`orders`.`date_created`'))
