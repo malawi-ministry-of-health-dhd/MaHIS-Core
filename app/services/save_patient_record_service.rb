@@ -5,7 +5,8 @@ ENCOUNTER_TYPE_MAPPING = {
   diagnosis: 'DIAGNOSIS',
   substance_abuse: 'ASSESSMENT',
   screening: 'SCREENING',
-  lab_orders: 'LAB_ORDERS'
+  lab_orders: 'LAB_ORDERS',
+  medication_order:'TREATMENT'
 }.freeze
 class SavePatientRecordService
   def create_patient_record(record)
@@ -39,6 +40,7 @@ class SavePatientRecordService
       save_appointments
       send_sms
       void_vaccine
+      save_medication_order
     ].each { |operation| send(operation, patient_id, record) }
     BuildPatientRecordService.build_patient_record(patient_id)
   end
@@ -324,6 +326,35 @@ class SavePatientRecordService
       Rails.logger.error(e.backtrace.join("\n"))
     end
   end
+
+  def save_medication_order(patient_id, record)
+    orders = record.dig(:MedicationOrder, :unsaved)
+    return unless orders&.any?
+  
+    begin
+      ActiveRecord::Base.transaction do
+        orders.each do |order|
+          next unless order.key?(:NCD_Drug_Orders)
+          drug_orders = order[:NCD_Drug_Orders]
+          encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[:medication_order])
+          encounter_id = create_encounter(patient_id, encounter_type.id, record)
+          encounter = Encounter.find(encounter_id)
+
+          unless encounter.type.name == 'TREATMENT'
+            Rails.logger.warn("Unexpected encounter type: #{encounter.type.name} for encounter ##{encounter.encounter_id}")
+            next
+          end
+          
+          DrugOrderService.create_drug_orders(encounter: , drug_orders:)
+        end
+      end
+    rescue StandardError => e
+      Rails.logger.error("Failed to create medication order: #{e.message}")
+      Rails.logger.error(e.backtrace.join("\n"))
+      raise
+    end
+  end
+  
 
   def save_clinical_data(data_type, patient_id, record)
     data_key = data_type.to_s.underscore.to_sym

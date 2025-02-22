@@ -30,6 +30,61 @@ module DrugOrderService
       query
     end
 
+    def fetch_all_patient_drug_orders(patient_id)
+      # Quote patient ID for SQL safety
+      quoted_patient_id = ActiveRecord::Base.connection.quote(patient_id)
+    
+      # Query to fetch all drug orders for the patient
+      medication = ActiveRecord::Base.connection.select_all <<-SQL
+        SELECT
+          d.name AS drug_name,
+          t.quantity AS quantity,
+          o.start_date AS start_date,
+          o.auto_expire_date AS expire_date,
+          o.order_id AS order_id,
+          t.drug_inventory_id AS drug_id,
+          e.encounter_id AS encounter_id,
+          e.encounter_datetime AS encounter_date,
+          t.frequency AS frequency,
+          t.prn AS prn,
+          t.dose AS dose,
+          t.units AS units,
+          t.equivalent_daily_dose AS equivalent_daily_dose,
+          e.program_id AS program_id
+        FROM orders o
+        INNER JOIN drug_order t ON o.order_id = t.order_id
+        INNER JOIN drug d ON d.drug_id = t.drug_inventory_id
+        INNER JOIN encounter e ON e.encounter_id = o.encounter_id
+        WHERE o.voided = 0
+          AND o.patient_id = #{quoted_patient_id}
+        ORDER BY e.program_id ASC, e.encounter_datetime DESC;
+      SQL
+    
+      # Transform the result into an array of drug orders with all fields
+      medication.map do |m|
+        {
+          drug_name: m['drug_name'],
+          quantity: m['quantity'],
+          start_date: m['start_date'],
+          expire_date: m['expire_date'],
+          order_id: m['order_id'],
+          drug_id: m['drug_id'],
+          encounter_id: m['encounter_id'],
+          encounter_date: m['encounter_date'],
+          frequency: m['frequency'],
+          prn: m['prn'],
+          dose: m['dose'],
+          units: m['units'],
+          equivalent_daily_dose: m['equivalent_daily_dose'],
+          program_id: m['program_id']
+        }
+      end
+    rescue StandardError => e
+      # Log the error and return an empty array
+      Rails.logger.error("Error fetching drug orders for patient #{patient_id}: #{e.message}")
+      []
+    end
+
     # Creates drug orders in bulk.
     #
     # Returns [drug_order, false] if successful else [null, true]

@@ -74,6 +74,10 @@ module BuildPatientRecordService
           saved: extract_observations(patient_id, EncounterType.find_by_name('ASSESSMENT').id),
           unsaved: []
         },
+        MedicationOrder: {
+          saved: get_client_drug_orders(patient_id),
+          unsaved: []
+        },
         saveStatusPersonInformation: '',
         saveStatusGuardianInformation: '',
         saveStatusBirthRegistration: ''
@@ -184,6 +188,24 @@ module BuildPatientRecordService
             value_numeric: observation.value_numeric
           }
         end
+      end
+    end
+
+    def get_client_drug_orders(patient_id)
+      begin
+        return [] if patient_id.nil? || patient_id.to_s.strip.empty?
+        
+        begin
+          results = DrugOrderService.fetch_all_patient_drug_orders(patient_id)
+          return results unless results.empty?
+        rescue => e
+          Rails.logger.error("Inner error fetching drug orders for patient #{patient_id}: #{e.message}")
+        end
+        
+        []
+      rescue => e
+        Rails.logger.error("Outer error fetching drug orders for patient #{patient_id}: #{e.message}")
+        []
       end
     end
 
