@@ -90,10 +90,10 @@ class Api::V1::SyncPatientRecordsController < ApplicationController
   def sync_patients(ids)
     results = ids.map do |id|
       begin
-        BuildPatientRecordService.build_patient_record(id)
+        BuildPatientRecordService.build_patient_record(id[0])
       rescue StandardError => e
         Rails.logger.error("Error building patient record for ID #{id}: #{e.message}")
-        {} # Return empty hash instead of nil for errors
+        nil
       end
     end.compact
     Rails.logger.info("Completed sync_patients, processed #{results.size} records")

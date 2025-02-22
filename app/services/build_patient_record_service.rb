@@ -194,20 +194,17 @@ module BuildPatientRecordService
     def get_client_drug_orders(patient_id)
       begin
         return [] if patient_id.nil? || patient_id.to_s.strip.empty?
-    
-        filters = {
-          patient_id: patient_id
-          # Commented filters for reference
-          # date: "2024-02-15",
-          # program_id: 3,
-          # drug_id: 456
-        }
         
-        DrugOrderService.find(filters)
-          .order(Arel.sql('`orders`.`date_created`'))
-          .to_a
+        begin
+          results = DrugOrderService.fetch_all_patient_drug_orders(patient_id)
+          return results unless results.empty?
+        rescue => e
+          Rails.logger.error("Inner error fetching drug orders for patient #{patient_id}: #{e.message}")
+        end
+        
+        []
       rescue => e
-        Rails.logger.error("Error fetching drug orders for patient #{patient_id}: #{e.message}")
+        Rails.logger.error("Outer error fetching drug orders for patient #{patient_id}: #{e.message}")
         []
       end
     end
