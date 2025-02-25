@@ -42,8 +42,8 @@ module BuildPatientRecordService
         },
         birthRegistration: extract_observations(patient_id, EncounterType.find_by_name('REGISTRATION').id),
         otherPersonInformation: {
-          national_id: '',
-          birth_id: '',
+          nationalID: '',
+          birthID: '',
           relationshipID: ''
         },
         vitals: {
