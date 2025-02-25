@@ -238,15 +238,13 @@ class PatientService
   end
 
   def find_program_drug_orders_awaiting_dispensation(patient, date, program_id: nil)
-    DrugOrder
+    query = DrugOrder
       .joins(order: :encounter)
       .where(
         'orders.start_date <= ? AND orders.patient_id = ? 
-         AND drug_order.quantity IS NOT NULL 
-         AND encounter.program_id = ?',
+         AND drug_order.quantity IS NOT NULL',
         TimeUtils.day_bounds(date)[1],
-        patient.patient_id,
-        program_id
+        patient.patient_id
       )
       .where(
         'NOT EXISTS (
@@ -260,6 +258,11 @@ class PatientService
         'AMOUNT DISPENSED'
       )
       .order('orders.start_date DESC')
+  
+    # Add program_id condition only if it is not nil
+    query = query.where('encounter.program_id = ?', program_id) if program_id.present?
+  
+    query
   end
 
   def drugs_orders_by_program(patient, date, program_id: nil)
