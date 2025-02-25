@@ -86,18 +86,25 @@ class SavePatientRecordService
   end
 
   def create_ids(otherPersonInformation, patient_id)
-    if otherPersonInformation[:national_id].present?
+    if otherPersonInformation[:nationalID].present?
       PatientIdentifierService.create(
         patient_id: patient_id,
-        identifier: otherPersonInformation[:national_id],
+        identifier: otherPersonInformation[:nationalID],
         identifier_type: 28
       )
     end
-    return unless otherPersonInformation[:birth_id].present?
+    if otherPersonInformation[:relationshipID].present?
+      PatientIdentifierService.create(
+        patient_id: patient_id,
+        identifier: otherPersonInformation[:relationshipID],
+        identifier_type: 28
+      )
+    end
+    return unless otherPersonInformation[:birthID].present?
 
     PatientIdentifierService.create(
       patient_id: patient_id,
-      identifier: otherPersonInformation[:birth_id],
+      identifier: otherPersonInformation[:birthID],
       identifier_type: 23
     )
   end
