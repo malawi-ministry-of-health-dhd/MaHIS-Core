@@ -19,15 +19,15 @@ class SavePatientRecordService
     }
 
     ids = {
-      national_id: record.dig('otherPersonInformation', 'national_id'),
-      birth_id: record.dig('otherPersonInformation', 'birth_id')
+      national_id: record.dig('otherPersonInformation', 'nationalID'),
+      birth_id: record.dig('otherPersonInformation', 'birthID')
     }
 
     return if required_fields.values.any? { |value| value.nil? || value.to_s.empty? }
-    return unless validate_id(ids[:national_id], ids[:birth_id])
     return unless (patient_id = save_person_information(record)[:patient_id])
 
     validate_id(ids[:national_id], ids[:birth_id])
+    
     %i[
       create_guardian
       save_birthday_data
@@ -90,13 +90,6 @@ class SavePatientRecordService
       PatientIdentifierService.create(
         patient_id: patient_id,
         identifier: otherPersonInformation[:nationalID],
-        identifier_type: 28
-      )
-    end
-    if otherPersonInformation[:relationshipID].present?
-      PatientIdentifierService.create(
-        patient_id: patient_id,
-        identifier: otherPersonInformation[:relationshipID],
         identifier_type: 28
       )
     end
