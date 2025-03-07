@@ -39,9 +39,10 @@ module NcdService
       private
 
       def fetch_registrations
+        registration_types = ['PATIENT REGISTRATION', 'REGISTRATION']
         base_query
           .where(
-            encounter_type: { name: 'PATIENT REGISTRATION' }
+            encounter_type: { name: registration_types }
           )
           .distinct
       end
