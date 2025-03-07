@@ -41,7 +41,7 @@ module NcdService
       def fetch_registrations
         base_query
           .where(
-            encounter_type: { name: 'REGISTRATION' }
+            encounter_type: { name: 'PATIENT REGISTRATION' }
           )
           .distinct
       end
