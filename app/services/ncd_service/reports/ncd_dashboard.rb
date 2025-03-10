@@ -96,7 +96,7 @@ module NcdService
           quarters[quarter_label] = {
             type_one: base_registrations.where(obs: { value_coded: 6409 }).count(:person_id) || 0,
             type_two: base_registrations.where(obs: { value_coded: 6410 }).count(:person_id) || 0,
-            hypertention:base_registrations.where(obs: { value_coded: 8809 }).count(:person_id) || 0,
+            hypertention: base_registrations.where(obs: { value_coded: [8809, 903] }).count(:person_id) || 0,
             date_range: {
               start: start_date.strftime('%Y-%m-%d'),
               end: end_date.strftime('%Y-%m-%d')
