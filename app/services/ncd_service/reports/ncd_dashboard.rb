@@ -21,6 +21,7 @@ module NcdService
           total_male_registered: total_male_registered || 0,
           total_female_registered: total_female_registered || 0,
           total_complications: fetch_complications.count(:person_id),
+          total_defaulters: count_defaulters || 0,
           gender_data: {
             categories: gender_quarterly_data.keys,
             femaleSeries: gender_quarterly_data.values.map { |q| q[:female] || 0 },
@@ -32,7 +33,6 @@ module NcdService
             typeTwoSeries: diagnosis_quarterly_data.values.map { |q| q[:type_two] || 0 },
             hypertentionSeries: diagnosis_quarterly_data.values.map { |q| q[:hypertention] || 0 }
           }
-          
         }
       end
 
@@ -79,6 +79,37 @@ module NcdService
 
       def total_female_registered
         @registrations.where(person: { gender: 'F' }).count(:person_id)
+      end
+
+      def count_defaulters
+        cutoff_date = Date.current - 60.days
+        
+        # Get patients from the NCD program at this location
+        base_patients = Patient.joins(encounters: [:program, :type])
+                              .where(program: { program_id: 32 })
+                              .where(encounters: { location_id: @location_id })
+                              .where(encounter_type: { name: ['PATIENT REGISTRATION', 'REGISTRATION'] })
+                              .distinct
+        
+        # All registered patients
+        all_patients = base_patients.pluck(:patient_id)
+        
+        # Get patients who have had a drug order in the past 60 days
+        active_patients = Patient.joins(orders: :drug_order)
+                         .joins('INNER JOIN obs ON obs.order_id = orders.order_id')
+                         .joins('INNER JOIN concept_name ON concept_name.concept_id = obs.concept_id')
+                         .where(patient_id: all_patients)  # Only check registered patients
+                         .where('drug_order.quantity IS NOT NULL')
+                         .where('orders.start_date > ?', cutoff_date)
+                         .where(
+                           'concept_name.name = ? AND obs.value_numeric IS NOT NULL',
+                           'AMOUNT DISPENSED'
+                         )
+                         .distinct
+                         .pluck(:patient_id)
+        
+        # Defaulters are registered patients minus active patients
+        (all_patients - active_patients).count
       end
 
       def diagnosis_quarterly_breakdown
