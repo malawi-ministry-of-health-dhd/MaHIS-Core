@@ -13,6 +13,7 @@ module Api
           total_programs: Program.all.count,
           total_concept_names: ConceptName.where('voided = 0 AND name IS NOT NULL AND name != ""').count,
           total_concept_set: concept_sets_count,
+          total_OPD_drugs: Drug.find_all_by_concept_set('OPD Medication').count,
           total_test_types: Lab::ConceptsService.test_types.unscope(:select,
                                                                     :group).distinct.count('concept_name.concept_id'),
           total_specimens: Lab::ConceptsService.specimen_types.unscope(:select,
