@@ -220,8 +220,8 @@ module Api
         cut_off_date = params[:date]&.to_date || Date.today
         program_id = params[:program_id]
         drugs_orders = paginate(service.find_program_drug_orders_awaiting_dispensation(patient, cut_off_date, program_id:))
-
-        render json: drugs_orders
+        valid_orders = drugs_orders.select { |order| order.drug.present? }
+        render json: valid_orders.as_json
       end
 
       # Returns all lab orders made since a given date
