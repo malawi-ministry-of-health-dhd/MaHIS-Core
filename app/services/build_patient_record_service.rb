@@ -74,6 +74,11 @@ module BuildPatientRecordService
           saved: extract_observations(patient_id, EncounterType.find_by_name('ASSESSMENT').id),
           unsaved: []
         },
+        labOrders: {
+          saved: Lab::OrdersSearchService.find_orders(patient_id: patient_id),
+          unsaved: [],
+          voided: []
+        },
         MedicationOrder: {
           saved: get_client_drug_orders(patient_id),
           unsaved: []
