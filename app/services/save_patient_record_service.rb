@@ -5,7 +5,8 @@ ENCOUNTER_TYPE_MAPPING = {
   diagnosis: 'DIAGNOSIS',
   substance_abuse: 'ASSESSMENT',
   screening: 'SCREENING',
-  lab_orders: 'LAB_ORDERS',
+  lab_orders: 'LAB ORDERS',
+  lab_results: 'LAB RESULTS',
   medication_order:'TREATMENT'
 }.freeze
 class SavePatientRecordService
@@ -36,10 +37,12 @@ class SavePatientRecordService
       save_substance_abuse_data
       save_screening_data
       save_lab_orders_data
+      save_lab_results_data
       save_vaccines
       save_appointments
       send_sms
       void_vaccine
+      void_lab_order
       save_medication_order
     ].each { |operation| send(operation, patient_id, record) }
     BuildPatientRecordService.build_patient_record(patient_id)
@@ -241,7 +244,10 @@ class SavePatientRecordService
   end
 
   def save_lab_orders_data(patient_id, record)
-    save_clinical_data(:labOrders, patient_id, record)
+    save_lab_order(:labOrders, patient_id, record)
+  end
+  def save_lab_results_data(patient_id, record)
+    save_lab_results(:labResults, patient_id, record)
   end
 
   def save_vaccines(patient_id, record)
@@ -355,6 +361,53 @@ class SavePatientRecordService
     end
   end
   
+  def save_lab_order(data_type, patient_id, record)
+    unsaved_data = record.dig(:labOrders, :unsaved)
+    return unless unsaved_data&.any?
+    data_key = data_type.to_s.underscore.to_sym
+    begin
+      encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[data_key])
+      encounter_id = create_encounter(patient_id, encounter_type.id, record)
+      orders = unsaved_data.map do |order_params|
+        order_params = order_params.merge(encounter_id: encounter_id)
+        Lab::OrdersService.order_test(order_params)
+      end
+
+      orders.each { |order| Lab::PushOrderJob.perform_later(order.fetch(:order_id)) }
+
+      record[data_type][:unsaved] = []
+    rescue StandardError => e
+      log_error("Failed to save #{data_type} information", e)
+    end
+
+  end
+
+  def save_lab_results(data_type, patient_id, record)
+    unsaved_data = record.dig(:labOrders, :results)
+    return unless unsaved_data&.any?
+    data_key = data_type.to_s.underscore.to_sym
+    
+    begin
+      encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[data_key])
+      encounter_id = create_encounter(patient_id, encounter_type.id, record)
+      lab_results = unsaved_data[0].merge(encounter_id: encounter_id)
+      Lab::ResultsService.create_results(lab_results[:test_id], lab_results)
+      record[data_type][:results] = []
+    rescue StandardError => e
+      log_error("Failed to save #{data_type} information", e)
+    end
+    
+  end
+
+  def void_lab_order(patient_id, record)
+    data = record.dig(:labOrders, :voided)
+    return unless data&.any?
+    data.map do |item|
+      Lab::OrdersService.void_order(item[:orderId], item[:reason])
+      Lab::VoidOrderJob.perform_later(item[:orderId])
+    end
+    record[:labOrders][:voided] = []
+  end
 
   def save_clinical_data(data_type, patient_id, record)
     data_key = data_type.to_s.underscore.to_sym
