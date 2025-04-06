@@ -93,8 +93,8 @@ module BuildPatientRecordService
         saveStatusBirthRegistration: ''
       }
     end
-    def visits(record,program = nil)
-      program = program ? Program.find(program) : nil
+    def visits(record,program_id = nil)
+      program = program_id ? Program.find(program_id) : nil
       patient_service.find_patient_visit_dates(record,program)
     end
     def get_attribute(item, name)
