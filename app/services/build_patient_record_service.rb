@@ -83,12 +83,20 @@ module BuildPatientRecordService
           saved: get_client_drug_orders(patient_id),
           unsaved: []
         },
+        visits: {
+          visitsDates: visits(record),
+          NCDVisitsDates: visits(record,32),
+          OPDVisitsDates: visits(record,14),
+        },
         saveStatusPersonInformation: '',
         saveStatusGuardianInformation: '',
         saveStatusBirthRegistration: ''
       }
     end
-
+    def visits(record,program_id = nil)
+      program = program_id ? Program.find(program_id) : nil
+      patient_service.find_patient_visit_dates(record,program)
+    end
     def get_attribute(item, name)
       attribute = item.person.person_attributes.find { |attr| attr.type.name == name }
       attribute&.value
@@ -213,7 +221,9 @@ module BuildPatientRecordService
         []
       end
     end
-
+    def patient_service
+        PatientService.new
+    end
     def matches_filters?(observation, filters)
       return true if filters.empty?
 
