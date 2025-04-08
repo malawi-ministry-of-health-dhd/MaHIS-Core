@@ -146,7 +146,7 @@ class SavePatientRecordService
         next_available_number = (possible_identifiers - assigned_numbers).first
       end   
 
-      "NCD-#{current_ncd_code}-#{next_available_number}"
+      "#{current_ncd_code}-NCD-#{next_available_number}"
   end
   def global_property(name)
     GlobalProperty.find_by property: name
@@ -286,7 +286,6 @@ def save_enrollment_data(patient_id, record)
   return unless unsaved.present? 
 
   {
-    diagnosis: :diagnosis,
     familyMedicalHistory: :familyMedicalHistory,
     patientRegistration: :patientRegistration,
     complications: :complications,
