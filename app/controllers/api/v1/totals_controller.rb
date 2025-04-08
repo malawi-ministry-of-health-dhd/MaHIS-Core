@@ -20,7 +20,8 @@ module Api
                                                                        :group).distinct.count('concept_name.concept_id'),
           total_diagnosis: DiagnosisService.new.find_diagnosis({
                                                                  id: ConceptName.find_by(name: 'Qech outpatient diagnosis list')&.concept_id, name: nil, count: true
-                                                               })
+                                                               }),
+          total_facilities: Facility.all.count,
         }
       end
 
