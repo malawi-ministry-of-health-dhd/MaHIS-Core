@@ -7,7 +7,12 @@ ENCOUNTER_TYPE_MAPPING = {
   screening: 'SCREENING',
   lab_orders: 'LAB ORDERS',
   lab_results: 'LAB RESULTS',
-  medication_order:'TREATMENT'
+  family_medical_history:'FAMILY MEDICAL HISTORY',
+  complications:'COMPLICATIONS',
+  tb_reception:'TB RECEPTION',
+  hiv_status_at_enrollment:'HIV STATUS AT ENROLLMENT',
+  medical_history:'MEDICAL HISTORY',
+  patient_registration:'PATIENT REGISTRATION'
 }.freeze
 class SavePatientRecordService
   def create_patient_record(record)
@@ -34,6 +39,7 @@ class SavePatientRecordService
       save_birthday_data
       save_vitals_data
       save_diagnosis_data
+      save_enrollment_data
       save_substance_abuse_data
       save_screening_data
       save_lab_orders_data
@@ -44,6 +50,7 @@ class SavePatientRecordService
       void_vaccine
       void_lab_order
       save_medication_order
+      create_ncd_identifier
     ].each { |operation| send(operation, patient_id, record) }
     BuildPatientRecordService.build_patient_record(patient_id)
   end
@@ -105,6 +112,45 @@ class SavePatientRecordService
     )
   end
 
+  def create_ncd_identifier(patient_id, record)
+    return unless record[:NcdID].present?
+    if(record[:NcdID] == "-")
+      PatientIdentifierService.create(patient_id: patient_id,
+      identifier: find_next_available_ncd_number(record[:location_id]),
+      identifier_type: 31)
+    end
+  end
+  def find_next_available_ncd_number(location_id)
+      current_ncd_code = global_property("site_prefix_#{location_id}")&.property_value
+      raise 'Global property `site_prefix` not set' unless current_ncd_code
+
+      type = PatientIdentifierType.find_by_name('NCD Number')
+      current_ncd_number_identifiers = PatientIdentifier.where(identifier_type: type)
+
+      unless current_ncd_number_identifiers.nil?
+        assigned_ncd_ids = current_ncd_number_identifiers.collect do |identifier|
+          Regexp.last_match(1).to_i if identifier.identifier =~ /#{current_ncd_code}-NCD- *(\d+)/
+        end.compact
+      end
+
+      next_available_number = nil
+
+      if assigned_ncd_ids.empty?
+        next_available_number = 1
+      else
+        assigned_numbers = assigned_ncd_ids.sort
+
+        possible_number_range = global_property('ncd_number_range')&.property_value&.to_i || 100_000
+
+        possible_identifiers = Array.new(possible_number_range) { |i| (i + 1) }
+        next_available_number = (possible_identifiers - assigned_numbers).first
+      end   
+
+      "NCD-#{current_ncd_code}-#{next_available_number}"
+  end
+  def global_property(name)
+    GlobalProperty.find_by property: name
+  end
   def enroll_program(patient_id, record)
     if PatientProgram.where(program_id: record[:program_id], patient_id: patient_id)
                      .exists?
@@ -234,6 +280,28 @@ class SavePatientRecordService
   def save_diagnosis_data(patient_id, record)
     save_clinical_data(:diagnosis, patient_id, record)
   end
+
+def save_enrollment_data(patient_id, record)
+  unsaved = record.dig(:NCDEnrollment, :unsaved)
+  return unless unsaved.present? 
+
+  {
+    diagnosis: :diagnosis,
+    familyMedicalHistory: :familyMedicalHistory,
+    patientRegistration: :patientRegistration,
+    complications: :complications,
+    hivStatusAtEnrollment: :hivStatusAtEnrollment,
+    tbReception: :tbReception,
+    medicalHistory: :medicalHistory
+  }.each do |key, data_type|
+    next unless unsaved[key].present?
+
+    pass_save_data(data_type, unsaved[key], patient_id, record)
+  end
+
+  record[:NCDEnrollment][:unsaved] = {}
+end
+
 
   def save_substance_abuse_data(patient_id, record)
     save_clinical_data(:substanceAbuse, patient_id, record)
@@ -415,23 +483,47 @@ class SavePatientRecordService
 
     return unless unsaved_data&.any?
 
+    if save_observations(data_key, unsaved_data, patient_id, record)
+      record[data_type][:unsaved] = []
+    end
+  end
+
+  def pass_save_data(data_type, unsaved_data, patient_id, record)
+    return unless unsaved_data&.any?
+
+    data_key = data_type.to_s.underscore.to_sym
+    save_observations(data_key, unsaved_data, patient_id, record)
+  end
+
+  private
+
+  def save_observations(data_key, observations, patient_id, record)
+    encounter_type_name = ENCOUNTER_TYPE_MAPPING[data_key]
+    unless encounter_type_name
+      log_error("No encounter type mapped for #{data_key}")
+      return false
+    end
+
+    encounter_type = EncounterType.find_by_name(encounter_type_name)
+    unless encounter_type
+      log_error("EncounterType not found for #{encounter_type_name}")
+      return false
+    end
+
     begin
-      encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[data_key])
       encounter_id = create_encounter(patient_id, encounter_type.id, record)
 
       save_obs(
         encounter_id: encounter_id,
-        observations: unsaved_data,
+        observations: observations,
         location_id: record[:location_id]
       )
-
-      record[data_type][:unsaved] = []
+      true
     rescue StandardError => e
-      log_error("Failed to save #{data_type} information", e)
+      log_error("Failed to save #{data_key} observations", e)
+      false
     end
   end
-
-  private
 
   def log_error(message, error)
     Rails.logger.error("#{message}: #{error.message}")
