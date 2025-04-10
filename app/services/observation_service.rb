@@ -23,6 +23,7 @@ class ObservationService
     value_text
   ].freeze
 
+  public
   def proccess_obs_creation(encounter, obs_parameters)
     ActiveRecord::Base.transaction do
       Rails.logger.debug("Creating observation: #{obs_parameters}")

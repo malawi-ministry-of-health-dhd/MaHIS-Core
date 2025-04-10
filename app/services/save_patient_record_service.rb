@@ -12,7 +12,9 @@ ENCOUNTER_TYPE_MAPPING = {
   tb_reception:'TB RECEPTION',
   hiv_status_at_enrollment:'HIV STATUS AT ENROLLMENT',
   medical_history:'MEDICAL HISTORY',
-  patient_registration:'PATIENT REGISTRATION'
+  patient_registration:'PATIENT REGISTRATION',
+  patient_outcome: 'PATIENT OUTCOME',
+  treatment:'TREATMENT',
 }.freeze
 class SavePatientRecordService
   def create_patient_record(record)
@@ -49,6 +51,7 @@ class SavePatientRecordService
       send_sms
       void_vaccine
       void_lab_order
+      save_outcome
       save_medication_order
       create_ncd_identifier
     ].each { |operation| send(operation, patient_id, record) }
@@ -347,6 +350,7 @@ end
     return unless record[:appointments][:unsaved]&.any?
 
     encounter_id = create_encounter(patient_id, 7, record)
+
     save_obs(
       encounter_id: encounter_id,
       observations: record[:appointments][:unsaved],
@@ -409,7 +413,7 @@ end
         orders.each do |order|
           next unless order.key?(:NCD_Drug_Orders)
           drug_orders = order[:NCD_Drug_Orders]
-          encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[:medication_order])
+          encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[:treatment])
           encounter_id = create_encounter(patient_id, encounter_type.id, record)
           encounter = Encounter.find(encounter_id)
 
@@ -423,6 +427,58 @@ end
       end
     rescue StandardError => e
       Rails.logger.error("Failed to create medication order: #{e.message}")
+      Rails.logger.error(e.backtrace.join("\n"))
+      raise
+    end
+  end
+
+  def save_outcome(patient_id, record)
+    outcome = record.dig(:outCome, :unsaved)
+    
+    # Early return if outcome is nil or empty
+    return unless outcome.present?
+    
+    begin
+      # Convert to array if it's not already
+      outcomes_array = outcome.is_a?(Array) ? outcome : [outcome]
+      
+      # Create observation service instance
+      observation_service = ObservationService.new
+      
+      outcomes_array.each do |out_come|
+        # Make sure out_come is not nil before proceeding
+        next unless out_come.present?
+        
+        encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[:patient_outcome])
+        encounter_id = create_encounter(patient_id, encounter_type.id, record)
+        encounter = Encounter.find(encounter_id)
+        
+        unless encounter.type.name == 'PATIENT OUTCOME'
+          Rails.logger.warn("Unexpected encounter type: #{encounter.type.name} for encounter ##{encounter.encounter_id}")
+          next
+        end
+        
+        # Convert ActionController::Parameters to a regular Hash
+        if out_come.is_a?(ActionController::Parameters)
+          out_come = out_come.permit!.to_h  # permit! allows all attributes
+        end
+        
+        # Handle nested value_text if it's an ActionController::Parameters object
+        if out_come[:value_text].is_a?(ActionController::Parameters)
+          out_come[:value_text] = out_come[:value_text].permit!.to_h
+          # Convert hash to JSON string for storage
+          out_come[:value_text] = out_come[:value_text].to_json
+        end
+        
+        # Add any missing required fields
+        out_come[:person_id] = patient_id if out_come[:person_id].blank?
+        out_come[:location_id] ||= User.current.location_id
+        
+        # Now pass the sanitized parameters to the service
+        observation_service.create_observation(encounter, out_come)
+      end
+    rescue StandardError => e
+      Rails.logger.error("Failed to create patient outcome: #{e.message}")
       Rails.logger.error(e.backtrace.join("\n"))
       raise
     end
@@ -531,5 +587,9 @@ end
 
   def person_service
     PersonService.new
+  end
+
+  def observation_service
+    ObservationService.new
   end
 end
