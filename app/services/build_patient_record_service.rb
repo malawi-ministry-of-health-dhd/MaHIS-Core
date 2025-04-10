@@ -83,6 +83,10 @@ module BuildPatientRecordService
           saved: get_client_drug_orders(patient_id),
           unsaved: []
         },
+        outCome: {
+          saved: [],
+          unsaved: []
+        },
         visits: {
           visitsDates: visits(record),
           NCDVisitsDates: visits(record,32),
