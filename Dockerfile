@@ -1,10 +1,21 @@
 FROM ruby:3.2
 
-# Install dependencies
-RUN apt-get update -qq && \
-    apt-get install -y build-essential libmysqlclient-dev nodejs npm default-mysql-client curl && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+# Set DNS to use Google's public DNS as a fallback
+RUN echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+
+# Install dependencies with retry mechanism
+RUN apt-get update -qq || (sleep 10 && apt-get update -qq) && \
+    apt-get install -y \
+    build-essential \
+    default-libmysqlclient-dev \
+    mariadb-client \
+    nodejs \
+    npm \
+    curl \
+    net-tools \
+    netcat \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install passenger
 RUN gem install passenger
@@ -15,8 +26,8 @@ WORKDIR /app
 # Copy Gemfile and Gemfile.lock
 COPY Gemfile Gemfile.lock ./
 
-# Install gems
-RUN bundle install
+# Install gems with retry
+RUN bundle install || (gem install bundler && bundle install)
 
 # Copy the rest of the application
 COPY . .
