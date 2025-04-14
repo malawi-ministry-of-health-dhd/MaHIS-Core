@@ -4,141 +4,249 @@ module BuildPatientRecordService
   class << self
     include ModelUtils
     def build_patient_record(patient_id)
-      record = Patient.find(patient_id)
-      {
-        patientID: patient_id,
-        ID: patient_identifier(record, 3),
-        NcdID: patient_identifier(record, 31),
-        program_id: '',
-        provider_id: '',
-        location_id: '',
-        encounter_datetime: '',
-        personInformation: {
-          given_name: record.person.names[0].given_name,
-          middle_name: record.person.names[0].middle_name,
-          family_name: record.person.names[0].family_name,
-          gender: record.person.gender,
-          birthdate: record.person.birthdate,
-          birthdate_estimated: 'false',
-          home_region: '',
-          home_district: record.person.addresses[0].address2,
-          home_traditional_authority: record.person.addresses[0].county_district,
-          home_village: record.person.addresses[0].neighborhood_cell,
-          current_region: '',
-          current_district: record.person.addresses[0].state_province,
-          current_traditional_authority: record.person.addresses[0].township_division,
-          current_village: record.person.addresses[0].city_village,
-          country: record.person.addresses[0].country,
-          landmark: '',
-          cell_phone_number: get_attribute(record, 'Cell Phone Number'),
-          occupation: get_attribute(record, 'Occupation'),
-          marital_status: get_attribute(record, 'Civil Status'),
-          religion: '',
-          education_level: get_attribute(record, 'EDUCATION LEVEL')
-        },
-        guardianInformation: {
-          saved: get_guardians(patient_id),
-          unsaved: []
-        },
-        birthRegistration: extract_observations(patient_id, EncounterType.find_by_name('REGISTRATION').id),
-        otherPersonInformation: {
-          nationalID: '',
-          birthID: '',
-          relationshipID: ''
-        },
-        vitals: {
-          saved: extract_observations(patient_id, EncounterType.find_by_name('VITALS').id),
-          unsaved: []
-        },
-        vaccineSchedule: ImmunizationService::VaccineScheduleService.vaccine_schedule(Person.find(patient_id)),
-        vaccineAdministration: {
-          orders: [],
-          obs: [],
-          voided: []
-        },
-        appointments: {
-          saved: [],
-          unsaved: []
-        },
-        diagnosis: {
-          saved: extract_observations(patient_id, EncounterType.find_by_name('DIAGNOSIS').id),
-          unsaved: []
-        },
-        screening: {
-          saved: [extract_observations(patient_id, EncounterType.find_by_name('SCREENING').id, nil, true) +
-            extract_observations(patient_id, EncounterType.find_by_name('SCREENING').id,
-                                 { concept_id: concept_name_to_id('CVD') })].flatten,
-          unsaved: []
-        },
-        substanceAbuse: {
-          saved: extract_observations(patient_id, EncounterType.find_by_name('ASSESSMENT').id),
-          unsaved: []
-        },
-        labOrders: {
-          saved: Lab::OrdersSearchService.find_orders(patient_id: patient_id),
-          unsaved: [],
-          voided: []
-        },
-        MedicationOrder: {
-          saved: get_client_drug_orders(patient_id),
-          unsaved: []
-        },
-        outCome: {
-          saved: [],
-          unsaved: []
-        },
-        visits: {
-          visitsDates: visits(record),
-          NCDVisitsDates: visits(record,32),
-          OPDVisitsDates: visits(record,14),
-        },
-        saveStatusPersonInformation: '',
-        saveStatusGuardianInformation: '',
-        saveStatusBirthRegistration: ''
-      }
-    end
-    def visits(record,program_id = nil)
-      program = program_id ? Program.find(program_id) : nil
-      patient_service.find_patient_visit_dates(record,program)
-    end
-    def get_attribute(item, name)
-      attribute = item.person.person_attributes.find { |attr| attr.type.name == name }
-      attribute&.value
+      begin
+        # Find the patient, handling potential not-found case
+        record = Patient.find_by(patient_id: patient_id)
+        return nil unless record
+
+        # Safely access related data
+        person = record.person
+        name = person&.names&.first
+        address = person&.addresses&.first
+
+        {
+          patientID: patient_id,
+          ID: patient_identifier(record, 3),
+          NcdID: patient_identifier(record, 31),
+          program_id: '',
+          provider_id: '',
+          location_id: Encounter.where(patient_id: patient_id).order(encounter_datetime: :desc).first&.location_id,
+          encounter_datetime: '',
+          personInformation: {
+            given_name: name&.given_name || '',
+            middle_name: name&.middle_name || '',
+            family_name: name&.family_name || '',
+            gender: person&.gender || '',
+            birthdate: person&.birthdate&.to_s || '',
+            birthdate_estimated: 'false',
+            home_region: '',
+            home_district: address&.address2 || '',
+            home_traditional_authority: address&.county_district || '',
+            home_village: address&.neighborhood_cell || '',
+            current_region: '',
+            current_district: address&.state_province || '',
+            current_traditional_authority: address&.township_division || '',
+            current_village: address&.city_village || '',
+            country: address&.country || '',
+            landmark: '',
+            cell_phone_number: safe_get_attribute(record, 'Cell Phone Number'),
+            occupation: safe_get_attribute(record, 'Occupation'),
+            marital_status: safe_get_attribute(record, 'Civil Status'),
+            religion: '',
+            education_level: safe_get_attribute(record, 'EDUCATION LEVEL')
+          },
+          guardianInformation: {
+            saved: safe_get_guardians(patient_id),
+            unsaved: []
+          },
+          birthRegistration: safe_extract_observations(patient_id, safe_find_encounter_type('REGISTRATION')),
+          otherPersonInformation: {
+            nationalID: '',
+            birthID: '',
+            relationshipID: ''
+          },
+          vitals: {
+            saved: safe_extract_observations(patient_id, safe_find_encounter_type('VITALS')),
+            unsaved: []
+          },
+          vaccineSchedule: safe_get_vaccine_schedule(person),
+          vaccineAdministration: {
+            orders: [],
+            obs: [],
+            voided: []
+          },
+          appointments: {
+            saved: [],
+            unsaved: []
+          },
+          diagnosis: {
+            saved: safe_extract_observations(patient_id, safe_find_encounter_type('DIAGNOSIS')),
+            unsaved: []
+          },
+          screening: {
+            saved: safe_get_screening_data(patient_id),
+            unsaved: []
+          },
+          substanceAbuse: {
+            saved: safe_extract_observations(patient_id, safe_find_encounter_type('ASSESSMENT')),
+            unsaved: []
+          },
+          labOrders: {
+            saved: safe_get_lab_orders(patient_id),
+            unsaved: [],
+            voided: []
+          },
+          MedicationOrder: {
+            saved: get_client_drug_orders(patient_id),
+            unsaved: []
+          },
+          outCome: {
+            saved: [],
+            unsaved: []
+          },
+          visits: safe_get_visits(record),
+          saveStatusPersonInformation: '',
+          saveStatusGuardianInformation: '',
+          saveStatusBirthRegistration: ''
+        }
+      rescue StandardError => e
+        Rails.logger.error("Error in build_patient_record for patient #{patient_id}: #{e.message}")
+        Rails.logger.error(e.backtrace.join("\n"))
+        nil
+      end
     end
 
-    def patient_identifier(identifiers, identifier_type_id)
-      if identifiers
-        identifiers.patient_identifiers
-                   .select { |identifier| identifier.identifier_type == identifier_type_id }
-                   .map(&:identifier)
-                   .join(', ')
-      else
+    # Safe wrapper methods to prevent nil errors
+    
+    def safe_find_encounter_type(name)
+      EncounterType.find_by_name(name)&.id
+    rescue StandardError => e
+      Rails.logger.error("Error finding encounter type '#{name}': #{e.message}")
+      nil
+    end
+    
+    def safe_get_screening_data(patient_id)
+      begin
+        screening_type = safe_find_encounter_type('SCREENING')
+        return [] unless screening_type
+        
+        regular_screening = safe_extract_observations(patient_id, screening_type, nil, true) || []
+        cvd_screening = safe_extract_observations(patient_id, screening_type, 
+                                                { concept_id: safe_concept_name_to_id('CVD') }) || []
+        
+        [regular_screening + cvd_screening].flatten.compact
+      rescue StandardError => e
+        Rails.logger.error("Error getting screening data for patient #{patient_id}: #{e.message}")
+        []
+      end
+    end
+    
+    def safe_concept_name_to_id(name)
+      concept_name_to_id(name)
+    rescue StandardError => e
+      Rails.logger.error("Error converting concept name '#{name}' to ID: #{e.message}")
+      nil
+    end
+    
+    def safe_get_lab_orders(patient_id)
+      begin
+        return [] unless patient_id
+        Lab::OrdersSearchService.find_orders(patient_id: patient_id)
+      rescue StandardError => e
+        Rails.logger.error("Error getting lab orders for patient #{patient_id}: #{e.message}")
+        []
+      end
+    end
+    
+    def safe_get_vaccine_schedule(person)
+      begin
+        return [] unless person
+        ImmunizationService::VaccineScheduleService.vaccine_schedule(person)
+      rescue StandardError => e
+        Rails.logger.error("Error getting vaccine schedule: #{e.message}")
+        []
+      end
+    end
+    
+    def safe_get_visits(record)
+      begin
+        {
+          visitsDates: visits(record) || [],
+          NCDVisitsDates: visits(record, 32) || [],
+          OPDVisitsDates: visits(record, 14) || []
+        }
+      rescue StandardError => e
+        Rails.logger.error("Error getting visits for patient: #{e.message}")
+        { visitsDates: [], NCDVisitsDates: [], OPDVisitsDates: [] }
+      end
+    end
+
+    def visits(record, program_id = nil)
+      return [] unless record
+      
+      begin
+        program = program_id ? Program.find_by(program_id: program_id) : nil
+        patient_service.find_patient_visit_dates(record, program)
+      rescue StandardError => e
+        Rails.logger.error("Error in visits method: #{e.message}")
+        []
+      end
+    end
+    
+    def safe_get_attribute(item, name)
+      return '' unless item&.person
+      
+      begin
+        attribute = item.person.person_attributes.find { |attr| attr.type.name == name }
+        attribute&.value || ''
+      rescue StandardError => e
+        Rails.logger.error("Error getting attribute '#{name}': #{e.message}")
         ''
       end
     end
 
-    def get_guardians(patient_id)
-      relationships_service = PersonRelationshipService.new Person.find(patient_id)
-      relationships = relationships_service.find_relationships('')
-      return [] unless relationships.is_a?(Enumerable) && relationships.any?
+    def patient_identifier(identifiers, identifier_type_id)
+      begin
+        if identifiers
+          identifiers.patient_identifiers
+                    .select { |identifier| identifier.identifier_type == identifier_type_id }
+                    .map(&:identifier)
+                    .join(', ')
+        else
+          ''
+        end
+      rescue StandardError => e
+        Rails.logger.error("Error getting patient identifier for type #{identifier_type_id}: #{e.message}")
+        ''
+      end
+    end
 
-      relationships.map do |relationship|
+    def safe_get_guardians(patient_id)
+      begin
+        return [] unless patient_id
+        
+        person = Person.find_by(person_id: patient_id)
+        return [] unless person
+        
+        relationships_service = PersonRelationshipService.new(person)
+        relationships = relationships_service.find_relationships('')
+        return [] unless relationships.is_a?(Enumerable) && relationships.any?
+
+        relationships.map do |relationship|
+          build_guardian_hash(relationship)
+        end.compact
+      rescue StandardError => e
+        Rails.logger.error("Error getting guardians for patient #{patient_id}: #{e.message}")
+        []
+      end
+    end
+    
+    def build_guardian_hash(relationship)
+      return nil unless relationship
+      
+      begin
         person = relationship.relation
+        return nil unless person
+        
         name = person.names&.first
         address = person.addresses&.first
-
-        # Helper function to safely get person attribute value
-        get_attribute_value = lambda do |attributes, attribute_name|
-          attribute = attributes&.find { |attr| attr.type.name == attribute_name }
-          attribute ? attribute.value : ''
-        end
 
         {
           given_name: name&.given_name || '',
           middle_name: name&.middle_name || '',
           family_name: name&.family_name || '',
           gender: person&.gender || '',
-          birthdate: person&.birthdate || '',
+          birthdate: person&.birthdate&.to_s || '',
           birthdate_estimated: person&.birthdate_estimated&.to_s || '',
 
           home_region: address&.region || '',
@@ -151,8 +259,8 @@ module BuildPatientRecordService
           current_traditional_authority: address&.township_division || '',
           current_village: address&.city_village || '',
 
-          landmark: get_attribute_value.call(person&.person_attributes, 'Landmark Or Plot Number'),
-          cell_phone_number: get_attribute_value.call(person&.person_attributes, 'Cell Phone Number'),
+          landmark: safe_get_person_attribute(person, 'Landmark Or Plot Number'),
+          cell_phone_number: safe_get_person_attribute(person, 'Cell Phone Number'),
           national_id: '',
 
           relationship_id: relationship.id.to_s || '',
@@ -162,49 +270,101 @@ module BuildPatientRecordService
             relationship_type_id: relationship.type&.id&.to_s || ''
           }
         }
+      rescue StandardError => e
+        Rails.logger.error("Error building guardian hash: #{e.message}")
+        nil
+      end
+    end
+    
+    def safe_get_person_attribute(person, attribute_name)
+      return '' unless person&.person_attributes
+      
+      begin
+        attribute = person.person_attributes.find { |attr| attr.type.name == attribute_name }
+        attribute ? attribute.value : ''
+      rescue StandardError => e
+        Rails.logger.error("Error getting person attribute '#{attribute_name}': #{e.message}")
+        ''
       end
     end
 
-    def extract_observations(patient_id, encounter_type, value_filters = nil, has_children = nil)
-      encounters = Encounter.where(patient_id: patient_id, encounter_type: encounter_type)
+    def safe_extract_observations(patient_id, encounter_type, value_filters = nil, has_children = nil)
+      begin
+        return [] unless patient_id && encounter_type
+        
+        encounters = Encounter.where(patient_id: patient_id, encounter_type: encounter_type)
+        return [] unless encounters.any?
 
-      encounters.flat_map do |encounter|
+        encounters.flat_map do |encounter|
+          safe_process_observations(encounter, value_filters, has_children)
+        end.compact
+      rescue StandardError => e
+        Rails.logger.error("Error extracting observations for patient #{patient_id}, encounter type #{encounter_type}: #{e.message}")
+        []
+      end
+    end
+    
+    def safe_process_observations(encounter, value_filters, has_children)
+      begin
         encounter.observations
-                 .select do |observation|
-                   if value_filters
-                     matches_filters?(observation, value_filters)
-                   else
-                     !has_children || observation.children.length.positive?
-                   end
-                 end
-                 .map do |observation|
-          children = if observation.children.length.positive?
-                       observation.children.map do |child|
-                         {
-                           concept_id: child.concept_id,
-                           concept_name: concept_id_to_name(child.concept_id),
-                           obs_datetime: child.obs_datetime,
-                           obs_id: child.obs_id,
-                           children: child.children,
-                           value_coded: child.value_coded,
-                           value_text: child.value_text,
-                           value_numeric: child.value_numeric
-                         }
-                       end
-                     else
-                       []
-                     end
-          {
-            concept_id: observation.concept_id,
-            concept_name: concept_id_to_name(observation.concept_id),
-            obs_datetime: observation.obs_datetime,
-            obs_id: observation.obs_id,
-            children: children,
-            value_coded: observation.value_coded,
-            value_text: observation.value_text,
-            value_numeric: observation.value_numeric
-          }
-        end
+                .select do |observation|
+                  if value_filters
+                    safe_matches_filters?(observation, value_filters)
+                  else
+                    !has_children || observation.children.length.positive?
+                  end
+                end
+                .map do |observation|
+          safe_build_observation_hash(observation)
+        end.compact
+      rescue StandardError => e
+        Rails.logger.error("Error processing observations for encounter #{encounter.id}: #{e.message}")
+        []
+      end
+    end
+    
+    def safe_build_observation_hash(observation)
+      begin
+        children = if observation.children.length.positive?
+                    observation.children.map do |child|
+                      {
+                        concept_id: child.concept_id,
+                        concept_name: safe_concept_id_to_name(child.concept_id),
+                        obs_datetime: child.obs_datetime&.to_s,
+                        obs_id: child.obs_id,
+                        children: child.children || [],
+                        value_coded: child.value_coded,
+                        value_text: child.value_text || '',
+                        value_numeric: child.value_numeric
+                      }
+                    end.compact
+                  else
+                    []
+                  end
+        
+        {
+          concept_id: observation.concept_id,
+          concept_name: safe_concept_id_to_name(observation.concept_id),
+          obs_datetime: observation.obs_datetime&.to_s,
+          obs_id: observation.obs_id,
+          children: children,
+          value_coded: observation.value_coded,
+          value_text: observation.value_text || '',
+          value_numeric: observation.value_numeric
+        }
+      rescue StandardError => e
+        Rails.logger.error("Error building observation hash for obs #{observation.id}: #{e.message}")
+        nil
+      end
+    end
+    
+    def safe_concept_id_to_name(concept_id)
+      begin
+        return '' unless concept_id
+        concept_id_to_name(concept_id)
+      rescue StandardError => e
+        Rails.logger.error("Error converting concept ID #{concept_id} to name: #{e.message}")
+        ''
       end
     end
 
@@ -225,14 +385,21 @@ module BuildPatientRecordService
         []
       end
     end
+    
     def patient_service
-        PatientService.new
+      PatientService.new
     end
-    def matches_filters?(observation, filters)
-      return true if filters.empty?
+    
+    def safe_matches_filters?(observation, filters)
+      begin
+        return true if filters.nil? || filters.empty?
 
-      filters.any? do |field, value|
-        observation.send(field) == value
+        filters.any? do |field, value|
+          observation.respond_to?(field) && observation.send(field) == value
+        end
+      rescue StandardError => e
+        Rails.logger.error("Error matching filters: #{e.message}")
+        false
       end
     end
   end
