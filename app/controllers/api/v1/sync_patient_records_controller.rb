@@ -1,102 +1,62 @@
 class Api::V1::SyncPatientRecordsController < ApplicationController
   def get_not_sync_ids
-    begin
-      permitted_params = params.permit(
-        :previous_sync_date,
-        :enable_site_sync,
-        :page,
-        :page_size,
-        sync_patient_record: [:previous_sync_date, :page, :page_size]
-      )
-
-      previous_sync_date = permitted_params[:previous_sync_date] || 
-                          permitted_params.dig(:sync_patient_record, :previous_sync_date)
-      enable_site_sync = permitted_params[:enable_site_sync]
-      
-      records = get_not_sync_ids_data(previous_sync_date, enable_site_sync)
-      render json: records, status: :ok
-    rescue StandardError => e
-      Rails.logger.error("Error in get_not_sync_ids: #{e.class.name}")
-      Rails.logger.error("Error message: #{e.message}")
-      Rails.logger.error("Backtrace: #{e.backtrace.join("\n")}")
-      render json: { error: e.message }, status: :internal_server_error
-    end
-  end
-
-  private
-
-  def get_not_sync_ids_data(previous_sync_date = nil, enable_site_sync = nil)
-    location_id = fetch_location_id
-    query = build_base_query(location_id, previous_sync_date)
-    paginated_results = paginate(query)
-
-    # Ensure unique patient_ids by grouping and ordering
-    patient_ids = paginated_results.pluck('patient.patient_id, MAX(encounters.date_created) as latest_encounter_date')
-
-    {
-      sync_patients: sync_patients(patient_ids),
-      sync_count: query.unscope(:select, :order, :group).distinct.count(:patient_id),
-      latest_encounter_datetime: paginated_results.last&.latest_encounter_date,
-      server_patient_count: calculate_server_patient_count(location_id)
-    }
-  rescue StandardError => e
-    Rails.logger.error("Error in get_not_sync_ids_data: #{e.class.name}")
-    Rails.logger.error("Error message: #{e.message}")
-    Rails.logger.error("Backtrace: #{e.backtrace.join("\n")}")
-    raise
-  end
-
-  def validate_inputs(previous_sync_date)
-    return unless previous_sync_date.present?
+    permitted_params = params.permit(
+      :previous_sync_date,
+      :enable_site_sync,
+      :page,
+      :page_size,
+      sync_patient_record: [:previous_sync_date, :page, :page_size]
+    )
     
-    unless previous_sync_date.is_a?(Time) || previous_sync_date.is_a?(String)
-      raise ArgumentError, 'previous_sync_date must be a Time object or valid datetime string'
-    end
+    location_id = fetch_location_id
+    page = params[:page].to_i > 0 ? params[:page].to_i : 1
+    per_page = 50
+    
+    # Optional: filter by updated_at if you want
+    updated_since = params[:previous_sync_date].present? ? Time.parse(params[:previous_sync_date]) : nil
+    
+    # Base query that only reads data (doesn't trigger syncing)
+    query = PatientRecord.where("record.location_id" => location_id)
+    query = query.where(:updated_at.gte => updated_since) if updated_since
+    
+    # Pagination
+    patients = query.order_by(updated_at: :desc)
+                    .skip((page - 1) * per_page)
+                    .limit(per_page)
+    
+    # Count all patients for the location (no pagination)
+    total_for_location = PatientRecord.where("record.location_id" => location_id).count
+    
+    # Build response
+    render json: {
+      sync_patients: patients.map(&:record),
+      sync_count: patients.count,
+      latest_encounter_datetime: patients.first&.updated_at,
+      server_patient_count: total_for_location
+    }
   end
-
+  
+  # Add a new endpoint to trigger syncing manually if needed
+  def trigger_sync
+    location_id = fetch_location_id
+    since_date = params[:since_date]
+    
+    # Queue the batch job to sync all patients for this location
+    job_id = BatchPatientSyncJob.perform_async(location_id, since_date)
+    
+    render json: {
+      status: 'sync_scheduled',
+      job_id: job_id,
+      location_id: location_id,
+      message: "Patient sync job scheduled for location #{location_id}"
+    }
+  end
+  
+  private
+  
   def fetch_location_id
     location_id = User.current&.location_id
     raise ActiveRecord::RecordNotFound, 'Current user location not found' if location_id.nil?
     location_id
-  end
-
-  def build_base_query(location_id, previous_sync_date)
-    query = Patient
-      .joins(:encounters)
-      .select('patient.patient_id, MAX(encounters.date_created) as latest_encounter_date')
-      .where(encounters: { location_id: location_id })
-  
-    if previous_sync_date.present?
-      parsed_date = Time.zone.parse(previous_sync_date)
-      query = query.where('encounters.date_created >= ?', parsed_date)
-    end
-  
-    query.group('patient.patient_id')
-      .order('latest_encounter_date ASC, patient.patient_id ASC')
-  end
-
-  def fetch_latest_encounter_datetime(query)
-    query.maximum('encounters.date_created')
-  end
-
-  def calculate_server_patient_count(location_id)
-    Patient
-      .joins(:encounters)
-      .where('encounter.location_id = ?', location_id) # Keep as `encounter.location_id` if correct
-      .distinct
-      .count
-  end
-
-  def sync_patients(ids)
-    results = ids.map do |id|
-      begin
-        BuildPatientRecordService.build_patient_record(id[0])
-      rescue StandardError => e
-        Rails.logger.error("Error building patient record for ID #{id}: #{e.message}")
-        nil
-      end
-    end.compact
-    Rails.logger.info("Completed sync_patients, processed #{results.size} records")
-    results
   end
 end
