@@ -26,6 +26,7 @@ class PatientRecordSyncJob
       
       # Update the record
       patient_record.record = patient_data
+      patient_record.encounter_datetime = patient_data[:encounter_datetime] if patient_data[:encounter_datetime]
       patient_record.last_sync_at = Time.current
       patient_record.sync_status = 'synced'
       patient_record.save!
