@@ -3,6 +3,7 @@ class PatientRecord
   include Mongoid::Timestamps
   
   field :patient_id, type: String
+  field :encounter_datetime, type: DateTime
   field :record, type: Hash
   field :last_sync_at, type: Time  # Track when the record was last synced
   field :sync_status, type: String, default: 'pending' # Track sync status (pending, synced, failed)
