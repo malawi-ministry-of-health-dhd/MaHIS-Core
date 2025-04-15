@@ -1,32 +1,31 @@
 # BHT EMR API
 
-Table of Contents
-=================
+# Table of Contents
 
-   * [HIS EMR API](#his-emr-api)
-      * [Requirements](#requirements)
-      * [Setting up](#setting-up)
-         * [Configuration](#configuration)
-         * [Setting up rails](#setting-up-rails)
-            * [Database](#database)
-               * [Using an existing database](#using-an-existing-database)
-               * [Using an empty database](#using-an-empty-database)
-         * [DDE](#dde)
-            * [Configuration](#configuration-1)
-            * [Enabling DDE](#enabling-dde)
-         * [Updating Metadata](#updating-metadata)
-         * [EMC to POC](#emc-to-poc)
-         * [AIT Intergration](#ait-intergration)
-         * [Running the API](#running-the-api)
-      * [Creating a Service](#creating-a-service)
-      * [Raw Data Store](#raw-data-store)
-      * [For developers](#for-developers)
-         * [Documentation](#documentation)
-            * [Building the Documentation](#building-the-documentation)
-         * [Testing](#testing)
-         * [Coding style/standards](#coding-stylestandards)
-         * [Useful (recommended) tools for development](#useful-recommended-tools-for-development)
-         * [Dev Container](#dev-container)
+- [HIS EMR API](#his-emr-api)
+  - [Requirements](#requirements)
+  - [Setting up](#setting-up)
+    - [Configuration](#configuration)
+    - [Setting up rails](#setting-up-rails)
+      - [Database](#database)
+        - [Using an existing database](#using-an-existing-database)
+        - [Using an empty database](#using-an-empty-database)
+    - [DDE](#dde)
+      - [Configuration](#configuration-1)
+      - [Enabling DDE](#enabling-dde)
+    - [Updating Metadata](#updating-metadata)
+    - [EMC to POC](#emc-to-poc)
+    - [AIT Intergration](#ait-intergration)
+    - [Running the API](#running-the-api)
+  - [Creating a Service](#creating-a-service)
+  - [Raw Data Store](#raw-data-store)
+  - [For developers](#for-developers)
+    - [Documentation](#documentation)
+      - [Building the Documentation](#building-the-documentation)
+    - [Testing](#testing)
+    - [Coding style/standards](#coding-stylestandards)
+    - [Useful (recommended) tools for development](#useful-recommended-tools-for-development)
+    - [Dev Container](#dev-container)
 
 ## Requirements
 
@@ -70,13 +69,15 @@ bundle install --local
 ```
 
 ### Setting up Production mode
+
 ```sh
-bin/setup_production_mode.sh 
+bin/setup_production_mode.sh
 ```
 
 Incase this does not run you might want to make it executable and you can achieve that by doing this
+
 ```sh
-chmod +x bin/setup_production_mode.sh 
+chmod +x bin/setup_production_mode.sh
 ```
 
 #### Database
@@ -100,52 +101,53 @@ $ vim config/database.yml   # Edit configuration
 
 1. Load metadata into your mysql database as follows:
 
-    ```bash
-    cat db/sql/openmrs_metadata_1_7.sql | mysql -u <username> -p <database_name>
-    ```
+   ```bash
+   cat db/sql/openmrs_metadata_1_7.sql | mysql -u <username> -p <database_name>
+   ```
 
 2. Run migrations:
 
-    ```bash
-    bin/rails db:migrate
-    ```
+   ```bash
+   bin/rails db:migrate
+   ```
 
 3. Load moh regimen tables into your database:
 
-    ```bash
-    cat db/sql/add_regimens_13_and_above.sql | mysql -u <username> -p <database>
-    ```
+   ```bash
+   cat db/sql/add_regimens_13_and_above.sql | mysql -u <username> -p <database>
+   ```
+
 4. For TB app: Load ntp regimen tables into your database:
 
-    ```bash
-    cat db/sql/ntp_regimens.sql | mysql -u <username> -p <database>
-    ```
+   ```bash
+   cat db/sql/ntp_regimens.sql | mysql -u <username> -p <database>
+   ```
 
 5. Set up the test database as follows:
 
-    ```bash
-    bin/initial_database_setup.sh test mpc
-    ```
+   ```bash
+   bin/initial_database_setup.sh test mpc
+   ```
 
 6. Run the following to run tests (if all goes well you are good to go):
 
-    ```bash
-    bin/rspec
-    ```
+   ```bash
+   bin/rspec
+   ```
 
 ##### Using an empty database
 
 1. Run the following commands to set up your development and test databases.
 
-    ```sh
-    bin/initial_database_setup.sh production mpc && bin/initial_database_setup.sh development mpc && bin/initial_database_setup.sh test mpc
-    ```
+   ```sh
+   bin/initial_database_setup.sh production mpc && bin/initial_database_setup.sh development mpc && bin/initial_database_setup.sh test mpc
+   ```
 
 2. Run test suite as follows:
 
-    ```bash
-    bin/rspec
-    ```
+   ```bash
+   bin/rspec
+   ```
 
 #### DDE
 
@@ -180,12 +182,12 @@ curl -X POST -H "Content-Type: application/json" -d '{
 The command above should give a response similar to the following:
 
 ```json
-    {
-        "authorization": {
-            "token": "AiJViSpF3spb",
-            "expiry_time": "2018-08-28T11:01:55.501+02:00"
-        }
-    }
+{
+  "authorization": {
+    "token": "AiJViSpF3spb",
+    "expiry_time": "2018-08-28T11:01:55.501+02:00"
+  }
+}
 ```
 
 Take token above and use it the following command as a parameter to
@@ -199,22 +201,26 @@ curl -X POST -H "Authorization: AiJViSpF3spb" -H "Content-Type: application/json
 ```
 
 ### Updating Metadata
+
 - Facilities
+
 ```bash
 ./bin/update_art_metadata.sh [production|development|test]
 ```
+
 You will have to choose the environment you want to update the metadata for.
 
 - Developers
-To add metadata into the system
+  To add metadata into the system
+
 ```bash
 bin/dump_metadata.sh [production|development|test]
 ```
 
 Commit the changes to the repository. And as always make sure you create a PR to be reviewed.
 
-
 ### EMC to POC
+
 These are the instructions of migrating data for sites that have changed from an e-Mastercard(EMC) to Point of Care(POC).
 Open a terminal and navigate to the API application folder. On the root of the application folder run this command in your terminal
 
@@ -230,16 +236,19 @@ emc_poc_migration_dateMigrationWasRun.csv
 ```
 
 An example of the file output by this process would be
+
 ```bash
 emc_poc_migration_20220816.csv
 ```
 
 The migration will skip certain results if they are blank/without value. You can find this list in the following file structure:
+
 ```bash
 emc_poc_migration_skipped_yearmonthday.csv
 ```
 
 An example of the file output by this process would be
+
 ```bash
 emc_poc_migration_skipped_20220816.csv
 ```
@@ -247,16 +256,16 @@ emc_poc_migration_skipped_20220816.csv
 The file will indicate the result date and the client ARV number which can be used for BDE purposes
 
 ### AIT Intergration
+
 To intergrate to AIT and send HTS patient data, follow the steps below
 
--   Copy and populate the AIT config file
-  
+- Copy and populate the AIT config file
+
 ```bash
 cp ./config/ait.yml.example ./config/ait.yml
 ```
 
 [SETUP AIT CONFIGURATION](db/hts_metadata/README.md)
-
 
 ### Running the API
 
@@ -269,6 +278,7 @@ bin/rails server
 [Back to top](#table-of-contents)
 
 ## Creating a Service
+
 Instead of manually running the server, you can create a service to run the server. This is useful when you want to run the server in the background. To create a service, run the following command:
 
 ```sh
@@ -385,39 +395,47 @@ See the following for more:
 - If you use VSCode check out the following plugins [Ruby](https://marketplace.visualstudio.com/search?term=Ruby&target=VSCode), [Ruby-Rubocop](https://marketplace.visualstudio.com/search?term=Rubocop&target=VSCode&category=All%20categories&sortBy=Relevance), and [Rufo](https://marketplace.visualstudio.com/search?term=Rufo&target=VSCode&category=All%20categories&sortBy=Relevance), [Ruby Solargraph](https://marketplace.visualstudio.com/items?itemName=castwide.solargraph)
 
 ### Dev Container
-* Install [Docker](https://docs.docker.com/get-docker/)
-* Install [Docker Compose](https://docs.docker.com/compose/install/)
-* We assume you are using VSCode as your editor
-* Install the [Remote - Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension
-* Open the project in VSCode
-* Click on the green button at the bottom left of the window
-* Select `Reopen in Container`
-* Wait for the container to build
-* Run `bash bin/container_start.sh` to setup the container and install dependencies. Only run this once unless you have rebuilt the container. If nothing happens after running this command, then you might want to execute the commands in the script manually.
+
+- Install [Docker](https://docs.docker.com/get-docker/)
+- Install [Docker Compose](https://docs.docker.com/compose/install/)
+- We assume you are using VSCode as your editor
+- Install the [Remote - Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension
+- Open the project in VSCode
+- Click on the green button at the bottom left of the window
+- Select `Reopen in Container`
+- Wait for the container to build
+- Run `bash bin/container_start.sh` to setup the container and install dependencies. Only run this once unless you have rebuilt the container. If nothing happens after running this command, then you might want to execute the commands in the script manually.
 
 **Note:** If you are using a dev container, then it comes with a pre-configured database and you don't need to run the migrations and seeds.
 
 **Note:** Perks of using a dev container include:
-* You don't need to install Ruby, Rails, MySQL, etc on your local machine
-* You don't need to worry about setting up the database, migrations, seeds, etc
-* You don't need to worry about setting up mysql client the container comes with it pre-installed
-* You don't need to worry about setting up the environment variables, the container comes with them pre-configured
-* You don't need to worry about setting up the storage, the container comes with it pre-configured
-* You don't need to worry about setting up the locale, the container comes with it pre-configured
-* You don't need to worry about setting up the gems, the container comes with them pre-installed
+
+- You don't need to install Ruby, Rails, MySQL, etc on your local machine
+- You don't need to worry about setting up the database, migrations, seeds, etc
+- You don't need to worry about setting up mysql client the container comes with it pre-installed
+- You don't need to worry about setting up the environment variables, the container comes with them pre-configured
+- You don't need to worry about setting up the storage, the container comes with it pre-configured
+- You don't need to worry about setting up the locale, the container comes with it pre-configured
+- You don't need to worry about setting up the gems, the container comes with them pre-installed
 
 [Back to top](#table-of-contents)
 
 # SMS Gateway for the immunization app
-  * You need to ask any of the team members for the api key or follow the following steps
-  * To get the api key from https://gateway.seven.io
-  * The documentation is in Germany so make sure you use firefox for easy page transalation to English
-  * Login to the account seven.io account using the provided creditials 
-  * On the botton right corner click on documentation
-  * In the documentation click on SMS under endpoints section to get sms_gateway_url
-  * Still in the documentation click on Account under endpoints section to get sms_api_key
-  * Finally go to config/application.yml and add the sms_api_key and sms_gateway_url
+
+- You need to ask any of the team members for the api key or follow the following steps
+- To get the api key from https://gateway.seven.io
+- The documentation is in Germany so make sure you use firefox for easy page transalation to English
+- Login to the account seven.io account using the provided creditials
+- On the botton right corner click on documentation
+- In the documentation click on SMS under endpoints section to get sms_gateway_url
+- Still in the documentation click on Account under endpoints section to get sms_api_key
+- Finally go to config/application.yml and add the sms_api_key and sms_gateway_url
 
 # Setting up Immunization data midnight refresh
-  * Copy config/schedule.yml.example config/schedule.yml
-  * When you run everything it wiil setup a sidekiq cron to run a midnight refresh to set all the data to the current status for all sites
+
+- Copy config/schedule.yml.example config/schedule.yml
+- When you run everything it wiil setup a sidekiq cron to run a midnight refresh to set all the data to the current status for all sites
+
+# create indexes for mongo db
+
+- rails db:mongoid:create_indexes
