@@ -6,14 +6,7 @@ class Api::V1::SyncPatientRecordsController < ApplicationController
     since_date = params[:since_date]
     
     # Queue the batch job to sync all patients for this location
-    job_id = BatchPatientSyncJob.perform_async(location_id, since_date)
-    
-    render json: {
-      status: 'sync_scheduled',
-      job_id: job_id,
-      location_id: location_id,
-      message: "Patient sync job scheduled for location #{location_id}"
-    }
+     BatchPatientSyncJob.perform_async(location_id, since_date)
   end
   def get_not_sync_ids
     params.permit(
