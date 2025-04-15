@@ -36,10 +36,10 @@ every 1.minute do
 end
 
 every 1.day, at: '2:00 am' do
-  runner "BatchPatientSyncJob.perform_async(nil, nil)", environment: Rails.env
+  runner "BatchPatientSyncJob.perform_async(nil, nil)", environment: 'development'
 end
 
 # Run incremental sync every hour to keep data fresh
 every 1.hour do
-  runner "BatchPatientSyncJob.perform_async(nil, Time.now.beginning_of_hour - 2.hours)", environment: Rails.env
+  runner "BatchPatientSyncJob.perform_async(nil, Time.now.beginning_of_hour - 2.hours)", environment: 'development'
 end
