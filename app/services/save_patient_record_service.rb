@@ -55,7 +55,25 @@ class SavePatientRecordService
       save_medication_order
       create_ncd_identifier
     ].each { |operation| send(operation, patient_id, record) }
-    BuildPatientRecordService.build_patient_record(patient_id)
+
+    patient_data = BuildPatientRecordService.build_patient_record(patient_id)
+    patient_record = PatientRecord.find_or_initialize_by(patient_id: patient_id)
+      
+    # If we couldn't build valid patient data, mark as failed and return
+    if patient_data.nil?
+      Rails.logger.error("Failed to build data for patient #{patient_id}")
+      patient_record.update(sync_status: 'failed', last_sync_at: Time.current)
+      return
+    end
+    
+    # Update the record
+    patient_record.record = patient_data
+    patient_record.encounter_datetime = patient_data[:encounter_datetime] if patient_data[:encounter_datetime]
+    patient_record.last_sync_at = Time.current
+    patient_record.sync_status = 'synced'
+    patient_record.save!
+
+    patient_data
   end
 
   def save_person_information(record)
