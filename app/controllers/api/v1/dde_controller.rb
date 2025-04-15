@@ -80,30 +80,36 @@ module Api
       def duplicates_match
         base_query = PotentialDuplicate.where(merge_status: false).select(:patient_id_a).distinct
         total_records = base_query.count
-
-        results = paginate(PotentialDuplicate.where(merge_status: false).select(:patient_id_a).distinct).map do |primary_patient_a|
+        
+        results = paginate(base_query).map do |primary_patient_a|
           PotentialDuplicate.where(merge_status: false, patient_id_a: primary_patient_a.patient_id_a)
-                                             .group_by(&:patient_id_a)
-                                             .map do |primary_patient_id, matches|
+                            .group_by(&:patient_id_a)
+                            .map do |primary_patient_id, matches|
             primary_patient = Person.joins('INNER JOIN person_name ON person_name.person_id = person.person_id')
-                                    .joins('INNER JOIN person_address ON person_address.person_id = person.person_id')
-                                    .select('person.person_id, person.birthdate, person.gender,
-                                             person_name.given_name, person_name.family_name,
-                                             person_name.middle_name, person_address.address2 AS home_district,
-                                             person_address.neighborhood_cell AS home_village,
-                                             person_address.county_district AS home_traditional_authority')
-                                    .find_by(person_id: primary_patient_id)
-
+                                   .joins('INNER JOIN person_address ON person_address.person_id = person.person_id')
+                                   .select('person.person_id, person.birthdate, person.gender,
+                                            person_name.given_name, person_name.family_name,
+                                            person_name.middle_name, person_address.address2 AS home_district,
+                                            person_address.neighborhood_cell AS home_village,
+                                            person_address.county_district AS home_traditional_authority')
+                                   .find_by(person_id: primary_patient_id)
+            
+            # Skip this record if primary_patient is nil
+            next nil unless primary_patient
+            
             duplicates = matches.map do |match|
               secondary_patient = Person.joins('INNER JOIN person_name ON person_name.person_id = person.person_id')
-                                        .joins('INNER JOIN person_address ON person_address.person_id = person.person_id')
-                                        .select('person.person_id, person.birthdate, person.gender,
-                                             person_name.given_name, person_name.family_name,
-                                             person_name.middle_name, person_address.address2 AS home_district,
-                                             person_address.neighborhood_cell AS home_village,
-                                             person_address.county_district AS home_traditional_authority')
-                                        .find_by(person_id: match.patient_id_b)
-
+                                       .joins('INNER JOIN person_address ON person_address.person_id = person.person_id')
+                                       .select('person.person_id, person.birthdate, person.gender,
+                                                person_name.given_name, person_name.family_name,
+                                                person_name.middle_name, person_address.address2 AS home_district,
+                                                person_address.neighborhood_cell AS home_village,
+                                                person_address.county_district AS home_traditional_authority')
+                                       .find_by(person_id: match.patient_id_b)
+              
+              # Skip this duplicate if secondary_patient is nil
+              next nil unless secondary_patient
+              
               {
                 secondary_patient_id: secondary_patient.person_id,
                 secondary_given_name: secondary_patient.given_name,
@@ -116,8 +122,8 @@ module Api
                 secondary_gender: secondary_patient.gender,
                 match_percentage: match.match_percentage
               }
-            end
-
+            end.compact # Remove any nil entries from the duplicates array
+            
             {
               primary_patient_id: primary_patient.person_id,
               primary_given_name: primary_patient.given_name,
@@ -128,11 +134,11 @@ module Api
               primary_home_village: primary_patient.home_village,
               primary_birthdate: primary_patient.birthdate,
               primary_gender: primary_patient.gender,
-              duplicates:
+              duplicates: duplicates.compact # Add the duplicates array here
             }
-        end
-      end
-
+          end.compact # Remove any nil entries from the results
+        end.flatten # Flatten because group_by returns a nested structure
+        
         render json: {
           count: total_records,
           results: results
