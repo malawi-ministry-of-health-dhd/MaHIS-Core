@@ -8,3 +8,15 @@ flag_potential_duplicates:
   class: "FlagPotentialDuplicatesJob"
   queue: "default"
   description: "Flags potential duplicates at midnight"
+
+batch_sync_job:
+  cron: "0 * * * *"  # Every hour
+  class: "BatchPatientSyncJob"
+  args: [null, null]
+  queue: "batch_sync"
+
+incremental_sync_job:
+  cron: "0 0 2 * * *"  # At 2:00 AM daily
+  class: "BatchPatientSyncJob"
+  args: [null, "Time.now.beginning_of_hour - 2.hours"]
+  queue: "batch_sync"
