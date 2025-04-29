@@ -1,6 +1,0 @@
-:concurrency: 5
-:queues:
-  - batch_sync
-  - patient_sync
-  - default
-  - mailers
