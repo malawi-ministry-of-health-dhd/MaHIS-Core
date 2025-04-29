@@ -10,7 +10,7 @@ module BuildPatientRecordService
         return nil unless record
 
         # Get active programs for this patient
-        active_programs = PatientProgram.where(patient_id: patient_id)
+        active_programs = PatientProgram.where(patient_id: patient_id).to_a
 
         # Safely access related data
         person = record.person
