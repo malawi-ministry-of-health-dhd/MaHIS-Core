@@ -9,6 +9,9 @@ module BuildPatientRecordService
         record = Patient.find_by(patient_id: patient_id)
         return nil unless record
 
+        # Get active programs for this patient
+        active_programs = PatientProgram.where(patient_id: patient_id)
+
         # Safely access related data
         person = record.person
         name = person&.names&.first
@@ -97,7 +100,8 @@ module BuildPatientRecordService
           visits: safe_get_visits(record),
           saveStatusPersonInformation: '',
           saveStatusGuardianInformation: '',
-          saveStatusBirthRegistration: ''
+          saveStatusBirthRegistration: '',
+          activePrograms: active_programs
         }
       rescue StandardError => e
         Rails.logger.error("Error in build_patient_record for patient #{patient_id}: #{e.message}")

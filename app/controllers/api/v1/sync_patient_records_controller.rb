@@ -36,9 +36,10 @@ class Api::V1::SyncPatientRecordsController < ApplicationController
     # Count all patients for the location (no pagination)
     total_for_location = PatientRecord.where("record.location_id" => location_id).count
   
-    if(total_for_location <= 0) 
-      trigger_sync()
-    end
+    # if(total_for_location <= 0) 
+    #   trigger_sync()
+    # end
+    trigger_sync()
     # Build response
     render json: {
       sync_patients: patients.map(&:record),
