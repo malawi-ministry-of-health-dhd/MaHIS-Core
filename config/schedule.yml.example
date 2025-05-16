@@ -12,7 +12,7 @@ flag_potential_duplicates:
 batch_sync_job:
   cron: "0 0 2 * * *" # At 2:00 AM daily
   class: "BatchPatientSyncJob"
-  args: [null, null]
+  args: [null, "Time.now.beginning_of_hour - 30.hours"]
   queue: "batch_sync"
 
 incremental_sync_job:
