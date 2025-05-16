@@ -10,13 +10,18 @@ flag_potential_duplicates:
   description: "Flags potential duplicates at midnight"
 
 batch_sync_job:
-  cron: "0 * * * *"  # Every hour
+  cron: "0 0 2 * * *" # At 2:00 AM daily
   class: "BatchPatientSyncJob"
-  args: [null, null]
+  args: [null, "Time.now.beginning_of_hour - 30.hours"]
   queue: "batch_sync"
 
 incremental_sync_job:
-  cron: "0 0 2 * * *"  # At 2:00 AM daily
+  cron: "0 * * * *" # Every hour
   class: "BatchPatientSyncJob"
   args: [null, "Time.now.beginning_of_hour - 2.hours"]
   queue: "batch_sync"
+# notifiable_disease_job:
+#   cron: "* * * * *"  # Every minute
+#   class: "ScriptRunner"
+#   args: ["bin/idsr/notifiable_disease_conditions_report.rb"]
+#   queue: "default"
