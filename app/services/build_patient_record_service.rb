@@ -23,6 +23,7 @@ module BuildPatientRecordService
           NcdID: patient_identifier(record, 31),
           program_id: '',
           provider_id: '',
+          patient_identifiers: record.patient_identifiers,
           location_id: Encounter.where(patient_id: patient_id).order(encounter_datetime: :desc).first&.location_id,
           encounter_datetime: Encounter.where(patient_id: patient_id).order(encounter_datetime: :desc).first&.encounter_datetime,
           personInformation: {
@@ -95,6 +96,10 @@ module BuildPatientRecordService
           },
           outCome: {
             saved: [],
+            unsaved: []
+          },
+          notes: {
+            saved: safe_extract_observations(patient_id, safe_find_encounter_type('NOTES')),
             unsaved: []
           },
           visits: safe_get_visits(record),
