@@ -15,6 +15,7 @@ ENCOUNTER_TYPE_MAPPING = {
   patient_registration:'PATIENT REGISTRATION',
   patient_outcome: 'PATIENT OUTCOME',
   treatment:'TREATMENT',
+  notes:'NOTES',
 }.freeze
 class SavePatientRecordService
   def create_patient_record(record)
@@ -54,6 +55,7 @@ class SavePatientRecordService
       save_outcome
       save_medication_order
       create_ncd_identifier
+      save_notes_and_pharmalogical_notes
     ].each { |operation| send(operation, patient_id, record) }
 
     patient_data = BuildPatientRecordService.build_patient_record(patient_id)
@@ -418,6 +420,49 @@ end
       record[:vaccineAdministration][:voided] = []
     rescue StandardError => e
       Rails.logger.error("Error voiding vaccine: #{e.message}")
+      Rails.logger.error(e.backtrace.join("\n"))
+    end
+  end
+
+  def save_notes_and_pharmalogical_notes(patient_id, record)
+    notes = record.dig(:notes, :unsaved)
+    return unless notes&.any?
+
+    begin
+      ActiveRecord::Base.transaction do
+        notes.each do |note|
+          # Make sure note is not nil before proceeding
+          next unless note.present?
+
+          encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[:notes])
+          encounter_id = create_encounter(patient_id, encounter_type.id, record)
+          encounter = Encounter.find(encounter_id)
+
+          unless encounter.type.name == 'NOTES'
+            Rails.logger.warn("Unexpected encounter type: #{encounter.type.name} for encounter ##{encounter.encounter_id}")
+            next
+          end
+
+          # Convert ActionController::Parameters to a regular Hash
+          if note.is_a?(ActionController::Parameters)
+            note = note.permit!.to_h
+          end
+
+          # Handle nested value_text if it's a complex object
+          if note[:value_text].is_a?(ActionController::Parameters) || note[:value_text].is_a?(Hash)
+            note[:value_text] = note[:value_text].to_json
+          end
+
+          # Add required fields
+          note[:person_id] = patient_id if note[:person_id].blank?
+          note[:location_id] ||= User.current.location_id
+
+          # Create the observation with sanitized parameters
+          observation_service.create_observation(encounter, note)
+        end
+      end
+    rescue StandardError => e
+      Rails.logger.error("Failed to save notes: #{e.message}")
       Rails.logger.error(e.backtrace.join("\n"))
     end
   end
