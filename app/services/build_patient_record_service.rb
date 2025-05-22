@@ -102,6 +102,10 @@ module BuildPatientRecordService
             saved: safe_extract_observations(patient_id, safe_find_encounter_type('NOTES')),
             unsaved: []
           },
+          allergies: {
+            saved: safe_extract_observations(patient_id, safe_find_encounter_type('MEDICAL HISTORY')),
+            unsaved: []
+          },
           visits: safe_get_visits(record),
           saveStatusPersonInformation: '',
           saveStatusGuardianInformation: '',
