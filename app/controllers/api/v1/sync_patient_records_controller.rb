@@ -30,22 +30,23 @@ class Api::V1::SyncPatientRecordsController < ApplicationController
     query = PatientRecord.where("record.location_id" => location_id)
     query = query.where(:encounter_datetime.gte => updated_since) if updated_since
     
-    # Pagination with stable ordering (add _id as secondary sort to ensure consistency)
-    patients = query.order_by(encounter_datetime: :desc, _id: :asc)
+    # Pagination with stable ordering - CHANGED to :asc for oldest first
+    patients = query.order_by(encounter_datetime: :asc, _id: :asc)
                     .skip((page - 1) * per_page)
                     .limit(per_page)
-
+    
     # Count all patients for the location (no pagination)
     total_for_location = PatientRecord.where("record.location_id" => location_id).count
   
     if(total_for_location <= 0) 
       trigger_sync()
     end
-    # Build response
+    
+    # Build response - CHANGED to use .last for latest when ordered oldest first
     render json: {
       sync_patients: patients.map(&:record),
       sync_count: patients.count,
-      latest_encounter_datetime: patients.first&.encounter_datetime,
+      latest_encounter_datetime: patients.last&.encounter_datetime,
       server_patient_count: total_for_location,
     }
   end
