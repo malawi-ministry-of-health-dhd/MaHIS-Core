@@ -25,6 +25,7 @@ module BuildPatientRecordService
           provider_id: '',
           location_id: Encounter.where(patient_id: patient_id).order(encounter_datetime: :desc).first&.location_id,
           encounter_datetime: Encounter.where(patient_id: patient_id).order(encounter_datetime: :desc).first&.encounter_datetime,
+          sync_status: '',
           personInformation: {
             given_name: name&.given_name || '',
             middle_name: name&.middle_name || '',
