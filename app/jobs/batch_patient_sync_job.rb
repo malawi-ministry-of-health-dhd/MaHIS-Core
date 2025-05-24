@@ -51,7 +51,7 @@ class BatchPatientSyncJob
     # Add date filter if provided
     if since_date.present?
       parsed_date = Time.zone.parse(since_date.to_s)
-      query = query.where('encounters.date_created >= ?', parsed_date)
+      query = query.where('encounter.date_created >= ?', parsed_date)
     end
 
     # Return array of patient IDs to avoid issues with complex joined queries
