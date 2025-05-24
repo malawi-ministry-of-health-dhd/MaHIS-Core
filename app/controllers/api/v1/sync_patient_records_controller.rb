@@ -22,7 +22,9 @@ class Api::V1::SyncPatientRecordsController < ApplicationController
     per_page = params[:page_size].to_i > 0 ? params[:page_size].to_i : 1
     
     # Optional: filter by encounter_datetime if you want
-    updated_since = params[:previous_sync_date].present? ? Time.parse(params[:previous_sync_date]) : nil
+    updated_since = if params[:previous_sync_date].present?
+            Time.zone.parse(params[:previous_sync_date])  
+          end
     
     # Base query that only reads data (doesn't trigger syncing)
     query = PatientRecord.where("record.location_id" => location_id)
