@@ -106,6 +106,10 @@ module BuildPatientRecordService
             saved: safe_extract_observations(patient_id, safe_find_encounter_type('MEDICAL HISTORY')),
             unsaved: []
           },
+          dispensations: {
+            saved: PatientService.new.find_program_drug_orders_awaiting_dispensation(record, Date.today).to_a,
+            unsaved: []
+          },
           visits: safe_get_visits(record),
           saveStatusPersonInformation: '',
           saveStatusGuardianInformation: '',
