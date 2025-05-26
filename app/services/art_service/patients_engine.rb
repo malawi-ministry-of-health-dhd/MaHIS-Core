@@ -96,8 +96,9 @@ module ArtService
                  .first
     end
 
-    def find_next_available_arv_number
-      current_arv_code = global_property('site_prefix')&.property_value
+     def find_next_available_arv_number
+      location_id =User.current.location_id
+      current_arv_code = global_property("site_prefix_#{location_id}")&.property_value
       raise 'Global property `site_prefix` not set' unless current_arv_code
 
       type = PatientIdentifierType.find_by_name('ARV Number')
