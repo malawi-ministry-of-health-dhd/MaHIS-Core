@@ -15,6 +15,8 @@ ENCOUNTER_TYPE_MAPPING = {
   patient_registration:'PATIENT REGISTRATION',
   patient_outcome: 'PATIENT OUTCOME',
   treatment:'TREATMENT',
+  notes:'NOTES',
+  allergies:'MEDICAL HISTORY',
 }.freeze
 class SavePatientRecordService
   def create_patient_record(record)
@@ -54,6 +56,8 @@ class SavePatientRecordService
       save_outcome
       save_medication_order
       create_ncd_identifier
+      save_notes_and_pharmalogical_notes
+      save_allergies
     ].each { |operation| send(operation, patient_id, record) }
 
     patient_data = BuildPatientRecordService.build_patient_record(patient_id)
@@ -422,6 +426,24 @@ end
     end
   end
 
+  def save_notes_and_pharmalogical_notes(patient_id, record)
+    save_observations_with_encounter(patient_id, record, {
+      data_key: :notes,
+      encounter_type: :notes,
+      expected_type: 'NOTES',
+      error_message: 'notes'
+    })
+  end
+
+  def save_allergies(patient_id, record)
+    save_observations_with_encounter(patient_id, record, {
+      data_key: :allergies,
+      encounter_type: :allergies,
+      expected_type: 'MEDICAL HISTORY',
+      error_message: 'allergies'
+    })
+  end
+
   def save_medication_order(patient_id, record)
     orders = record.dig(:MedicationOrder, :unsaved)
     return unless orders&.any?
@@ -569,6 +591,48 @@ end
   end
 
   private
+
+  def save_observations_with_encounter(patient_id, record, options)
+    data = record.dig(options[:data_key], :unsaved)
+    return unless data&.any?
+
+    begin
+      ActiveRecord::Base.transaction do
+        data.each do |item|
+          next unless item.present?
+
+          encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[options[:encounter_type]])
+          encounter_id = create_encounter(patient_id, encounter_type.id, record)
+          encounter = Encounter.find(encounter_id)
+
+          unless encounter.type.name == options[:expected_type]
+            Rails.logger.warn("Unexpected encounter type: #{encounter.type.name} for encounter ##{encounter.encounter_id}")
+            next
+          end
+
+          # Convert ActionController::Parameters to a regular Hash
+          if item.is_a?(ActionController::Parameters)
+            item = item.permit!.to_h
+          end
+
+          # Handle nested value_text if it's a complex object
+          if item[:value_text].is_a?(ActionController::Parameters) || item[:value_text].is_a?(Hash)
+            item[:value_text] = item[:value_text].to_json
+          end
+
+          # Add required fields
+          item[:person_id] = patient_id if item[:person_id].blank?
+          item[:location_id] ||= User.current.location_id
+
+          # Create the observation with sanitized parameters
+          observation_service.create_observation(encounter, item)
+        end
+      end
+    rescue StandardError => e
+      Rails.logger.error("Failed to save #{options[:error_message]}: #{e.message}")
+      Rails.logger.error(e.backtrace.join("\n"))
+    end
+  end
 
   def save_observations(data_key, observations, patient_id, record)
     encounter_type_name = ENCOUNTER_TYPE_MAPPING[data_key]
