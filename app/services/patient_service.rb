@@ -240,6 +240,7 @@ class PatientService
   def find_program_drug_orders_awaiting_dispensation(patient, date, program_id: nil)
     query = DrugOrder
       .joins(order: :encounter)
+      .select('drug_order.*, encounter.program_id')
       .where(
         'orders.start_date <= ? AND orders.patient_id = ? 
          AND drug_order.quantity IS NOT NULL',
