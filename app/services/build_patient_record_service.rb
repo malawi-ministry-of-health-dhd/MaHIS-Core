@@ -23,7 +23,7 @@ module BuildPatientRecordService
           NcdID: patient_identifier(record, 31),
           program_id: '',
           provider_id: '',
-          patient_identifiers: record.patient_identifiers,
+          patient_identifiers: record.patient_identifiers.as_json,
           location_id: Encounter.where(patient_id: patient_id).order(encounter_datetime: :desc).first&.location_id,
           encounter_datetime: Encounter.where(patient_id: patient_id).order(encounter_datetime: :desc).first&.encounter_datetime,
           sync_status: '',
@@ -108,7 +108,7 @@ module BuildPatientRecordService
             unsaved: []
           },
           dispensations: {
-            saved: PatientService.new.find_program_drug_orders_awaiting_dispensation(record, Date.today).to_a,
+            saved: PatientService.new.find_program_drug_orders_awaiting_dispensation(record, Date.today).as_json,
             unsaved: []
           },
           visits: safe_get_visits(record),
