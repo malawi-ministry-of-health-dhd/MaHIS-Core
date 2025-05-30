@@ -58,6 +58,7 @@ class SavePatientRecordService
       create_ncd_identifier
       save_notes_and_pharmalogical_notes
       save_allergies
+      save_dispensation_data
     ].each { |operation| send(operation, patient_id, record) }
 
     patient_data = BuildPatientRecordService.build_patient_record(patient_id)
@@ -442,6 +443,49 @@ end
       expected_type: 'MEDICAL HISTORY',
       error_message: 'allergies'
     })
+  end
+
+  def save_dispensation_data(patient_id, record)
+    begin
+      unsaved_data = record.dig(:dispensations, :unsaved)
+      return unless unsaved_data&.any?
+
+      # Permit the parameters for each dispensation record
+      permitted_data = unsaved_data.map do |dispensation_params|
+        dispensation_params.permit(
+          :provider_id, 
+          :program_id, 
+          :patient_id,
+          dispensations: [:drug_order_id, :date, :quantity]
+        )
+      end
+
+      # Process each permitted dispensation
+      permitted_data.each do |params|
+        begin
+          dispensations = params[:dispensations]
+          program_id = params[:program_id]
+          provider_id = params[:provider_id]
+
+          # Find the program and provider
+          program = Program.find(program_id) if program_id
+          provider = provider_id ? Person.find(provider_id) : User.current.person
+
+          # Create the dispensation
+          DispensationService.create(program, dispensations, provider) if program && dispensations
+        rescue ActiveRecord::RecordNotFound => e
+          Rails.logger.error "Record not found while processing dispensation: #{e.message}"
+          next  # Skip to next dispensation
+        rescue StandardError => e
+          Rails.logger.error "Error processing individual dispensation: #{e.message}"
+          next  # Skip to next dispensation
+        end
+      end
+    rescue StandardError => e
+      Rails.logger.error "Error in save_dispensation_data: #{e.message}"
+      Rails.logger.error e.backtrace.join("\n")
+      # raise e
+    end
   end
 
   def save_medication_order(patient_id, record)
