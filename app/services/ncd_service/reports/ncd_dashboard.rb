@@ -22,6 +22,7 @@ module NcdService
           total_female_registered: total_female_registered || 0,
           total_complications: fetch_complications.count(:person_id),
           total_defaulters: count_defaulters || 0,
+          total_pending_dispensations: count_pending_dispensations || 0,
           gender_data: {
             categories: gender_quarterly_data.keys,
             femaleSeries: gender_quarterly_data.values.map { |q| q[:female] || 0 },
@@ -84,32 +85,61 @@ module NcdService
       def count_defaulters
         cutoff_date = Date.current - 60.days
         
-        # Get patients from the NCD program at this location
+        # Get all NCD program patients at this location
         base_patients = Patient.joins(encounters: [:program, :type])
                               .where(program: { program_id: 32 })
                               .where(encounters: { location_id: @location_id })
                               .where(encounter_type: { name: ['PATIENT REGISTRATION', 'REGISTRATION'] })
                               .distinct
-        
-        # All registered patients
+
         all_patients = base_patients.pluck(:patient_id)
         
-        # Get patients who have had a drug order in the past 60 days
-        active_patients = Patient.joins(orders: :drug_order)
-                         .joins('INNER JOIN obs ON obs.order_id = orders.order_id')
-                         .joins('INNER JOIN concept_name ON concept_name.concept_id = obs.concept_id')
-                         .where(patient_id: all_patients)  # Only check registered patients
-                         .where('drug_order.quantity IS NOT NULL')
-                         .where('orders.start_date > ?', cutoff_date)
-                         .where(
-                           'concept_name.name = ? AND obs.value_numeric IS NOT NULL',
-                           'AMOUNT DISPENSED'
-                         )
-                         .distinct
-                         .pluck(:patient_id)
+        # Get patients who had their last dispensation between 60-120 days ago
+        defaulting_patients = Patient.joins(orders: :drug_order)
+                           .joins('INNER JOIN obs ON obs.order_id = orders.order_id')
+                           .joins('INNER JOIN concept_name ON concept_name.concept_id = obs.concept_id')
+                           .where(patient_id: all_patients)
+                           .where('drug_order.quantity IS NOT NULL')
+                           .where('orders.start_date BETWEEN ? AND ?', cutoff_date - 60.days, cutoff_date)
+                           .where(
+                             'concept_name.name = ? AND obs.value_numeric IS NOT NULL',
+                             'AMOUNT DISPENSED'
+                           )
+                           .where('NOT EXISTS (
+                             SELECT 1 FROM orders o 
+                             INNER JOIN drug_order do ON do.order_id = o.order_id
+                             WHERE o.patient_id = patient.patient_id 
+                             AND o.start_date > ?
+                           )', cutoff_date)
+                           .distinct
+                           .pluck(:patient_id)
+
+        defaulting_patients.count
+      end
+
+      def count_pending_dispensations
+        cutoff_date = Date.current
         
-        # Defaulters are registered patients minus active patients
-        (all_patients - active_patients).count
+        DrugOrder
+          .joins(order: :encounter)
+          .where(encounter: { program_id: 32, location_id: @location_id })  # NCD program
+          .where(
+            'orders.start_date <= ? AND drug_order.quantity IS NOT NULL',
+            TimeUtils.day_bounds(cutoff_date)[1]
+          )
+          .where(
+            'NOT EXISTS (
+              SELECT 1 
+              FROM obs 
+              JOIN concept_name ON concept_name.concept_id = obs.concept_id
+              WHERE obs.order_id = orders.order_id
+              AND concept_name.name = ? 
+              AND obs.value_numeric IS NOT NULL
+            )',
+            'AMOUNT DISPENSED'
+          )
+          .distinct
+          .count('orders.patient_id')  # Count unique patients with pending dispensations
       end
 
       def diagnosis_quarterly_breakdown
