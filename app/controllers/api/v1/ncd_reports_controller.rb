@@ -58,8 +58,8 @@ module Api
             end
 
             patient_data = patient.as_json
-
             ncd_patient = NcdActivePatient.find_or_initialize_by(patient_id: patient.patient_id)
+
             ncd_patient.encounter_datetime = latest_encounter.encounter_datetime
             ncd_patient.location_id = @location_id.to_s
             ncd_patient.active_patient = patient_data
@@ -73,6 +73,65 @@ module Api
             raise e # Re-raise the error to see it in development
           end
         end
+      end
+
+      def ncd_active_patients_from_mongo
+        filters = params.permit(%i[given_name middle_name family_name birthdate gender per_page page identifier])
+        @location_id = User.current.location_id
+
+        # Build MongoDB query based on the actual document structure
+        mongo_query = { location_id: @location_id.to_s }
+
+        # Add name filters - names are nested in active_patient.person.names array
+        if filters[:given_name].present?
+          mongo_query["active_patient.person.names.given_name"] = /#{Regexp.escape(filters[:given_name])}/i
+        end
+
+        if filters[:middle_name].present?
+          mongo_query["active_patient.person.names.middle_name"] = /#{Regexp.escape(filters[:middle_name])}/i
+        end
+
+        if filters[:family_name].present?
+          mongo_query["active_patient.person.names.family_name"] = /#{Regexp.escape(filters[:family_name])}/i
+        end
+
+        # Gender filter
+        if filters[:gender].present?
+          mongo_query["active_patient.person.gender"] = filters[:gender].upcase
+        end
+
+        # Birthdate filter
+        if filters[:birthdate].present?
+          begin
+            birthdate = Date.parse(filters[:birthdate])
+            mongo_query["active_patient.person.birthdate"] = birthdate.strftime("%Y-%m-%d")
+          rescue ArgumentError
+            # Invalid date format, skip filter
+          end
+        end
+
+        # Identifier filter (search across all identifier types)
+        if filters[:identifier].present?
+          mongo_query["active_patient.patient_identifiers.identifier"] = /#{Regexp.escape(filters[:identifier])}/i
+        end
+
+        # Query MongoDB
+        mongo_patients = NcdActivePatient.where(mongo_query)
+
+        total_records = mongo_patients.count
+        
+        # Apply pagination
+        page = filters[:page]&.to_i || 1
+        per_page = filters[:per_page]&.to_i || 50
+        
+        results = mongo_patients.skip((page - 1) * per_page)
+                              .limit(per_page)
+                              .order_by(encounter_datetime: :desc)
+
+        render json: {
+          count: total_records,
+          results: results.map(&:active_patient)
+        }, status: :ok
       end
 
       private
