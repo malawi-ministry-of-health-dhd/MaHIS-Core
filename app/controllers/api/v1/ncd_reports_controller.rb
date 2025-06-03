@@ -126,7 +126,7 @@ module Api
         
         # Apply pagination
         page = filters[:page]&.to_i || 1
-        per_page = filters[:per_page]&.to_i || 50
+        per_page = filters[:per_page]&.to_i || 10
         
         results = mongo_patients.skip((page - 1) * per_page)
                               .limit(per_page)
