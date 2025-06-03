@@ -433,6 +433,7 @@ Rails.application.routes.draw do
   get '/api/v1/orders_made', to: 'api/v1/reports#orders_made'
   get '/api/v1/:program_id/external_consultation_clients', to: 'api/v1/reports#external_consultation_clients'
   get '/api/v1/ncd_active_patients', to: 'api/v1/ncd_reports#ncd_active_patients'
+  get '/api/v1/ncd_active_patients_from_mongo', to: 'api/v1/ncd_reports#ncd_active_patients_from_mongo'
 
   get '/api/v1/screened_for_cxca', to: 'api/v1/reports#cxca_reports'
   get '/api/v1/pepfar_cxca', to: 'api/v1/reports#cxca_reports'
