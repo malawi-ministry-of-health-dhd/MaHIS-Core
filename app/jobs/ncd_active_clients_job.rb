@@ -20,14 +20,14 @@ class NcdActiveClientsJob
     Rails.logger.info("Finding active clients")
     service = FacilityService.new
     result = service.list_facility_codes()
-    Rails.logger.info("Found #{result.count} facilities")
+    Rails.logger.info("Found #{result[:total]} facilities")
     
-    result.each do |facility|
+    result[:facility_codes].each do |facility|
       Rails.logger.info("Processing facility: #{facility}")
       begin
-        ncd_active_patients(facility)
+        ncd_active_patients(facility[:code])
       rescue StandardError => e
-        Rails.logger.error("Error processing facility #{facility}: #{e.message}")
+        Rails.logger.error("Error processing facility #{facility[:code]}: #{e.message}")
         # Continue processing other facilities instead of failing the entire job
       end
     end
