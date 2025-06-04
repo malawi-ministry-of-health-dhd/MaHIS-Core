@@ -77,6 +77,24 @@ class FacilityService
       facility = Facility.find(facility_id)
       facility.destroy
     end
+
+    def list_facility_codes
+      # Get all unique facility codes ordered alphabetically
+      codes = Facility.select('code')
+                     .distinct
+                     .order(:code)
+                     .map do |facility|
+        {
+          code: facility.code,
+          name: Facility.find_by(code: facility.code)&.name
+        }
+      end.compact
+  
+      {
+        facility_codes: codes,
+        total: codes.size
+      }
+    end
   
     private
   
