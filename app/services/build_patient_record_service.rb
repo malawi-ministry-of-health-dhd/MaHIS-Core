@@ -343,23 +343,8 @@ module BuildPatientRecordService
     
     def safe_build_observation_hash(observation)
       begin
-        children = if observation.children.length.positive?
-                    observation.children.map do |child|
-                      {
-                        concept_id: child.concept_id,
-                        concept_name: safe_concept_id_to_name(child.concept_id),
-                        obs_datetime: child.obs_datetime&.to_s,
-                        obs_id: child.obs_id,
-                        children: child.children || [],
-                        value_coded: child.value_coded,
-                        value_text: child.value_text || '',
-                        value_numeric: child.value_numeric
-                      }
-                    end.compact
-                  else
-                    []
-                  end
-        
+        children = observation.children.map { |child| safe_build_observation_hash(child) }
+    
         {
           concept_id: observation.concept_id,
           concept_name: safe_concept_id_to_name(observation.concept_id),
