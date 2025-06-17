@@ -16,10 +16,13 @@ module Api
                     return
                 end
 
-                checkVisit = Visit.where(patientId: patientId, closedDateTime: nil)
-                if checkVisit.exists?
-                    render json: { message: "there is an active visit for patient with #{patientId}" }, status: :conflict
-                    return
+                checkVisit = Visit.where(patientId: patientId, closedDateTime: nil).first
+                if checkVisit.present?
+                  render json: {
+                    message: "There is an active visit for patient with ID #{patientId}",
+                    visit: checkVisit
+                  }, status: :ok
+                  return
                 end
 
                 visit = Visit.new(visit_params)

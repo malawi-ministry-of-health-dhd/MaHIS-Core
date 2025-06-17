@@ -71,7 +71,7 @@ module BuildPatientRecordService
             voided: []
           },
           appointments: {
-            saved: [],
+            saved: safe_extract_observations(patient_id, safe_find_encounter_type('APPOINTMENT')),
             unsaved: []
           },
           diagnosis: {
