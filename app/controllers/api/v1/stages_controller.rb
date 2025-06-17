@@ -58,43 +58,45 @@ module Api
       
 
       def create
+        begin
+          patientId = params[:stage][:patient_id]
 
-        patientId = params[:stage][:patient_id]
-
-        # validate stage name
-        requestedStage = params[:stage][:stage]
-        unless VALID_STAGES.include?(requestedStage)
-          render json: { errors: "#{requestedStage} is not a valid stage. Allowed stages are: #{VALID_STAGES.join(', ')}" }, status: :unprocessable_entity
-          return
-        end
-
-
-     
-        activeVisit = Visit.find_by(patientId: patientId, closedDateTime: nil)
-        if activeVisit.nil?
-          render json: { errors: 'The patient does not have an active visit' }, status: :unprocessable_entity
-          return
-        end
-
-        
-        active_stage = Stage.find_by(patient_id: patientId, status: true)  
-        if active_stage
-          begin
-            active_stage.update!(status: false)
-          rescue ActiveRecord::RecordInvalid => e
-            Rails.logger.debug("Failed to update status: #{e.message}")
+          # validate stage name
+          requestedStage = params[:stage][:stage]
+          unless VALID_STAGES.include?(requestedStage)
+            render json: { errors: "#{requestedStage} is not a valid stage. Allowed stages are: #{VALID_STAGES.join(', ')}" }, status: :unprocessable_entity
+            return
           end
-        end
 
+          activeVisit = Visit.find_by(patientId: patientId, closedDateTime: nil)
+          if activeVisit.nil?
+            render json: { errors: 'The patient does not have an active visit' }, status: :unprocessable_entity
+            return
+          end
 
-        stage = Stage.new(stage_params.merge(visit_id: activeVisit.id, status: params[:stage][:status] || true))
-        
-        if stage.save
-          render json: { message: 'Stage created successfully', stage: stage }, status: :created
-        else
-          render json: { errors: stage.errors.full_messages }, status: :unprocessable_entity
+          active_stage = Stage.find_by(patient_id: patientId, status: true)
+          if active_stage
+            begin
+              active_stage.update!(status: false)
+            rescue ActiveRecord::RecordInvalid => e
+              Rails.logger.debug("Failed to update status: #{e.message}")
+            end
+          end
+
+          stage = Stage.new(stage_params.merge(visit_id: activeVisit.id, status: params[:stage][:status] || true))
+
+          if stage.save
+            render json: { message: 'Stage created successfully', stage: stage }, status: :created
+          else
+            render json: { errors: stage.errors.full_messages }, status: :unprocessable_entity
+          end
+
+        rescue => e
+          Rails.logger.error("Unexpected error in create: #{e.message}")
+          render json: { errors: "An unexpected error occurred: #{e.message}" }, status: :internal_server_error
         end
       end
+
 
       private
       def stage_params
