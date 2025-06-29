@@ -12,7 +12,7 @@ module Api
 
       def patient
         patient_id = params[:id]
-        response = RestClient.get("#{BASE_FHIR_URL}/Patient?identifier=https://dhis2.org/trackedEntityInstance|#{patient_id}&_tag=ichis-mahis-pending", accept: 'application/fhir+json')
+        response = RestClient.get("#{BASE_FHIR_URL}/Patient?identifier=https://ichis.org/ichisGeneratedID|#{patient_id}&_tag=ichis-mahis-pending", accept: 'application/fhir+json')
         render json: JSON.parse(response.body)
       rescue RestClient::ExceptionWithResponse => e
         render json: { error: "Patient/#{patient_id} not found", response: e.response }, status: :not_found
