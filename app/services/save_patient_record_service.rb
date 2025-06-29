@@ -59,6 +59,7 @@ class SavePatientRecordService
       save_notes_and_pharmalogical_notes
       save_allergies
       save_dispensation_data
+      save_all_observations
     ].each { |operation| send(operation, patient_id, record) }
 
     patient_data = BuildPatientRecordService.build_patient_record(patient_id)
@@ -635,6 +636,34 @@ end
   end
 
   private
+
+  def save_all_observations(patient_id, record)
+    data = record.dig(:observations)
+    return unless data&.any?
+  
+    begin
+      ActiveRecord::Base.transaction do
+        data.each do |item|
+          next unless item.present? && item[:status] == "unsaved" && item[:obs]&.any?
+  
+          encounter_type = EncounterType.find_by_name(item[:encounter_type])
+          next unless encounter_type 
+  
+          encounter_id = create_encounter(patient_id, encounter_type.id, record)
+
+          encounter = Encounter.find(encounter_id)
+          item[:obs].map do |archetype|
+            archetype[:location_id] = record[:location_id]
+            service = ObservationService.new
+            service.create_observation(encounter, archetype.permit!)
+          end
+        end
+      end
+    rescue StandardError => e
+      Rails.logger.error("Error saving observations: #{e.message}")
+      Rails.logger.error(e.backtrace.join("\n"))
+    end
+  end
 
   def save_observations_with_encounter(patient_id, record, options)
     data = record.dig(options[:data_key], :unsaved)
