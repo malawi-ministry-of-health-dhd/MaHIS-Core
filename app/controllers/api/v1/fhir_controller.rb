@@ -1,7 +1,7 @@
 module Api
   module V1
     class FhirController < ApplicationController
-      BASE_FHIR_URL = 'http://localhost:8081/fhir' # change to your HAPI FHIR URL
+      BASE_FHIR_URL = YAML.safe_load(File.read('config/application.yml'))['BASE_FHIR_URL'] # change to your HAPI FHIR URL
 
       def patients
         response = RestClient.get("#{BASE_FHIR_URL}/Patient", accept: 'application/fhir+json')
