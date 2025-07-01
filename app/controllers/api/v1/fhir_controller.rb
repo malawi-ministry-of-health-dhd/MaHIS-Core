@@ -18,10 +18,10 @@ module Api
         render json: { error: "Patient/#{patient_id} not found", response: e.response }, status: :not_found
       end
 
-
+      
       def observations
         patient_id = params[:id]
-        url = "#{BASE_FHIR_URL}/Observation?subject=Patient/#{patient_id}"
+        url = "#{BASE_FHIR_URL}/Observation?subject=Patient/#{patient_id}&_tag=ichis-mahis-pending"
         response = RestClient.get(url, accept: 'application/fhir+json')
         render json: JSON.parse(response.body)
       rescue RestClient::ExceptionWithResponse => e
