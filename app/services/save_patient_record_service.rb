@@ -30,13 +30,14 @@ class SavePatientRecordService
 
     ids = {
       national_id: record.dig('otherPersonInformation', 'nationalID'),
+      ichis_id: record.dig('otherPersonInformation', 'ichisID'),
       birth_id: record.dig('otherPersonInformation', 'birthID')
     }
 
     return if required_fields.values.any? { |value| value.nil? || value.to_s.empty? }
     return unless (patient_id = save_person_information(record)[:patient_id])
 
-    validate_id(ids[:national_id], ids[:birth_id])
+    validate_id(ids[:national_id], ids[:birth_id],ids[:ichis_id])
     
     %i[
       create_guardian
@@ -91,6 +92,11 @@ class SavePatientRecordService
       patient_id = person.person_id
 
       create_ids(record[:otherPersonInformation], patient_id)
+      if record[:otherPersonInformation][:ichisID].present?
+        tei = record[:otherPersonInformation][:TEI]
+        ichis_data = { identifier: identifier, TEI: tei }
+        FhirService.sendEMRIdToMediator(ichis_data)  
+      end
       enroll_program(patient_id, record)
       create_encounter(patient_id, 5, record)
 
@@ -136,6 +142,14 @@ class SavePatientRecordService
       patient_id: patient_id,
       identifier: otherPersonInformation[:birthID],
       identifier_type: 23
+    )
+
+    return unless otherPersonInformation[:ichisID].present?
+
+    PatientIdentifierService.create(
+      patient_id: patient_id,
+      identifier: otherPersonInformation[:ichisID],
+      identifier_type: 10
     )
   end
 
@@ -199,7 +213,7 @@ class SavePatientRecordService
     end
   end
 
-  def validate_id(national_id, birth_id)
+  def validate_id(national_id, birth_id, ichis_id)
     validate_identifier(national_id, type: :national) &&
       validate_identifier(birth_id, type: :birth)
   end
