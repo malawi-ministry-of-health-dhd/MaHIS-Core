@@ -1,6 +1,6 @@
 module FhirService
   class << self
-    BASE_MEDIATOR_URL = 'http://localhost:3001/emr/' 
+    BASE_MEDIATOR_URL = YAML.safe_load(File.read('config/application.yml'))['BASE_MEDIATOR_URL']
     def sendEMRIdToMediator(data)
       begin
         response = RestClient.post(
