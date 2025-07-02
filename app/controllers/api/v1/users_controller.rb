@@ -85,8 +85,54 @@ module Api
         if api_key.nil?
           render json: { errors: ['Invalid user or password'] }, status: :unauthorized
         else
+          # Store last login time in user property table
+          user = User.find_by(username: login_params[:username])
+          if user
+            timestamp = Time.current.iso8601 # or Time.current.to_i for unix timestamp
+            
+            # Find or create the last_login_time property
+            property = UserProperty.find_by(
+              property: 'last_login_time',
+              user_id: user.user_id
+            )
+            
+            property ||= UserProperty.new(
+              property: 'last_login_time',
+              user_id: user.user_id
+            )
+            
+            property.property_value = timestamp
+            property.save
+          end
+          
           render json: { authorization: api_key }
         end
+      end
+
+      def check_first_time_login
+        user_id = params[:user_id] || User.current.user_id
+        
+        has_logged_in_before = UserProperty.exists?(
+          property: 'last_login_time',
+          user_id: user_id
+        )
+        
+        is_first_time = !has_logged_in_before
+        
+        last_login_property = UserProperty.find_by(
+          property: 'last_login_time',
+          user_id: user_id
+        )
+        
+        render json: {
+          user_id: user_id,
+          first_time_login: is_first_time,
+          has_logged_in_before: has_logged_in_before,
+          last_login_time: last_login_property&.property_value,
+          message: is_first_time ? 'User has never logged in before' : 'User has logged in before'
+        }, status: :ok
+      rescue StandardError => e
+        render json: { errors: [e.message] }, status: :internal_server_error
       end
 
       def destroy
