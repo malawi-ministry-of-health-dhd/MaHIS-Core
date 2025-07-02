@@ -36,6 +36,7 @@ Rails.application.routes.draw do
         put '/update_username', to: 'users#update_username'
         get '/get_user_villages', to: 'users#get_user_villages'
         put '/update_user_villages', to: 'users#update_user_villages'
+        get '/check_first_time_login', to: 'users#check_first_time_login'
       end
 
       resources :hts_reports, only: %i[index]
