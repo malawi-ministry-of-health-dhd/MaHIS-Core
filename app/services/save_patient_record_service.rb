@@ -636,6 +636,16 @@ end
     unsaved_data = record.dig(data_type, :unsaved)
 
     return unless unsaved_data&.any?
+    if(data_type == :diagnosis && record.dig('program_id') == 32)
+      unsaved_data.each do |item|
+        if(item["value_coded"] == 6409 || item["value_coded"] == 6410)
+          FhirService.sendConfirmedDiagnosisToMediator(patient_id,"Diabetes") 
+        end
+        if(item["value_coded"] == 903)
+          FhirService.sendConfirmedDiagnosisToMediator(patient_id,"Hypertension") 
+        end
+      end
+    end
 
     if save_observations(data_key, unsaved_data, patient_id, record)
       record[data_type][:unsaved] = []
