@@ -19,18 +19,31 @@ module FhirService
       end
     end
 
-    def sendConfirmedDiagnosisToMediator(data)
-      latest_event_id = Observation.where(concept_id: 11587, person_id: data[:patient_id])
+    def sendConfirmedDiagnosisToMediator(patient_id, diagnosis)
+      latest_event_id = Observation.where(concept_id: 11587, person_id: patient_id)
                             .order(obs_datetime: :desc)
                             .limit(1)
                             .pluck(:comments)
                             .first
-        data ={
-          event_id: latest_event_id,
-
-                            }
-      # response = RestClient.post()
-    rescue RestClient::ExceptionWithResponse => e
+                            
+      return unless latest_event_id.present?
+      data ={ event_id: latest_event_id, diagnosis: diagnosis }
+                  
+      begin
+        response = RestClient.post(
+          "#{BASE_MEDIATOR_URL}diagnosis",
+          data.to_json,
+          { content_type: :json, accept: :json }
+        )
+        puts "Success: #{response.code}"
+        response
+      rescue RestClient::ExceptionWithResponse => e
+        puts "Failed to send diagnosis: #{e.response}"
+        e.response
+      rescue StandardError => e
+        puts "Other error: #{e.message}"
+        nil
+      end
     end
   end
 end
