@@ -69,7 +69,9 @@ module Api
         return unless validate_roles(update_params[:roles])
 
         user = UserService.update_user User.find(params[:id]), update_params
+        
         if user.errors.empty?
+          update_last_password_property(user.id, update_params[:password])
           render json: user, status: :ok
         else
           render json: user.errors, status: :bad_request
@@ -108,7 +110,8 @@ module Api
             
             render json: { 
               authorization: api_key,
-              first_time_login: is_first_time
+              first_time_login: is_first_time,
+              password_needs_update: password_needs_update?(user.user_id)
             }
           else
             render json: { authorization: api_key }
@@ -254,6 +257,42 @@ module Api
           render json: { errors: }, status: :conflict
           return false
         end
+      end
+
+      def update_last_password_property(user_id, password)
+        return unless password.present?
+        
+        last_password_updated_property = UserProperty.find_by(
+          property: 'last_password_updated',
+          user_id: user_id
+        )
+        
+        if last_password_updated_property
+          last_password_updated_property.update(value: Time.current.to_s)
+        else
+          UserProperty.create(
+            property: 'last_password_updated',
+            user_id: user_id,
+            property_value: Time.current.to_s
+          )
+        end
+      end
+
+      def password_needs_update?(user_id)
+        last_password_property = UserProperty.find_by(
+          property: 'last_password_updated',
+          user_id: user_id
+        )
+        
+        # Return false if no property exists or property_value is blank
+        return false if last_password_property.nil? || last_password_property.property_value.blank?
+        
+        # Parse the timestamp and check if 90 days have elapsed
+        last_updated = Time.parse(last_password_property.property_value)
+        Time.current >= last_updated + 90.days
+      rescue ArgumentError
+        # Return false if timestamp can't be parsed
+        false
       end
 
       def service
