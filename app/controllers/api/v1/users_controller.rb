@@ -138,6 +138,24 @@ module Api
         render json: { errors: [e.message] }, status: :internal_server_error
       end
 
+      def clear_last_login_time
+        user_id = params[:user_id] || User.current.user_id
+
+        last_login_property = UserProperty.find_by(
+          property: 'last_login_time',
+          user_id: user_id
+        )
+        
+        if last_login_property
+          last_login_property.destroy
+          render json: { message: 'Last login time cleared successfully' }, status: :ok
+        else
+          render json: { message: 'No last login time found to clear' }, status: :ok
+        end
+      rescue StandardError => e
+        render json: { errors: [e.message] }, status: :internal_server_error
+      end
+
       def destroy
         if User.find(params[:id]).void('No reason provided')
           render status: :no_content
