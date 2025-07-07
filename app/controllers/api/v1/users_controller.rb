@@ -69,7 +69,9 @@ module Api
         return unless validate_roles(update_params[:roles])
 
         user = UserService.update_user User.find(params[:id]), update_params
+        
         if user.errors.empty?
+          update_last_password_property(user.id, update_params[:password])
           render json: user, status: :ok
         else
           render json: user.errors, status: :bad_request
@@ -80,13 +82,81 @@ module Api
         login_params, error = required_params required: %i[username password]
         return render json: login_params, status: :bad_request if error
 
-        api_key = UserService.login(login_params[:username],
-                                    login_params[:password])
+        api_key = UserService.login(login_params[:username], login_params[:password])
+        
         if api_key.nil?
           render json: { errors: ['Invalid user or password'] }, status: :unauthorized
         else
-          render json: { authorization: api_key }
+          user = User.find_by(username: login_params[:username])
+          
+          if user
+            # Check if this is first time login BEFORE updating
+            # Check both existence and that the value is not blank
+            existing_property = UserProperty.find_by(
+              property: 'last_login_time',
+              user_id: user.user_id
+            )
+            
+            is_first_time = existing_property.nil? || existing_property.property_value.blank?
+            
+            # Update or create the last_login_time property
+            property = UserProperty.find_or_initialize_by(
+              property: 'last_login_time',
+              user_id: user.user_id
+            )
+            
+            property.property_value = Time.current.iso8601
+            property.save
+            
+            render json: { 
+              authorization: api_key,
+              first_time_login: is_first_time,
+              password_needs_update: password_needs_update?(user.user_id)
+            }
+          else
+            render json: { authorization: api_key }
+          end
         end
+      end
+
+      def check_first_time_login
+        user_id = params[:user_id] || User.current.user_id
+        
+        last_login_property = UserProperty.find_by(
+          property: 'last_login_time',
+          user_id: user_id
+        )
+        
+        # Check both existence and that the value is not blank
+        is_first_time = last_login_property.nil? || last_login_property.property_value.blank?
+        
+        render json: {
+          user_id: user_id,
+          first_time_login: is_first_time,
+          has_logged_in_before: !is_first_time,
+          last_login_time: last_login_property&.property_value,
+          message: is_first_time ? 'User has never logged in before' : 'User has logged in before'
+        }, status: :ok
+      rescue StandardError => e
+        render json: { errors: [e.message] }, status: :internal_server_error
+      end
+
+      def clear_last_login_time
+        user_id = params[:user_id] || User.current.user_id
+
+        last_login_property = UserProperty.find_by(
+          property: 'last_login_time',
+          user_id: user_id
+        )
+        
+        if last_login_property
+          last_login_property.destroy
+          render json: { message: 'Last login time cleared successfully' }, status: :ok
+        else
+          render json: { message: 'No last login time found to clear' }, status: :ok
+        end
+      rescue StandardError => e
+        render json: { errors: [e.message] }, status: :internal_server_error
       end
 
       def destroy
@@ -187,6 +257,42 @@ module Api
           render json: { errors: }, status: :conflict
           return false
         end
+      end
+
+      def update_last_password_property(user_id, password)
+        return unless password.present?
+        
+        last_password_updated_property = UserProperty.find_by(
+          property: 'last_password_updated',
+          user_id: user_id
+        )
+        
+        if last_password_updated_property
+          last_password_updated_property.update(value: Time.current.to_s)
+        else
+          UserProperty.create(
+            property: 'last_password_updated',
+            user_id: user_id,
+            property_value: Time.current.to_s
+          )
+        end
+      end
+
+      def password_needs_update?(user_id)
+        last_password_property = UserProperty.find_by(
+          property: 'last_password_updated',
+          user_id: user_id
+        )
+        
+        # Return false if no property exists or property_value is blank
+        return false if last_password_property.nil? || last_password_property.property_value.blank?
+        
+        # Parse the timestamp and check if 90 days have elapsed
+        last_updated = Time.parse(last_password_property.property_value)
+        Time.current >= last_updated + 90.days
+      rescue ArgumentError
+        # Return false if timestamp can't be parsed
+        false
       end
 
       def service
