@@ -43,11 +43,11 @@ module BuildPatientRecordService
             current_traditional_authority: address&.township_division || '',
             current_village: address&.city_village || '',
             country: address&.country || '',
-            landmark: '',
+            landmark: safe_get_attribute(record, 'Landmark Or Plot Number'),
             cell_phone_number: safe_get_attribute(record, 'Cell Phone Number'),
             occupation: safe_get_attribute(record, 'Occupation'),
             marital_status: safe_get_attribute(record, 'Civil Status'),
-            religion: '',
+            religion: safe_get_attribute(record, 'Religion'),
             education_level: safe_get_attribute(record, 'EDUCATION LEVEL')
           },
           guardianInformation: {
