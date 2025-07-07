@@ -40,6 +40,8 @@ class SavePatientRecordService
     validate_id(ids[:national_id], ids[:birth_id],ids[:ichis_id])
     
     %i[
+      update_person_information
+      update_guardian_information
       create_guardian
       save_birthday_data
       save_vitals_data
@@ -82,7 +84,27 @@ class SavePatientRecordService
 
     patient_data
   end
+  def update_person_information(patient_id, record)
+    if record[:personInformation] && record[:saveStatusPersonInformation] == 'edit'
+      person = Person.find(patient_id)
+      person_service.update_person(person, record[:personInformation].permit!)
+    end
+  end
 
+  def update_guardian_information(patient_id, record)
+    if record[:guardianInformation][:unsaved].present? && record[:saveStatusGuardianInformation] == 'edit'
+      if record[:otherPersonInformation][:relationship_id].present?
+        service = PersonRelationshipService.new Person.find(patient_id)
+        relationship_data =service.find_relationships("")
+        person = Person.find(relationship_data[0].person_b)
+        person_service.update_person(person, record[:guardianInformation][:unsaved][0].permit!)
+
+        relationship_type = RelationshipType.find record[:otherPersonInformation][:relationshipID]
+        service.void_relationship relationship_data[0].relationship_id, "Guardian relationship updated"
+        service.create_relationship person, relationship_type
+      end
+    end
+  end
   def save_person_information(record)
     if record[:personInformation] && record[:saveStatusPersonInformation] == 'pending'
       # Create person and get data
