@@ -93,16 +93,23 @@ class SavePatientRecordService
 
   def update_guardian_information(patient_id, record)
     if record[:guardianInformation][:unsaved].present? && record[:saveStatusGuardianInformation] == 'edit'
-      if record[:otherPersonInformation][:relationship_id].present?
-        service = PersonRelationshipService.new Person.find(patient_id)
-        relationship_data =service.find_relationships("")
+      
+      service = PersonRelationshipService.new Person.find(patient_id)
+      relationship_data =service.find_relationships("")
+      if relationship_data.present?
         person = Person.find(relationship_data[0].person_b)
         person_service.update_person(person, record[:guardianInformation][:unsaved][0].permit!)
 
-        relationship_type = RelationshipType.find record[:otherPersonInformation][:relationshipID]
-        service.void_relationship relationship_data[0].relationship_id, "Guardian relationship updated"
-        service.create_relationship person, relationship_type
+        if relationship_data[0].relationship_id.present?
+          relationship_type = RelationshipType.find record[:otherPersonInformation][:relationshipID]
+          service.void_relationship relationship_data[0].relationship_id, "Guardian relationship updated"
+          service.create_relationship person, relationship_type
+        end
+      else
+        record[:saveStatusGuardianInformation] = 'pending'
+        create_guardian(patient_id, record)
       end
+      
     end
   end
   def save_person_information(record)
@@ -255,7 +262,9 @@ class SavePatientRecordService
   end
 
   def create_guardian(patient_id, record)
-    return unless record[:saveStatusGuardianInformation] == 'pending'
+    
+    return unless record[:saveStatusGuardianInformation] == 'pending' 
+    
 
     return unless guardian_info_complete?(record)
 
