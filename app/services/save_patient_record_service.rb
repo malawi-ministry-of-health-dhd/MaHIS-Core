@@ -30,15 +30,18 @@ class SavePatientRecordService
 
     ids = {
       national_id: record.dig('otherPersonInformation', 'nationalID'),
+      ichis_id: record.dig('otherPersonInformation', 'ichisID'),
       birth_id: record.dig('otherPersonInformation', 'birthID')
     }
 
     return if required_fields.values.any? { |value| value.nil? || value.to_s.empty? }
     return unless (patient_id = save_person_information(record)[:patient_id])
 
-    validate_id(ids[:national_id], ids[:birth_id])
+    validate_id(ids[:national_id], ids[:birth_id],ids[:ichis_id])
     
     %i[
+      update_person_information
+      update_guardian_information
       create_guardian
       save_birthday_data
       save_vitals_data
@@ -81,7 +84,34 @@ class SavePatientRecordService
 
     patient_data
   end
+  def update_person_information(patient_id, record)
+    if record[:personInformation] && record[:saveStatusPersonInformation] == 'edit'
+      person = Person.find(patient_id)
+      person_service.update_person(person, record[:personInformation].permit!)
+    end
+  end
 
+  def update_guardian_information(patient_id, record)
+    if record[:guardianInformation][:unsaved].present? && record[:saveStatusGuardianInformation] == 'edit'
+      
+      service = PersonRelationshipService.new Person.find(patient_id)
+      relationship_data =service.find_relationships("")
+      if relationship_data.present?
+        person = Person.find(relationship_data[0].person_b)
+        person_service.update_person(person, record[:guardianInformation][:unsaved][0].permit!)
+
+        if relationship_data[0].relationship_id.present?
+          relationship_type = RelationshipType.find record[:otherPersonInformation][:relationshipID]
+          service.void_relationship relationship_data[0].relationship_id, "Guardian relationship updated"
+          service.create_relationship person, relationship_type
+        end
+      else
+        record[:saveStatusGuardianInformation] = 'pending'
+        create_guardian(patient_id, record)
+      end
+      
+    end
+  end
   def save_person_information(record)
     if record[:personInformation] && record[:saveStatusPersonInformation] == 'pending'
       # Create person and get data
@@ -91,6 +121,11 @@ class SavePatientRecordService
       patient_id = person.person_id
 
       create_ids(record[:otherPersonInformation], patient_id)
+      if record[:otherPersonInformation][:ichisID].present?
+        tei = record[:otherPersonInformation][:TEI]
+        ichis_data = { identifier: identifier, TEI: tei }
+        FhirService.sendEMRIdToMediator(ichis_data)  
+      end
       enroll_program(patient_id, record)
       create_encounter(patient_id, 5, record)
 
@@ -136,6 +171,14 @@ class SavePatientRecordService
       patient_id: patient_id,
       identifier: otherPersonInformation[:birthID],
       identifier_type: 23
+    )
+
+    return unless otherPersonInformation[:ichisID].present?
+
+    PatientIdentifierService.create(
+      patient_id: patient_id,
+      identifier: otherPersonInformation[:ichisID],
+      identifier_type: 10
     )
   end
 
@@ -199,7 +242,7 @@ class SavePatientRecordService
     end
   end
 
-  def validate_id(national_id, birth_id)
+  def validate_id(national_id, birth_id, ichis_id)
     validate_identifier(national_id, type: :national) &&
       validate_identifier(birth_id, type: :birth)
   end
@@ -219,7 +262,9 @@ class SavePatientRecordService
   end
 
   def create_guardian(patient_id, record)
-    return unless record[:saveStatusGuardianInformation] == 'pending'
+    
+    return unless record[:saveStatusGuardianInformation] == 'pending' 
+    
 
     return unless guardian_info_complete?(record)
 
@@ -622,6 +667,16 @@ end
     unsaved_data = record.dig(data_type, :unsaved)
 
     return unless unsaved_data&.any?
+    if(data_type == :diagnosis && record.dig('program_id') == 32)
+      unsaved_data.each do |item|
+        if(item["value_coded"] == 6409 || item["value_coded"] == 6410)
+          FhirService.sendConfirmedDiagnosisToMediator(patient_id,"Diabetes") 
+        end
+        if(item["value_coded"] == 903)
+          FhirService.sendConfirmedDiagnosisToMediator(patient_id,"Hypertension") 
+        end
+      end
+    end
 
     if save_observations(data_key, unsaved_data, patient_id, record)
       record[data_type][:unsaved] = []

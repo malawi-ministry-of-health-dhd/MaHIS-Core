@@ -43,12 +43,12 @@ module BuildPatientRecordService
             current_traditional_authority: address&.township_division || '',
             current_village: address&.city_village || '',
             country: address&.country || '',
-            landmark: '',
+            landmark: safe_get_attribute(record, 'Landmark Or Plot Number'),
             cell_phone_number: safe_get_attribute(record, 'Cell Phone Number'),
             occupation: safe_get_attribute(record, 'Occupation'),
             marital_status: safe_get_attribute(record, 'Civil Status'),
-            religion: '',
-            education_level: safe_get_attribute(record, 'EDUCATION LEVEL')
+            religion: safe_get_attribute(record, 'Religion'),
+            education_level: safe_get_attribute(record, 'EDUCATION LEVEL'),
           },
           guardianInformation: {
             saved: safe_get_guardians(patient_id),
@@ -279,7 +279,7 @@ module BuildPatientRecordService
 
           landmark: safe_get_person_attribute(person, 'Landmark Or Plot Number'),
           cell_phone_number: safe_get_person_attribute(person, 'Cell Phone Number'),
-          national_id: '',
+          national_id: safe_get_person_attribute(person, 'Guardian ID'),
 
           relationship_id: relationship.id.to_s || '',
           relationship_type: {
