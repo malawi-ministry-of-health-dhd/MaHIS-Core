@@ -2,8 +2,13 @@ module Api
   module V1
     class PrinterConfigurationsController < ApplicationController
       # GET /api/v1/printer_configurations
+      # GET /api/v1/printer_configurations?location_id=X
       def index
-        @printer_configurations = PrinterConfiguration.all
+        if params[:location_id].present?
+          @printer_configurations = PrinterConfiguration.where(location_id: params[:location_id])
+        else
+          @printer_configurations = PrinterConfiguration.all
+        end
         render json: @printer_configurations
       end
 
