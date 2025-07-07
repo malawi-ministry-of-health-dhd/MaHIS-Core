@@ -48,7 +48,7 @@ module BuildPatientRecordService
             occupation: safe_get_attribute(record, 'Occupation'),
             marital_status: safe_get_attribute(record, 'Civil Status'),
             religion: safe_get_attribute(record, 'Religion'),
-            education_level: safe_get_attribute(record, 'EDUCATION LEVEL')
+            education_level: safe_get_attribute(record, 'EDUCATION LEVEL'),
           },
           guardianInformation: {
             saved: safe_get_guardians(patient_id),
@@ -279,7 +279,7 @@ module BuildPatientRecordService
 
           landmark: safe_get_person_attribute(person, 'Landmark Or Plot Number'),
           cell_phone_number: safe_get_person_attribute(person, 'Cell Phone Number'),
-          national_id: '',
+          national_id: safe_get_person_attribute(person, 'Guardian ID'),
 
           relationship_id: relationship.id.to_s || '',
           relationship_type: {
