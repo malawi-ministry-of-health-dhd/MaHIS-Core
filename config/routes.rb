@@ -71,6 +71,7 @@ Rails.application.routes.draw do
       end
 
       resources :roles
+      resources :printer_configurations, only: [:index, :create, :destroy, :update]
 
       # Patients
       resources :patients do

@@ -121,3 +121,6 @@ eir_sms_configurations:
 #The threshold for the EIR duplicates percentage.
 deduplication:
   match_percentage: 85
+
+BASE_MEDIATOR_URL: "http://localhost:3001/emr/"
+BASE_FHIR_URL: "http://localhost:8081/fhir"
