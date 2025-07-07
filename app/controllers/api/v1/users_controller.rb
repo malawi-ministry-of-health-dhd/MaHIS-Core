@@ -262,20 +262,13 @@ module Api
       def update_last_password_property(user_id, password)
         return unless password.present?
         
-        last_password_updated_property = UserProperty.find_by(
+        property = UserProperty.find_or_initialize_by(
           property: 'last_password_updated',
           user_id: user_id
         )
         
-        if last_password_updated_property
-          last_password_updated_property.update(value: Time.current.to_s)
-        else
-          UserProperty.create(
-            property: 'last_password_updated',
-            user_id: user_id,
-            property_value: Time.current.to_s
-          )
-        end
+        property.property_value = Time.current.to_s
+        property.save
       end
 
       def password_needs_update?(user_id)
