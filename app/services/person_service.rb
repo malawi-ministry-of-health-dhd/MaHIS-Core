@@ -22,7 +22,7 @@ class PersonService
     marital_status: 'Civil Status',
     religion: 'Religion',
     occupation: 'Occupation',
-    national_id: 'Regiment ID',
+    national_id: 'Guardian ID',
     education_level:  'EDUCATION LEVEL',
   }.freeze
 
