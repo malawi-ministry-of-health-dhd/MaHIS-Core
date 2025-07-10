@@ -9,7 +9,6 @@ module BuildPatientRecordService
         Rails.logger.error("Error getting lab orders for patient #{patient_id}: #{e.message}")
         []
       end
-      []
     end
   end
 end
