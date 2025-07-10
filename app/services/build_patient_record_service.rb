@@ -26,7 +26,6 @@ module BuildPatientRecordService
       handle_error(e, patient_id)
     end
 
-    private
 
     def validate_patient_id(patient_id)
       raise ArgumentError, "Patient ID cannot be nil or empty" if patient_id.blank?
