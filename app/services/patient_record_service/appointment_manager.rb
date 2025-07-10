@@ -4,7 +4,7 @@
 module PatientRecordService
   class AppointmentManager < BaseSaver
     def save_appointments(patient_id, record)
-      return unless record[:appointments][:unsaved]&.any?
+      return false unless record[:appointments][:unsaved]&.any?
 
       encounter_id = create_encounter(patient_id, 7, record)
 
@@ -14,6 +14,7 @@ module PatientRecordService
         location_id: record[:location_id]
       )
       record[:appointments][:unsaved] = []
+      true
     end
   end
 end

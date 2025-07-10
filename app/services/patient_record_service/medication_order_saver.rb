@@ -7,7 +7,7 @@ module PatientRecordService
 
     def save_medication_order(patient_id, record)
       orders = record.dig(:MedicationOrder, :unsaved)
-      return unless orders&.any?
+      return false unless orders&.any?
 
       begin
         ActiveRecord::Base.transaction do
@@ -26,6 +26,7 @@ module PatientRecordService
             DrugOrderService.create_drug_orders(encounter: encounter, drug_orders: drug_orders)
           end
         end
+        return true
       rescue StandardError => e
         log_error("Failed to create medication order", e)
         raise # Re-raise if you want the transaction to rollback

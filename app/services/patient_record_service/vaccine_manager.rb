@@ -5,7 +5,7 @@ module PatientRecordService
   class VaccineManager < BaseSaver
     def save_vaccines(patient_id, record)
       orders = record.dig(:vaccineAdministration, :orders)
-      return unless orders&.any?
+      return false unless orders&.any?
 
       begin
         ActiveRecord::Base.transaction do
@@ -22,6 +22,7 @@ module PatientRecordService
 
           record[:vaccineAdministration][:obs] = []
           record[:vaccineAdministration][:orders] = []
+          true
         end
       rescue StandardError => e
         log_error("Failed to save vaccines", e)
@@ -30,7 +31,7 @@ module PatientRecordService
 
     def void_vaccine(_patient_id, record)
       data = record.dig(:vaccineAdministration, :voided)
-      return unless data&.any?
+      return false unless data&.any?
 
       begin
         ActiveRecord::Base.transaction do
@@ -40,6 +41,7 @@ module PatientRecordService
             Observation.where(order_id: order.id).each { |obs| obs.void(item[:reason]) }
           end
           record[:vaccineAdministration][:voided] = []
+          true
         rescue ActiveRecord::RecordNotFound => e
           log_error("Order not found", e)
           record[:vaccineAdministration][:voided] = []

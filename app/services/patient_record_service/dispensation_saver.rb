@@ -6,7 +6,7 @@ module PatientRecordService
     def save_dispensation_data(patient_id, record)
       begin
         unsaved_data = record.dig(:dispensations, :unsaved)
-        return unless unsaved_data&.any?
+        return false unless unsaved_data&.any?
 
         permitted_data = unsaved_data.map do |dispensation_params|
           dispensation_params.permit(
@@ -35,6 +35,7 @@ module PatientRecordService
             next
           end
         end
+        return true
       rescue StandardError => e
         log_error("Error in save_dispensation_data", e)
       end
