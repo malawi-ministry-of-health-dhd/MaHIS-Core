@@ -7,8 +7,8 @@ module PatientRecordService
     ENCOUNTER_TYPE_MAPPING = SavePatientRecordService::ENCOUNTER_TYPE_MAPPING
 
     def save_birthday_data(patient_id, record)
-      return unless record[:saveStatusBirthRegistration] == 'pending'
-      return unless record[:birthRegistration].present? && record[:birthRegistration].any?
+      return false unless record[:saveStatusBirthRegistration] == 'pending'
+      return false unless record[:birthRegistration].present? && record[:birthRegistration].any?
 
       begin
         encounter_id = create_encounter(patient_id, 5, record)
@@ -18,6 +18,7 @@ module PatientRecordService
           location_id: record[:location_id]
         )
         record[:saveStatusBirthRegistration] = 'complete'
+        true
       rescue StandardError => e
         log_error("Failed to save birth information", e)
       end
@@ -33,7 +34,7 @@ module PatientRecordService
 
     def save_enrollment_data(patient_id, record)
       unsaved = record.dig(:NCDEnrollment, :unsaved)
-      return unless unsaved.present?
+      return false unless unsaved.present?
 
       {
         familyMedicalHistory: :familyMedicalHistory,
@@ -47,6 +48,7 @@ module PatientRecordService
         pass_save_data(data_type, unsaved[key], patient_id, record)
       end
       record[:NCDEnrollment][:unsaved] = {}
+      return true
     end
 
     def save_substance_abuse_data(patient_id, record)
@@ -62,7 +64,7 @@ module PatientRecordService
     def save_clinical_data(data_type, patient_id, record)
       data_key = data_type.to_s.underscore.to_sym
       unsaved_data = record.dig(data_type, :unsaved)
-      return unless unsaved_data&.any?
+      return false unless unsaved_data&.any?
 
       if data_type == :diagnosis && record.dig('program_id') == 32
         unsaved_data.each do |item|
@@ -77,6 +79,7 @@ module PatientRecordService
 
       if save_observations(data_key, unsaved_data, patient_id, record)
         record[data_type][:unsaved] = []
+        return true
       end
     end
 

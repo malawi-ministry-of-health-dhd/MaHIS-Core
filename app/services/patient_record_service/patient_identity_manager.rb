@@ -75,9 +75,10 @@ module PatientRecordService
     end
 
     def create_ncd_identifier(patient_id, record)
-      return unless record[:NcdID].present?
+      return false unless record[:NcdID].present?
       if record[:NcdID] == "-"
         PatientIdentifierService.create(patient_id: patient_id, identifier: find_next_available_ncd_number(record[:location_id]), identifier_type: 31)
+        return true
       end
     end
 
@@ -119,7 +120,9 @@ module PatientRecordService
       if record[:personInformation] && record[:saveStatusPersonInformation] == 'edit'
         person = Person.find(patient_id)
         person_service.update_person(person, record[:personInformation].permit!)
+        return true
       end
+      return false
     end
   end
 end

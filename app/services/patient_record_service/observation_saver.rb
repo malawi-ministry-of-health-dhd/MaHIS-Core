@@ -25,7 +25,7 @@ module PatientRecordService
 
     def save_all_observations(patient_id, record)
       data = record.dig(:observations)
-      return unless data&.any?
+      return false unless data&.any?
 
       begin
         ActiveRecord::Base.transaction do
@@ -43,6 +43,7 @@ module PatientRecordService
             end
           end
         end
+        return true
       rescue StandardError => e
         log_error("Error saving observations", e)
       end
@@ -52,7 +53,7 @@ module PatientRecordService
 
     def save_observations_with_encounter(patient_id, record, options)
       data = record.dig(options[:data_key], :unsaved)
-      return unless data&.any?
+      return false unless data&.any?
 
       begin
         ActiveRecord::Base.transaction do
@@ -81,6 +82,7 @@ module PatientRecordService
 
             observation_service.create_observation(encounter, item)
           end
+          return true
         end
       rescue StandardError => e
         log_error("Failed to save #{options[:error_message]}", e)

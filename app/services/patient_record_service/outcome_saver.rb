@@ -7,7 +7,7 @@ module PatientRecordService
 
     def save_outcome(patient_id, record)
       outcome = record.dig(:outCome, :unsaved)
-      return unless outcome.present?
+      return false unless outcome.present?
 
       begin
         outcomes_array = outcome.is_a?(Array) ? outcome : [outcome]
@@ -36,6 +36,7 @@ module PatientRecordService
 
           observation_service.create_observation(encounter, out_come)
         end
+        true
       rescue StandardError => e
         log_error("Failed to create patient outcome", e)
         raise # Re-raise if you want the transaction to rollback

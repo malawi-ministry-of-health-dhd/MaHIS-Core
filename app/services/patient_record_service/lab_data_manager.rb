@@ -15,7 +15,7 @@ module PatientRecordService
 
     def save_lab_order(data_type, patient_id, record)
       unsaved_data = record.dig(:labOrders, :unsaved)
-      return unless unsaved_data&.any?
+      return false unless unsaved_data&.any?
       data_key = data_type.to_s.underscore.to_sym
       begin
         encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[data_key])
@@ -27,6 +27,7 @@ module PatientRecordService
 
         orders.each { |order| Lab::PushOrderJob.perform_later(order.fetch(:order_id)) }
         record[data_type][:unsaved] = []
+        true
       rescue StandardError => e
         log_error("Failed to save #{data_type} information", e)
       end
@@ -34,7 +35,7 @@ module PatientRecordService
 
     def save_lab_results(data_type, patient_id, record)
       unsaved_data = record.dig(:labOrders, :results)
-      return unless unsaved_data&.any?
+      return false unless unsaved_data&.any?
       data_key = data_type.to_s.underscore.to_sym
 
       begin
@@ -43,6 +44,7 @@ module PatientRecordService
         lab_results = unsaved_data[0].merge(encounter_id: encounter_id)
         Lab::ResultsService.create_results(lab_results[:test_id], lab_results)
         record[data_type][:results] = []
+        true
       rescue StandardError => e
         log_error("Failed to save #{data_type} information", e)
       end
@@ -50,12 +52,13 @@ module PatientRecordService
 
     def void_lab_order(_patient_id, record)
       data = record.dig(:labOrders, :voided)
-      return unless data&.any?
+      return false unless data&.any?
       data.map do |item|
         Lab::OrdersService.void_order(item[:orderId], item[:reason])
         Lab::VoidOrderJob.perform_later(item[:orderId])
       end
       record[:labOrders][:voided] = []
+      true
     end
   end
 end

@@ -6,7 +6,7 @@ module PatientRecordService
     def send_sms(_patient_id, record)
       appointment_date = record.dig('sms', 'appointment_date')
       cell_phones = record.dig('sms', 'cell_phone')
-      return unless appointment_date && cell_phones
+      return false unless appointment_date && cell_phones
 
       cell_phones.map do |phone|
         patient_details = { cell_phone: phone }
@@ -14,6 +14,7 @@ module PatientRecordService
       end
       record[:sms][:appointment_date] = ''
       record[:sms][:cell_phone] = []
+      true
     end
 
     def enqueue_sms(date, details, action)
