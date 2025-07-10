@@ -100,17 +100,7 @@ class SavePatientRecordService
       # --- Post-Execution Checks on Individual Operations (using _key) ---
       failed_operations = []
 
-      results.each do |key, success|
-        unless success
-          failed_operations << key
-          Rails.logger.error("Operation '#{key}' failed for patient #{patient_id}.")
-          # You can add specific handling here for specific keys:
-          # if key == :save_vitals_data
-          #   Rails.logger.error("Vitals data was critical and failed!")
-          #   # Perhaps raise ActiveRecord::Rollback if this specific failure should halt the entire process
-          # end
-        end
-      end
+     
 
       if failed_operations.any?
         Rails.logger.error("Overall record saving for patient #{patient_id} had failures in: #{failed_operations.join(', ')}")
@@ -131,26 +121,25 @@ class SavePatientRecordService
       raise # Re-raise to ensure the transaction is rolled back
     end # End of ActiveRecord::Base.transaction block
 
-    # Building and updating the patient record (outside the transaction)
-    patient_data = BuildPatientRecordService.build_patient_record(patient_id)
     patient_record = PatientRecord.find_or_initialize_by(patient_id: patient_id)
-
-    if patient_data.nil?
-      Rails.logger.error("Failed to build patient data for patient #{patient_id} post-operations.")
-      patient_record.update(sync_status: 'failed', last_sync_at: Time.current, error_message: 'Failed to build final patient data')
-      return
+    patient_data = patient_record.record
+    results.each do |key, success|
+      if success
+        if key == :save_vitals_data
+          patient_data[:vitals] = BuildPatientRecordService.build_observation_data(patient_id, 'VITALS')
+        elsif key == :save_diagnosis_data
+          patient_data[:diagnosis] = BuildPatientRecordService.build_observation_data(patient_id, 'DIAGNOSIS')
+        elsif key == :save_lab_orders_data
+          patient_data[:labOrders] = BuildPatientRecordService.build_lab_orders_data(patient_id)
+        end
+      end
     end
-
-    # Update the record with the determined sync status
     patient_record.record = patient_data
     patient_record.encounter_datetime = patient_data[:encounter_datetime] if patient_data[:encounter_datetime]
     patient_record.last_sync_at = Time.current
     patient_record.sync_status = overall_sync_status # Use the calculated status
     patient_record.save!
 
-    # You could return the `results` hash from `create_patient_record` if an external caller needs it.
-    # return results
-    Rails.logger.info("############################################===========All sub-operations successfully processed for patient #{results}.")
     patient_data
   end
 end
