@@ -185,6 +185,10 @@ module BuildPatientRecordService
       }
     end
 
+    def build_all_observations(patient_id)
+      []
+    end
+
     def fetch_active_programs(patient_id)
       PatientProgram.where(patient_id: patient_id).to_a.map(&:as_json)
     end

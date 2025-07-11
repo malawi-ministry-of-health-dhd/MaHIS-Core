@@ -2,6 +2,11 @@
 # frozen_string_literal: true
 
 class SavePatientRecordService
+  # Defines expected required fields and their keys within the record hash.
+  RequiredFields = Struct.new(:program_id, :provider_id, :location_id, :encounter_datetime)
+  # Defines expected ID fields and their keys within the record hash.
+  PatientIds = Struct.new(:national_id, :ichis_id, :birth_id)
+
   ENCOUNTER_TYPE_MAPPING = {
     vitals: 'VITALS',
     diagnosis: 'DIAGNOSIS',
@@ -21,173 +26,202 @@ class SavePatientRecordService
     allergies: 'MEDICAL HISTORY'
   }.freeze
 
- 
   def create_patient_record(record)
-    # Extract required fields and initial validations (unchanged)
-    required_fields = {
+    # 1. Extract and Validate Initial Data
+    required_fields = extract_required_fields(record)
+    return unless required_fields_present?(required_fields)
+
+    ids = extract_patient_ids(record)
+
+    # 2. Initialize Service Managers
+    managers = initialize_managers
+
+    # 3. Save Person Information and Get Patient ID
+    identity_data = managers[:identity_manager].save_person_information(record)
+    patient_id = identity_data[:patient_id]
+    return unless patient_id
+
+    # 4. Initial ID Validation
+    unless managers[:identity_manager].validate_ids(ids.national_id, ids.birth_id, ids.ichis_id)
+      log_and_update_status(patient_id, 'failed', 'ID Validation Failed', "Patient ID validation failed for patient #{patient_id}. Terminating record creation.")
+      return
+    end
+
+    # 5. Execute Operations within Transaction
+    overall_sync_status = 'synced'
+    operation_results = {} # To store success/failure of each operation
+
+    begin
+      ActiveRecord::Base.transaction do
+        operation_results = execute_patient_operations(patient_id, record, managers)
+
+        # Determine overall status based on operation_results (assuming any false means partial_failed)
+        if operation_results.value?(false)
+          failed_ops_list = operation_results.select { |_k, v| v == false }.keys.join(', ')
+          Rails.logger.error("Overall record saving for patient #{patient_id} had failures in: #{failed_ops_list}")
+          overall_sync_status = 'partial_failed'
+          # If you want to force a rollback on *any* failure among these, uncomment the line below:
+          # raise ActiveRecord::Rollback
+        else
+          Rails.logger.info("All sub-operations successfully processed for patient #{patient_id}.")
+        end
+      end # End of ActiveRecord::Base.transaction block
+    rescue StandardError => e
+      Rails.logger.error("An unhandled error occurred during patient record saving for patient #{patient_id}: #{e.message}")
+      Rails.logger.error(e.backtrace.join("\n"))
+      overall_sync_status = 'failed'
+      raise # Re-raise to ensure the transaction is rolled back
+    end
+
+    # 6. Build and Save Final Patient Record
+    build_and_save_patient_record(patient_id, record, operation_results, overall_sync_status)
+  end
+
+  private
+
+  def extract_required_fields(record)
+    RequiredFields.new(
       program_id: record.dig('program_id'),
       provider_id: record.dig('provider_id'),
       location_id: record.dig('location_id'),
       encounter_datetime: record.dig('encounter_datetime')
-    }
-    ids = {
+    )
+  end
+
+  def required_fields_present?(required_fields)
+    required_fields.to_h.values.all? { |value| value.present? } 
+  end
+
+  def extract_patient_ids(record)
+    PatientIds.new(
       national_id: record.dig('otherPersonInformation', 'nationalID'),
       ichis_id: record.dig('otherPersonInformation', 'ichisID'),
       birth_id: record.dig('otherPersonInformation', 'birthID')
+    )
+  end
+
+  def initialize_managers
+    {
+      identity_manager: PatientRecordService::PatientIdentityManager.new,
+      guardian_manager: PatientRecordService::GuardianManager.new,
+      enrollment_manager: PatientRecordService::PatientEnrollmentManager.new,
+      clinical_data_saver: PatientRecordService::ClinicalDataSaver.new,
+      lab_data_manager: PatientRecordService::LabDataManager.new,
+      vaccine_manager: PatientRecordService::VaccineManager.new,
+      appointment_manager: PatientRecordService::AppointmentManager.new,
+      sms_manager: PatientRecordService::SmsManager.new,
+      outcome_saver: PatientRecordService::OutcomeSaver.new,
+      medication_order_saver: PatientRecordService::MedicationOrderSaver.new,
+      dispensation_saver: PatientRecordService::DispensationSaver.new,
+      observation_saver: PatientRecordService::ObservationSaver.new
     }
+  end
 
-    return if required_fields.values.any? { |value| value.nil? || value.to_s.empty? }
+  def execute_patient_operations(patient_id, record, managers)
+    {
+      update_person_info: managers[:identity_manager].update_person_information(patient_id, record),
+      manage_guardian: managers[:guardian_manager].manage_guardian(patient_id, record),
+      enroll_program: managers[:enrollment_manager].enroll_program(patient_id, record),
+      save_birthday_data: managers[:clinical_data_saver].save_birthday_data(patient_id, record),
+      save_vitals_data: managers[:clinical_data_saver].save_vitals_data(patient_id, record),
+      save_diagnosis_data: managers[:clinical_data_saver].save_diagnosis_data(patient_id, record),
+      save_enrollment_data: managers[:clinical_data_saver].save_enrollment_data(patient_id, record),
+      save_substance_abuse_data: managers[:clinical_data_saver].save_substance_abuse_data(patient_id, record),
+      save_screening_data: managers[:clinical_data_saver].save_screening_data(patient_id, record),
+      save_lab_orders_data: managers[:lab_data_manager].save_lab_orders_data(patient_id, record),
+      save_lab_results_data: managers[:lab_data_manager].save_lab_results_data(patient_id, record),
+      void_lab_order: managers[:lab_data_manager].void_lab_order(patient_id, record),
+      save_vaccines: managers[:vaccine_manager].save_vaccines(patient_id, record),
+      save_appointments: managers[:appointment_manager].save_appointments(patient_id, record),
+      send_sms: managers[:sms_manager].send_sms(patient_id, record),
+      void_vaccine: managers[:vaccine_manager].void_vaccine(patient_id, record),
+      save_outcome: managers[:outcome_saver].save_outcome(patient_id, record),
+      save_medication_order: managers[:medication_order_saver].save_medication_order(patient_id, record),
+      create_ncd_identifier: managers[:identity_manager].create_ncd_identifier(patient_id, record),
+      save_notes_and_pharmalogical_notes: managers[:observation_saver].save_notes_and_pharmalogical_notes(patient_id, record),
+      save_allergies: managers[:observation_saver].save_allergies(patient_id, record),
+      save_dispensation_data: managers[:dispensation_saver].save_dispensation_data(patient_id, record),
+      save_all_observations: managers[:observation_saver].save_all_observations(patient_id, record)
+    }
+  end
 
-    # Initialize managers/savers
-    # (Initialize all here as before)
-    identity_manager = PatientRecordService::PatientIdentityManager.new
-    guardian_manager = PatientRecordService::GuardianManager.new
-    enrollment_manager = PatientRecordService::PatientEnrollmentManager.new
-    clinical_data_saver = PatientRecordService::ClinicalDataSaver.new
-    lab_data_manager = PatientRecordService::LabDataManager.new
-    vaccine_manager = PatientRecordService::VaccineManager.new
-    appointment_manager = PatientRecordService::AppointmentManager.new
-    sms_manager = PatientRecordService::SmsManager.new
-    outcome_saver = PatientRecordService::OutcomeSaver.new
-    medication_order_saver = PatientRecordService::MedicationOrderSaver.new
-    dispensation_saver = PatientRecordService::DispensationSaver.new
-    observation_saver = PatientRecordService::ObservationSaver.new
-
-    # Save person information and get patient_id
-    identity_data = identity_manager.save_person_information(record)
-    return unless (patient_id = identity_data[:patient_id])
-
-    # --- Initial ID Validation ---
-    # This block is for an early check. If this fails, you might want to stop immediately.
-    id_validation_success = identity_manager.validate_ids(ids[:national_id], ids[:birth_id], ids[:ichis_id])
-    unless id_validation_success
-      Rails.logger.warn("Patient ID validation failed for patient #{patient_id}. Terminating record creation.")
-      patient_record = PatientRecord.find_or_initialize_by(patient_id: patient_id)
-      patient_record.update(sync_status: 'failed', last_sync_at: Time.current, error_message: 'ID Validation Failed')
-      return # Exit early
-    end
-
-    results = {} # Initialize a hash to store all operation results
-
-    overall_sync_status = 'synced' # Assume success until a failure is detected
-
-    ActiveRecord::Base.transaction do
-      # --- Execute Operations and Capture Results ---
-      results[:update_person_info] = identity_manager.update_person_information(patient_id, record)
-      results[:manage_guardian] = guardian_manager.manage_guardian(patient_id, record)
-      results[:enroll_program] = enrollment_manager.enroll_program(patient_id, record)
-      results[:save_birthday_data] = clinical_data_saver.save_birthday_data(patient_id, record)
-      results[:save_vitals_data] = clinical_data_saver.save_vitals_data(patient_id, record)
-      results[:save_diagnosis_data] = clinical_data_saver.save_diagnosis_data(patient_id, record)
-      results[:save_enrollment_data] = clinical_data_saver.save_enrollment_data(patient_id, record)
-      results[:save_substance_abuse_data] = clinical_data_saver.save_substance_abuse_data(patient_id, record)
-      results[:save_screening_data] = clinical_data_saver.save_screening_data(patient_id, record)
-      results[:save_lab_orders_data] = lab_data_manager.save_lab_orders_data(patient_id, record)
-      results[:save_lab_results_data] = lab_data_manager.save_lab_results_data(patient_id, record)
-      results[:void_lab_order] = lab_data_manager.void_lab_order(patient_id, record)
-      results[:save_vaccines] = vaccine_manager.save_vaccines(patient_id, record)
-      results[:save_appointments] = appointment_manager.save_appointments(patient_id, record)
-      results[:send_sms] = sms_manager.send_sms(patient_id, record)
-      results[:void_vaccine] = vaccine_manager.void_vaccine(patient_id, record)
-      results[:save_outcome] = outcome_saver.save_outcome(patient_id, record)
-      results[:save_medication_order] = medication_order_saver.save_medication_order(patient_id, record)
-      results[:create_ncd_identifier] = identity_manager.create_ncd_identifier(patient_id, record)
-      results[:save_notes_and_pharmalogical_notes] = observation_saver.save_notes_and_pharmalogical_notes(patient_id, record)
-      results[:save_allergies] = observation_saver.save_allergies(patient_id, record)
-      results[:save_dispensation_data] = dispensation_saver.save_dispensation_data(patient_id, record)
-      results[:save_all_observations] = observation_saver.save_all_observations(patient_id, record)
-
-      # --- Post-Execution Checks on Individual Operations (using _key) ---
-      failed_operations = []
-
-     
-
-      if failed_operations.any?
-        Rails.logger.error("Overall record saving for patient #{patient_id} had failures in: #{failed_operations.join(', ')}")
-        overall_sync_status = 'partial_failed' # Or just 'failed' if any failure means total failure
-        # If you want to force a rollback on *any* failure among these, uncomment the line below:
-        # raise ActiveRecord::Rollback # This will cause the transaction to revert all changes
-      else
-        Rails.logger.info("All sub-operations successfully processed for patient #{patient_id}.")
-        overall_sync_status = 'synced'
-      end
-
-    rescue StandardError => e
-      # This catches any unhandled exceptions that propagate up from sub-services,
-      # which would cause the transaction to rollback by default.
-      Rails.logger.error("An unhandled error occurred during patient record saving for patient #{patient_id}: #{e.message}")
-      Rails.logger.error(e.backtrace.join("\n"))
-      overall_sync_status = 'failed' # Ensure status is 'failed' for unhandled errors
-      raise # Re-raise to ensure the transaction is rolled back
-    end # End of ActiveRecord::Base.transaction block
-
+  def build_and_save_patient_record(patient_id, original_record, operation_results, overall_sync_status)
     patient_record = PatientRecord.find_or_initialize_by(patient_id: patient_id)
-    patient_data = patient_record.record
+    patient_data = patient_record.record.presence || original_record # Initialize if nil
 
+    # Fetch patient and encounter details once
     patient = BuildPatientRecordService.find_patient(patient_id)
-    person = patient.person
+    person = patient&.person
     latest_encounter = BuildPatientRecordService.find_latest_encounter(patient_id)
-    patient_data[:encounter_datetime]= latest_encounter&.encounter_datetime,
-    patient_data[:location_id]= latest_encounter&.location_id,
-    patient_data[:ID]= patient_identifier(patient, 3),
-    patient_data[:NcdID]= patient_identifier(patient, 31),
-    patient_data[:program_id]= '',
-    patient_data[:provider_id]= '',
-    patient_data[:sync_status]= '',
-    patient_data[:saveStatusPersonInformation]= '',
-    patient_data[:saveStatusGuardianInformation]= '',
-    patient_data[:saveStatusBirthRegistration]= '',
-    patient_data[:otherPersonInformation]= BuildPatientRecordService.build_other_person_info,
 
-    results.each do |key, success|
-      if success
-        if key == :update_person_info
-          name = person&.names&.first
-          address = person&.addresses&.first
-          patient_data[:personInformation] = BuildPatientRecordService.build(person, name, address, patient)
-        elsif key == :manage_guardian
-          patient_data[:guardianInformation] = BuildPatientRecordService.build_guardian_data(patient.patient_id)
-        elsif key == :enroll_program
-          patient_data[:activePrograms] = BuildPatientRecordService.fetch_active_programs(patient_id)
-        elsif key == :save_birthday_data
-          patient_data[:birthRegistration] = BuildPatientRecordService.build_observation_data(patient_id, 'REGISTRATION')
-        elsif key == :save_vitals_data
-          patient_data[:vitals] = BuildPatientRecordService.build_observation_data(patient_id, 'VITALS')
-        elsif key == :save_diagnosis_data
-          patient_data[:diagnosis] = BuildPatientRecordService.build_observation_data(patient_id, 'DIAGNOSIS')
-        elsif key == :save_substance_abuse_data
-          patient_data[:substanceAbuse] = BuildPatientRecordService.build_observation_data(patient_id, 'ASSESSMENT')
-        elsif key == :save_screening_data
-          patient_data[:screening] = BuildPatientRecordService.build_screening_data(patient_id)
-        elsif key == :save_lab_orders_data ||  key == :save_lab_results_data || key == :void_lab_order
-          patient_data[:labOrders] = BuildPatientRecordService.build_lab_orders_data(patient_id)
-        elsif key == :save_vaccines || key == :void_vaccine
-          patient_data[:vaccineAdministration] = BuildPatientRecordService.build_vaccine_administration_data
-        elsif key == :save_appointments
-          patient_data[:appointments] = BuildPatientRecordService.build_observation_data(patient_id, 'APPOINTMENT')
-        elsif key == :save_outcome
-          patient_data[:outCome] = BuildPatientRecordService.build_empty_data_structure
-        elsif key == :save_medication_order
-          patient_data[:MedicationOrder] = BuildPatientRecordService.build_medication_data(patient_id)
-        elsif key == :create_ncd_identifier
-          patient_data[:NcdID] = BuildPatientRecordService.patient_identifier(patient, 31)
-        elsif key == :save_notes_and_pharmalogical_notes
-          patient_data[:notes] = BuildPatientRecordService.build_observation_data(patient_id, 'NOTES')
-        elsif key == :save_allergies
-          patient_data[:allergies] = BuildPatientRecordService.build_observation_data(patient_id, 'MEDICAL HISTORY')
-        elsif key == :save_dispensation_data
-          patient_data[:dispensations] = BuildPatientRecordService.build_dispensations_data(patient)
-        elsif key == :save_all_observations
-          patient_data[:observations] = BuildPatientRecordService.build_lab_orders_data(patient_id)
-        end
+    # Always set these base attributes
+    patient_data[:encounter_datetime] = latest_encounter&.encounter_datetime
+    patient_data[:location_id] = latest_encounter&.location_id
+    patient_data[:ID] = BuildPatientRecordService.patient_identifier(patient, 3) # Assuming 3 is for general ID
+    patient_data[:NcdID] = BuildPatientRecordService.patient_identifier(patient, 31)
+    patient_data[:program_id] = original_record.dig('program_id') # Use from original record
+    patient_data[:provider_id] = original_record.dig('provider_id') # Use from original record
+    patient_data[:sync_status] = overall_sync_status # This will be overwritten later by the overall status
+    patient_data[:otherPersonInformation] = BuildPatientRecordService.build_other_person_info 
+
+    # Update specific sections based on successful operations
+    operation_results.each do |key, success|
+      next unless success
+
+      case key
+      when :update_person_info
+        name = person&.names&.first
+        address = person&.addresses&.first
+        patient_data[:personInformation] = BuildPatientRecordService.build(person, name, address, patient)
+      when :manage_guardian
+        patient_data[:guardianInformation] = BuildPatientRecordService.build_guardian_data(patient_id)
+      when :enroll_program
+        patient_data[:activePrograms] = BuildPatientRecordService.fetch_active_programs(patient_id)
+      when :save_birthday_data
+        patient_data[:birthRegistration] = BuildPatientRecordService.build_observation_data(patient_id, 'REGISTRATION')
+      when :save_vitals_data
+        patient_data[:vitals] = BuildPatientRecordService.build_observation_data(patient_id, 'VITALS')
+      when :save_diagnosis_data
+        patient_data[:diagnosis] = BuildPatientRecordService.build_observation_data(patient_id, 'DIAGNOSIS')
+      when :save_substance_abuse_data
+        patient_data[:substanceAbuse] = BuildPatientRecordService.build_observation_data(patient_id, 'ASSESSMENT')
+      when :save_screening_data
+        patient_data[:screening] = BuildPatientRecordService.build_screening_data(patient_id)
+      when :save_lab_orders_data, :save_lab_results_data, :void_lab_order
+        patient_data[:labOrders] = BuildPatientRecordService.build_lab_orders_data(patient_id)
+      when :save_vaccines, :void_vaccine
+        patient_data[:vaccineAdministration] = BuildPatientRecordService.build_vaccine_administration_data(patient_id) 
+      when :save_appointments
+        patient_data[:appointments] = BuildPatientRecordService.build_observation_data(patient_id, 'APPOINTMENT')
+      when :save_outcome
+        patient_data[:outCome] = BuildPatientRecordService.build_empty_data_structure 
+      when :save_medication_order
+        patient_data[:MedicationOrder] = BuildPatientRecordService.build_medication_data(patient_id)
+      when :create_ncd_identifier
+        patient_data[:NcdID] = BuildPatientRecordService.patient_identifier(patient, 31)
+      when :save_notes_and_pharmalogical_notes
+        patient_data[:notes] = BuildPatientRecordService.build_observation_data(patient_id, 'NOTES')
+      when :save_allergies
+        patient_data[:allergies] = BuildPatientRecordService.build_observation_data(patient_id, 'MEDICAL HISTORY')
+      when :save_dispensation_data
+        patient_data[:dispensations] = BuildPatientRecordService.build_dispensations_data(patient)
+      when :save_all_observations
+        patient_data[:observations] = BuildPatientRecordService.build_all_observations(patient_id) 
       end
     end
+
     patient_record.record = patient_data
     patient_record.encounter_datetime = patient_data[:encounter_datetime] if patient_data[:encounter_datetime]
     patient_record.last_sync_at = Time.current
-    patient_record.sync_status = overall_sync_status # Use the calculated status
+    patient_record.sync_status = overall_sync_status
     patient_record.save!
 
     patient_data
+  end
+
+  def log_and_update_status(patient_id, sync_status, error_message, log_message)
+    Rails.logger.warn(log_message)
+    patient_record = PatientRecord.find_or_initialize_by(patient_id: patient_id)
+    patient_record.update(sync_status: sync_status, last_sync_at: Time.current, error_message: error_message)
   end
 end
