@@ -439,3 +439,6 @@ See the following for more:
 # create indexes for mongo db
 
 - rails db:mongoid:create_indexes
+
+# sync patient records with mongo
+- rails sync:batch
