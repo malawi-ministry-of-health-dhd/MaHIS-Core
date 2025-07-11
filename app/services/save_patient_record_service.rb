@@ -84,11 +84,11 @@ class SavePatientRecordService
       results[:save_screening_data] = clinical_data_saver.save_screening_data(patient_id, record)
       results[:save_lab_orders_data] = lab_data_manager.save_lab_orders_data(patient_id, record)
       results[:save_lab_results_data] = lab_data_manager.save_lab_results_data(patient_id, record)
+      results[:void_lab_order] = lab_data_manager.void_lab_order(patient_id, record)
       results[:save_vaccines] = vaccine_manager.save_vaccines(patient_id, record)
       results[:save_appointments] = appointment_manager.save_appointments(patient_id, record)
       results[:send_sms] = sms_manager.send_sms(patient_id, record)
       results[:void_vaccine] = vaccine_manager.void_vaccine(patient_id, record)
-      results[:void_lab_order] = lab_data_manager.void_lab_order(patient_id, record)
       results[:save_outcome] = outcome_saver.save_outcome(patient_id, record)
       results[:save_medication_order] = medication_order_saver.save_medication_order(patient_id, record)
       results[:create_ncd_identifier] = identity_manager.create_ncd_identifier(patient_id, record)
@@ -123,14 +123,62 @@ class SavePatientRecordService
 
     patient_record = PatientRecord.find_or_initialize_by(patient_id: patient_id)
     patient_data = patient_record.record
+
+    patient = BuildPatientRecordService.find_patient(patient_id)
+    person = patient.person
+    latest_encounter = BuildPatientRecordService.find_latest_encounter(patient_id)
+    patient_data[:encounter_datetime]= latest_encounter&.encounter_datetime,
+    patient_data[:location_id]= latest_encounter&.location_id,
+    patient_data[:ID]= patient_identifier(patient, 3),
+    patient_data[:NcdID]= patient_identifier(patient, 31),
+    patient_data[:program_id]= '',
+    patient_data[:provider_id]= '',
+    patient_data[:sync_status]= '',
+    patient_data[:saveStatusPersonInformation]= '',
+    patient_data[:saveStatusGuardianInformation]= '',
+    patient_data[:saveStatusBirthRegistration]= '',
+    patient_data[:otherPersonInformation]= BuildPatientRecordService.build_other_person_info,
+
     results.each do |key, success|
       if success
-        if key == :save_vitals_data
+        if key == :update_person_info
+          name = person&.names&.first
+          address = person&.addresses&.first
+          patient_data[:personInformation] = BuildPatientRecordService.build(person, name, address, patient)
+        elsif key == :manage_guardian
+          patient_data[:guardianInformation] = BuildPatientRecordService.build_guardian_data(patient.patient_id)
+        elsif key == :enroll_program
+          patient_data[:activePrograms] = BuildPatientRecordService.fetch_active_programs(patient_id)
+        elsif key == :save_birthday_data
+          patient_data[:birthRegistration] = BuildPatientRecordService.build_observation_data(patient_id, 'REGISTRATION')
+        elsif key == :save_vitals_data
           patient_data[:vitals] = BuildPatientRecordService.build_observation_data(patient_id, 'VITALS')
         elsif key == :save_diagnosis_data
           patient_data[:diagnosis] = BuildPatientRecordService.build_observation_data(patient_id, 'DIAGNOSIS')
-        elsif key == :save_lab_orders_data
+        elsif key == :save_substance_abuse_data
+          patient_data[:substanceAbuse] = BuildPatientRecordService.build_observation_data(patient_id, 'ASSESSMENT')
+        elsif key == :save_screening_data
+          patient_data[:screening] = BuildPatientRecordService.build_screening_data(patient_id)
+        elsif key == :save_lab_orders_data ||  key == :save_lab_results_data || key == :void_lab_order
           patient_data[:labOrders] = BuildPatientRecordService.build_lab_orders_data(patient_id)
+        elsif key == :save_vaccines || key == :void_vaccine
+          patient_data[:vaccineAdministration] = BuildPatientRecordService.build_vaccine_administration_data
+        elsif key == :save_appointments
+          patient_data[:appointments] = BuildPatientRecordService.build_observation_data(patient_id, 'APPOINTMENT')
+        elsif key == :save_outcome
+          patient_data[:outCome] = BuildPatientRecordService.build_empty_data_structure
+        elsif key == :save_medication_order
+          patient_data[:MedicationOrder] = BuildPatientRecordService.build_medication_data(patient_id)
+        elsif key == :create_ncd_identifier
+          patient_data[:NcdID] = BuildPatientRecordService.patient_identifier(patient, 31)
+        elsif key == :save_notes_and_pharmalogical_notes
+          patient_data[:notes] = BuildPatientRecordService.build_observation_data(patient_id, 'NOTES')
+        elsif key == :save_allergies
+          patient_data[:allergies] = BuildPatientRecordService.build_observation_data(patient_id, 'MEDICAL HISTORY')
+        elsif key == :save_dispensation_data
+          patient_data[:dispensations] = BuildPatientRecordService.build_dispensations_data(patient)
+        elsif key == :save_all_observations
+          patient_data[:observations] = BuildPatientRecordService.build_lab_orders_data(patient_id)
         end
       end
     end
