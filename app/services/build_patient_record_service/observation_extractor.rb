@@ -52,41 +52,44 @@ module BuildPatientRecordService
       begin
         return [] unless patient_id
 
-        # Build the initial query for encounters
         encounters_query = Encounter.where(patient_id: patient_id)
 
-       # If allowed_encounter_types is provided and not empty, add the filter
-      if allowed_encounter_types.is_a?(Array) && allowed_encounter_types.any?
-        encounters_query = encounters_query.where(encounter_type: allowed_encounter_types)
-      end
+        if allowed_encounter_types.is_a?(Array) && allowed_encounter_types.any?
+          encounters_query = encounters_query.where(encounter_type: allowed_encounter_types)
+        end
 
-        # Fetch encounters based on the constructed query
         encounters = encounters_query
         return [] unless encounters.any?
 
-        result = []
-        encounters.each do |encounter|
-          obs_array = []
-          encounter.observations.each do |observation|
-            obs_array << safe_build_observation_hash(observation, encounter)
-          end
+        aggregated_observations = {}
 
-          result << {
-            encounter_type: EncounterType.where(encounter_type_id: encounter.encounter_type).pick(:name), 
-            status: status, 
-            obs: obs_array,
-          }
+        encounters.each do |encounter|
+          encounter_type_name = EncounterType.where(encounter_type_id: encounter.encounter_type).pick(:name)
+
+          unless aggregated_observations.key?(encounter_type_name)
+            aggregated_observations[encounter_type_name] = {
+              encounter_type: encounter.encounter_type,
+              status: status,
+              obs: [], 
+            }
+          end
+          encounter.observations.each do |observation|
+            obs_hash = safe_build_observation_hash(observation, encounter)
+            aggregated_observations[encounter_type_name][:obs] << obs_hash if obs_hash
+          end
         end
-        result
+
+        aggregated_observations.values
       rescue StandardError => e
         Rails.logger.error("Error extracting all observations for patient #{patient_id}: #{e.message}")
         []
       end
     end
+
     def safe_build_observation_hash(observation, encounter)
       begin
-        children = observation.children.map { |child| safe_build_observation_hash(child, encounter) }
-    
+        children = observation.children.map { |child| safe_build_observation_hash(child, encounter) }.compact
+
         {
           concept_id: observation.concept_id,
           concept_name: safe_concept_id_to_name(observation.concept_id),
@@ -104,9 +107,10 @@ module BuildPatientRecordService
         }
       rescue StandardError => e
         Rails.logger.error("Error building observation hash for obs #{observation.id}: #{e.message}")
-        nil
+        nil 
       end
     end
+
     def safe_concept_id_to_name(concept_id)
       begin
         return '' unless concept_id

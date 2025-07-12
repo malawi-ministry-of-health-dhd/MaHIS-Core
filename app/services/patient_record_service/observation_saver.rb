@@ -32,7 +32,7 @@ module PatientRecordService
           data.each do |item|
             next unless item.present? && item[:status] == "unsaved" && item[:obs]&.any?
 
-            encounter_type = EncounterType.find_by_name(item[:encounter_type])
+            encounter_type = EncounterType.find_by_encounter_type_id(item[:encounter_type])
             next unless encounter_type
 
             encounter_id = create_encounter(patient_id, encounter_type.id, record)
