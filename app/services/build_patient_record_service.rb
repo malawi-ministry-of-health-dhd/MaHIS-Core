@@ -98,7 +98,8 @@ module BuildPatientRecordService
         MedicationOrder: build_medication_data(patient_id),
         outCome: build_empty_data_structure,
         notes: build_observation_data(patient_id, 'NOTES'),
-        allergies: build_observation_data(patient_id, 'MEDICAL HISTORY')
+        allergies: build_observation_data(patient_id, 'MEDICAL HISTORY'),
+        observations: build_all_observations(patient_id, allowed_encounter_types = nil, status = "saved")
       }
     end
 
@@ -185,9 +186,6 @@ module BuildPatientRecordService
       }
     end
 
-    def build_all_observations(patient_id)
-      []
-    end
 
     def fetch_active_programs(patient_id)
       PatientProgram.where(patient_id: patient_id).to_a.map(&:as_json)
