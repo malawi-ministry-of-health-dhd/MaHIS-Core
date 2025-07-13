@@ -163,7 +163,8 @@ class SavePatientRecordService
     patient_data[:provider_id] = original_record.dig('provider_id') # Use from original record
     patient_data[:sync_status] = overall_sync_status # This will be overwritten later by the overall status
     patient_data[:otherPersonInformation] = BuildPatientRecordService.build_other_person_info 
-
+    patient_data[:visits]  = BuildPatientRecordService.safe_get_visits(patient)
+    patient_data[:activePrograms]  = BuildPatientRecordService.fetch_active_programs(patient.patient_id)
     # Update specific sections based on successful operations
     operation_results.each do |key, success|
       next unless success

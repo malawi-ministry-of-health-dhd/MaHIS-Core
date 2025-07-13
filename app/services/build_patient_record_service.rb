@@ -5,7 +5,7 @@ module BuildPatientRecordService
     include ModelUtils
     include BuildPatientRecordService::ObservationExtractor
     include BuildPatientRecordService::LabOrderService
-    include BuildPatientRecordService::DrugOrderService
+    include BuildPatientRecordService::DrugService
     include BuildPatientRecordService::EncounterService
     include BuildPatientRecordService::GuardianService
     include BuildPatientRecordService::PatientIdentifierService
