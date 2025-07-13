@@ -23,31 +23,34 @@ module PatientRecordService
       })
     end
 
-    def save_all_observations(patient_id, record)
-      data = record.dig(:observations)
-      return false unless data&.any?
+   def save_all_observations(patient_id, record)
+    data = record.dig(:observations)
+    return false unless data&.any?
 
-      begin
-        ActiveRecord::Base.transaction do
-          data.each do |item|
-            next unless item.present? && item[:status] == "unsaved" && item[:obs]&.any?
+    # Check if there are any items with "unsaved" status
+    unsaved_items = data.select { |item| item.present? && item[:status] == "unsaved" && item[:obs]&.any? }
+    return false if unsaved_items.empty?
 
-            encounter_type = EncounterType.find_by_encounter_type_id(item[:encounter_type])
-            next unless encounter_type
+    begin
+      ActiveRecord::Base.transaction do
+        unsaved_items.each do |item|
+          encounter_type = EncounterType.find_by_encounter_type_id(item[:encounter_type])
+          next unless encounter_type
 
-            encounter_id = create_encounter(patient_id, encounter_type.id, record)
-            encounter = Encounter.find(encounter_id)
-            item[:obs].map do |archetype|
-              archetype[:location_id] = record[:location_id]
-              observation_service.create_observation(encounter, archetype.permit!)
-            end
+          encounter_id = create_encounter(patient_id, encounter_type.id, record)
+          encounter = Encounter.find(encounter_id)
+          item[:obs].map do |archetype|
+            archetype[:location_id] = record[:location_id]
+            observation_service.create_observation(encounter, archetype.permit!)
           end
         end
-        return true
-      rescue StandardError => e
-        log_error("Error saving observations", e)
       end
+      return true
+    rescue StandardError => e
+      log_error("Error saving observations", e)
+      return false  
     end
+  end
 
     private
 
