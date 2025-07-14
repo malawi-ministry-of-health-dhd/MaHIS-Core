@@ -208,10 +208,25 @@ class SavePatientRecordService
         patient_data[:dispensations] = BuildPatientRecordService.build_dispensations_data(patient)
       when :save_all_observations
         allowed_encounter_types = original_record[:observations]
-                                  .select { |e| e[:status] == "unsaved" }
-                                  .map { |e| e[:encounter_type] }
-                                  .uniq
-        patient_data[:observations] = BuildPatientRecordService.build_all_observations(patient_id, allowed_encounter_types) 
+                          .select { |e| e[:status] == "unsaved" }
+                          .map { |e| e[:encounter_type] }
+                          .uniq
+
+        new_observations = BuildPatientRecordService.build_all_observations(patient_id, allowed_encounter_types) 
+        new_observations_map = new_observations.group_by { |obs| obs[:encounter_type] }
+
+        updated_observations = []
+
+        original_record[:observations].each do |obs|
+            if allowed_encounter_types.include?(obs[:encounter_type])
+                updated_observations.push(new_observations_map[obs[:encounter_type]][0])
+            else
+                updated_observations.push(obs)
+            end
+        end
+
+        patient_data[:observations] = updated_observations
+
       end
     end
 
