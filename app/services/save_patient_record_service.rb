@@ -163,7 +163,8 @@ class SavePatientRecordService
     patient_data[:provider_id] = original_record.dig('provider_id') # Use from original record
     patient_data[:sync_status] = overall_sync_status # This will be overwritten later by the overall status
     patient_data[:otherPersonInformation] = BuildPatientRecordService.build_other_person_info 
-
+    patient_data[:visits]  = BuildPatientRecordService.safe_get_visits(patient)
+    patient_data[:activePrograms]  = BuildPatientRecordService.fetch_active_programs(patient.patient_id)
     # Update specific sections based on successful operations
     operation_results.each do |key, success|
       next unless success
@@ -207,10 +208,24 @@ class SavePatientRecordService
         patient_data[:dispensations] = BuildPatientRecordService.build_dispensations_data(patient)
       when :save_all_observations
         allowed_encounter_types = original_record[:observations]
-                                  .select { |e| e[:status] == "unsaved" }
-                                  .map { |e| e[:encounter_type] }
-                                  .uniq
-        patient_data[:observations] = BuildPatientRecordService.build_all_observations(patient_id, allowed_encounter_types) 
+                                            .select { |e| e[:status] == "unsaved" }
+                                            .map { |e| e[:encounter_type] }
+                                            .uniq
+        
+        allowed_encounter_types = allowed_encounter_types.compact
+        if allowed_encounter_types.empty? ||allowed_encounter_types.nil? 
+          break 
+        end
+
+         original_observations_map = original_record[:observations]
+                                  .each_with_object({}) do |obs, hash|
+                                    hash[obs[:encounter_type]] = obs
+                                  end
+
+        new_observations = BuildPatientRecordService.build_all_observations(patient_id, allowed_encounter_types)
+        updated_observations_hash = original_observations_map.merge(new_observations.index_by { |obs| obs[:encounter_type] })
+        patient_data[:observations] = updated_observations_hash.values.as_json
+
       end
     end
 
