@@ -157,11 +157,12 @@ class SavePatientRecordService
     # Always set these base attributes
     patient_data[:encounter_datetime] = latest_encounter&.encounter_datetime
     patient_data[:location_id] = latest_encounter&.location_id
-    patient_data[:ID] = BuildPatientRecordService.patient_identifier(patient, 3) # Assuming 3 is for general ID
+    patient_data[:ID] = BuildPatientRecordService.patient_identifier(patient, 3) 
+    patient_data[:patientID] = patient_id
     patient_data[:NcdID] = BuildPatientRecordService.patient_identifier(patient, 31)
-    patient_data[:program_id] = original_record.dig('program_id') # Use from original record
-    patient_data[:provider_id] = original_record.dig('provider_id') # Use from original record
-    patient_data[:sync_status] = overall_sync_status # This will be overwritten later by the overall status
+    patient_data[:program_id] = original_record.dig('program_id') 
+    patient_data[:provider_id] = original_record.dig('provider_id') 
+    patient_data[:sync_status] = overall_sync_status 
     patient_data[:otherPersonInformation] = BuildPatientRecordService.build_other_person_info 
     patient_data[:visits]  = BuildPatientRecordService.safe_get_visits(patient)
     patient_data[:activePrograms]  = BuildPatientRecordService.fetch_active_programs(patient.patient_id)
@@ -229,12 +230,12 @@ class SavePatientRecordService
       end
     end
 
-    patient_record.record = patient_data
+    patient_record.record = patient_data.as_json
     patient_record.encounter_datetime = patient_data[:encounter_datetime] if patient_data[:encounter_datetime]
     patient_record.last_sync_at = Time.current
     patient_record.sync_status = overall_sync_status
     patient_record.save!
-
+    
     patient_data
   end
 
