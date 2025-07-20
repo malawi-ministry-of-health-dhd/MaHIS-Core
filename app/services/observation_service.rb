@@ -37,6 +37,7 @@ class ObservationService
       obs_parameters[:person_id] = encounter.patient_id
       obs_parameters[:encounter_id] = encounter.id
       obs_parameters[:location_id] = obs_parameters[:location_id] || User.current.location_id
+      obs_parameters = obs_parameters.except("concept_name")
       observation = Observation.create!(obs_parameters)
       validate_observation(observation)
       records << observation
