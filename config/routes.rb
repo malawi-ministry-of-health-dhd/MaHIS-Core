@@ -74,6 +74,7 @@ Rails.application.routes.draw do
       resources :printer_configurations, only: [:index, :create, :destroy, :update]
 
       # Patients
+      get '/get_patient_record' => 'patients#get_patient_record'
       resources :patients do
         get '/labels/national_health_id' => 'patients#print_national_health_id_label'
         get '/labels/filing_number' => 'patients#print_filing_number'
