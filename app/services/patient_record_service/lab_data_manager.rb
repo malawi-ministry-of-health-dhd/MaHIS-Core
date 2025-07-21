@@ -43,7 +43,6 @@ module PatientRecordService
         encounter_id = create_encounter(patient_id, encounter_type.id, record)
         lab_results = unsaved_data[0].merge(encounter_id: encounter_id)
         Lab::ResultsService.create_results(lab_results[:test_id], lab_results)
-        record[data_type][:results] = []
         true
       rescue StandardError => e
         log_error("Failed to save #{data_type} information", e)

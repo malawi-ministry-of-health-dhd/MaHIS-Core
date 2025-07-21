@@ -57,7 +57,7 @@ gem 'rswag-ui'
 # gem 'his_emr_api_radiology', '~> 0.0.8'
 
 gem 'emr_ohsp_interface', '~> 2.2.3'
-gem 'his_emr_api_lab', '~> 2.0.0'
+gem 'his_emr_api_lab', '~> 2.0.5'
 # gem 'his_emr_api_radiology', '~> 1.0.9'
 
 gem 'parallel', '~> 1.20.1'
@@ -94,3 +94,5 @@ gem 'roo', '~> 2.8'
 gem 'whitesimilarity'
 
 gem 'mongoid', '~> 9.0', '>= 9.0.6'
+
+gem 'concurrent-ruby', '1.3.4'
