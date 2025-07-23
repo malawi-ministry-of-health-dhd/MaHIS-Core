@@ -37,9 +37,16 @@ module Api
       end
 
       def get_patient_record
-        patient_id = params[:id] || params[:patient_id]
-        patient_record = PatientRecord.find_or_initialize_by(patient_id: patient_id)
-        render json: patient_record.record
+        if params[:patient_ids].present?
+          ids = params[:patient_ids]
+          ids = ids.split(',') if ids.is_a?(String) 
+          patient_records = PatientRecord.where(:patient_id.in => ids)
+          render json: patient_records.map(&:record)
+        else
+          patient_id = params[:id] || params[:patient_id]
+          patient_record = PatientRecord.find_or_initialize_by(patient_id: patient_id)
+          render json: patient_record.record
+        end
       end
 
       def save_patient_record
