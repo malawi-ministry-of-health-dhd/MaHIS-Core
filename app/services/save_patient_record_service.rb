@@ -197,16 +197,15 @@ class SavePatientRecordService
         patient_data[:appointments] = BuildPatientRecordService.build_observation_data(patient_id, 'APPOINTMENT')
       when :save_outcome
         patient_data[:outCome] = BuildPatientRecordService.build_empty_data_structure 
-      when :save_medication_order
+      when :save_medication_order, :save_dispensation_data,
         patient_data[:MedicationOrder] = BuildPatientRecordService.build_medication_data(patient_id)
+        patient_data[:dispensations] = BuildPatientRecordService.build_dispensations_data(patient)
       when :create_ncd_identifier
         patient_data[:NcdID] = BuildPatientRecordService.patient_identifier(patient, 31)
       when :save_notes_and_pharmalogical_notes
         patient_data[:notes] = BuildPatientRecordService.build_observation_data(patient_id, 'NOTES')
       when :save_allergies
         patient_data[:allergies] = BuildPatientRecordService.build_observation_data(patient_id, 'MEDICAL HISTORY')
-      when :save_dispensation_data
-        patient_data[:dispensations] = BuildPatientRecordService.build_dispensations_data(patient)
       when :save_all_observations
         allowed_encounter_types = original_record[:observations]
                                             .select { |e| e[:status] == "unsaved" }

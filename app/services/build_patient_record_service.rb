@@ -181,8 +181,8 @@ module BuildPatientRecordService
 
     def build_dispensations_data(patient)
       {
-        saved: PatientService.new.find_program_drug_orders_awaiting_dispensation(patient, Date.today).as_json,
-        unsaved: []
+        saved: [],
+        unsaved: PatientService.new.find_program_drug_orders_awaiting_dispensation(patient, Date.today).as_json
       }
     end
 
