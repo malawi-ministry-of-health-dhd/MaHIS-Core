@@ -51,7 +51,6 @@ module Api
                               .joins(:visit)
                               .where(
                                 location_id: current_location_id,
-                                status: true,
                                 visits: { closedDateTime: nil }
                               )
                               .distinct

@@ -475,6 +475,7 @@ Rails.application.routes.draw do
   post '/api/v1/visits', to: 'api/v1/visits#create'
   patch '/api/v1/visits/:id/close', to: 'api/v1/visits#close'
   get '/api/v1/visits', to: 'api/v1/visits#index'
+  get '/api/v1/visits/by_location', to: 'api/v1/visits#get_visits_by_location'
 
   get '/api/v1/check_patient_status/:patient_id', to: 'api/v1/visits#check_patient_status'
 
