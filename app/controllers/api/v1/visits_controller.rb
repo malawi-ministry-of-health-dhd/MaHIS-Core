@@ -62,7 +62,61 @@ module Api
             
               # Return the list of visits as JSON
               render json: visits, status: :ok
-            end   
+            end
+            
+            def get_visits_by_location
+              location_id = params[:location_id]
+              
+              if location_id.blank?
+                render json: { error: "location_id parameter is required" }, status: :bad_request
+                return
+              end
+              
+              # Optional status filter (active/closed)
+              status = params[:status]
+              
+              # Optional date filter
+              date = params[:date]
+              
+              # Base query for visits at the specified location
+              visits = Visit.where(location_id: location_id)
+              
+              # Filter by status if provided
+              if status.present?
+                case status.downcase
+                when 'active'
+                  visits = visits.where(closedDateTime: nil)
+                when 'closed'
+                  visits = visits.where.not(closedDateTime: nil)
+                end
+              end
+              
+              # Filter by date if provided (defaults to today if 'today' is passed)
+              if date.present?
+                if date.downcase == 'today'
+                  today = Date.today
+                  visits = visits.where('DATE(startDate) = ?', today)
+                else
+                  # Try to parse the provided date
+                  begin
+                    parsed_date = Date.parse(date)
+                    visits = visits.where('DATE(startDate) = ?', parsed_date)
+                  rescue ArgumentError
+                    render json: { error: "Invalid date format. Use YYYY-MM-DD or 'today'" }, status: :bad_request
+                    return
+                  end
+                end
+              end
+              
+              # Order by most recent first
+              visits = visits.order(startDate: :desc)
+              
+              render json: {
+                location_id: location_id,
+                visits: visits,
+                count: visits.count
+              }, status: :ok
+            end
             
 
 
