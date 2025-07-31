@@ -4,35 +4,37 @@ module Api
       VALID_STAGES = %w[VITALS CONSULTATION LAB DISPENSATION].freeze
 
       def index
-        stageName = params[:stage]
+        stageName   = params[:stage]
         location_id = params[:location_id]
-        
-        stages = Stage.includes(:patient)
-                     .joins(:visit)
-                     .where(visits: { closedDateTime: nil })
-                     .distinct
-                     
-        if stageName.present? && location_id.present?
-          stages = stages.where(stage: stageName, location_id: location_id, status: true)
-        elsif stageName.present?
-          stages = stages.where(stage: stageName, status: true)
-        elsif location_id.present?
-          stages = stages.where(location_id: location_id, status: true)
-        else
-          # Return all stages when status is false
-          stages = Stage.where(status: false).distinct 
+        patient_id  = params[:patient_id]
+        identifier  = params[:identifier]
+
+        stages = Stage
+                .includes(patient: :patient_identifiers)
+                .joins(:visit)
+                .joins('INNER JOIN patient ON patient.patient_id = visits.patientId')
+                .joins('INNER JOIN patient_identifier ON patient_identifier.patient_id = patient.patient_id AND patient_identifier.identifier_type = 3')
+                .where(visits: { closedDateTime: nil })
+                .distinct
+
+        stages = stages.where(status: true)
+        stages = stages.where(patient_id: patient_id) if patient_id.present?
+        stages = stages.where("patient_identifier.identifier = ?", identifier) if identifier.present?
+        stages = stages.where(stage: stageName) if stageName.present?
+        stages = stages.where(location_id: location_id) if location_id.present?
+
+        stages_with_info = stages.map do |stage|
+        # Find the identifier with type 3 from preloaded identifiers
+        type3_identifier = stage.patient.patient_identifiers.find { |pi| pi.identifier_type == 3 }&.identifier
+
+        stage.as_json.merge(
+          fullName: stage.patient.name,
+          identifier: type3_identifier,
+          location_id: stage.location_id
+        )
         end
-        
-        # Prepare the result by adding fullName to the stage object
-        stages_with_names = stages.map do |stage|
-          stage.as_json.merge(
-            fullName: stage.patient.name,
-            location_id: stage.location_id
-          )
-        end
-        
-        # Return the result as JSON
-        render json: stages_with_names, status: :ok
+
+        render json: stages_with_info, status: :ok
       end
 
       def active_stages
@@ -65,51 +67,61 @@ module Api
         end
       end
 
-      def create
-        begin
-          patientId = params[:stage][:patient_id]
-          
-          # validate stage name
-          requestedStage = params[:stage][:stage]
-          unless VALID_STAGES.include?(requestedStage)
-            render json: { errors: "#{requestedStage} is not a valid stage. Allowed stages are: #{VALID_STAGES.join(', ')}" }, status: :unprocessable_entity
-            return
+   def create
+      begin
+        stages = stage_params
+
+        stages.each do |stage_params|
+          identifier = stage_params[:identifier]
+          patientId = stage_params[:patient_id]
+
+          if identifier.present?
+            patient_identifier = PatientIdentifier.where(identifier: identifier)
+            patientId = patient_identifier[0][:patient_id]
           end
-          
-          activeVisit = Visit.find_by(patientId: patientId, closedDateTime: nil)
+              
+          existing_stage = Stage.find_by(
+            patient_id: patientId,
+            location_id: User.current.location_id
+          )
+          existing_stage.destroy if existing_stage
+
+          activeVisit = Visit.find_by(
+            patientId: patientId,
+            closedDateTime: nil
+          )
+
           if activeVisit.nil?
             render json: { errors: 'The patient does not have an active visit' }, status: :unprocessable_entity
             return
           end
-          
-          active_stage = Stage.find_by(patient_id: patientId, status: true)
-          if active_stage
-            begin
-              active_stage.update!(status: false)
-            rescue ActiveRecord::RecordInvalid => e
-              Rails.logger.debug("Failed to update status: #{e.message}")
-            end
+
+          new_stage = Stage.new(stage_params.merge(
+            visit_id: activeVisit.id,
+            location_id: User.current.location_id,
+            status: true
+          ))
+
+          unless new_stage.save
+            Rails.logger.error("Failed to save stage: #{new_stage.errors.full_messages.join(', ')}")
           end
-          
-          stage = Stage.new(stage_params.merge(visit_id: activeVisit.id, status: params[:stage][:status] || true))
-          
-          if stage.save
-            render json: { message: 'Stage created successfully', stage: stage }, status: :created
-          else
-            render json: { errors: stage.errors.full_messages }, status: :unprocessable_entity
-          end
-          
-        rescue => e
-          Rails.logger.error("Unexpected error in create: #{e.message}")
-          render json: { errors: "An unexpected error occurred: #{e.message}" }, status: :internal_server_error
         end
-      end
 
-      private
+        render json: { message: "Stages created/updated successfully" }, status: :ok
 
-      def stage_params
-        params.require(:stage).permit(:patient_id, :stage, :arrivalTime, :visit_id, :status, :location_id)
+      rescue => e
+        Rails.logger.error("Unexpected error in create: #{e.message}")
+        render json: { errors: "An unexpected error occurred: #{e.message}" }, status: :internal_server_error
       end
+    end
+
+    private
+
+    def stage_params
+      params.require(:stages).map do |stage|
+      stage.permit(:patient_id, :identifier, :stage, :arrivalTime)
+  end
+    end
     end
   end
 end
