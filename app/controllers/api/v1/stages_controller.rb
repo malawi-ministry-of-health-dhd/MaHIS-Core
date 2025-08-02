@@ -95,11 +95,12 @@ module Api
             render json: { errors: 'The patient does not have an active visit' }, status: :unprocessable_entity
             return
           end
-
-          new_stage = Stage.new(stage_params.merge(
+          filtered_params = stage_params.except(:identifier)
+          new_stage = Stage.new(filtered_params.merge(
             visit_id: activeVisit.id,
             location_id: User.current.location_id,
-            status: true
+            status: true,
+            patient_id: patientId
           ))
 
           unless new_stage.save
