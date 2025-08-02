@@ -9,19 +9,19 @@ module Api
 
             def create
                 patientId = visit_params[:patientId] 
-                identifier = visit_params[:identifier]
-
+                identifier = params[:identifier]
                 if identifier.present?
                   patient_identifier = PatientIdentifier.where(identifier: identifier)
                   patientId = patient_identifier[0][:patient_id]
                 end
-             
 
                 checkVisit = Visit.where(patientId: patientId, closedDateTime: nil).first
                 if checkVisit.present?
+                  visit_data = checkVisit.attributes
+                  visit_data[:identifier] = identifier if identifier.present?
                   render json: {
                     message: "There is an active visit for patient with ID #{patientId}",
-                    visit: checkVisit
+                    visit: visit_data
                   }, status: :ok
                   return
                 end
@@ -29,9 +29,14 @@ module Api
                 visit = Visit.new(visit_params.except(:identifier))
                 visit.patientId = patientId
                 if visit.save
-                    render json: {message:"Visit created successfully", visit: visit}, status: :created
+                  visit_data = visit.attributes
+                  visit_data[:identifier] = identifier if identifier.present?
+                  render json: { 
+                    message: "Visit created successfully", 
+                    visit: visit_data
+                  }, status: :created
                 else
-                    render json: { errors: visit.errors.full_messages }, status: :unprocessable_entity
+                  render json: { errors: visit.errors.full_messages }, status: :unprocessable_entity
                 end
             end
 
@@ -40,9 +45,16 @@ module Api
               patientId = params[:patientId] # Optional filter by patient ID
               status = params[:status] # Optional filter by status (active or closed)
               date = params[:date]
-            
+              identifier = params[:identifier]
+
+              if identifier.present?
+                patient_identifier = PatientIdentifier.where(identifier: identifier)
+                patientId = patient_identifier[0][:patient_id]
+              end
+
+
               # Fetch all visits, optionally filtering by patientId or status
-              visits = Visit.select('visits.*, patient_identifier.identifier AS identifier')
+              visits = Visit.includes(:patient).select('visits.*, patient_identifier.identifier AS identifier')
                 .where(location_id: User.current.location_id )
                 .joins('INNER JOIN patient ON patient.patient_id = visits.patientId')
                 .joins('INNER JOIN patient_identifier ON patient_identifier.patient_id = patient.patient_id AND patient_identifier.identifier_type = 3')
@@ -65,9 +77,16 @@ module Api
               # today = Date.today
               visits = visits.where('DATE(startDate) = ?', date) if date.present?   
               visits = visits.where(patientId: patientId) if patientId.present?   
-            
+
+             visit_data = visits.map do |visit|
+              visit.attributes.merge(
+                identifier: visit.try(:identifier),
+                fullName: visit.patient.try(:name)
+              )
+            end
+           
               # Return the list of visits as JSON
-              render json: visits, status: :ok
+              render json: visit_data, status: :ok
             end   
             
 
