@@ -8,28 +8,35 @@ module Api
             end
 
             def create
-                patientId = visit_params[:patientId]
-                checkPatient = Patient.find_by(patient_id: patientId)
-
-                if checkPatient.nil?
-                    render json: { message: "patient with ID #{patientId} doesnt exist " }, status: :conflict
-                    return
+                patientId = visit_params[:patientId] 
+                identifier = params[:identifier]
+                if identifier.present?
+                  patient_identifier = PatientIdentifier.where(identifier: identifier)
+                  patientId = patient_identifier[0][:patient_id]
                 end
 
                 checkVisit = Visit.where(patientId: patientId, closedDateTime: nil).first
                 if checkVisit.present?
+                  visit_data = checkVisit.attributes
+                  visit_data[:identifier] = identifier if identifier.present?
                   render json: {
                     message: "There is an active visit for patient with ID #{patientId}",
-                    visit: checkVisit
+                    visit: visit_data
                   }, status: :ok
                   return
                 end
 
-                visit = Visit.new(visit_params)
+                visit = Visit.new(visit_params.except(:identifier))
+                visit.patientId = patientId
                 if visit.save
-                    render json: {message:"Visit created successfully", visit: visit}, status: :created
+                  visit_data = visit.attributes
+                  visit_data[:identifier] = identifier if identifier.present?
+                  render json: { 
+                    message: "Visit created successfully", 
+                    visit: visit_data
+                  }, status: :created
                 else
-                    render json: { errors: visit.errors.full_messages }, status: :unprocessable_entity
+                  render json: { errors: visit.errors.full_messages }, status: :unprocessable_entity
                 end
             end
 
@@ -37,11 +44,21 @@ module Api
             def index
               patientId = params[:patientId] # Optional filter by patient ID
               status = params[:status] # Optional filter by status (active or closed)
-            
+              date = params[:date]
+              identifier = params[:identifier]
+
+              if identifier.present?
+                patient_identifier = PatientIdentifier.where(identifier: identifier)
+                patientId = patient_identifier[0][:patient_id]
+              end
+
+
               # Fetch all visits, optionally filtering by patientId or status
-              visits = Visit.all
-              visits = Visit.select('MIN(id) as id, patientId, startDate, closedDateTime, location_id, programId')
-              .group(:patientId)  
+              visits = Visit.includes(:patient).select('visits.*, patient_identifier.identifier AS identifier')
+                .where(location_id: User.current.location_id )
+                .joins('INNER JOIN patient ON patient.patient_id = visits.patientId')
+                .joins('INNER JOIN patient_identifier ON patient_identifier.patient_id = patient.patient_id AND patient_identifier.identifier_type = 3')
+              visits = visits.group(:patientId)  if patientId.present?
             
               # Filter by patientId if provided
               #visits = visits.where(patientId: patientId) if patientId.present?
@@ -57,66 +74,20 @@ module Api
               end
 
               #visits = visits.where('startDate = ?', Time.now)
-              today = Date.today
-              visits = visits.where('DATE(startDate) = ?', today)      
-            
+              # today = Date.today
+              visits = visits.where('DATE(startDate) = ?', date) if date.present?   
+              visits = visits.where(patientId: patientId) if patientId.present?   
+
+             visit_data = visits.map do |visit|
+              visit.attributes.merge(
+                identifier: visit.try(:identifier),
+                fullName: visit.patient.try(:name)
+              )
+            end
+           
               # Return the list of visits as JSON
-              render json: visits, status: :ok
-            end
-            
-            def get_visits_by_location
-              location_id = params[:location_id]
-              
-              if location_id.blank?
-                render json: { error: "location_id parameter is required" }, status: :bad_request
-                return
-              end
-              
-              # Optional status filter (active/closed)
-              status = params[:status]
-              
-              # Optional date filter
-              date = params[:date]
-              
-              # Base query for visits at the specified location
-              visits = Visit.where(location_id: location_id)
-              
-              # Filter by status if provided
-              if status.present?
-                case status.downcase
-                when 'active'
-                  visits = visits.where(closedDateTime: nil)
-                when 'closed'
-                  visits = visits.where.not(closedDateTime: nil)
-                end
-              end
-              
-              # Filter by date if provided (defaults to today if 'today' is passed)
-              if date.present?
-                if date.downcase == 'today'
-                  today = Date.today
-                  visits = visits.where('DATE(startDate) = ?', today)
-                else
-                  # Try to parse the provided date
-                  begin
-                    parsed_date = Date.parse(date)
-                    visits = visits.where('DATE(startDate) = ?', parsed_date)
-                  rescue ArgumentError
-                    render json: { error: "Invalid date format. Use YYYY-MM-DD or 'today'" }, status: :bad_request
-                    return
-                  end
-                end
-              end
-              
-              # Order by most recent first
-              visits = visits.order(startDate: :desc)
-              
-              render json: {
-                location_id: location_id,
-                visits: visits,
-                count: visits.count
-              }, status: :ok
-            end
+              render json: visit_data, status: :ok
+            end   
             
 
 
@@ -149,7 +120,13 @@ module Api
                   render json: { errors: "Visit with id #{visit_id} doesn't exist" }, status: :unprocessable_entity
                   return
                 end
-              
+
+                existing_stage = Stage.find_by(
+                  patient_id: visit.patientId,
+                  location_id: User.current.location_id
+                )
+                existing_stage.destroy if existing_stage
+
                 closed_datetime = params.dig(:visit, :closedDateTime)
                 visit.update(closedDateTime: closed_datetime)
               
@@ -168,7 +145,7 @@ module Api
 
             private
             def visit_params
-                params.require(:visit).permit(:patientId, :startDate, :closedDateTime, :programId, :location_id)
+                params.require(:visit).permit(:patientId, :identifier, :startDate, :closedDateTime, :programId, :location_id)
             end
 
         end
