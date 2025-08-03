@@ -2,6 +2,6 @@
 
 class TimeService
   def current_time
-    { time: Time.now.strftime('%H:%M:%S'), date: Date.today }
+    { time: Time.now.strftime('%H:%M:%S'), date: Date.today, time_date: Time.now }
   end
 end
