@@ -39,14 +39,26 @@ module Api
       def get_patient_record
         if params[:patient_ids].present?
           ids = params[:patient_ids]
-          ids = ids.split(',') if ids.is_a?(String) 
+          ids = ids.split(',') if ids.is_a?(String)
           patient_records = PatientRecord.where(:patient_id.in => ids)
-          render json: patient_records.map(&:record)
+          records = patient_records.map(&:record)
         else
           patient_id = params[:id] || params[:patient_id]
+
+          if patient_id.blank?
+            render json: { error: 'Missing patient identifier' }, status: :bad_request and return
+          end
+
+          # Ensure record exists or is initialized
           patient_record = PatientRecord.find_or_initialize_by(patient_id: patient_id)
-          render json: patient_record.record
+
+          # Fallback: use builder if record is new or missing vital data
+          record = patient_record.persisted? ? patient_record.record : BuildPatientRecordService.build_patient_record(patient_id)
+
+          records = record
         end
+
+        render json: records
       end
 
       def save_patient_record
