@@ -19,6 +19,7 @@ module Api
                 if checkVisit.present?
                   visit_data = checkVisit.attributes
                   visit_data[:identifier] = identifier if identifier.present?
+                  visit_data[:fullName] =  Patient.find_by(patient_id: patientId).try(:name)
                   render json: {
                     message: "There is an active visit for patient with ID #{patientId}",
                     visit: visit_data
@@ -113,11 +114,17 @@ module Api
             #    end 
             #end
             def close
-                visit_id = params[:id]
-                visit = Visit.find_by(id: visit_id)
-              
+                identifier = params[:identifier]
+
+                if identifier.present?
+                  patient_identifier = PatientIdentifier.where(identifier: identifier)
+                  patientId = patient_identifier[0][:patient_id]
+                end
+
+                visit = Visit.find_by(patientId: patientId)
+             
                 unless visit
-                  render json: { errors: "Visit with id #{visit_id} doesn't exist" }, status: :unprocessable_entity
+                  render json: { errors: "Visit with id doesn't exist" }, status: :unprocessable_entity
                   return
                 end
 
@@ -127,20 +134,17 @@ module Api
                 )
                 existing_stage.destroy if existing_stage
 
-                closed_datetime = params.dig(:visit, :closedDateTime)
+                closed_datetime = params[:closedDateTime]
+                
                 visit.update(closedDateTime: closed_datetime)
-              
-                active_stage = Stage.find_by(patient_id: visit.patientId, status: true)
 
-              
-                if active_stage
-                  begin
-                    active_stage.update!(status: false)
-                  rescue ActiveRecord::RecordInvalid => e
-                    Rails.logger.debug("Failed to update stage status: #{e.message}")
-                  end
-                end
-              end
+                visit_data = visit.attributes
+                visit_data[:identifier] = identifier if identifier.present?
+                visit_data[:fullName] =  Patient.find_by(patient_id: visit.patientId).try(:name)
+                render json: { 
+                   visit: visit_data
+                  }, status: :created
+            end
               
 
             private
