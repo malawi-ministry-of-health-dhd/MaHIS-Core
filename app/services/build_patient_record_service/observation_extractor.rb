@@ -99,6 +99,7 @@ module BuildPatientRecordService
           value_coded: observation.value_coded,
           value_text: observation.value_text || '',
           value_numeric: observation.value_numeric,
+          value_datetime: observation.value_datetime,
           provider_id: encounter.provider_id,
           location_id: encounter.location_id,
           program_id: encounter.program_id,
