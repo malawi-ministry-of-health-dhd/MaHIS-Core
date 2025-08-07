@@ -55,6 +55,14 @@ module Api
           # Fallback: use builder if record is new or missing vital data
           record = patient_record.persisted? ? patient_record.record : BuildPatientRecordService.build_patient_record(patient_id)
 
+          unless patient_record.persisted?
+            patient_record.record = record.as_json
+            patient_record.encounter_datetime = record[:encounter_datetime] if record[:encounter_datetime]
+            patient_record.last_sync_at = Time.current
+            patient_record.sync_status = "synced"
+            patient_record.save!
+          end
+
           records = record
         end
 
