@@ -5,31 +5,34 @@ module Api
     class GlobalPropertiesController < ApplicationController
       def search
         name, = params.require %i[property]
+        location_id = User.current.location_id
 
-        render json: GlobalProperty.where('property like ?', "%#{name}%")
+        render json: GlobalProperty.where('property like ? AND location_id = ?', "%#{name}%", location_id)
       end
 
       def show
         name = params.require %i[property]
-        property = GlobalProperty.find_by property: name
+        location_id = User.current.location_id
+        
+        property = GlobalProperty.find_by(property: name, location_id: location_id)
         if property
           render json: { property.property => property.property_value }
-     
+        else
+          render json: { errors: ["Property not found"] }, status: :not_found
         end
       end
 
       def create(success_response_status: :created)
         name, value = params.require %i[property property_value]
+        location_id = User.current.location_id
 
-        property = GlobalProperty.find_by property: name
-        property ||= GlobalProperty.new property: name
+        property = GlobalProperty.find_or_initialize_by(property: name, location_id: location_id)
         property.property_value = value
 
         if property.save
           render json: property, status: success_response_status
         else
-          render json: ['Failed to save property'],
-                 status: :internal_server_error
+          render json: { errors: property.errors.full_messages }, status: :unprocessable_entity
         end
       end
 
@@ -39,9 +42,11 @@ module Api
 
       def destroy
         name = params.require %i[property]
-        property = GlobalProperty.find_by(name:)
+        location_id = User.current.location_id
+        
+        property = GlobalProperty.find_by(property: name, location_id: location_id)
         if property.nil?
-          render json: { errors: ["Property, #{name}, not found"] }
+          render json: { errors: ["Property, #{name}, not found"] }, status: :not_found
         elsif property.destroy
           render status: :no_content
         else

@@ -40,6 +40,10 @@ module BHTEmrApi
     config.active_record.default_timezone = :local
     config.active_record.time_zone_aware_attributes = false
 
+    config.generators do |g|
+      g.orm :active_record, primary_key_type: :integer
+    end
+
     #Action Cable
     config.action_cable.mount_path = '/cable'
     config.action_cable.disable_request_forgery_protection = true
@@ -54,5 +58,6 @@ module BHTEmrApi
 
     # Use Sidekiq for Active Job
     config.active_job.queue_adapter = :sidekiq
+
   end
 end

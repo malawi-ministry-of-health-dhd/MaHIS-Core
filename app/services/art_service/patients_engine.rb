@@ -104,8 +104,7 @@ module ArtService
     end
 
     def current_arv_code
-      location_id = User.current.location_id
-      global_property("site_prefix_#{location_id}")&.property_value
+      global_property("site_prefix")&.property_value
     end
 
     def arv_identifier_type
