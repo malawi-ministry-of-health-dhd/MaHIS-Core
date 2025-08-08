@@ -22,8 +22,7 @@ class NcdService::PatientsEngine
   end
 
    def find_next_available_ncd_number
-      location_id =User.current.location_id
-      current_ncd_code = global_property("site_prefix_#{location_id}")&.property_value
+      current_ncd_code = global_property("site_prefix")&.property_value
       raise 'Global property `site_prefix` not set' unless current_ncd_code
 
       type = PatientIdentifierType.find_by_name('NCD Number')

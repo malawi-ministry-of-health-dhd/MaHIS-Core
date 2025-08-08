@@ -24,7 +24,7 @@ class DrugOrder < ApplicationRecord
   end
 
   def barcodes
-    drug.barcodes
+    drug&.barcodes
   end
 
   def duration
@@ -62,12 +62,12 @@ class DrugOrder < ApplicationRecord
   def dosage_struct
     ingredient = MohRegimenIngredient.find_by(drug:)
     {
-      drug_id: drug.drug_id,
-      drug_name: drug.name,
+      drug_id: drug&.drug_id,
+      drug_name: drug&.name,
       am: ingredient&.dose&.am || 0,
       noon: 0, # Requested by the frontenders
       pm: ingredient&.dose&.pm || 0,
-      units: drug.units
+      units: drug&.units
     }
   end
 
