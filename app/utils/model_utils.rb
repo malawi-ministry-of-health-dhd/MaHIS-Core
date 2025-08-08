@@ -38,7 +38,8 @@ module ModelUtils
   end
 
   def global_property(name)
-    GlobalProperty.find_by property: name
+    location_id = User.current.location_id
+    GlobalProperty.find_by property: name, location_id: location_id
   end
 
   def user_property(name, user_id: nil)
