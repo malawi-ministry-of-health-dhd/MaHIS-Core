@@ -12,9 +12,16 @@ module Api
 
       def show
         name = params.require %i[property]
-        location_id = User.current.location_id
+        skip_location_filter = ActiveModel::Type::Boolean.new.cast(params[:skip_location_filter])
         
-        property = GlobalProperty.find_by(property: name, location_id: location_id)
+        query = { property: name }
+
+        unless skip_location_filter
+          query[:location_id] = User.current.location_id
+        end
+
+        property = GlobalProperty.find_by(query)
+
         if property
           render json: { property.property => property.property_value }
         else
