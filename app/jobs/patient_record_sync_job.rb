@@ -1,107 +1,105 @@
+require 'rest-client'
+require 'json'
+
 class PatientRecordSyncJob
   include Sidekiq::Job
-  
   sidekiq_options queue: :patient_sync, retry: 3
-  
+
   def perform(patient_id, options = {})
-    # Get options
     location_id = options['location_id']
-    
-    begin
-      # Find or initialize the record in MongoDB
-      patient_record = PatientRecord.find_or_initialize_by(patient_id: patient_id)
-      
-      # Log start of processing
-      Rails.logger.info("Starting sync for patient #{patient_id}")
-      
-      # Get patient data with defensive error handling
-      patient_data = safely_build_patient_record(patient_id)
-      
-      # If we couldn't build valid patient data, mark as failed and return
-      if patient_data.nil?
-        Rails.logger.error("Failed to build data for patient #{patient_id}")
-        patient_record.update(sync_status: 'failed', last_sync_at: Time.current)
-        return
-      end
-      
-      # Update the record
-      patient_record.record = patient_data
-      patient_record.encounter_datetime = patient_data[:encounter_datetime] if patient_data[:encounter_datetime]
-      patient_record.last_sync_at = Time.current
-      patient_record.sync_status = 'synced'
-      patient_record.save!
-      
-      Rails.logger.info("Successfully synced patient record #{patient_id}")
-    rescue StandardError => e
-      # Update the status to failed if the record exists
-      if patient_record&.persisted?
-        patient_record.update(sync_status: 'failed', last_sync_at: Time.current)
-      end
-      
-      Rails.logger.error("Error syncing patient record #{patient_id}: #{e.message}")
-      Rails.logger.error(e.backtrace.join("\n"))
+    patient_record = PatientRecord.find_or_initialize_by(patient_id: patient_id)
+
+    Rails.logger.info("Starting sync for patient #{patient_id}")
+
+    patient_data = safely_build_patient_record(patient_id)
+    if patient_data.nil?
+      Rails.logger.error("Failed to build data for patient #{patient_id}")
+      patient_record.update(sync_status: 'failed', last_sync_at: Time.current)
+      return
     end
+
+    # Save to MongoDB
+    patient_record.record = patient_data
+    patient_record.encounter_datetime = patient_data[:encounter_datetime] if patient_data[:encounter_datetime]
+    patient_record.last_sync_at = Time.current
+    patient_record.sync_status = 'synced'
+    patient_record.save!
+
+    # Sync to CouchDB
+    begin
+      sync_to_couchdb(patient_record)
+    rescue => e
+      Rails.logger.error("CouchDB sync failed for patient #{patient_id}: #{e.message}")
+    end
+
+    Rails.logger.info("Successfully synced patient record #{patient_id}")
+  rescue => e
+    patient_record&.update(sync_status: 'failed', last_sync_at: Time.current)
+    Rails.logger.error("Error syncing patient record #{patient_id}: #{e.message}")
+    Rails.logger.error(e.backtrace.join("\n"))
   end
-  
+
   private
-  
-  def safely_build_patient_record(patient_id)
+
+  def sync_to_couchdb(patient_record)
+    couch_url = 'http://admin:root@localhost:5984'
+    db_name   = 'patients_records'
+    doc_id    = patient_record.record[:ID]
+
+    doc_data = patient_record.record.merge(
+      "_id" => doc_id,
+      "last_sync_at" => Time.current.iso8601
+    )
+
+    # Get _rev if updating existing doc
     begin
-      # First check if the patient exists
-      unless Patient.where(patient_id: patient_id).exists?
-        Rails.logger.error("Patient #{patient_id} does not exist")
-        return nil
-      end
-      
-      # Get the raw patient data with a rescue block around the whole thing
-      raw_data = BuildPatientRecordService.build_patient_record(patient_id)
-      
-      # Convert the data to a safe, serializable format
-      sanitize_for_mongodb(raw_data)
-    rescue StandardError => e
-      Rails.logger.error("Error building patient record #{patient_id}: #{e.message}")
-      Rails.logger.error(e.backtrace.join("\n"))
-      nil
+      existing_doc = RestClient.get("#{couch_url}/#{db_name}/#{doc_id}")
+      rev = JSON.parse(existing_doc.body)["_rev"]
+      doc_data["_rev"] = rev
+    rescue RestClient::NotFound
+      # First insert, no _rev needed
     end
+
+    RestClient.put(
+      "#{couch_url}/#{db_name}/#{doc_id}",
+      doc_data.to_json,
+      { content_type: :json, accept: :json }
+    )
   end
-  
-  # Sanitize data to ensure it can be stored in MongoDB
+
+  def safely_build_patient_record(patient_id)
+    return nil unless Patient.where(patient_id: patient_id).exists?
+
+    raw_data = BuildPatientRecordService.build_patient_record(patient_id)
+    sanitize_for_mongodb(raw_data)
+  rescue => e
+    Rails.logger.error("Error building patient record #{patient_id}: #{e.message}")
+    Rails.logger.error(e.backtrace.join("\n"))
+    nil
+  end
+
   def sanitize_for_mongodb(data)
     case data
     when Hash
-      result = {}
-      data.each do |key, value|
-        # Skip nil values to prevent errors
-        next if value.nil?
-        result[key] = sanitize_for_mongodb(value)
+      data.each_with_object({}) do |(k, v), h|
+        h[k] = sanitize_for_mongodb(v) unless v.nil?
       end
-      result
     when Array
       data.map { |item| sanitize_for_mongodb(item) }.compact
     when ActiveRecord::Base
-      # Convert ActiveRecord objects to plain hashes
       data.as_json
     when ActiveRecord::Associations::CollectionProxy
-      # Convert collection proxies to arrays of hashes
       data.map(&:as_json).compact
-    when Date, DateTime
-      # Convert dates to ISO 8601 strings
-      data.iso8601
-    when Time
-      # Convert times to ISO 8601 strings
+    when Date, DateTime, Time
       data.iso8601
     when Symbol
-      # Convert symbols to strings
       data.to_s
     when Numeric, String, true, false
-      # These types are safe for MongoDB
       data
     else
-      # For any other type, convert to string representation
       data.to_s
     end
-  rescue StandardError => e
-    # If we can't sanitize this value, log the error and return nil
+  rescue => e
     Rails.logger.error("Error sanitizing value #{data.class.name}: #{e.message}")
     nil
   end
