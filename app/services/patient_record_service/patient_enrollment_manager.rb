@@ -4,6 +4,7 @@
 module PatientRecordService
   class PatientEnrollmentManager < BaseSaver
     def enroll_program(patient_id, record)
+      
       if PatientProgram.where(program_id: record[:program_id], patient_id: patient_id).exists?
         return false
       end
@@ -14,13 +15,12 @@ module PatientRecordService
         location_id: record[:location_id],
         patient_id: patient_id
       )
-
       if new_patient_program.errors.empty?
         Rails.logger.info('Successfully created patient program')
         true
       else
         Rails.logger.error(new_patient_program.errors.full_messages)
-        raise new_patient_program.errors.full_messages.join(', ')
+        return false
       end
     end
   end

@@ -29,7 +29,7 @@ class SavePatientRecordService
   def create_patient_record(record)
     # 1. Extract and Validate Initial Data
     required_fields = extract_required_fields(record)
-    return unless required_fields_present?(required_fields)
+    return "required fields missing" unless required_fields_present?(required_fields)
 
     ids = extract_patient_ids(record)
 
@@ -39,14 +39,13 @@ class SavePatientRecordService
     # 3. Save Person Information and Get Patient ID
     identity_data = managers[:identity_manager].save_person_information(record)
     patient_id = identity_data[:patient_id]
-    return unless patient_id
+    return "Patient ID not found" unless patient_id
 
     # 4. Initial ID Validation
     unless managers[:identity_manager].validate_ids(ids.national_id, ids.birth_id, ids.ichis_id)
-      log_and_update_status(patient_id, 'failed', 'ID Validation Failed', "Patient ID validation failed for patient #{patient_id}. Terminating record creation.")
-      return
+      return "ID Validation Failed"
     end
-
+   
     # 5. Execute Operations within Transaction
     overall_sync_status = 'synced'
     operation_results = {} # To store success/failure of each operation
@@ -81,10 +80,10 @@ class SavePatientRecordService
 
   def extract_required_fields(record)
     RequiredFields.new(
-      program_id: record.dig('program_id'),
-      provider_id: record.dig('provider_id'),
-      location_id: record.dig('location_id'),
-      encounter_datetime: record.dig('encounter_datetime')
+      program_id: record.dig(:program_id),
+      provider_id: record.dig(:provider_id),
+      location_id: record.dig(:location_id),
+      encounter_datetime: record.dig(:encounter_datetime)
     )
   end
 
@@ -94,9 +93,9 @@ class SavePatientRecordService
 
   def extract_patient_ids(record)
     PatientIds.new(
-      national_id: record.dig('otherPersonInformation', 'nationalID'),
-      ichis_id: record.dig('otherPersonInformation', 'ichisID'),
-      birth_id: record.dig('otherPersonInformation', 'birthID')
+      national_id: record.dig(:otherPersonInformation, :nationalID),
+      ichis_id: record.dig(:otherPersonInformation, :ichisID),
+      birth_id: record.dig(:otherPersonInformation, :birthID)
     )
   end
 
@@ -121,7 +120,7 @@ class SavePatientRecordService
     {
       update_person_info: managers[:identity_manager].update_person_information(patient_id, record),
       manage_guardian: managers[:guardian_manager].manage_guardian(patient_id, record),
-      enroll_program: managers[:enrollment_manager].enroll_program(patient_id, record),
+      # enroll_program: managers[:enrollment_manager].enroll_program(patient_id, record),
       save_birthday_data: managers[:clinical_data_saver].save_birthday_data(patient_id, record),
       save_vitals_data: managers[:clinical_data_saver].save_vitals_data(patient_id, record),
       save_diagnosis_data: managers[:clinical_data_saver].save_diagnosis_data(patient_id, record),
@@ -145,9 +144,7 @@ class SavePatientRecordService
     }
   end
 
-  def build_and_save_patient_record(patient_id, original_record, operation_results, overall_sync_status)
-    patient_record = PatientRecord.find_or_initialize_by(patient_id: patient_id)
-    patient_data = patient_record.record.presence || original_record # Initialize if nil
+  def build_and_save_patient_record(patient_id, patient_data, operation_results, overall_sync_status)
 
     # Fetch patient and encounter details once
     patient = BuildPatientRecordService.find_patient(patient_id)
@@ -160,12 +157,11 @@ class SavePatientRecordService
     patient_data[:ID] = BuildPatientRecordService.patient_identifier(patient, 3) 
     patient_data[:patientID] = patient_id
     patient_data[:NcdID] = BuildPatientRecordService.patient_identifier(patient, 31)
-    patient_data[:program_id] = original_record.dig('program_id') 
-    patient_data[:provider_id] = original_record.dig('provider_id') 
     patient_data[:sync_status] = overall_sync_status 
     patient_data[:otherPersonInformation] = BuildPatientRecordService.build_other_person_info 
     patient_data[:visits]  = BuildPatientRecordService.safe_get_visits(patient)
     patient_data[:activePrograms]  = BuildPatientRecordService.fetch_active_programs(patient.patient_id)
+    
     # Update specific sections based on successful operations
     operation_results.each do |key, success|
       next unless success
@@ -207,7 +203,7 @@ class SavePatientRecordService
       when :save_allergies
         patient_data[:allergies] = BuildPatientRecordService.build_observation_data(patient_id, 'MEDICAL HISTORY')
       when :save_all_observations
-        allowed_encounter_types = original_record[:observations]
+        allowed_encounter_types = patient_data[:observations]
                                             .select { |e| e[:status] == "unsaved" }
                                             .map { |e| e[:encounter_type] }
                                             .uniq
@@ -217,7 +213,7 @@ class SavePatientRecordService
           break 
         end
 
-         original_observations_map = original_record[:observations]
+         original_observations_map = patient_data[:observations]
                                   .each_with_object({}) do |obs, hash|
                                     hash[obs[:encounter_type]] = obs
                                   end
@@ -228,19 +224,8 @@ class SavePatientRecordService
 
       end
     end
-
-    patient_record.record = patient_data.as_json
-    patient_record.encounter_datetime = patient_data[:encounter_datetime] if patient_data[:encounter_datetime]
-    patient_record.last_sync_at = Time.current
-    patient_record.sync_status = overall_sync_status
-    patient_record.save!
     
-    patient_data
-  end
-
-  def log_and_update_status(patient_id, sync_status, error_message, log_message)
-    Rails.logger.warn(log_message)
-    patient_record = PatientRecord.find_or_initialize_by(patient_id: patient_id)
-    patient_record.update(sync_status: sync_status, last_sync_at: Time.current, error_message: error_message)
+    # Return the patient data as JSON
+    patient_data.as_json
   end
 end
