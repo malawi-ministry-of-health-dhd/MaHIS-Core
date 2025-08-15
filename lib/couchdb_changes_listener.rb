@@ -141,16 +141,76 @@ class CouchdbChangesListener
     data = doc.except("_id", "_rev") # Remove CouchDB metadata
     
     Rails.logger.info("[CouchDB Listener] Processing patient: #{patient_id}")
-    Rails.logger.debug("[CouchDB Listener] Patient data: #{data}")
+   
+    # Save to MySQL and get the processed data back
+    patient_data = SavePatientRecordService.new.create_patient_record(data.transform_keys(&:to_sym))
     
-    # Uncomment and modify as needed:
-    # patient = Patient.find_or_initialize_by(patient_id: patient_id)
-    # patient.update!(data)
-    
-    # You might want to handle specific fields:
-    # patient = Patient.find_or_initialize_by(patient_id: patient_id)
-    # patient.assign_attributes(data.slice('name', 'age', 'diagnosis', ...))
-    # patient.save!
+    # Update CouchDB with the processed data
+    if patient_data
+      update_couchdb_document(patient_id, doc["_rev"], patient_data)
+    else
+      Rails.logger.warn("[CouchDB Listener] No patient data returned from MySQL save operation for patient: #{patient_id}")
+    end
+  end
+
+  def update_couchdb_document(doc_id, current_rev, updated_data)
+    begin
+      # Parse the base COUCHDB_URL to extract credentials
+      base_uri = URI(COUCHDB_URL)
+      username = base_uri.user || COUCHDB_USERNAME
+      password = base_uri.password || COUCHDB_PASSWORD
+      
+      # Build clean URL without embedded credentials
+      clean_base_url = "#{base_uri.scheme}://#{base_uri.host}:#{base_uri.port}"
+      update_url = "#{clean_base_url}/#{DB_NAME}/#{doc_id}"
+      
+      # Prepare the document for update
+      updated_doc = updated_data.merge({
+        "_id" => doc_id,
+        "_rev" => current_rev
+      })
+      
+      Rails.logger.info("[CouchDB Listener] Updating CouchDB document: #{doc_id}")
+      Rails.logger.debug("[CouchDB Listener] Update data: #{updated_doc}")
+      
+      # Create RestClient resource with authentication
+      resource_options = {
+        headers: {
+          content_type: :json,
+          accept: :json
+        }
+      }
+      
+      if username && password
+        resource_options[:user] = username
+        resource_options[:password] = password
+      end
+      
+      resource = RestClient::Resource.new(update_url, resource_options)
+      
+      # Perform the update
+      response = resource.put(updated_doc.to_json)
+      
+      if response.code == 201 || response.code == 200
+        response_data = JSON.parse(response.body)
+        Rails.logger.info("[CouchDB Listener] Successfully updated CouchDB document: #{doc_id}, new rev: #{response_data['rev']}")
+      else
+        Rails.logger.error("[CouchDB Listener] Unexpected response code #{response.code} when updating document: #{doc_id}")
+      end
+      
+    rescue RestClient::Conflict => e
+      Rails.logger.error("[CouchDB Listener] Document conflict when updating #{doc_id}. Document may have been updated by another process: #{e.message}")
+      # Optionally, you could implement retry logic here by fetching the latest revision
+    rescue RestClient::NotFound => e
+      Rails.logger.error("[CouchDB Listener] Document not found when trying to update #{doc_id}: #{e.message}")
+    rescue RestClient::Exception => e
+      Rails.logger.error("[CouchDB Listener] RestClient error when updating document #{doc_id}: #{e.message}")
+    rescue JSON::ParserError => e
+      Rails.logger.error("[CouchDB Listener] JSON parsing error when processing CouchDB response for #{doc_id}: #{e.message}")
+    rescue StandardError => e
+      Rails.logger.error("[CouchDB Listener] Unexpected error when updating CouchDB document #{doc_id}: #{e.message}")
+      Rails.logger.error("[CouchDB Listener] Error backtrace: #{e.backtrace.first(3).join(' -> ')}")
+    end
   end
 
   def last_seq
