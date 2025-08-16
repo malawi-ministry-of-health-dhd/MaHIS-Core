@@ -2,9 +2,9 @@
 
 # Class managing patient program details
 class PatientProgramService
-  def create(patient:, program:, date_enrolled: nil, location: nil, user: nil)
+  def create(patient:, program:, date_enrolled: nil, location_id: nil, user: nil)
     date_enrolled ||= Time.now
-    location ||= Location.current
+    location_id ||= Location.current
     user ||= User.current
     return if program.blank? || patient.blank?
 
@@ -13,7 +13,7 @@ class PatientProgramService
 
     ActiveRecord::Base.transaction do
       patient_program = PatientProgram.create(patient:, program:, date_enrolled:,
-                                              location:, creator: user.id)
+                                              location_id:, creator: user.id)
       initial_state = initial_program_state(program)
       unless initial_state.blank?
         PatientState.create(patient_program_id: patient_program.id, start_date: date_enrolled,

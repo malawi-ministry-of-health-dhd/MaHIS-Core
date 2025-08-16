@@ -159,7 +159,12 @@ class CouchdbChangesListener
     data = doc.except("_id", "_rev") # Remove CouchDB metadata
     
     Rails.logger.info("[CouchDB Listener] Processing patient: #{patient_id}")
-   
+
+    if doc["provider_id"].present?
+      User.current = User.find_by(user_id: doc["provider_id"])
+    else
+      Rails.logger.warn("No user_id found in CouchDB doc: #{data.inspect}")
+    end
     # Save to MySQL and get the processed data back
     patient_data = SavePatientRecordService.new.create_patient_record(data.with_indifferent_access)
     
