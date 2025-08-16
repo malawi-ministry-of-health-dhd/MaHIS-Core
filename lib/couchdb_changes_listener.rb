@@ -5,11 +5,11 @@ require 'yaml'
 class CouchdbChangesListener
   CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
   COUCHDB_URL = CONFIG['COUCHDB_URL']
-  COUCHDB_USERNAME = CONFIG['COUCHDB_USERNAME'] # Optional - can be nil if using URL-embedded credentials
-  COUCHDB_PASSWORD = CONFIG['COUCHDB_PASSWORD'] # Optional - can be nil if using URL-embedded credentials
+  COUCHDB_USERNAME = CONFIG['COUCHDB_USERNAME']
+  COUCHDB_PASSWORD = CONFIG['COUCHDB_PASSWORD']
   DB_NAME = 'patients_records'
   SEQ_FILE = Rails.root.join('tmp', "couchdb_#{DB_NAME}_seq.txt")
-  RECONNECT_DELAY = 5 # seconds
+  RECONNECT_DELAY = 5
 
   def start
     Rails.logger.info("[CouchDB Listener] Starting for #{DB_NAME}...")
@@ -112,8 +112,12 @@ class CouchdbChangesListener
           
           Rails.logger.debug("[CouchDB Listener] Received change for doc: #{change['id']}")
           
-          # Process each change immediately
-          process_change(change)
+          # Check if document was already processed by us to prevent infinite loop
+          if should_process_change?(change)
+            process_change(change)
+          else
+            Rails.logger.debug("[CouchDB Listener] Skipping change - already processed by listener")
+          end
           
         rescue JSON::ParserError => e
           Rails.logger.warn("[CouchDB Listener] Failed to parse JSON line: #{line[0..100]}... Error: #{e.message}")
@@ -121,6 +125,20 @@ class CouchdbChangesListener
         end
       end
     end
+  end
+
+  # Check if we should process this change (prevent infinite loop)
+  def should_process_change?(change)
+    doc = change["doc"]
+    return false unless doc
+    
+    # Skip if document was already processed by our listener
+    # Note: Using field without underscore as CouchDB reserves underscore fields
+    if doc["processed_by_listener"] == true
+      return false
+    end
+    
+    true
   end
 
   def process_change(change)
@@ -143,9 +161,10 @@ class CouchdbChangesListener
     Rails.logger.info("[CouchDB Listener] Processing patient: #{patient_id}")
    
     # Save to MySQL and get the processed data back
-    patient_data = SavePatientRecordService.new.create_patient_record(data.transform_keys(&:to_sym))
+    patient_data = SavePatientRecordService.new.create_patient_record(data.with_indifferent_access)
     
-    # Update CouchDB with the processed data
+     Rails.logger.info("[CouchDB Listener] Processing patient: #{patient_data}")
+    # Update CouchDB with the processed data and processing flag
     if patient_data
       update_couchdb_document(patient_id, doc["_rev"], patient_data)
     else
@@ -164,14 +183,39 @@ class CouchdbChangesListener
       clean_base_url = "#{base_uri.scheme}://#{base_uri.host}:#{base_uri.port}"
       update_url = "#{clean_base_url}/#{DB_NAME}/#{doc_id}"
       
-      # Prepare the document for update
-      updated_doc = updated_data.merge({
+      # Validate inputs
+      if doc_id.nil? || doc_id.empty?
+        Rails.logger.error("[CouchDB Listener] Invalid doc_id: #{doc_id}")
+        return
+      end
+      
+      if current_rev.nil? || current_rev.empty?
+        Rails.logger.error("[CouchDB Listener] Invalid current_rev: #{current_rev}")
+        return
+      end
+      
+      # Ensure updated_data is a hash and clean it
+      unless updated_data.is_a?(Hash)
+        Rails.logger.error("[CouchDB Listener] updated_data is not a hash: #{updated_data.class}")
+        return
+      end
+      
+      # Clean the updated_data to ensure it's JSON serializable
+      clean_data = clean_for_json(updated_data)
+      
+      # Prepare the document for update with processing flag
+      # Note: Using field without underscore as CouchDB reserves underscore fields
+      updated_doc = clean_data.merge({
         "_id" => doc_id,
-        "_rev" => current_rev
+        "_rev" => current_rev,
+        "processed_by_listener" => true,
+        "listener_processed_at" => Time.current.iso8601
       })
       
       Rails.logger.info("[CouchDB Listener] Updating CouchDB document: #{doc_id}")
-      Rails.logger.debug("[CouchDB Listener] Update data: #{updated_doc}")
+      Rails.logger.debug("[CouchDB Listener] Document ID: #{doc_id}")
+      Rails.logger.debug("[CouchDB Listener] Current Rev: #{current_rev}")
+      Rails.logger.debug("[CouchDB Listener] Update doc keys: #{updated_doc}")
       
       # Create RestClient resource with authentication
       resource_options = {
@@ -188,16 +232,31 @@ class CouchdbChangesListener
       
       resource = RestClient::Resource.new(update_url, resource_options)
       
+      # Convert to JSON and log the payload
+      json_payload = updated_doc.to_json
+      Rails.logger.debug("[CouchDB Listener] JSON payload size: #{json_payload.length} bytes")
+      
       # Perform the update
-      response = resource.put(updated_doc.to_json)
+      response = resource.put(json_payload)
       
       if response.code == 201 || response.code == 200
         response_data = JSON.parse(response.body)
-        Rails.logger.info("[CouchDB Listener] Successfully updated CouchDB document: #{doc_id}, new rev: #{response_data['rev']}")
+        Rails.logger.info("[CouchDB Listener] Successfully updated CouchDB document: #{doc_id}, new rev: #{response_data['rev']} (marked as processed)")
       else
         Rails.logger.error("[CouchDB Listener] Unexpected response code #{response.code} when updating document: #{doc_id}")
       end
       
+    rescue RestClient::BadRequest => e
+      Rails.logger.error("[CouchDB Listener] Bad Request (400) when updating #{doc_id}: #{e.message}")
+      if e.response
+        Rails.logger.error("[CouchDB Listener] Response body: #{e.response.body}")
+        begin
+          error_data = JSON.parse(e.response.body)
+          Rails.logger.error("[CouchDB Listener] CouchDB error details: #{error_data}")
+        rescue JSON::ParserError
+          Rails.logger.error("[CouchDB Listener] Could not parse error response as JSON")
+        end
+      end
     rescue RestClient::Conflict => e
       Rails.logger.error("[CouchDB Listener] Document conflict when updating #{doc_id}. Document may have been updated by another process: #{e.message}")
       # Optionally, you could implement retry logic here by fetching the latest revision
@@ -224,5 +283,31 @@ class CouchdbChangesListener
     File.write(SEQ_FILE, seq)
   rescue StandardError => e
     Rails.logger.error("[CouchDB Listener] Failed to save sequence: #{e.message}")
+  end
+
+  # Clean data to ensure it's JSON serializable
+  def clean_for_json(data)
+    case data
+    when Hash
+      data.each_with_object({}) do |(key, value), clean_hash|
+        clean_key = key.to_s
+        clean_hash[clean_key] = clean_for_json(value)
+      end
+    when Array
+      data.map { |item| clean_for_json(item) }
+    when String, Numeric, TrueClass, FalseClass, NilClass
+      data
+    when Time, DateTime
+      data.iso8601
+    when Date
+      data.to_s
+    else
+      # For any other object, try to convert to string
+      begin
+        data.to_s
+      rescue
+        nil
+      end
+    end
   end
 end
