@@ -9,6 +9,9 @@ class VillageSyncJob
   def perform(batch_size = 100) # Reduced default batch size
     db_name = 'villages'
     
+    # Check record counts and clean CouchDB if they don't match
+    return if check_and_clean_couchdb_if_needed(db_name) == :skip_sync
+    
     total_count = Village.where(retired: false).count
     Sidekiq.logger.info "Starting sync of #{total_count} villages to CouchDB at #{COUCHDB_URL}"
     
@@ -80,6 +83,128 @@ class VillageSyncJob
   
   private
   
+  def check_and_clean_couchdb_if_needed(db_name)
+    begin
+      mysql_count = Village.where(retired: false).count
+      couchdb_count = get_couchdb_village_count(db_name)
+      
+      Sidekiq.logger.info "MySQL village count: #{mysql_count}, CouchDB village count: #{couchdb_count}"
+      
+      if mysql_count != couchdb_count
+        Sidekiq.logger.warn "Record count mismatch detected! MySQL: #{mysql_count}, CouchDB: #{couchdb_count}"
+        Sidekiq.logger.info "Cleaning all village records from CouchDB before sync..."
+        
+        delete_all_villages_from_couchdb(db_name)
+        
+        Sidekiq.logger.info "Successfully cleaned all village records from CouchDB"
+        return :continue_sync
+      else
+        Sidekiq.logger.info "Record counts match. Skipping sync as data is already synchronized."
+        return :skip_sync
+      end
+      
+    rescue => e
+      Sidekiq.logger.error "Error checking CouchDB record count: #{e.message}"
+      Sidekiq.logger.info "Proceeding with sync despite count check failure..."
+      return :continue_sync
+    end
+  end
+  
+  def get_couchdb_village_count(db_name)
+    begin
+      # Try to get the database info first
+      db_url = "#{COUCHDB_URL}/#{db_name}"
+      response = RestClient.get(db_url)
+      db_info = JSON.parse(response.body)
+      
+      # Get count of village documents specifically using URL encoding
+      require 'uri'
+      start_key = URI.encode_www_form_component('"village_"')
+      end_key = URI.encode_www_form_component('"village_\ufff0"')
+      
+      view_url = "#{db_url}/_all_docs?startkey=#{start_key}&endkey=#{end_key}"
+      response = RestClient.get(view_url)
+      result = JSON.parse(response.body)
+      
+      return result['total_rows'] || 0
+      
+    rescue RestClient::NotFound
+      # Database doesn't exist, return 0
+      Sidekiq.logger.info "CouchDB database '#{db_name}' not found. Will be created during sync."
+      return 0
+    rescue => e
+      Sidekiq.logger.error "Error getting CouchDB village count: #{e.message}"
+      raise e
+    end
+  end
+  
+  def delete_all_villages_from_couchdb(db_name)
+    begin
+      db_url = "#{COUCHDB_URL}/#{db_name}"
+      
+      # First, check if database exists
+      begin
+        RestClient.get(db_url)
+      rescue RestClient::NotFound
+        Sidekiq.logger.info "Database '#{db_name}' doesn't exist. Nothing to clean."
+        return
+      end
+      
+      # Get all village documents using URL encoding
+      require 'uri'
+      start_key = URI.encode_www_form_component('"village_"')
+      end_key = URI.encode_www_form_component('"village_\ufff0"')
+      
+      view_url = "#{db_url}/_all_docs?startkey=#{start_key}&endkey=#{end_key}&include_docs=true"
+      response = RestClient.get(view_url)
+      result = JSON.parse(response.body)
+      
+      if result['rows'].empty?
+        Sidekiq.logger.info "No village documents found in CouchDB. Nothing to clean."
+        return
+      end
+      
+      Sidekiq.logger.info "Found #{result['rows'].length} village documents to delete"
+      
+      # Prepare bulk delete
+      docs_to_delete = result['rows'].map do |row|
+        {
+          "_id" => row['id'],
+          "_rev" => row['doc']['_rev'],
+          "_deleted" => true
+        }
+      end
+      
+      # Perform bulk delete
+      bulk_url = "#{db_url}/_bulk_docs"
+      bulk_data = {
+        "docs" => docs_to_delete
+      }
+      
+      delete_response = RestClient.post(
+        bulk_url,
+        bulk_data.to_json,
+        { content_type: :json, accept: :json }
+      )
+      
+      delete_result = JSON.parse(delete_response.body)
+      successful_deletes = delete_result.count { |result| !result.key?('error') }
+      
+      Sidekiq.logger.info "Successfully deleted #{successful_deletes} village documents from CouchDB"
+      
+      # Log any errors
+      errors = delete_result.select { |result| result.key?('error') }
+      if errors.any?
+        Sidekiq.logger.error "Failed to delete #{errors.length} documents:"
+        errors.each { |error| Sidekiq.logger.error "  #{error}" }
+      end
+      
+    rescue => e
+      Sidekiq.logger.error "Error deleting villages from CouchDB: #{e.message}"
+      raise e
+    end
+  end
+  
   def sync_village_to_couchdb(village, db_name)
     doc_data = prepare_village_document(village)
     doc_id = "village_#{village.id}"
@@ -111,9 +236,5 @@ class VillageSyncJob
   end
 end
 
-
-
 # Usage examples:
-
 # VillageSyncJob.perform_async(50)  # Even smaller batches
-
