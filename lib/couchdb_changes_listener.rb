@@ -11,6 +11,11 @@ class CouchdbChangesListener
   RECONNECT_DELAY = 5
   MAX_RETRY_ATTEMPTS = 3
   BATCH_SIZE = 100 # Process documents in batches
+  PROCESSING_COOLDOWN = 30 # Seconds to wait before processing again
+
+  def initialize
+    @last_processing_time = 0
+  end
 
   def start
     Rails.logger.info("[CouchDB Listener] Starting for #{DB_NAME}...")
@@ -49,7 +54,8 @@ class CouchdbChangesListener
       feed: 'continuous',
       include_docs: true,
       timeout: 60000, # 60 second timeout
-      heartbeat: 30000 # 30 second heartbeat
+      heartbeat: 30000, # 30 second heartbeat
+      since: 'now' # Start from current point, not from beginning
     }
 
     Rails.logger.info("[CouchDB Listener] Connecting to CouchDB changes feed")
@@ -95,10 +101,31 @@ class CouchdbChangesListener
           # Skip heartbeat messages
           next unless change["doc"]
           
-          # Only process if there's an actual document change
-          Rails.logger.debug("[CouchDB Listener] Received change for doc: #{change['id']}")
+          doc = change["doc"]
           
-          # Process all unprocessed documents whenever any change occurs
+          # Skip if this document is already processed
+          if doc["processed_by_listener"] == true
+            Rails.logger.debug("[CouchDB Listener] Skipping already processed doc: #{change['id']}")
+            next
+          end
+          
+          # Skip deleted documents
+          if change["deleted"] == true
+            Rails.logger.debug("[CouchDB Listener] Skipping deleted document: #{change['id']}")
+            next
+          end
+          
+          Rails.logger.debug("[CouchDB Listener] Received change for unprocessed doc: #{change['id']}")
+          
+          # Add throttling to prevent continuous processing
+          current_time = Time.current.to_i
+          if current_time - @last_processing_time < PROCESSING_COOLDOWN
+            Rails.logger.debug("[CouchDB Listener] Throttling: skipping processing (last processed #{current_time - @last_processing_time}s ago)")
+            next
+          end
+          
+          # Process all unprocessed documents
+          @last_processing_time = current_time
           process_all_unprocessed_documents
           
         rescue JSON::ParserError => e
@@ -139,17 +166,38 @@ class CouchdbChangesListener
     
     clean_base_url = "#{base_uri.scheme}://#{base_uri.host}:#{base_uri.port}"
     
-    # Use a view or _all_docs with a filter
-    # First, let's try using _all_docs and filter on the client side
-    url = "#{clean_base_url}/#{DB_NAME}/_all_docs"
+    # Use Mango query to filter documents server-side
+    url = "#{clean_base_url}/#{DB_NAME}/_find"
     
-    params = {
-      include_docs: true,
-      limit: 1000 # Adjust based on your needs
+    # Mango query to find documents where processed_by_listener is not true
+    query = {
+      selector: {
+        "$and" => [
+          {
+            "_id" => {
+              "$not" => {
+                "$regex" => "^_design/"
+              }
+            }
+          },
+          {
+            "$or" => [
+              { "processed_by_listener" => { "$exists" => false } },
+              { "processed_by_listener" => false },
+              { "processed_by_listener" => nil }
+            ]
+          }
+        ]
+      },
+      limit: 1000,
+      execution_stats: false
     }
     
     resource_options = {
-      headers: { accept: :json }
+      headers: { 
+        accept: :json,
+        content_type: :json
+      }
     }
     
     if username && password
@@ -157,41 +205,24 @@ class CouchdbChangesListener
       resource_options[:password] = password
     end
     
-    uri = URI(url)
-    uri.query = URI.encode_www_form(params)
+    resource = RestClient::Resource.new(url, resource_options)
     
-    resource = RestClient::Resource.new(uri.to_s, resource_options)
-    response = resource.get
-    
-    if response.code == 200
-      data = JSON.parse(response.body)
-      unprocessed_docs = []
+    begin
+      response = resource.post(query.to_json)
       
-      data['rows'].each do |row|
-        doc = row['doc']
-        next unless doc
-        
-        # Skip design documents
-        next if doc['_id'].start_with?('_design/')
-        
-        # Skip deleted documents
-        next if row['value']['deleted']
-        
-        # Only include documents that haven't been processed by listener
-        if doc['processed_by_listener'] != true
-          unprocessed_docs << doc
-        end
+      if response.code == 200
+        data = JSON.parse(response.body)
+        Rails.logger.info("[CouchDB Listener] Found #{data['docs'].length} unprocessed documents using Mango query")
+        return data['docs']
+      else
+        Rails.logger.error("[CouchDB Listener] Failed to fetch documents with Mango query: HTTP #{response.code}")
+        return []
       end
       
-      return unprocessed_docs
-    else
-      Rails.logger.error("[CouchDB Listener] Failed to fetch documents: HTTP #{response.code}")
+    rescue StandardError => e
+      Rails.logger.error("[CouchDB Listener] Error with Mango query: #{e.message}")
       return []
     end
-    
-  rescue StandardError => e
-    Rails.logger.error("[CouchDB Listener] Error fetching unprocessed documents: #{e.message}")
-    return []
   end
 
   def process_document_batch(docs)
