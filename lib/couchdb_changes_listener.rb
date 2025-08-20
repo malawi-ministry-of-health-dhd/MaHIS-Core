@@ -246,10 +246,10 @@ class CouchdbChangesListener
     
     begin
       # Save to MySQL
-      save_to_mysql(doc)
+      mysql_data = save_to_mysql(doc)
       
-      # Mark as processed in CouchDB
-      update_couchdb_with_retry(doc_id, doc)
+      # Mark as processed in CouchDB AND save the MySQL data back
+      update_couchdb_with_retry(doc_id, mysql_data)
       
     rescue StandardError => e
       Rails.logger.error("[CouchDB Listener] Failed to process document #{doc_id}: #{e.message}")
@@ -259,7 +259,7 @@ class CouchdbChangesListener
 
   def save_to_mysql(doc)
     patient_id = doc["_id"]
-    data = doc.except("_id", "_rev", "processed_by_listener", "listener_processed_at") # Remove CouchDB metadata
+    data = doc.except("_id", "_rev", "processed_by_listener", "listener_processed_at", "mysql_processed_data") # Remove CouchDB metadata
     
     Rails.logger.info("[CouchDB Listener] Processing patient: #{patient_id}")
 
@@ -274,11 +274,16 @@ class CouchdbChangesListener
     
     Rails.logger.info("[CouchDB Listener] Processing patient data completed for #{patient_id}")
     
+    # Ensure we return the processed data
     return patient_data
+  rescue StandardError => e
+    Rails.logger.error("[CouchDB Listener] Error saving to MySQL for #{patient_id}: #{e.message}")
+    # Return original data if MySQL save fails
+    return data
   end
 
-  # Updated retry mechanism - now just marks document as processed
-  def update_couchdb_with_retry(doc_id, original_doc, attempt = 1)
+  # Updated retry mechanism - now saves MySQL data back to CouchDB
+  def update_couchdb_with_retry(doc_id, mysql_data, attempt = 1)
     return if attempt > MAX_RETRY_ATTEMPTS
     
     begin
@@ -296,10 +301,32 @@ class CouchdbChangesListener
         return
       end
       
-      # Just mark as processed (don't merge MySQL data back)
+      # Merge the MySQL data back into the CouchDB document
       updated_doc = current_doc.dup
       updated_doc["processed_by_listener"] = true
       updated_doc["listener_processed_at"] = Time.current.iso8601
+      
+      # Add the processed MySQL data
+      if mysql_data.present?
+        # Clean the MySQL data for JSON serialization
+        cleaned_mysql_data = clean_for_json(mysql_data)
+        updated_doc["mysql_processed_data"] = cleaned_mysql_data
+        
+        # Optionally, you can merge specific fields directly into the root document
+        # Be careful not to overwrite CouchDB metadata
+        if cleaned_mysql_data.is_a?(Hash)
+          cleaned_mysql_data.each do |key, value|
+            # Skip CouchDB reserved fields and existing metadata
+            next if key.to_s.start_with?('_') || 
+                   key.to_s == 'processed_by_listener' || 
+                   key.to_s == 'listener_processed_at' ||
+                   key.to_s == 'mysql_processed_data'
+            updated_doc[key.to_s] = value
+          end
+        end
+        
+        Rails.logger.info("[CouchDB Listener] Adding MySQL data to CouchDB document #{doc_id}")
+      end
       
       # Attempt to update
       update_couchdb_document_direct(doc_id, updated_doc)
@@ -311,14 +338,14 @@ class CouchdbChangesListener
       sleep_time = 0.5 * (2 ** (attempt - 1))
       sleep(sleep_time)
       
-      update_couchdb_with_retry(doc_id, original_doc, attempt + 1)
+      update_couchdb_with_retry(doc_id, mysql_data, attempt + 1)
       
     rescue StandardError => e
       Rails.logger.error("[CouchDB Listener] Error updating document #{doc_id} on attempt #{attempt}: #{e.message}")
       
       if attempt < MAX_RETRY_ATTEMPTS
         sleep(1)
-        update_couchdb_with_retry(doc_id, original_doc, attempt + 1)
+        update_couchdb_with_retry(doc_id, mysql_data, attempt + 1)
       end
     end
   end
@@ -397,6 +424,7 @@ class CouchdbChangesListener
     end
   end
 
+  # Enhanced clean_for_json method to handle more data types
   def clean_for_json(data)
     case data
     when Hash
@@ -412,9 +440,23 @@ class CouchdbChangesListener
       data.iso8601
     when Date
       data.to_s
+    when ActiveRecord::Base
+      # Handle ActiveRecord objects by converting to hash
+      begin
+        clean_for_json(data.attributes)
+      rescue
+        data.to_s
+      end
+    when Symbol
+      data.to_s
     else
       begin
-        data.to_s
+        # Try to convert to hash if it responds to attributes
+        if data.respond_to?(:attributes)
+          clean_for_json(data.attributes)
+        else
+          data.to_s
+        end
       rescue
         nil
       end
