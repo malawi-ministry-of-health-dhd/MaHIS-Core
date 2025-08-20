@@ -11,10 +11,9 @@ class CouchdbChangesListener
   RECONNECT_DELAY = 5
   MAX_RETRY_ATTEMPTS = 3
   BATCH_SIZE = 100 # Process documents in batches
-  PROCESSING_COOLDOWN = 30 # Seconds to wait before processing again
 
   def initialize
-    @last_processing_time = 0
+    # Removed @last_processing_time initialization
   end
 
   def start
@@ -117,15 +116,7 @@ class CouchdbChangesListener
           
           Rails.logger.debug("[CouchDB Listener] Received change for unprocessed doc: #{change['id']}")
           
-          # Add throttling to prevent continuous processing
-          current_time = Time.current.to_i
-          if current_time - @last_processing_time < PROCESSING_COOLDOWN
-            Rails.logger.debug("[CouchDB Listener] Throttling: skipping processing (last processed #{current_time - @last_processing_time}s ago)")
-            next
-          end
-          
-          # Process all unprocessed documents
-          @last_processing_time = current_time
+          # Process all unprocessed documents immediately (removed throttling)
           process_all_unprocessed_documents
           
         rescue JSON::ParserError => e
