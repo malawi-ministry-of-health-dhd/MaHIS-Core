@@ -1,28 +1,28 @@
-# app/jobs/village_sync_job.rb
-class VillageSyncJob
+# app/jobs/district_sync_job.rb
+class DistrictSyncJob
   include Sidekiq::Job
   include CouchdbSync
   
   sidekiq_options queue: 'sync_offline_data', retry: 3
   
-  # Sync all villages to CouchDB
-  def perform(batch_size = 100) # Reduced default batch size
-    db_name = 'villages'
+  # Sync all districts to CouchDB
+  def perform(batch_size = 100) # Default batch size
+    db_name = 'districts'
     
     # Check record counts and clean CouchDB if they don't match
     return if check_and_clean_couchdb_if_needed(db_name) == :skip_sync
     
-    total_count = Village.where(retired: false).count
-    Sidekiq.logger.info "Starting sync of #{total_count} villages to CouchDB at #{COUCHDB_URL}"
+    total_count = District.where(retired: false).count
+    Sidekiq.logger.info "Starting sync of #{total_count} districts to CouchDB at #{COUCHDB_URL}"
     
     processed = 0
     errors = []
     consecutive_errors = 0
     
-    Village.where(retired: false).find_in_batches(batch_size: batch_size) do |village_batch|
-      village_batch.each_with_index do |village, index|
+    District.where(retired: false).find_in_batches(batch_size: batch_size) do |district_batch|
+      district_batch.each_with_index do |district, index|
         begin
-          sync_village_to_couchdb(village, db_name)
+          sync_district_to_couchdb(district, db_name)
           processed += 1
           consecutive_errors = 0 # Reset consecutive error counter on success
           
@@ -31,14 +31,14 @@ class VillageSyncJob
             sleep(0.01) # 10ms delay
           end
           
-          # Log progress every 100 records
-          if processed % 100 == 0
-            Sidekiq.logger.info "Synced #{processed}/#{total_count} villages"
+          # Log progress every 50 records (smaller intervals since we have fewer districts)
+          if processed % 50 == 0
+            Sidekiq.logger.info "Synced #{processed}/#{total_count} districts"
           end
           
         rescue RestClient::Exception, SocketError, Errno::ECONNREFUSED => e
           consecutive_errors += 1
-          error_msg = "Failed to sync village ID #{village.id}: #{e.message}"
+          error_msg = "Failed to sync district ID #{district.district_id}: #{e.message}"
           Sidekiq.logger.error error_msg
           errors << error_msg
           
@@ -53,7 +53,7 @@ class VillageSyncJob
           
         rescue => e
           # Handle other types of errors
-          error_msg = "Failed to sync village ID #{village.id}: #{e.message}"
+          error_msg = "Failed to sync district ID #{district.district_id}: #{e.message}"
           Sidekiq.logger.error error_msg
           errors << error_msg
           
@@ -65,7 +65,7 @@ class VillageSyncJob
       
       # Longer pause between batches to give CouchDB time to process
       sleep(0.1)
-      Sidekiq.logger.info "Completed batch. Processed #{processed}/#{total_count} villages so far."
+      Sidekiq.logger.info "Completed batch. Processed #{processed}/#{total_count} districts so far."
     end
     
     # Final summary
@@ -76,7 +76,7 @@ class VillageSyncJob
       Sidekiq.logger.error "Total errors: #{errors.length}"
       # Only fail if error rate is very high
       if errors.length > total_count * 0.05 # Fail if >5% error rate
-        raise "Village sync completed with unacceptable error rate: #{errors.length}/#{total_count} (#{(errors.length.to_f/total_count*100).round(2)}%)"
+        raise "District sync completed with unacceptable error rate: #{errors.length}/#{total_count} (#{(errors.length.to_f/total_count*100).round(2)}%)"
       end
     end
   end
@@ -85,18 +85,18 @@ class VillageSyncJob
   
   def check_and_clean_couchdb_if_needed(db_name)
     begin
-      mysql_count = Village.where(retired: false).count
-      couchdb_count = get_couchdb_village_count(db_name)
+      mysql_count = District.where(retired: false).count
+      couchdb_count = get_couchdb_district_count(db_name)
       
-      Sidekiq.logger.info "MySQL village count: #{mysql_count}, CouchDB village count: #{couchdb_count}"
+      Sidekiq.logger.info "MySQL district count: #{mysql_count}, CouchDB district count: #{couchdb_count}"
       
       if mysql_count != couchdb_count
         Sidekiq.logger.warn "Record count mismatch detected! MySQL: #{mysql_count}, CouchDB: #{couchdb_count}"
-        Sidekiq.logger.info "Cleaning all village records from CouchDB before sync..."
+        Sidekiq.logger.info "Cleaning all district records from CouchDB before sync..."
         
-        delete_all_villages_from_couchdb(db_name)
+        delete_all_districts_from_couchdb(db_name)
         
-        Sidekiq.logger.info "Successfully cleaned all village records from CouchDB"
+        Sidekiq.logger.info "Successfully cleaned all district records from CouchDB"
         return :continue_sync
       else
         Sidekiq.logger.info "Record counts match. Skipping sync as data is already synchronized."
@@ -110,17 +110,17 @@ class VillageSyncJob
     end
   end
   
-  def get_couchdb_village_count(db_name)
+  def get_couchdb_district_count(db_name)
     begin
       # Try to get the database info first
       db_url = "#{COUCHDB_URL}/#{db_name}"
       response = RestClient.get(db_url)
       db_info = JSON.parse(response.body)
       
-      # Get count of village documents specifically using URL encoding
+      # Get count of district documents specifically using URL encoding
       require 'uri'
-      start_key = URI.encode_www_form_component('"village_"')
-      end_key = URI.encode_www_form_component('"village_\ufff0"')
+      start_key = URI.encode_www_form_component('"district_"')
+      end_key = URI.encode_www_form_component('"district_\ufff0"')
       
       view_url = "#{db_url}/_all_docs?startkey=#{start_key}&endkey=#{end_key}"
       response = RestClient.get(view_url)
@@ -133,12 +133,12 @@ class VillageSyncJob
       Sidekiq.logger.info "CouchDB database '#{db_name}' not found. Will be created during sync."
       return 0
     rescue => e
-      Sidekiq.logger.error "Error getting CouchDB village count: #{e.message}"
+      Sidekiq.logger.error "Error getting CouchDB district count: #{e.message}"
       raise e
     end
   end
   
-  def delete_all_villages_from_couchdb(db_name)
+  def delete_all_districts_from_couchdb(db_name)
     begin
       db_url = "#{COUCHDB_URL}/#{db_name}"
       
@@ -150,21 +150,21 @@ class VillageSyncJob
         return
       end
       
-      # Get all village documents using URL encoding
+      # Get all district documents using URL encoding
       require 'uri'
-      start_key = URI.encode_www_form_component('"village_"')
-      end_key = URI.encode_www_form_component('"village_\ufff0"')
+      start_key = URI.encode_www_form_component('"district_"')
+      end_key = URI.encode_www_form_component('"district_\ufff0"')
       
       view_url = "#{db_url}/_all_docs?startkey=#{start_key}&endkey=#{end_key}&include_docs=true"
       response = RestClient.get(view_url)
       result = JSON.parse(response.body)
       
       if result['rows'].empty?
-        Sidekiq.logger.info "No village documents found in CouchDB. Nothing to clean."
+        Sidekiq.logger.info "No district documents found in CouchDB. Nothing to clean."
         return
       end
       
-      Sidekiq.logger.info "Found #{result['rows'].length} village documents to delete"
+      Sidekiq.logger.info "Found #{result['rows'].length} district documents to delete"
       
       # Prepare bulk delete
       docs_to_delete = result['rows'].map do |row|
@@ -190,7 +190,7 @@ class VillageSyncJob
       delete_result = JSON.parse(delete_response.body)
       successful_deletes = delete_result.count { |result| !result.key?('error') }
       
-      Sidekiq.logger.info "Successfully deleted #{successful_deletes} village documents from CouchDB"
+      Sidekiq.logger.info "Successfully deleted #{successful_deletes} district documents from CouchDB"
       
       # Log any errors
       errors = delete_result.select { |result| result.key?('error') }
@@ -200,14 +200,14 @@ class VillageSyncJob
       end
       
     rescue => e
-      Sidekiq.logger.error "Error deleting villages from CouchDB: #{e.message}"
+      Sidekiq.logger.error "Error deleting districts from CouchDB: #{e.message}"
       raise e
     end
   end
   
-  def sync_village_to_couchdb(village, db_name)
-    doc_data = prepare_village_document(village)
-    doc_id = "village_#{village.id}"
+  def sync_district_to_couchdb(district, db_name)
+    doc_data = prepare_district_document(district)
+    doc_id = "district_#{district.district_id}"
     
     # Add timeout and retry logic specifically for sync
     retries = 0
@@ -224,16 +224,18 @@ class VillageSyncJob
     end
   end
   
-  def prepare_village_document(village)
+  def prepare_district_document(district)
     {
-      "type" => "village",
-      "village_id" => village.village_id,
-      "name" => village.name,
-      "traditional_authority_id" => village.traditional_authority_id,
+      "type" => "district",
+      "district_id" => district.district_id,
+      "name" => district.name,
+      "region_id" => district.region_id,
       "synced_at" => Time.current.iso8601
     }
   end
 end
 
 # Usage examples:
-# VillageSyncJob.perform_async(50)  # Even smaller batches
+# DistrictSyncJob.perform_async     # Default batch size of 100
+# DistrictSyncJob.perform_async(50) # Smaller batches if needed
+# DistrictSyncJob.perform_async(25) # Even smaller batches
