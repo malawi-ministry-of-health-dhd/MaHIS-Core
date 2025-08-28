@@ -19,7 +19,13 @@ class StageSyncJob
     errors = []
     consecutive_errors = 0
     
-    Stage.find_in_batches(batch_size: batch_size) do |stage_batch|
+    # Updated query to include patient information like in your index method
+    Stage.includes(patient: :patient_identifiers)
+         .joins(:visit)
+         .joins('INNER JOIN patient ON patient.patient_id = visits.patientId')
+         .joins('INNER JOIN patient_identifier ON patient_identifier.patient_id = patient.patient_id AND patient_identifier.identifier_type = 3')
+         .find_in_batches(batch_size: batch_size) do |stage_batch|
+      
       stage_batch.each_with_index do |stage, index|
         begin
           sync_stage_to_couchdb(stage, db_name)
@@ -85,7 +91,12 @@ class StageSyncJob
   
   def check_and_clean_couchdb_if_needed(db_name)
     begin
-      mysql_count = Stage.count
+      # Updated to use the same query structure for count comparison
+      mysql_count = Stage.includes(patient: :patient_identifiers)
+                         .joins(:visit)
+                         .joins('INNER JOIN patient ON patient.patient_id = visits.patientId')
+                         .joins('INNER JOIN patient_identifier ON patient_identifier.patient_id = patient.patient_id AND patient_identifier.identifier_type = 3')
+                         .count
       couchdb_count = get_couchdb_stage_count(db_name)
       
       Sidekiq.logger.info "MySQL stage count: #{mysql_count}, CouchDB stage count: #{couchdb_count}"
@@ -225,6 +236,9 @@ class StageSyncJob
   end
   
   def prepare_stage_document(stage)
+    # Find the identifier with type 3 from preloaded identifiers (same as in your index method)
+    type3_identifier = stage.patient.patient_identifiers.find { |pi| pi.identifier_type == 3 }&.identifier
+    
     {
       "type" => "stage",
       "stage_id" => stage.id,
@@ -234,6 +248,10 @@ class StageSyncJob
       "arrival_time" => stage.arrivalTime&.iso8601,
       "status" => stage.status,
       "location_id" => stage.location_id,
+      # Added patient information
+      "full_name" => stage.patient.name,
+      "identifier" => type3_identifier,
+      # Timestamps
       "created_at" => stage.created_at&.iso8601,
       "updated_at" => stage.updated_at&.iso8601,
       "synced_at" => Time.current.iso8601
