@@ -193,7 +193,7 @@ class SavePatientRecordService
         patient_data[:appointments] = BuildPatientRecordService.build_observation_data(patient_id, 'APPOINTMENT')
       when :save_outcome
         patient_data[:outCome] = BuildPatientRecordService.build_empty_data_structure 
-      when :save_medication_order, :save_dispensation_data,
+      when :save_medication_order, :save_dispensation_data
         patient_data[:MedicationOrder] = BuildPatientRecordService.build_medication_data(patient_id)
         patient_data[:dispensations] = BuildPatientRecordService.build_dispensations_data(patient)
       when :create_ncd_identifier
