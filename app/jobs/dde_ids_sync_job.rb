@@ -62,7 +62,7 @@ class DdeIdsSyncJob
               
             rescue RestClient::Exception, SocketError, Errno::ECONNREFUSED => e
               consecutive_errors += 1
-              error_msg = "Failed to sync DDE ID #{npid_data['npid']} (ID: #{npid_data['id']}): #{e.message}"
+              error_msg = "Failed to sync DDE ID #{npid_data['npid']} : #{e.message}"
               Sidekiq.logger.error error_msg
               errors << error_msg
               
@@ -77,7 +77,7 @@ class DdeIdsSyncJob
               
             rescue => e
               # Handle other types of errors
-              error_msg = "Failed to sync DDE ID #{npid_data['npid']} (ID: #{npid_data['id']}): #{e.message}"
+              error_msg = "Failed to sync DDE ID #{npid_data['npid']} : #{e.message}"
               Sidekiq.logger.error error_msg
               errors << error_msg
               
@@ -187,7 +187,7 @@ class DdeIdsSyncJob
   
   def sync_dde_id_to_couchdb(npid_data, db_name)
     doc_data = prepare_dde_id_document(npid_data)
-    doc_id = "dde_id_#{npid_data['id']}"
+    doc_id = npid_data['npid']
     
     # Add timeout and retry logic specifically for sync
     retries = 0
@@ -207,7 +207,7 @@ class DdeIdsSyncJob
   def prepare_dde_id_document(npid_data)
     {
       "type" => "dde_id",
-      "dde_id" => npid_data['id'],
+      "dde_id" => npid_data['npid'],
       "location_id" => npid_data['location_id'],
       "npid" => npid_data['npid'],
       "assigned" => npid_data['assigned'],
@@ -253,7 +253,7 @@ class DdeIdsSyncJob
       # Prepare bulk delete
       docs_to_delete = assigned_docs.map do |row|
         {
-          "_id" => row['id'],
+          "_id" => row['npid'],
           "_rev" => row['doc']['_rev'],
           "_deleted" => true
         }
