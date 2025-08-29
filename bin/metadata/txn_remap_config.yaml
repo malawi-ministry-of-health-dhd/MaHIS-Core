@@ -8,42 +8,8 @@ alternative_drug_names:
   - column: drug_inventory_id
     ref: drug
 
-drug_ingredient:
-  - column: ingredient_id
-    ref: concept
-  - column: concept_id
-    ref: concept
-
 drug_order:
   - column: drug_inventory_id
-    ref: drug
-
-moh_other_medications:
-  - column: drug_inventory_id
-    ref: drug
-
-moh_regimen_combination_drug:
-  - column: drug_id
-    ref: drug
-
-moh_regimen_ingredient:
-  - column: drug_inventory_id
-    ref: drug
-
-moh_regimen_ingredient_starter_packs:
-  - column: drug_inventory_id
-    ref: drug
-
-moh_regimen_ingredient_tb_treatment:
-  - column: drug_inventory_id
-    ref: drug
-
-moh_regimen_lookup:
-  - column: drug_inventory_id
-    ref: drug
-
-ntp_regimens:
-  - column: drug_id
     ref: drug
 
 encounter:
@@ -51,14 +17,10 @@ encounter:
     ref: encounter_type
   - column: program_id
     ref: program
-#  - column: location_id
-#    ref: location
 
 obs:
   - column: concept_id
     ref: concept
-  #  - column: location_id
-  #    ref: location
   - column: value_coded
     ref: concept
   - column: value_drug
@@ -69,12 +31,8 @@ orders:
     ref: concept
 
 patient_identifier: []
-#  - column: location_id
-#    ref: location
 
 patient_program: []
-#  - column: location_id
-#    ref: location
 
 program_workflow:
   - column: concept_id
@@ -84,13 +42,7 @@ program_workflow_state:
   - column: concept_id
     ref: concept
 
-regimen:
-  - column: concept_id
-    ref: concept
-
 users: []
-#  - column: location_id
-#    ref: location
 
 lims_acknowledgement_statuses:
   - column: test
