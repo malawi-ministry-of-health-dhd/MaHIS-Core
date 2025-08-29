@@ -12,14 +12,15 @@ class VisitSyncJob
     # Check record counts and clean CouchDB if they don't match
     return if check_and_clean_couchdb_if_needed(db_name) == :skip_sync
     
-    total_count = Visit.count
+    # Get total count using a separate query without custom select
+    total_count = get_visits_count
     Sidekiq.logger.info "Starting sync of #{total_count} visits to CouchDB at #{COUCHDB_URL}"
     
     processed = 0
     errors = []
     consecutive_errors = 0
     
-    Visit.find_in_batches(batch_size: batch_size) do |visit_batch|
+    get_visits_with_identifiers.find_in_batches(batch_size: batch_size) do |visit_batch|
       visit_batch.each_with_index do |visit, index|
         begin
           sync_visit_to_couchdb(visit, db_name)
@@ -83,9 +84,29 @@ class VisitSyncJob
   
   private
   
+  def get_visits_with_identifiers
+    Visit.includes(:patient)
+      .select('visits.*, patient_identifier.identifier AS identifier')
+      .joins('INNER JOIN patient ON patient.patient_id = visits.patientId')
+      .joins('INNER JOIN patient_identifier ON patient_identifier.patient_id = patient.patient_id AND patient_identifier.identifier_type = 3')
+  end
+  
+  def get_visits_count
+    Visit.joins('INNER JOIN patient ON patient.patient_id = visits.patientId')
+      .joins('INNER JOIN patient_identifier ON patient_identifier.patient_id = patient.patient_id AND patient_identifier.identifier_type = 3')
+      .count
+  end
+  
+  def generate_composite_id(visit)
+    # Create composite _id from identifier and start_date
+    identifier = visit.try(:identifier) || 'unknown'
+    start_date = visit.startDate ? visit.startDate&.iso8601 : 'no-date'
+    "#{identifier}_#{start_date}"
+  end
+  
   def check_and_clean_couchdb_if_needed(db_name)
     begin
-      mysql_count = Visit.count
+      mysql_count = get_visits_count
       couchdb_count = get_couchdb_visit_count(db_name)
       
       Sidekiq.logger.info "MySQL visit count: #{mysql_count}, CouchDB visit count: #{couchdb_count}"
@@ -117,16 +138,30 @@ class VisitSyncJob
       response = RestClient.get(db_url)
       db_info = JSON.parse(response.body)
       
-      # Get count of visit documents specifically using URL encoding
-      require 'uri'
-      start_key = URI.encode_www_form_component('"visit_"')
-      end_key = URI.encode_www_form_component('"visit_\ufff0"')
-      
-      view_url = "#{db_url}/_all_docs?startkey=#{start_key}&endkey=#{end_key}"
+      # Get count of visit documents - now using composite IDs that don't start with "visit_"
+      # We'll count all documents that have type: "visit"
+      view_url = "#{db_url}/_all_docs"
       response = RestClient.get(view_url)
       result = JSON.parse(response.body)
       
-      return result['total_rows'] || 0
+      # Count documents by checking if they're visit documents
+      # This is less efficient but necessary since we changed the ID format
+      visit_count = 0
+      result['rows'].each do |row|
+        next if row['id'].start_with?('_design')
+        
+        # Get the document to check its type
+        begin
+          doc_response = RestClient.get("#{db_url}/#{row['id']}")
+          doc = JSON.parse(doc_response.body)
+          visit_count += 1 if doc['type'] == 'visit'
+        rescue => e
+          # Skip if we can't read the document
+          Sidekiq.logger.warn "Couldn't read document #{row['id']}: #{e.message}"
+        end
+      end
+      
+      return visit_count
       
     rescue RestClient::NotFound
       # Database doesn't exist, return 0
@@ -150,24 +185,25 @@ class VisitSyncJob
         return
       end
       
-      # Get all visit documents using URL encoding
-      require 'uri'
-      start_key = URI.encode_www_form_component('"visit_"')
-      end_key = URI.encode_www_form_component('"visit_\ufff0"')
-      
-      view_url = "#{db_url}/_all_docs?startkey=#{start_key}&endkey=#{end_key}&include_docs=true"
+      # Get all documents and filter for visit documents
+      view_url = "#{db_url}/_all_docs?include_docs=true"
       response = RestClient.get(view_url)
       result = JSON.parse(response.body)
       
-      if result['rows'].empty?
+      # Filter for visit documents only
+      visit_docs = result['rows'].select do |row|
+        !row['id'].start_with?('_design') && row['doc'] && row['doc']['type'] == 'visit'
+      end
+      
+      if visit_docs.empty?
         Sidekiq.logger.info "No visit documents found in CouchDB. Nothing to clean."
         return
       end
       
-      Sidekiq.logger.info "Found #{result['rows'].length} visit documents to delete"
+      Sidekiq.logger.info "Found #{visit_docs.length} visit documents to delete"
       
       # Prepare bulk delete
-      docs_to_delete = result['rows'].map do |row|
+      docs_to_delete = visit_docs.map do |row|
         {
           "_id" => row['id'],
           "_rev" => row['doc']['_rev'],
@@ -207,7 +243,7 @@ class VisitSyncJob
   
   def sync_visit_to_couchdb(visit, db_name)
     doc_data = prepare_visit_document(visit)
-    doc_id = "visit_#{visit.id}"
+    doc_id = generate_composite_id(visit)
     
     # Add timeout and retry logic specifically for sync
     retries = 0
@@ -229,6 +265,8 @@ class VisitSyncJob
       "type" => "visit",
       "visit_id" => visit.id,
       "patient_id" => visit.patientId,
+      "identifier" => visit.try(:identifier),
+      "full_name" => visit.patient.try(:name),
       "start_date" => visit.startDate&.iso8601,
       "closed_date_time" => visit.closedDateTime&.iso8601,
       "program_id" => visit.programId,
