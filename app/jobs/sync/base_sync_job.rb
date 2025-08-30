@@ -13,7 +13,7 @@ module Sync
     
     protected
     
-    # Generic sync method that handles the common sync logic for model-based records
+  # Generic sync method that handles the common sync logic for model-based records
     def sync_records_to_couchdb(model_class, db_name, batch_size = 100, &record_filter)
       # Use the provided filter or default to non-retired records
       query = record_filter ? record_filter.call(model_class) : default_filter(model_class)
@@ -27,21 +27,26 @@ module Sync
       Sidekiq.logger.info "Starting sync of #{total_count} #{model_name.pluralize} to CouchDB at #{COUCHDB_URL}"
       
       processed = 0
+      skipped = 0
       errors = []
       consecutive_errors = 0
       
       query.find_in_batches(batch_size: batch_size) do |batch|
         batch.each_with_index do |record, index|
           begin
-            sync_record_to_couchdb(record, db_name)
-            processed += 1
+            result = sync_record_to_couchdb(record, db_name)
+            if result == :skipped
+              skipped += 1
+            else
+              processed += 1
+            end
             consecutive_errors = 0 # Reset consecutive error counter on success
             
             # Rate limiting: Add a small delay every 10 records
             add_rate_limiting_delay(index)
             
             # Log progress every 100 records
-            log_progress(processed, total_count, model_name.pluralize)
+            log_progress(processed, total_count, model_name.pluralize, skipped)
             
           rescue RestClient::Exception, SocketError, Errno::ECONNREFUSED => e
             consecutive_errors = handle_connection_error(record, e, consecutive_errors, errors)
@@ -53,11 +58,11 @@ module Sync
         
         # Longer pause between batches
         sleep(0.1)
-        Sidekiq.logger.info "Completed batch. Processed #{processed}/#{total_count} #{model_name.pluralize} so far."
+        Sidekiq.logger.info "Completed batch. Processed #{processed}/#{total_count} #{model_name.pluralize} so far. Skipped: #{skipped}"
       end
       
       # Final summary and error handling
-      handle_sync_completion(processed, errors, total_count, model_name)
+      handle_sync_completion(processed, errors, total_count, model_name, skipped)
     end
     
     # Generic sync method for custom queries (like complex joins)
