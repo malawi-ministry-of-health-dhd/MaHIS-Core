@@ -4,60 +4,99 @@ require 'yaml'
 
 class CouchdbChangesListener
   CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
-  COUCHDB_URL = CONFIG['COUCHDB_URL']
-  COUCHDB_USERNAME = CONFIG['COUCHDB_USERNAME']
-  COUCHDB_PASSWORD = CONFIG['COUCHDB_PASSWORD']
-  DB_NAME = 'patients_records'
-  RECONNECT_DELAY = 5
-  MAX_RETRY_ATTEMPTS = 3
-  BATCH_SIZE = 100 # Process documents in batches
+  
+  # Default configuration - can be overridden during initialization
+  DEFAULT_CONFIG = {
+    couchdb_url: CONFIG['COUCHDB_URL'],
+    username: CONFIG['COUCHDB_USERNAME'],
+    password: CONFIG['COUCHDB_PASSWORD'],
+    reconnect_delay: 5,
+    max_retry_attempts: 3,
+    batch_size: 100,
+    timeout: 60000,      # 60 second timeout
+    heartbeat: 30000     # 30 second heartbeat
+  }.freeze
 
-  def initialize
-    # Removed @last_processing_time initialization
+  attr_reader :db_name, :config, :processor_service, :processor_method
+
+  def initialize(db_name:, processor_service:, processor_method: :process_document, **options)
+    @db_name = db_name
+    @processor_service = processor_service
+    @processor_method = processor_method
+    @config = DEFAULT_CONFIG.merge(options)
+    
+    validate_configuration!
   end
 
   def start
-    Rails.logger.info("[CouchDB Listener] Starting for #{DB_NAME}...")
+    Rails.logger.info("[CouchDB Listener] Starting for #{db_name}...")
     Rails.logger.info("[CouchDB Listener] Process PID: #{Process.pid}")
-    Rails.logger.info("[CouchDB Listener] Log level: #{Rails.logger.level}")
+    Rails.logger.info("[CouchDB Listener] Processor: #{processor_service}##{processor_method}")
+    
     loop do
       begin
         listen_to_changes
       rescue Net::HTTPUnauthorized, Net::HTTPClientError => e
-        Rails.logger.error("[CouchDB Listener] Authentication error: #{e.message}. Check credentials. Reconnecting in #{RECONNECT_DELAY}s...")
-        sleep(RECONNECT_DELAY)
+        Rails.logger.error("[CouchDB Listener] Authentication error for #{db_name}: #{e.message}. Check credentials. Reconnecting in #{config[:reconnect_delay]}s...")
+        sleep(config[:reconnect_delay])
       rescue RestClient::Exception => e
-        Rails.logger.error("[CouchDB Listener] RestClient error: #{e.message}. Reconnecting in #{RECONNECT_DELAY}s...")
-        sleep(RECONNECT_DELAY)
+        Rails.logger.error("[CouchDB Listener] RestClient error for #{db_name}: #{e.message}. Reconnecting in #{config[:reconnect_delay]}s...")
+        sleep(config[:reconnect_delay])
       rescue StandardError => e
-        Rails.logger.error("[CouchDB Listener] Unexpected error: #{e.message}. Reconnecting in #{RECONNECT_DELAY}s...")
+        Rails.logger.error("[CouchDB Listener] Unexpected error for #{db_name}: #{e.message}. Reconnecting in #{config[:reconnect_delay]}s...")
         Rails.logger.error("[CouchDB Listener] Error backtrace: #{e.backtrace.first(3).join(' -> ')}")
-        sleep(RECONNECT_DELAY)
+        sleep(config[:reconnect_delay])
       end
     end
   end
 
+  # Class method to create multiple listeners for different databases
+  def self.start_multiple(database_configs)
+    threads = []
+    
+    database_configs.each do |db_config|
+      threads << Thread.new do
+        listener = new(**db_config)
+        listener.start
+      end
+    end
+    
+    # Wait for all threads to complete (they won't in normal operation)
+    threads.each(&:join)
+  end
+
   private
+
+  def validate_configuration!
+    raise ArgumentError, "db_name is required" if db_name.blank?
+    raise ArgumentError, "processor_service is required" if processor_service.blank?
+    raise ArgumentError, "couchdb_url is required" if config[:couchdb_url].blank?
+    
+    # Validate that the processor service exists and has the required method
+    unless processor_service.respond_to?(processor_method)
+      raise ArgumentError, "#{processor_service} must respond to #{processor_method}"
+    end
+  end
 
   def listen_to_changes
     # Parse the base COUCHDB_URL to extract credentials
-    base_uri = URI(COUCHDB_URL)
-    username = base_uri.user || COUCHDB_USERNAME
-    password = base_uri.password || COUCHDB_PASSWORD
+    base_uri = URI(config[:couchdb_url])
+    username = base_uri.user || config[:username]
+    password = base_uri.password || config[:password]
     
     # Build clean URL without embedded credentials
     clean_base_url = "#{base_uri.scheme}://#{base_uri.host}:#{base_uri.port}"
-    url = "#{clean_base_url}/#{DB_NAME}/_changes"
+    url = "#{clean_base_url}/#{db_name}/_changes"
     
     params = {
       feed: 'continuous',
       include_docs: true,
-      timeout: 60000, # 60 second timeout
-      heartbeat: 30000, # 30 second heartbeat
+      timeout: config[:timeout],
+      heartbeat: config[:heartbeat],
       since: 'now' # Start from current point, not from beginning
     }
 
-    Rails.logger.info("[CouchDB Listener] Connecting to CouchDB changes feed")
+    Rails.logger.info("[CouchDB Listener] Connecting to CouchDB changes feed for #{db_name}")
 
     # Use Net::HTTP for better streaming control
     uri = URI(url)
@@ -104,23 +143,22 @@ class CouchdbChangesListener
           
           # Skip if this document is already processed
           if doc["processed_by_listener"] == true
-            Rails.logger.debug("[CouchDB Listener] Skipping already processed doc: #{change['id']}")
-            next
+              next
           end
           
           # Skip deleted documents
           if change["deleted"] == true
-            Rails.logger.debug("[CouchDB Listener] Skipping deleted document: #{change['id']}")
+            Rails.logger.debug("[CouchDB Listener] Skipping deleted document: #{change['id']} in #{db_name}")
             next
           end
           
-          Rails.logger.debug("[CouchDB Listener] Received change for unprocessed doc: #{change['id']}")
+          Rails.logger.debug("[CouchDB Listener] Received change for unprocessed doc: #{change['id']} in #{db_name}")
           
-          # Process all unprocessed documents immediately (removed throttling)
+          # Process all unprocessed documents immediately
           process_all_unprocessed_documents
           
         rescue JSON::ParserError => e
-          Rails.logger.warn("[CouchDB Listener] Failed to parse JSON line: #{line[0..100]}... Error: #{e.message}")
+          Rails.logger.warn("[CouchDB Listener] Failed to parse JSON line in #{db_name}: #{line[0..100]}... Error: #{e.message}")
           next
         end
       end
@@ -128,54 +166,46 @@ class CouchdbChangesListener
   end
 
   def process_all_unprocessed_documents
-    Rails.logger.info("[CouchDB Listener] Processing all unprocessed documents...")
+    Rails.logger.info("[CouchDB Listener] Processing all unprocessed documents in #{db_name}...")
     
     begin
       unprocessed_docs = fetch_unprocessed_documents
       
       if unprocessed_docs.empty?
-        Rails.logger.info("[CouchDB Listener] No unprocessed documents found")
+        Rails.logger.info("[CouchDB Listener] No unprocessed documents found in #{db_name}")
         return
       end
       
-      Rails.logger.info("[CouchDB Listener] Found #{unprocessed_docs.length} unprocessed documents")
+      Rails.logger.info("[CouchDB Listener] Found #{unprocessed_docs.length} unprocessed documents in #{db_name}")
       
       # Process documents in batches
-      unprocessed_docs.each_slice(BATCH_SIZE) do |batch|
+      unprocessed_docs.each_slice(config[:batch_size]) do |batch|
         process_document_batch(batch)
       end
       
     rescue StandardError => e
-      Rails.logger.error("[CouchDB Listener] Error processing unprocessed documents: #{e.message}")
+      Rails.logger.error("[CouchDB Listener] Error processing unprocessed documents in #{db_name}: #{e.message}")
     end
   end
 
   def fetch_unprocessed_documents
-    base_uri = URI(COUCHDB_URL)
-    username = base_uri.user || COUCHDB_USERNAME
-    password = base_uri.password || COUCHDB_PASSWORD
+    base_uri = URI(config[:couchdb_url])
+    username = base_uri.user || config[:username]
+    password = base_uri.password || config[:password]
     
     clean_base_url = "#{base_uri.scheme}://#{base_uri.host}:#{base_uri.port}"
     
     # Use Mango query to filter documents server-side
-    url = "#{clean_base_url}/#{DB_NAME}/_find"
+    url = "#{clean_base_url}/#{db_name}/_find"
     
     # Mango query to find documents where processed_by_listener is not true
     query = {
       selector: {
         "$and" => [
-          {
-            "_id" => {
-              "$not" => {
-                "$regex" => "^_design/"
-              }
-            }
-          },
+          
           {
             "$or" => [
-              { "processed_by_listener" => { "$exists" => false } },
               { "processed_by_listener" => false },
-              { "processed_by_listener" => nil }
             ]
           }
         ]
@@ -203,27 +233,27 @@ class CouchdbChangesListener
       
       if response.code == 200
         data = JSON.parse(response.body)
-        Rails.logger.info("[CouchDB Listener] Found #{data['docs'].length} unprocessed documents using Mango query")
+        Rails.logger.info("[CouchDB Listener] Found #{data['docs'].length} unprocessed documents using Mango query in #{db_name}")
         return data['docs']
       else
-        Rails.logger.error("[CouchDB Listener] Failed to fetch documents with Mango query: HTTP #{response.code}")
+        Rails.logger.error("[CouchDB Listener] Failed to fetch documents with Mango query in #{db_name}: HTTP #{response.code}")
         return []
       end
       
     rescue StandardError => e
-      Rails.logger.error("[CouchDB Listener] Error with Mango query: #{e.message}")
+      Rails.logger.error("[CouchDB Listener] Error with Mango query in #{db_name}: #{e.message}")
       return []
     end
   end
 
   def process_document_batch(docs)
-    Rails.logger.info("[CouchDB Listener] Processing batch of #{docs.length} documents")
+    Rails.logger.info("[CouchDB Listener] Processing batch of #{docs.length} documents in #{db_name}")
     
     docs.each do |doc|
       begin
         process_document(doc)
       rescue StandardError => e
-        Rails.logger.error("[CouchDB Listener] Failed to process doc #{doc['_id']}: #{e.message}")
+        Rails.logger.error("[CouchDB Listener] Failed to process doc #{doc['_id']} in #{db_name}: #{e.message}")
         # Continue processing other documents even if one fails
       end
     end
@@ -233,123 +263,102 @@ class CouchdbChangesListener
     return unless doc
     
     doc_id = doc['_id']
-    Rails.logger.info("[CouchDB Listener] Processing document: #{doc_id}")
+    Rails.logger.info("[CouchDB Listener] Processing document: #{doc_id} in #{db_name}")
     
     begin
-      # Save to MySQL
-      mysql_data = save_to_mysql(doc)
+      if doc["provider_id"].present?
+        User.current = User.find_by(user_id: doc["provider_id"])
+      else
+        Rails.logger.warn("No user_id found in CouchDB doc")
+      end
+      # Use the configurable processor service and method
+      processed_data = processor_service.send(processor_method, doc.with_indifferent_access)
       
-      # Mark as processed in CouchDB AND save the MySQL data back
-      update_couchdb_with_retry(doc_id, mysql_data)
+      # Mark as processed in CouchDB AND save the processed data back
+      update_couchdb_with_retry(doc_id, processed_data)
       
     rescue StandardError => e
-      Rails.logger.error("[CouchDB Listener] Failed to process document #{doc_id}: #{e.message}")
+      Rails.logger.error("[CouchDB Listener] Failed to process document #{doc_id} in #{db_name}: #{e.message}")
       raise e
     end
   end
 
-  def save_to_mysql(doc)
-    patient_id = doc["_id"]
-    data = doc.except("_id", "_rev", "processed_by_listener", "listener_processed_at", "mysql_processed_data") # Remove CouchDB metadata
-    
-    Rails.logger.info("[CouchDB Listener] Processing patient: #{patient_id}")
-
-    if doc["provider_id"].present?
-      User.current = User.find_by(user_id: doc["provider_id"])
-    else
-      Rails.logger.warn("No user_id found in CouchDB doc")
-    end
-    
-    # Save to MySQL and get the processed data back
-    patient_data = SavePatientRecordService.new.create_patient_record(data.with_indifferent_access)
-    
-    Rails.logger.info("[CouchDB Listener] Processing patient data completed for #{patient_id}")
-    
-    # Ensure we return the processed data
-    return patient_data
-  rescue StandardError => e
-    Rails.logger.error("[CouchDB Listener] Error saving to MySQL for #{patient_id}: #{e.message}")
-    # Return original data if MySQL save fails
-    return data
-  end
-
-  # Updated retry mechanism - now saves MySQL data back to CouchDB
-  def update_couchdb_with_retry(doc_id, mysql_data, attempt = 1)
-    return if attempt > MAX_RETRY_ATTEMPTS
+  def update_couchdb_with_retry(doc_id, processed_data, attempt = 1)
+    return if attempt > config[:max_retry_attempts]
     
     begin
       # Fetch the latest document to get the current revision
       current_doc = fetch_current_document(doc_id)
       
       unless current_doc
-        Rails.logger.error("[CouchDB Listener] Could not fetch current document for #{doc_id}")
+        Rails.logger.error("[CouchDB Listener] Could not fetch current document for #{doc_id} in #{db_name}")
         return
       end
       
       # Check if already processed to avoid infinite loops
       if current_doc["processed_by_listener"] == true
-        Rails.logger.debug("[CouchDB Listener] Document #{doc_id} already marked as processed, skipping update")
+        Rails.logger.debug("[CouchDB Listener] Document #{doc_id} in #{db_name} already marked as processed, skipping update")
         return
       end
       
-      # Merge the MySQL data back into the CouchDB document
+      # Merge the processed data back into the CouchDB document
       updated_doc = current_doc.dup
       updated_doc["processed_by_listener"] = true
       updated_doc["listener_processed_at"] = Time.current.iso8601
+      updated_doc["processed_by_db"] = db_name
       
-      # Add the processed MySQL data
-      if mysql_data.present?
-        # Clean the MySQL data for JSON serialization
-        cleaned_mysql_data = clean_for_json(mysql_data)
-        updated_doc["mysql_processed_data"] = cleaned_mysql_data
+      # Add the processed data
+      if processed_data.present?
+        # Clean the processed data for JSON serialization
+        cleaned_data = clean_for_json(processed_data)
+        updated_doc["processed_data"] = cleaned_data
         
-        # Optionally, you can merge specific fields directly into the root document
-        # Be careful not to overwrite CouchDB metadata
-        if cleaned_mysql_data.is_a?(Hash)
-          cleaned_mysql_data.each do |key, value|
+        # Optionally merge specific fields directly into the root document
+        if cleaned_data.is_a?(Hash)
+          cleaned_data.each do |key, value|
             # Skip CouchDB reserved fields and existing metadata
             next if key.to_s.start_with?('_') || 
                    key.to_s == 'processed_by_listener' || 
                    key.to_s == 'listener_processed_at' ||
-                   key.to_s == 'mysql_processed_data'
+                   key.to_s == 'processed_data' ||
+                   key.to_s == 'processed_by_db'
             updated_doc[key.to_s] = value
           end
         end
         
-        Rails.logger.info("[CouchDB Listener] Adding MySQL data to CouchDB document #{doc_id}")
+        Rails.logger.info("[CouchDB Listener] Adding processed data to CouchDB document #{doc_id} in #{db_name}")
       end
       
       # Attempt to update
       update_couchdb_document_direct(doc_id, updated_doc)
       
     rescue RestClient::Conflict => e
-      Rails.logger.warn("[CouchDB Listener] Conflict on attempt #{attempt} for #{doc_id}, retrying...")
+      Rails.logger.warn("[CouchDB Listener] Conflict on attempt #{attempt} for #{doc_id} in #{db_name}, retrying...")
       
       # Exponential backoff
       sleep_time = 0.5 * (2 ** (attempt - 1))
       sleep(sleep_time)
       
-      update_couchdb_with_retry(doc_id, mysql_data, attempt + 1)
+      update_couchdb_with_retry(doc_id, processed_data, attempt + 1)
       
     rescue StandardError => e
-      Rails.logger.error("[CouchDB Listener] Error updating document #{doc_id} on attempt #{attempt}: #{e.message}")
+      Rails.logger.error("[CouchDB Listener] Error updating document #{doc_id} in #{db_name} on attempt #{attempt}: #{e.message}")
       
-      if attempt < MAX_RETRY_ATTEMPTS
+      if attempt < config[:max_retry_attempts]
         sleep(1)
-        update_couchdb_with_retry(doc_id, mysql_data, attempt + 1)
+        update_couchdb_with_retry(doc_id, processed_data, attempt + 1)
       end
     end
   end
 
-  # Fetch the current document from CouchDB to get latest revision
   def fetch_current_document(doc_id)
     begin
-      base_uri = URI(COUCHDB_URL)
-      username = base_uri.user || COUCHDB_USERNAME
-      password = base_uri.password || COUCHDB_PASSWORD
+      base_uri = URI(config[:couchdb_url])
+      username = base_uri.user || config[:username]
+      password = base_uri.password || config[:password]
       
       clean_base_url = "#{base_uri.scheme}://#{base_uri.host}:#{base_uri.port}"
-      fetch_url = "#{clean_base_url}/#{DB_NAME}/#{doc_id}"
+      fetch_url = "#{clean_base_url}/#{db_name}/#{doc_id}"
       
       resource_options = {
         headers: { accept: :json }
@@ -366,27 +375,26 @@ class CouchdbChangesListener
       if response.code == 200
         return JSON.parse(response.body)
       else
-        Rails.logger.error("[CouchDB Listener] Unexpected response code #{response.code} when fetching document: #{doc_id}")
+        Rails.logger.error("[CouchDB Listener] Unexpected response code #{response.code} when fetching document: #{doc_id} in #{db_name}")
         return nil
       end
       
     rescue RestClient::NotFound => e
-      Rails.logger.error("[CouchDB Listener] Document not found when fetching #{doc_id}: #{e.message}")
+      Rails.logger.error("[CouchDB Listener] Document not found when fetching #{doc_id} in #{db_name}: #{e.message}")
       return nil
     rescue StandardError => e
-      Rails.logger.error("[CouchDB Listener] Error fetching document #{doc_id}: #{e.message}")
+      Rails.logger.error("[CouchDB Listener] Error fetching document #{doc_id} in #{db_name}: #{e.message}")
       return nil
     end
   end
 
-  # Direct document update method
   def update_couchdb_document_direct(doc_id, document_data)
-    base_uri = URI(COUCHDB_URL)
-    username = base_uri.user || COUCHDB_USERNAME
-    password = base_uri.password || COUCHDB_PASSWORD
+    base_uri = URI(config[:couchdb_url])
+    username = base_uri.user || config[:username]
+    password = base_uri.password || config[:password]
     
     clean_base_url = "#{base_uri.scheme}://#{base_uri.host}:#{base_uri.port}"
-    update_url = "#{clean_base_url}/#{DB_NAME}/#{doc_id}"
+    update_url = "#{clean_base_url}/#{db_name}/#{doc_id}"
     
     resource_options = {
       headers: {
@@ -403,19 +411,18 @@ class CouchdbChangesListener
     resource = RestClient::Resource.new(update_url, resource_options)
     json_payload = document_data.to_json
     
-    Rails.logger.debug("[CouchDB Listener] Updating document #{doc_id} with revision #{document_data['_rev']}")
+    Rails.logger.debug("[CouchDB Listener] Updating document #{doc_id} in #{db_name} with revision #{document_data['_rev']}")
     
     response = resource.put(json_payload)
     
     if response.code == 201 || response.code == 200
       response_data = JSON.parse(response.body)
-      Rails.logger.info("[CouchDB Listener] Successfully updated CouchDB document: #{doc_id}, new rev: #{response_data['rev']}")
+      Rails.logger.info("[CouchDB Listener] Successfully updated CouchDB document: #{doc_id} in #{db_name}, new rev: #{response_data['rev']}")
     else
-      Rails.logger.error("[CouchDB Listener] Unexpected response code #{response.code} when updating document: #{doc_id}")
+      Rails.logger.error("[CouchDB Listener] Unexpected response code #{response.code} when updating document: #{doc_id} in #{db_name}")
     end
   end
 
-  # Enhanced clean_for_json method to handle more data types
   def clean_for_json(data)
     case data
     when Hash
