@@ -50,7 +50,7 @@ module Sync
     def generate_document_id(visit)
       # Create composite _id from identifier and start_date
       identifier = visit.try(:identifier) || 'unknown'
-      start_date = visit.startDate ? visit.startDate&.iso8601 : 'no-date'
+      start_date = visit.startDate ? visit.startDate.to_time.strftime("%Y-%m-%dT%H:%M:%S") : 'no-date'
       "#{identifier}_#{start_date}"
     end
   end
