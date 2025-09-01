@@ -358,7 +358,9 @@ class CouchdbChangesListener
       password = base_uri.password || config[:password]
       
       clean_base_url = "#{base_uri.scheme}://#{base_uri.host}:#{base_uri.port}"
-      fetch_url = "#{clean_base_url}/#{db_name}/#{doc_id}"
+      # URL encode the document ID to handle special characters like spaces and colons
+      encoded_doc_id = URI.encode_www_form_component(doc_id)
+      fetch_url = "#{clean_base_url}/#{db_name}/#{encoded_doc_id}"
       
       resource_options = {
         headers: { accept: :json }
@@ -382,6 +384,9 @@ class CouchdbChangesListener
     rescue RestClient::NotFound => e
       Rails.logger.error("[CouchDB Listener] Document not found when fetching #{doc_id} in #{db_name}: #{e.message}")
       return nil
+    rescue URI::InvalidURIError => e
+      Rails.logger.error("[CouchDB Listener] Invalid URI when fetching document #{doc_id} in #{db_name}: #{e.message}")
+      return nil
     rescue StandardError => e
       Rails.logger.error("[CouchDB Listener] Error fetching document #{doc_id} in #{db_name}: #{e.message}")
       return nil
@@ -394,7 +399,8 @@ class CouchdbChangesListener
     password = base_uri.password || config[:password]
     
     clean_base_url = "#{base_uri.scheme}://#{base_uri.host}:#{base_uri.port}"
-    update_url = "#{clean_base_url}/#{db_name}/#{doc_id}"
+    encoded_doc_id = URI.encode_www_form_component(doc_id)
+    update_url = "#{clean_base_url}/#{db_name}/#{encoded_doc_id}"
     
     resource_options = {
       headers: {

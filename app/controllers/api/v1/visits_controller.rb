@@ -8,39 +8,8 @@ module Api
             end
 
             def create
-                patientId = visit_params[:patientId] 
-                identifier = params[:identifier]
-                if identifier.present?
-                  patient_identifier = PatientIdentifier.where(identifier: identifier)
-                  patientId = patient_identifier[0][:patient_id]
-                end
-
-                checkVisit = Visit.where(patientId: patientId, closedDateTime: nil).first
-                if checkVisit.present?
-                  visit_data = checkVisit.attributes
-                  visit_data[:identifier] = identifier if identifier.present?
-                  visit_data[:fullName] =  Patient.find_by(patient_id: patientId).try(:name)
-                  render json: {
-                    message: "There is an active visit for patient with ID #{patientId}",
-                    visit: visit_data
-                  }, status: :ok
-                  return
-                end
-
-                visit = Visit.new(visit_params.except(:identifier))
-                visit.patientId = patientId
-                if visit.save
-                  visit_data = visit.attributes
-                  visit_data[:identifier] = identifier if identifier.present?
-                  render json: { 
-                    message: "Visit created successfully", 
-                    visit: visit_data
-                  }, status: :created
-                else
-                  render json: { errors: visit.errors.full_messages }, status: :unprocessable_entity
-                end
+              render json: VisitsService.new.create_visit(visit_params)
             end
-
 
             def index
               patientId = params[:patientId] # Optional filter by patient ID
@@ -90,66 +59,14 @@ module Api
               render json: visit_data, status: :ok
             end   
             
-
-
-            #def close   
-                       
-            #    visitId = params[:id]
-            #    visit = Visit.find_by(id: visitId);
-
-            #    if visit.nil?
-            #        render json: { errors: "visit with id #{visitId} doesn't exist" }, status: :unprocessable_entity
-            #        return
-            #    end
-            #    visit.update(closedDateTime: params[:visit][:closedDateTime]);
-
-            #    activeStage = Stage.find_by(patient_id:visit.patientId, status: true)
-
-            #    if activeStage
-            #        begin
-            #          activeStage.update!(status: false)
-            #        rescue ActiveRecord::RecordInvalid => e
-            #          Rails.logger.debug("Failed to update status: #{e.message}")
-            #        end
-            #    end 
-            #end
             def close
-                identifier = params[:identifier]
-
-                if identifier.present?
-                  patient_identifier = PatientIdentifier.where(identifier: identifier)
-                  patientId = patient_identifier[0][:patient_id]
-                end
-
-                visit = Visit.find_by(patientId: patientId)
-             
-                unless visit
-                  render json: { errors: "Visit with id doesn't exist" }, status: :unprocessable_entity
-                  return
-                end
-
-                existing_stage = Stage.find_by(
-                  patient_id: visit.patientId,
-                  location_id: User.current.location_id
-                )
-                existing_stage.destroy if existing_stage
-
-                closed_datetime = params[:closedDateTime]
-                
-                visit.update(closedDateTime: closed_datetime)
-
-                visit_data = visit.attributes
-                visit_data[:identifier] = identifier if identifier.present?
-                visit_data[:fullName] =  Patient.find_by(patient_id: visit.patientId).try(:name)
-                render json: { 
-                   visit: visit_data
-                  }, status: :created
+              render json: VisitsService.new.close_visit(visit_params)
             end
               
 
             private
             def visit_params
-                params.require(:visit).permit(:patientId, :identifier, :startDate, :closedDateTime, :programId, :location_id)
+                params.permit(:patientId, :identifier, :startDate,:fullName, :closedDateTime, :programId, :location_id)
             end
 
         end
