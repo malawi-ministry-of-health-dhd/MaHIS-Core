@@ -458,6 +458,8 @@ These are organizations that have contributed to the development of the HIS EMR 
 
 # Run only one job (e.g. StageSyncJob)
 
-- rails sync:run[StageSyncJob]
+- rails "sync:run[StageSyncJob]"
 
-- rails r CouchdbChangesListener.new.start
+# Start all listeners
+
+- rails couchdb:start_all_listeners
