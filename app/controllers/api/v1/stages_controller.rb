@@ -66,62 +66,15 @@ module Api
         end
       end
 
-   def create
-      begin
-        stages = stage_params
-
-        stages.each do |stage_params|
-          identifier = stage_params[:identifier]
-          patientId = stage_params[:patient_id]
-
-          if identifier.present?
-            patient_identifier = PatientIdentifier.where(identifier: identifier)
-            patientId = patient_identifier[0][:patient_id]
-          end
-              
-          existing_stage = Stage.find_by(
-            patient_id: patientId,
-            location_id: User.current.location_id
-          )
-          existing_stage.destroy if existing_stage
-
-          activeVisit = Visit.find_by(
-            patientId: patientId,
-            closedDateTime: nil
-          )
-
-          if activeVisit.nil?
-            render json: { errors: 'The patient does not have an active visit' }, status: :unprocessable_entity
-            return
-          end
-          filtered_params = stage_params.except(:identifier)
-          new_stage = Stage.new(filtered_params.merge(
-            visit_id: activeVisit.id,
-            location_id: User.current.location_id,
-            status: true,
-            patient_id: patientId
-          ))
-
-          unless new_stage.save
-            Rails.logger.error("Failed to save stage: #{new_stage.errors.full_messages.join(', ')}")
-          end
-        end
-
-        render json: { message: "Stages created/updated successfully" }, status: :ok
-
-      rescue => e
-        Rails.logger.error("Unexpected error in create: #{e.message}")
-        render json: { errors: "An unexpected error occurred: #{e.message}" }, status: :internal_server_error
+      def create
+        render json: StagesService.new.create_stage(stage_params)
       end
-    end
 
-    private
+      private
 
-    def stage_params
-      params.require(:stages).map do |stage|
-      stage.permit(:patient_id, :identifier, :stage, :arrivalTime)
-  end
-    end
+      def stage_params
+        params.permit(:patient_id, :identifier, :stage, :arrivalTime, :location_id)
+      end
     end
   end
 end
