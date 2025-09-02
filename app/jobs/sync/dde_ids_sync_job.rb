@@ -367,66 +367,7 @@ module Sync
       end
     end
     
-    # Method to update existing DDE documents with facility codes (migration helper)
-    def update_existing_documents_with_facility_codes(db_name, location_id)
-      begin
-        # Get all DDE facilities to create a mapping
-        dde_facilities = get_dde_activated_facilities
-        
-        if dde_facilities.empty?
-          Sidekiq.logger.info "No DDE-activated facilities found for updating existing documents."
-          return
-        end
-        
-        # For now, assign all documents at a location to the first facility
-        # You might want to implement more sophisticated mapping logic
-        default_facility = dde_facilities.first
-        facility_code = default_facility['code']
-        
-        db_url = "#{COUCHDB_URL}/#{db_name}"
-        
-        # Get all DDE documents without facility_code
-        require 'uri'
-        start_key = URI.encode_www_form_component('"dde_id_"')
-        end_key = URI.encode_www_form_component('"dde_id_\ufff0"')
-        
-        view_url = "#{db_url}/_all_docs?startkey=#{start_key}&endkey=#{end_key}&include_docs=true"
-        response = RestClient.get(view_url)
-        result = JSON.parse(response.body)
-        
-        # Filter documents that need facility_code update
-        docs_to_update = result['rows'].select do |row|
-          doc = row['doc']
-          doc['location_id'] == location_id && doc['facility_code'].nil?
-        end
-        
-        if docs_to_update.empty?
-          Sidekiq.logger.info "No documents found that need facility_code update for location #{location_id}."
-          return
-        end
-        
-        Sidekiq.logger.info "Updating #{docs_to_update.length} documents with facility_code: #{facility_code}"
-        
-        # Prepare updates
-        updates = docs_to_update.map do |row|
-          doc = row['doc']
-          doc['facility_code'] = facility_code
-          doc['updated_at'] = Time.current.iso8601
-          doc
-        end
-        
-        # Perform bulk update
-        bulk_update_url = "#{db_url}/_bulk_docs"
-        bulk_data = { "docs" => updates }
-        
-        RestClient.post(bulk_update_url, bulk_data.to_json, { content_type: :json })
-        Sidekiq.logger.info "Successfully updated #{updates.length} documents with facility codes"
-        
-      rescue => e
-        Sidekiq.logger.error "Error updating existing documents with facility codes: #{e.message}"
-        raise e
-      end
-    end
+
     # Helper method to sync a specific facility
     def sync_specific_facility(facility_code, location_id = 700, batch_size = 100)
       program_id = 14
