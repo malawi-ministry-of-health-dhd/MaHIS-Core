@@ -12,6 +12,7 @@ module Sync
     def prepare_document(facility)
       {
         "type" => "facility",
+        "dde_activated" => false,
         "facility_id" => facility.id,
         "code" => facility.code,
         "name" => facility.name,

@@ -19,6 +19,7 @@ namespace :sync do
       Sync::VillageSyncJob,
       Sync::VisitSyncJob,
       Sync::WardSyncJob,
+      Sync::FacilitySyncJob,
       Sync::TestTypesSyncJob
     ]
 
