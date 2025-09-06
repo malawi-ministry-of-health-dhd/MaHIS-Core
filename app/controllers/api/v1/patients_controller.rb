@@ -37,41 +37,38 @@ module Api
       end
 
       def get_patient_record
-        if params[:patient_ids].present?
-          ids = params[:patient_ids]
-          ids = ids.split(',') if ids.is_a?(String)
-          patient_records = PatientRecord.where(:patient_id.in => ids)
-          records = patient_records.map(&:record)
-        else
-          patient_id = params[:id] || params[:patient_id]
+        begin
+          if params[:patient_ids].present?
+            records = CouchdbPatientService.get_patient_record(
+              patient_ids: params[:patient_ids]
+            )
+          else
+            patient_id = params[:id] || params[:patient_id]
+            
+            if patient_id.blank?
+              render json: { error: 'Missing patient identifier' }, status: :bad_request
+              return
+            end
 
-          if patient_id.blank?
-            render json: { error: 'Missing patient identifier' }, status: :bad_request and return
+            records = CouchdbPatientService.get_patient_record(
+              patient_id: patient_id
+            )
           end
 
-          # Ensure record exists or is initialized
-          patient_record = PatientRecord.find_or_initialize_by(patient_id: patient_id)
-
-          # Fallback: use builder if record is new or missing vital data
-          record = patient_record.persisted? ? patient_record.record : BuildPatientRecordService.build_patient_record(patient_id)
-
-          unless patient_record.persisted?
-            patient_record.record = record.as_json
-            patient_record.encounter_datetime = record[:encounter_datetime] if record[:encounter_datetime]
-            patient_record.last_sync_at = Time.current
-            patient_record.sync_status = "synced"
-            patient_record.save!
-          end
-
-          records = record
+          render json: records
+        rescue ArgumentError => e
+          render json: { error: e.message }, status: :bad_request
+        rescue RestClient::Exception => e
+          render json: { error: 'Database connection error' }, status: :service_unavailable
+        rescue => e
+          Rails.logger.error "Patient record error: #{e.message}"
+          render json: { error: 'Internal server error' }, status: :internal_server_error
         end
-
-        render json: records
       end
 
       def save_patient_record
         patient_record =SavePatientRecordService.new.create_patient_record(params[:record])
-        Sync::BaseSyncJob.new.sync_record_to_couchdb(patient_record, 'patients_records')
+        # Sync::BaseSyncJob.new.sync_record_to_couchdb(patient_record, 'patients_records')
         render json: patient_record
       end
 
