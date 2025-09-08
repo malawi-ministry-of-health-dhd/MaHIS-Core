@@ -87,6 +87,7 @@ module Api
         )
 
         if encounter.errors.empty?
+          Sync::BatchPatientSyncJob.perform_async
           render json: encounter, status: :created
         else
           render json: encounter.errors, status: :bad_request
