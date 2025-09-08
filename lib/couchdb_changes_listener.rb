@@ -311,7 +311,7 @@ class CouchdbChangesListener
       if processed_data.present?
         # Clean the processed data for JSON serialization
         cleaned_data = clean_for_json(processed_data)
-        updated_doc["processed_data"] = cleaned_data
+        # updated_doc["processed_data"] = cleaned_data
         
         # Optionally merge specific fields directly into the root document
         if cleaned_data.is_a?(Hash)
