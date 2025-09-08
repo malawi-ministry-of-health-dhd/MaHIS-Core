@@ -68,7 +68,7 @@ module Api
 
       def save_patient_record
         patient_record =SavePatientRecordService.new.create_patient_record(params[:record])
-        # Sync::BaseSyncJob.new.sync_record_to_couchdb(patient_record, 'patients_records')
+        Sync::BatchPatientSyncJob.perform_async
         render json: patient_record
       end
 
