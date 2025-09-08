@@ -9,7 +9,7 @@ module Sync
       else
         Rails.logger.info("Starting batch patient sync for ALL locations")
       end
-
+      since_date = CouchdbPatientService.get_latest_encounter_date_changed
       # Get unique patient IDs that need syncing
       patient_ids = get_patient_ids_to_sync(location_id, since_date)
       
