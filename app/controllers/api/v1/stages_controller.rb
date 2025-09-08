@@ -2,6 +2,7 @@ module Api
   module V1
     class StagesController < ApplicationController
       VALID_STAGES = %w[VITALS CONSULTATION LAB DISPENSATION].freeze
+      include CouchdbSync
 
       def index
         stageName   = params[:stage]
@@ -67,7 +68,9 @@ module Api
       end
 
       def create
-        render json: StagesService.new.create_stage(stage_params)
+        data = StagesService.new.create_stage(stage_params)
+        sync_to_couchdb(data, "stages", data[:identifier])
+        render json: data
       end
 
       private
