@@ -29,6 +29,109 @@ class CouchdbPatientService
       end
     end
 
+    def get_latest_encounter_date_changed(db_name = 'patients_records')
+      ensure_db_exists(db_name)
+      
+      
+      # Create the correct index
+      create_encounter_date_index(db_name)
+      
+      query = {
+        selector: {
+          encounter_date_changed: { "$exists": true, "$ne": nil }
+        },
+        sort: [{ encounter_date_changed: "desc" }],
+        limit: 1,
+        use_index: "encounter_date_changed_simple",
+        fields: [ "encounter_date_changed"]
+        
+      }
+      
+      response = RestClient.post(
+        "#{COUCHDB_URL}/#{db_name}/_find",
+        query.to_json,
+        { content_type: :json, accept: :json }
+      )
+      
+      result = JSON.parse(response.body)
+      
+      if result['docs'].any?
+        doc = result['docs'].first
+        return doc['encounter_date_changed']
+      else
+        return nil
+      end
+    rescue RestClient::ExceptionWithResponse => e
+      error_message = "Error querying latest encounter date: #{e.response&.body || e.message}"
+      Rails.logger.error error_message
+      return { success: false, error: error_message }
+    rescue StandardError => e
+      error_message = "Unexpected error: #{e.message}"
+      Rails.logger.error error_message
+      return { success: false, error: error_message }
+    end
+
+    def create_encounter_date_index(db_name)
+      # Check if the correct index already exists
+      begin
+        response = RestClient.get("#{COUCHDB_URL}/#{db_name}/_index")
+        indexes = JSON.parse(response.body)
+        
+        # Look for an index with the correct field structure
+        existing_index = indexes['indexes'].find do |idx| 
+          idx['name'] == 'encounter_date_changed_simple' &&
+          idx['def'] && 
+          idx['def']['fields'] == ['encounter_date_changed']
+        end
+        
+        if existing_index
+          Rails.logger.info "Correct index encounter_date_changed_simple already exists"
+          return
+        end
+      rescue => e
+        Rails.logger.warn "Could not check existing indexes: #{e.message}"
+      end
+
+      # Create index with ONLY the field name - no sort direction
+      index_doc = {
+        index: {
+          fields: ["encounter_date_changed"],  # JUST the field name
+          partial_filter_selector: {
+            encounter_date_changed: { "$exists": true, "$ne": nil }
+          }
+        },
+        name: "encounter_date_changed_simple",  # Different name to avoid conflicts
+        ddoc: "encounter_date_changed_simple",  # Different name to avoid conflicts
+        type: "json"
+      }
+
+      response = RestClient.post(
+        "#{COUCHDB_URL}/#{db_name}/_index",
+        index_doc.to_json,
+        { content_type: :json, accept: :json }
+      )
+      
+      result = JSON.parse(response.body)
+      Rails.logger.info "Index creation result: #{result['result']}"
+      
+      # Wait for index to be built
+      if result['result'] == 'created'
+        Rails.logger.info "New index encounter_date_changed_simple is ready."
+        sleep(1)  # Give CouchDB time to build the index
+      end
+      
+    rescue RestClient::ExceptionWithResponse => e
+      if e.response.code == 409
+        Rails.logger.info "Index already exists - continuing..."
+      else
+        Rails.logger.error "Error creating index: #{e.response&.body || e.message}"
+      end
+    rescue StandardError => e
+      Rails.logger.error "Unexpected error creating index: #{e.message}"
+    end
+
+ 
+
     private
 
     def get_multiple_patients(patient_ids)
