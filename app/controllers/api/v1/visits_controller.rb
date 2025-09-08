@@ -1,6 +1,7 @@
 module Api
     module V1
         class Api::V1::VisitsController < ApplicationController
+            include CouchdbSync
             def check_patient_status
                 patientId = params[:patient_id]
                 visit = Visit.where(patientId: patientId, closedDateTime: nil)
@@ -8,7 +9,20 @@ module Api
             end
 
             def create
-              render json: VisitsService.new.create_visit(visit_params)
+              data = VisitsService.new.create_visit(visit_params)
+              create_couchdb_visit(data)
+              render json: data
+            end
+
+            def create_couchdb_visit(doc_data)
+              doc_id = generate_document_id(doc_data)
+              sync_to_couchdb(doc_data, "visits", doc_id)
+            end
+            def generate_document_id(visit)
+              # Create composite _id from identifier and start_date
+              identifier = visit[:identifier] || 'unknown'
+              start_date = visit["startDate"] ? visit["startDate"].to_time.strftime("%Y-%m-%dT%H:%M:%S") : 'no-date'
+              "#{identifier}_#{start_date}"
             end
 
             def index
