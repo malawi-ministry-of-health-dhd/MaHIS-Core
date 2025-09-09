@@ -36,7 +36,8 @@ module PatientRecordService
       return false unless record[:saveStatusGuardianInformation] == 'pending'
       return false unless guardian_info_complete?(record)
 
-      guardian_data = person_service.create_person(record[:guardianInformation][:unsaved][0])
+      patient =PatientRecordService::PatientIdentityManager.new
+      guardian_data = patient.create_person(record[:guardianInformation][:unsaved][0])
       guardian_id = guardian_data.person_id
 
       create_relation(
