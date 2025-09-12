@@ -448,11 +448,15 @@ module Sync
     end
     
     # Progress logging
-    def log_progress(processed, total_count, model_name)
-      if processed % 100 == 0
+   def log_progress(processed, total_count, model_name, skipped = 0)
+    if processed % 100 == 0
+      if skipped > 0
+        Sidekiq.logger.info "Synced #{processed}/#{total_count} #{model_name} (skipped: #{skipped})"
+      else
         Sidekiq.logger.info "Synced #{processed}/#{total_count} #{model_name}"
       end
     end
+  end
     
     # Handle connection errors with progressive backoff
     def handle_connection_error(record, error, consecutive_errors, errors)
