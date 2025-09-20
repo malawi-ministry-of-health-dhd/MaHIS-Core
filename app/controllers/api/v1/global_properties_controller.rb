@@ -30,16 +30,17 @@ module Api
       end
 
       def create(success_response_status: :created)
-        name, value = params.require %i[property property_value]
+        name, value = params.require(%i[property property_value])
         location_id = User.current.location_id
 
         property = GlobalProperty.find_or_initialize_by(property: name, location_id: location_id)
         property.property_value = value
 
-        if property.save
+        begin
+          property.save!(touch: false)  
           render json: property, status: success_response_status
-        else
-          render json: { errors: property.errors.full_messages }, status: :unprocessable_entity
+        rescue ActiveRecord::RecordInvalid => e
+          render json: { errors: e.record.errors.full_messages }, status: :unprocessable_entity
         end
       end
 
