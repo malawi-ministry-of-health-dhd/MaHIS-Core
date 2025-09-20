@@ -30,33 +30,18 @@ module Api
       end
 
       def create(success_response_status: :created)
-        name, value = params.require(%i[property property_value])
+        name, value = params.require %i[property property_value]
         location_id = User.current.location_id
 
-        # Find existing record by both columns
-        property = GlobalProperty.find_by(property: name, location_id: location_id)
+        property = GlobalProperty.find_or_initialize_by(property: name, location_id: location_id)
+        property.property_value = value
 
-        if property
-          # Update existing record using id in WHERE clause
-          property.property_value = value
-          begin
-            property.save!(touch: false)
-            render json: property, status: success_response_status
-          rescue ActiveRecord::RecordInvalid => e
-            render json: { errors: e.record.errors.full_messages }, status: :unprocessable_entity
-          end
+        if property.save
+          render json: property, status: success_response_status
         else
-          # Create a new record
-          property = GlobalProperty.new(property: name, property_value: value, location_id: location_id)
-          begin
-            property.save!
-            render json: property, status: success_response_status
-          rescue ActiveRecord::RecordInvalid => e
-            render json: { errors: e.record.errors.full_messages }, status: :unprocessable_entity
-          end
+          render json: { errors: property.errors.full_messages }, status: :unprocessable_entity
         end
       end
-
 
       def update
         create success_response_status: :ok
