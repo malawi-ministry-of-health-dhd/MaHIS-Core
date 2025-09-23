@@ -35,6 +35,19 @@ module Api
       def show
         render json: patient
       end
+      
+      def get_patient_list
+        records = []
+        
+        patient_ids = Patient.distinct
+        
+        patient_ids.each do |patient|
+          record = BuildPatientRecordService.build_patient_record(patient.patient_id)
+          records << record
+        end
+        
+        render json: records
+      end
 
       def get_patient_record
         begin
