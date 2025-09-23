@@ -22,7 +22,7 @@ module Sync
     
     def prepare_document(patient_record)
       patient_record.merge(
-        "last_sync_at" => Time.current.iso8601
+        "synced_at" => Time.current.iso8601
       )
     end
     
