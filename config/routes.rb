@@ -480,6 +480,8 @@ Rails.application.routes.draw do
 
   get '/api/v1/next_appointment', to: 'api/v1/appointments#next_appointment'
 
+  get '/api/v1/hts_referral_orders', to: 'api/v1/lab_test_orders#hts_referral_orders'
+
   post 'api/v1/sync_to_ait', to: 'api/v1/patients#sync_to_ait'
 
   # EIR
