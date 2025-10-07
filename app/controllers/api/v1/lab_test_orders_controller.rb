@@ -86,6 +86,15 @@ module Api
         render json: engine.orders_without_results(patient)
       end
 
+      def hts_referral_orders
+        data = Encounter.joins("INNER JOIN obs ON obs.encounter_id = encounter.encounter_id")
+                .joins("INNER JOIN orders ON orders.encounter_id = obs.encounter_id AND orders.order_id = obs.order_id")
+                .select("encounter.program_id,encounter.encounter_type,encounter.location_id,encounter.provider_id,orders.patient_id,obs.value_text")
+                .where("obs.concept_id = ?", 7856)
+
+        render json: data
+      end
+
       private
 
       def patient
