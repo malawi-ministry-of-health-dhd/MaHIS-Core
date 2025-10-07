@@ -22,15 +22,34 @@ module PatientRecordService
         encounter_id = create_encounter(patient_id, encounter_type.id, record)
         orders = unsaved_data.map do |order_params|
           order_params = order_params.merge(encounter_id: encounter_id)
-          Lab::OrdersService.order_test(order_params)
+          order = Lab::OrdersService.order_test(order_params)
+          if order_params[:referral] == "referral"
+            tests = order.fetch(:tests)
+            create_referral_observation(encounter_id,{
+                concept_id: 7856, # Refer to HTC
+                value_text: tests[0][:name],
+                order_id: order.fetch(:order_id),
+                obs_datetime: record[:encounter_datetime],
+                location_id: record[:location_id],
+            })
+          end
+          order
         end
-
-        orders.each { |order| Lab::PushOrderJob.perform_later(order.fetch(:order_id)) }
+        
+        orders.each { |order| 
+       
+          Lab::PushOrderJob.perform_later(order.fetch(:order_id)) 
+        }
         record[data_type][:unsaved] = []
         true
       rescue StandardError => e
         log_error("Failed to save #{data_type} information", e)
       end
+    end
+
+    def create_referral_observation(encounter_id, referral_params)
+      encounter = Encounter.find(encounter_id)
+      observation_service.create_observation(encounter, referral_params)
     end
 
     def save_lab_results(data_type, patient_id, record)
