@@ -194,7 +194,6 @@ class SavePatientRecordService
       when :save_vaccines, :void_vaccine
         patient_data[:vaccineAdministration] = BuildPatientRecordService.build_vaccine_administration_data(patient_id)
         patient_data[:vaccineSchedule] = BuildPatientRecordService.safe_get_vaccine_schedule(person)
-        
       when :save_appointments
         patient_data[:appointments] = BuildPatientRecordService.build_observation_data(patient_id, 'APPOINTMENT')
       when :save_outcome
