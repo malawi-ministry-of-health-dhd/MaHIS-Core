@@ -242,7 +242,7 @@ module Sync
         unassigned_count = result['rows'].count do |row|
           doc = row['doc']
           doc['location_id'] == location_id && 
-          doc['assigned'] == false &&
+          (doc['status'].nil? || doc['status'].empty? || doc['status'] != 'used') &&
           (doc['facility_code'] == facility_code || doc['facility_code'].nil?)
         end
         
