@@ -63,7 +63,7 @@ class DdeService
     response
   end
 
-  def allocate_npids(count, location_id = "")
+  def allocate_npids(count, location_id = nil)
     response, status = dde_client.get("/allocate_npids?location_id=#{location_id || Location.current.id}&count=#{count}")
     raise DdeError, "Failed to fetch remaining npids: #{status} - #{response}" unless status == 200 
     
