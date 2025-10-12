@@ -26,12 +26,10 @@ namespace :couchdb do
     @running = true
     
     Signal.trap('SIGTERM') do
-      Rails.logger.info("Received SIGTERM, shutting down gracefully...")
       @running = false
     end
     
     Signal.trap('SIGINT') do
-      Rails.logger.info("Received SIGINT, shutting down gracefully...")
       @running = false
     end
     
@@ -42,7 +40,6 @@ namespace :couchdb do
     puts "CouchDB listeners running. Press Ctrl+C to stop."
     
     # Keep the main process alive
-    # Check if threads are still alive and if we should keep running
     while @running
       sleep 5
       
@@ -50,6 +47,7 @@ namespace :couchdb do
       if threads.is_a?(Array)
         dead_threads = threads.reject(&:alive?)
         if dead_threads.any?
+          puts "Some listener threads have died. Exiting..."
           Rails.logger.error("Some listener threads have died. Exiting...")
           break
         end
@@ -57,7 +55,9 @@ namespace :couchdb do
     end
     
     # Cleanup: give threads time to finish
+    puts "Shutting down listeners..."
     Rails.logger.info("Waiting for listeners to finish...")
+    
     if threads.is_a?(Array)
       threads.each do |thread|
         thread.join(5) # Wait up to 5 seconds for each thread
@@ -65,6 +65,7 @@ namespace :couchdb do
     end
     
     Rails.logger.info("All listeners stopped")
+    puts "All listeners stopped"
   end
   
   desc "Start listener for specific database"
@@ -85,12 +86,10 @@ namespace :couchdb do
       @running = true
       
       Signal.trap('SIGTERM') do
-        Rails.logger.info("Received SIGTERM, shutting down...")
         @running = false
       end
       
       Signal.trap('SIGINT') do
-        Rails.logger.info("Received SIGINT, shutting down...")
         @running = false
       end
       
@@ -109,8 +108,10 @@ namespace :couchdb do
         sleep 5
       end
       
+      puts "Shutting down listener for #{db_name}..."
       thread&.join(5)
       Rails.logger.info("Listener stopped for #{db_name}")
+      puts "Listener stopped for #{db_name}"
     else
       Rails.logger.error("No configuration found for database: #{db_name}")
     end
