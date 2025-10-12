@@ -32,6 +32,9 @@ class CouchdbChangesListener
     Rails.logger.info("[CouchDB Listener] Starting for #{db_name}...")
     Rails.logger.info("[CouchDB Listener] Process PID: #{Process.pid}")
     Rails.logger.info("[CouchDB Listener] Processor: #{processor_service}##{processor_method}")
+
+    Rails.logger.info("[CouchDB Listener] process_all_unprocessed_documents on startup for #{db_name}")
+    process_all_unprocessed_documents
     
     loop do
       begin
@@ -271,6 +274,8 @@ class CouchdbChangesListener
       else
         Rails.logger.warn("No user_id found in CouchDB doc")
       end
+
+      Location.current = Location.current_health_center
       # Use the configurable processor service and method
       processed_data = processor_service.send(processor_method, doc.with_indifferent_access)
       
