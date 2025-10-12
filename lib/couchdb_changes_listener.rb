@@ -29,33 +29,23 @@ class CouchdbChangesListener
   end
 
   def start
-    Thread.new do
-      Rails.logger.info("[CouchDB Listener] Starting for #{db_name}...")
-      Rails.logger.info("[CouchDB Listener] Thread ID: #{Thread.current.object_id}")
-      Rails.logger.info("[CouchDB Listener] Processor: #{processor_service}##{processor_method}")
-
-      Rails.logger.info("[CouchDB Listener] process_all_unprocessed_documents on startup for #{db_name}")
-      
+    Rails.logger.info("[CouchDB Listener] Starting for #{db_name}...")
+    Rails.logger.info("[CouchDB Listener] Process PID: #{Process.pid}")
+    Rails.logger.info("[CouchDB Listener] Processor: #{processor_service}##{processor_method}")
+    
+    loop do
       begin
-        process_all_unprocessed_documents
-      rescue => e
-        Rails.logger.error("[CouchDB Listener] Error in initial processing for #{db_name}: #{e.message}")
-      end
-      
-      loop do
-        begin
-          listen_to_changes
-        rescue Net::HTTPUnauthorized, Net::HTTPClientError => e
-          Rails.logger.error("[CouchDB Listener] Authentication error for #{db_name}: #{e.message}. Check credentials. Reconnecting in #{config[:reconnect_delay]}s...")
-          sleep(config[:reconnect_delay])
-        rescue RestClient::Exception => e
-          Rails.logger.error("[CouchDB Listener] RestClient error for #{db_name}: #{e.message}. Reconnecting in #{config[:reconnect_delay]}s...")
-          sleep(config[:reconnect_delay])
-        rescue StandardError => e
-          Rails.logger.error("[CouchDB Listener] Unexpected error for #{db_name}: #{e.message}. Reconnecting in #{config[:reconnect_delay]}s...")
-          Rails.logger.error("[CouchDB Listener] Error backtrace: #{e.backtrace.first(3).join(' -> ')}")
-          sleep(config[:reconnect_delay])
-        end
+        listen_to_changes
+      rescue Net::HTTPUnauthorized, Net::HTTPClientError => e
+        Rails.logger.error("[CouchDB Listener] Authentication error for #{db_name}: #{e.message}. Check credentials. Reconnecting in #{config[:reconnect_delay]}s...")
+        sleep(config[:reconnect_delay])
+      rescue RestClient::Exception => e
+        Rails.logger.error("[CouchDB Listener] RestClient error for #{db_name}: #{e.message}. Reconnecting in #{config[:reconnect_delay]}s...")
+        sleep(config[:reconnect_delay])
+      rescue StandardError => e
+        Rails.logger.error("[CouchDB Listener] Unexpected error for #{db_name}: #{e.message}. Reconnecting in #{config[:reconnect_delay]}s...")
+        Rails.logger.error("[CouchDB Listener] Error backtrace: #{e.backtrace.first(3).join(' -> ')}")
+        sleep(config[:reconnect_delay])
       end
     end
   end
@@ -65,15 +55,14 @@ class CouchdbChangesListener
     threads = []
     
     database_configs.each do |db_config|
-      listener = new(**db_config)
-      thread = listener.start  # Now returns a thread instead of blocking
-      threads << thread
-      Rails.logger.info("[CouchDB Listener] Started thread for #{db_config[:db_name]}")
+      threads << Thread.new do
+        listener = new(**db_config)
+        listener.start
+      end
     end
     
-    # Return the threads array without joining
-    # Let the caller manage the threads
-    threads
+    # Wait for all threads to complete (they won't in normal operation)
+    threads.each(&:join)
   end
 
   private
@@ -213,6 +202,7 @@ class CouchdbChangesListener
     query = {
       selector: {
         "$and" => [
+          
           {
             "$or" => [
               { "processed_by_listener" => false },
@@ -228,8 +218,7 @@ class CouchdbChangesListener
       headers: { 
         accept: :json,
         content_type: :json
-      },
-      timeout: 30  # Add timeout to prevent hanging
+      }
     }
     
     if username && password
@@ -251,10 +240,6 @@ class CouchdbChangesListener
         return []
       end
       
-    rescue SignalException => e
-      # Handle SIGTERM/SIGINT gracefully
-      Rails.logger.info("[CouchDB Listener] Received signal during fetch in #{db_name}, stopping gracefully...")
-      return []
     rescue StandardError => e
       Rails.logger.error("[CouchDB Listener] Error with Mango query in #{db_name}: #{e.message}")
       return []
@@ -286,8 +271,6 @@ class CouchdbChangesListener
       else
         Rails.logger.warn("No user_id found in CouchDB doc")
       end
-
-      Location.current = Location.current_health_center
       # Use the configurable processor service and method
       processed_data = processor_service.send(processor_method, doc.with_indifferent_access)
       
