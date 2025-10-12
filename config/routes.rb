@@ -11,7 +11,8 @@ Rails.application.routes.draw do
   mount Rswag::Api::Engine => '/api-docs'
   mount ActionCable.server => '/cable'
   mount ActionCable.server => '/api/v1/cable'
-  mount Sidekiq::Web => '/sidekiq'
+  Sidekiq::Web.set :redis, { url: 'redis://localhost:6379/0', namespace: 'emr_api' }
+  mount Sidekiq::Web => '/emr_sidekiq'
 
   namespace :api do
     namespace :v1 do
