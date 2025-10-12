@@ -22,25 +22,31 @@ namespace :couchdb do
     
     Rails.logger.info("Starting CouchDB listeners for #{database_configs.length} databases")
     
-    # Set up signal handlers for graceful shutdown
-    @running = true
-    
-    Signal.trap('SIGTERM') do
-      @running = false
-    end
-    
-    Signal.trap('SIGINT') do
-      @running = false
-    end
-    
     # Start the listeners
     threads = CouchdbChangesListener.start_multiple(database_configs)
     
     Rails.logger.info("All listeners started successfully")
     puts "CouchDB listeners running. Press Ctrl+C to stop."
     
-    # Keep the main process alive
-    while @running
+    # Set up signal handlers for graceful shutdown
+    shutdown = lambda do
+      puts "\nShutting down listeners..."
+      
+      # Kill all threads
+      if threads.is_a?(Array)
+        threads.each do |thread|
+          thread.kill if thread.alive?
+        end
+      end
+      
+      exit(0)
+    end
+    
+    Signal.trap('SIGTERM', &shutdown)
+    Signal.trap('SIGINT', &shutdown)
+    
+    # Keep the main process alive and monitor threads
+    loop do
       sleep 5
       
       # Check if any threads have died
@@ -49,23 +55,10 @@ namespace :couchdb do
         if dead_threads.any?
           puts "Some listener threads have died. Exiting..."
           Rails.logger.error("Some listener threads have died. Exiting...")
-          break
+          exit(1)
         end
       end
     end
-    
-    # Cleanup: give threads time to finish
-    puts "Shutting down listeners..."
-    Rails.logger.info("Waiting for listeners to finish...")
-    
-    if threads.is_a?(Array)
-      threads.each do |thread|
-        thread.join(5) # Wait up to 5 seconds for each thread
-      end
-    end
-    
-    Rails.logger.info("All listeners stopped")
-    puts "All listeners stopped"
   end
   
   desc "Start listener for specific database"
@@ -82,17 +75,6 @@ namespace :couchdb do
     
     config = config_map[db_name]
     if config
-      # Set up signal handlers
-      @running = true
-      
-      Signal.trap('SIGTERM') do
-        @running = false
-      end
-      
-      Signal.trap('SIGINT') do
-        @running = false
-      end
-      
       listener = CouchdbChangesListener.new(
         db_name: db_name,
         **config
@@ -103,15 +85,24 @@ namespace :couchdb do
       Rails.logger.info("Listener started for #{db_name}")
       puts "Listener running for #{db_name}. Press Ctrl+C to stop."
       
-      # Keep running
-      while @running && thread&.alive?
-        sleep 5
+      # Set up signal handlers
+      shutdown = lambda do
+        puts "\nShutting down listener for #{db_name}..."
+        thread&.kill if thread&.alive?
+        exit(0)
       end
       
-      puts "Shutting down listener for #{db_name}..."
-      thread&.join(5)
-      Rails.logger.info("Listener stopped for #{db_name}")
-      puts "Listener stopped for #{db_name}"
+      Signal.trap('SIGTERM', &shutdown)
+      Signal.trap('SIGINT', &shutdown)
+      
+      # Keep running
+      loop do
+        sleep 5
+        unless thread&.alive?
+          puts "Listener thread died. Exiting..."
+          exit(1)
+        end
+      end
     else
       Rails.logger.error("No configuration found for database: #{db_name}")
     end
