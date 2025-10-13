@@ -89,8 +89,10 @@ module Api
       def hts_referral_orders
         data = Encounter.joins("INNER JOIN obs ON obs.encounter_id = encounter.encounter_id")
                 .joins("INNER JOIN orders ON orders.encounter_id = obs.encounter_id AND orders.order_id = obs.order_id")
-                .select("encounter.program_id,encounter.encounter_type,encounter.location_id,encounter.provider_id,orders.patient_id,obs.value_text")
+                .select("orders.order_id,encounter.program_id,encounter.encounter_type,encounter.location_id,encounter.provider_id,orders.patient_id,obs.value_text")
                 .where("obs.concept_id = ?", 7856)
+
+          data = data.where("encounter.patient_id = ?", params[:patient_id]) if params[:patient_id].present?
 
         render json: data
       end
