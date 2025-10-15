@@ -87,14 +87,39 @@ module Api
       end
 
       def hts_referral_orders
-        data = Encounter.joins("INNER JOIN obs ON obs.encounter_id = encounter.encounter_id")
-                .joins("INNER JOIN orders ON orders.encounter_id = obs.encounter_id AND orders.order_id = obs.order_id")
-                .select("orders.order_id,encounter.program_id,encounter.encounter_type,encounter.location_id,encounter.provider_id,orders.patient_id,obs.value_text")
-                .where("obs.concept_id = ?", 7856)
+        sql = <<-SQL
+          SELECT orders.order_id,
+                encounter.program_id,
+                encounter.location_id,
+                encounter.provider_id,
+                orders.patient_id,
+                obs.value_text,
+                (SELECT name FROM program WHERE program_id = encounter.program_id) AS program_name,
+                (SELECT concept_id FROM concept_name WHERE name = obs.value_text) AS order_concept_id,
+                (SELECT CONCAT(given_name,' ', family_name) FROM person_name WHERE person_id = encounter.provider_id) AS provider_name,
+                (SELECT obs_id FROM obs where person_id = orders.patient_id AND order_id = orders.order_id  AND value_coded = order_concept_id) AS order_obs_id,
+                (SELECT obs_id FROM obs where person_id = orders.patient_id AND concept_id = 7363 AND order_id = orders.order_id order by date_created desc limit 1 ) AS lab_result_obs_id,
+                (SELECT value_text FROM obs where  order_id = orders.order_id AND obs_group_id = lab_result_obs_id AND concept_id = order_concept_id) AS lab_result_value
+          FROM encounter
+          INNER JOIN obs ON obs.encounter_id = encounter.encounter_id
+          INNER JOIN orders ON orders.encounter_id = obs.encounter_id 
+                          AND orders.order_id = obs.order_id
+          WHERE obs.concept_id = ?
+        SQL
 
-          data = data.where("encounter.patient_id = ?", params[:patient_id]) if params[:patient_id].present?
+        if params[:patient_id].present?
+          sql += " AND encounter.patient_id = ?"
+          data = ActiveRecord::Base.connection.exec_query(
+            ActiveRecord::Base.sanitize_sql_array([sql, 7856, params[:patient_id]])
+          )
+        else
+          data = ActiveRecord::Base.connection.exec_query(
+            ActiveRecord::Base.sanitize_sql_array([sql, 7856])
+          )
+        end
 
-        render json: data
+        # exec_query returns an ActiveRecord::Result object that can be converted to hash
+        render json: data.to_a
       end
 
       private
