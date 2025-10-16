@@ -23,30 +23,28 @@ module PatientRecordService
         orders = unsaved_data.map do |order_params|
           order_params = order_params.merge(encounter_id: encounter_id)
           order = Lab::OrdersService.order_test(order_params)
+
           tests = order.fetch(:tests)
-          save_lab_results(:labResults, patient_id, record, unsaved_data[:offline_id],tests[0][:id]) if unsaved_data[:offline_id]&.any?
+          save_lab_results(:labResults, patient_id, record, order_params[:offline_id], tests[0][:id]) if order_params[:offline_id].present?
+
           if order_params[:referral] == "referral"
-            
-            create_referral_observation(encounter_id,{
-                concept_id: 7856, # Refer to HTC
-                value_text: tests[0][:name],
-                order_id: order.fetch(:order_id),
-                obs_datetime: record[:encounter_datetime],
-                location_id: record[:location_id],
+            create_referral_observation(encounter_id, {
+              concept_id: 7856,
+              value_text: tests[0][:name],
+              order_id: order.fetch(:order_id),
+              obs_datetime: record[:encounter_datetime],
+              location_id: record[:location_id]
             })
           end
-          
           order
         end
-        
-        orders.each { |order| 
-       
-          Lab::PushOrderJob.perform_later(order.fetch(:order_id)) 
-        }
+
+        orders.each { |order| Lab::PushOrderJob.perform_later(order.fetch(:order_id)) }
         record[data_type][:unsaved] = []
         true
       rescue StandardError => e
         log_error("Failed to save #{data_type} information", e)
+        false
       end
     end
 
@@ -55,12 +53,11 @@ module PatientRecordService
       observation_service.create_observation(encounter, referral_params)
     end
 
-    def save_lab_results(data_type, patient_id, record ,offline_id=nil,test_obs_id=nil)
-     
+    def save_lab_results(data_type, patient_id, record, offline_id = nil, test_obs_id = nil)
       unsaved_data = record.dig(:labOrders, :results)
-
-      if offline_id&.any?
-          unsaved_data = unsaved_data.select{|result| result[:offline_id] == offline_id}
+      debugger
+      if offline_id.present? && unsaved_data&.any?
+        unsaved_data = unsaved_data.select { |result| result[:offline_id] == offline_id }
       end
 
       return false unless unsaved_data&.any?
@@ -68,6 +65,7 @@ module PatientRecordService
 
       begin
         unsaved_data.map do |order_params|
+          return false if test_obs_id.blank? && order_params[:offline_id].present?
           encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[data_key])
           encounter_id = create_encounter(patient_id, encounter_type.id, record)
           order_params = order_params.merge(test_id: test_obs_id) if test_obs_id
@@ -75,14 +73,16 @@ module PatientRecordService
           Lab::ResultsService.create_results(lab_results[:test_id], lab_results)
           order_params
         end
-       
+
+        record[data_type][:unsaved] = []
         true
       rescue StandardError => e
         log_error("Failed to save #{data_type} information", e)
+        false
       end
     end
 
-    def void_lab_order(_patient_id, record)
+    def void_lab_order(patient_id, record)
       data = record.dig(:labOrders, :voided)
       return false unless data&.any?
       data.map do |item|
