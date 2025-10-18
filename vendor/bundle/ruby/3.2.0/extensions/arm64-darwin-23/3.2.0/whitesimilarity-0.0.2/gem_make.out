@@ -1,0 +1,20 @@
+current directory: /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/whitesimilarity-0.0.2/ext/whitesimilarity
+/Users/pk/.rvm/rubies/ruby-3.2.0/bin/ruby -I /Users/pk/.rvm/rubies/ruby-3.2.0/lib/ruby/3.2.0 extconf.rb
+creating Makefile
+
+current directory: /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/whitesimilarity-0.0.2/ext/whitesimilarity
+make DESTDIR\= sitearchdir\=./.gem.20251018-71038-u1ebcf sitelibdir\=./.gem.20251018-71038-u1ebcf clean
+
+current directory: /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/whitesimilarity-0.0.2/ext/whitesimilarity
+make DESTDIR\= sitearchdir\=./.gem.20251018-71038-u1ebcf sitelibdir\=./.gem.20251018-71038-u1ebcf
+compiling white_similarity.c
+compiling whitesimilarity.c
+linking shared-object whitesimilarity.bundle
+ld: warning: ignoring duplicate libraries: '-lruby.3.2'
+
+current directory: /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/whitesimilarity-0.0.2/ext/whitesimilarity
+make DESTDIR\= sitearchdir\=./.gem.20251018-71038-u1ebcf sitelibdir\=./.gem.20251018-71038-u1ebcf install
+/opt/homebrew/opt/coreutils/bin/ginstall -c -m 0755 whitesimilarity.bundle ./.gem.20251018-71038-u1ebcf
+
+current directory: /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/whitesimilarity-0.0.2/ext/whitesimilarity
+make DESTDIR\= sitearchdir\=./.gem.20251018-71038-u1ebcf sitelibdir\=./.gem.20251018-71038-u1ebcf clean

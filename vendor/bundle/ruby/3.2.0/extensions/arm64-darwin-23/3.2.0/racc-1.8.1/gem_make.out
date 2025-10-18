@@ -1,0 +1,19 @@
+current directory: /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/racc-1.8.1/ext/racc/cparse
+/Users/pk/.rvm/rubies/ruby-3.2.0/bin/ruby -I /Users/pk/.rvm/rubies/ruby-3.2.0/lib/ruby/3.2.0 extconf.rb
+creating Makefile
+
+current directory: /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/racc-1.8.1/ext/racc/cparse
+make DESTDIR\= sitearchdir\=./.gem.20251018-71038-6r8bzu sitelibdir\=./.gem.20251018-71038-6r8bzu clean
+
+current directory: /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/racc-1.8.1/ext/racc/cparse
+make DESTDIR\= sitearchdir\=./.gem.20251018-71038-6r8bzu sitelibdir\=./.gem.20251018-71038-6r8bzu
+compiling cparse.c
+linking shared-object racc/cparse.bundle
+ld: warning: ignoring duplicate libraries: '-lruby.3.2'
+
+current directory: /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/racc-1.8.1/ext/racc/cparse
+make DESTDIR\= sitearchdir\=./.gem.20251018-71038-6r8bzu sitelibdir\=./.gem.20251018-71038-6r8bzu install
+/opt/homebrew/opt/coreutils/bin/ginstall -c -m 0755 cparse.bundle ./.gem.20251018-71038-6r8bzu/racc
+
+current directory: /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/racc-1.8.1/ext/racc/cparse
+make DESTDIR\= sitearchdir\=./.gem.20251018-71038-6r8bzu sitelibdir\=./.gem.20251018-71038-6r8bzu clean

@@ -1,0 +1,26 @@
+current directory: /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/passenger-6.0.27/src/helper-scripts/download_binaries
+/Users/pk/.rvm/rubies/ruby-3.2.0/bin/ruby -I /Users/pk/.rvm/rubies/ruby-3.2.0/lib/ruby/3.2.0 extconf.rb
+Attempting to download https://github.com/phusion/passenger/releases/download/release-6.0.27/rubyext-ruby-3.2.0-arm64-macosx.tar.gz into /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/passenger-6.0.27/download_cache
+*** Could not download https://github.com/phusion/passenger/releases/download/release-6.0.27/rubyext-ruby-3.2.0-arm64-macosx.tar.gz: The requested URL returned error: 404
+Attempting to download https://oss-binaries.phusionpassenger.com/binaries/passenger/by_release/6.0.27/rubyext-ruby-3.2.0-arm64-macosx.tar.gz into /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/passenger-6.0.27/download_cache
+*** Could not download https://oss-binaries.phusionpassenger.com/binaries/passenger/by_release/6.0.27/rubyext-ruby-3.2.0-arm64-macosx.tar.gz: The requested URL returned error: 404
+Attempting to download https://s3.amazonaws.com/phusion-passenger/binaries/passenger/by_release/6.0.27/rubyext-ruby-3.2.0-arm64-macosx.tar.gz into /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/passenger-6.0.27/download_cache
+*** Could not download https://s3.amazonaws.com/phusion-passenger/binaries/passenger/by_release/6.0.27/rubyext-ruby-3.2.0-arm64-macosx.tar.gz: The requested URL returned error: 403
+Attempting to download https://github.com/phusion/passenger/releases/download/release-6.0.27/nginx-1.26.3-arm64-macosx-14.tar.gz into /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/passenger-6.0.27/download_cache
+Attempting to download https://github.com/phusion/passenger/releases/download/release-6.0.27/agent-arm64-macosx-14.tar.gz into /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/passenger-6.0.27/download_cache
+
+current directory: /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/passenger-6.0.27/src/helper-scripts/download_binaries
+make DESTDIR\= sitearchdir\=./.gem.20251018-71038-f787nk sitelibdir\=./.gem.20251018-71038-f787nk clean
+true
+
+current directory: /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/passenger-6.0.27/src/helper-scripts/download_binaries
+make DESTDIR\= sitearchdir\=./.gem.20251018-71038-f787nk sitelibdir\=./.gem.20251018-71038-f787nk
+true
+
+current directory: /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/passenger-6.0.27/src/helper-scripts/download_binaries
+make DESTDIR\= sitearchdir\=./.gem.20251018-71038-f787nk sitelibdir\=./.gem.20251018-71038-f787nk install
+true
+
+current directory: /Users/pk/App/BHT-EMR-API/vendor/bundle/ruby/3.2.0/gems/passenger-6.0.27/src/helper-scripts/download_binaries
+make DESTDIR\= sitearchdir\=./.gem.20251018-71038-f787nk sitelibdir\=./.gem.20251018-71038-f787nk clean
+true
