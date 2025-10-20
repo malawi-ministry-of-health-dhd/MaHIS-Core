@@ -55,7 +55,6 @@ module PatientRecordService
 
     def save_lab_results(data_type, patient_id, record, offline_id = nil, test_obs_id = nil)
       unsaved_data = record.dig(:labOrders, :results)
-      debugger
       if offline_id.present? && unsaved_data&.any?
         unsaved_data = unsaved_data.select { |result| result[:offline_id] == offline_id }
       end
@@ -74,7 +73,6 @@ module PatientRecordService
           order_params
         end
 
-        record[data_type][:unsaved] = []
         true
       rescue StandardError => e
         log_error("Failed to save #{data_type} information", e)
