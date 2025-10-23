@@ -33,9 +33,11 @@ module Api
           end
         end
 
-        queryset = queryset.includes(%i[type patient location program], provider: [:names],
-                                                                        observations: { concept: %i[concept_names] })
-                           .order(:date_created)
+        queryset = queryset.includes(%i[type location program], 
+                                      patient: { person: [:names] },
+                                      provider: [:names],
+                                      observations: { concept: %i[concept_names] })
+                          .order(:date_created)
 
         render json: paginate(queryset)
       end
