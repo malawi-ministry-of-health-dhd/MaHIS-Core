@@ -90,7 +90,7 @@ module BuildPatientRecordService
       {
         birthRegistration: build_observation_data(patient_id, 'REGISTRATION'),
         vitals: build_observation_data(patient_id, 'VITALS'),
-        vaccineAdministration: build_vaccine_administration_data,
+        vaccineAdministration: build_vaccine_administration_data(patient_id),
         appointments: build_observation_data(patient_id, 'APPOINTMENT'),
         diagnosis: build_observation_data(patient_id, 'DIAGNOSIS'),
         screening: build_observation_data(patient_id, 'SCREENING'),
@@ -143,7 +143,7 @@ module BuildPatientRecordService
       }
     end
 
-    def build_vaccine_administration_data
+    def build_vaccine_administration_data(patient_id)
       {
         orders: [],
         obs: [],

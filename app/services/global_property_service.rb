@@ -10,7 +10,7 @@ module GlobalPropertyService
     end
 
     def site_code
-      property = GlobalProperty.find_by(property: 'site_prefix')
+      property = GlobalProperty.find_by(property: 'site_prefix', location_id: User.current.location_id)
       value = property&.property_value&.strip
 
       raise "Global property 'site_prefix' not set" unless value
