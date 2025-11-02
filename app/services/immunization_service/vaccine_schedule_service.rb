@@ -194,6 +194,7 @@ module ImmunizationService
       Observation.joins(person: :names)
                  .joins(order: :drug_order)
                  .where(drug_order: { drug_inventory_id: drugs }, person_id: patient_id)
+                 .where(order: { voided: 0 })
                  .select(:obs_datetime, :drug_inventory_id, :order_id, :location_id,
                          :creator, :given_name, :family_name, :encounter_id).map do |obs|
         {

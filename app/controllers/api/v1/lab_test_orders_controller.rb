@@ -86,6 +86,47 @@ module Api
         render json: engine.orders_without_results(patient)
       end
 
+      def hts_referral_orders
+        sql = <<-SQL
+          SELECT orders.order_id,
+                encounter.program_id,
+                encounter.location_id,
+                encounter.provider_id,
+                orders.patient_id,
+                obs.value_text,
+                (SELECT name FROM program WHERE program_id = encounter.program_id) AS program_name,
+                (SELECT concept_id FROM concept_name WHERE name = obs.value_text) AS order_concept_id,
+                (SELECT CONCAT(given_name,' ', family_name) FROM person_name WHERE person_id = encounter.provider_id) AS provider_name,
+                (SELECT obs_id FROM obs where person_id = orders.patient_id AND order_id = orders.order_id  AND value_coded = order_concept_id) AS order_obs_id,
+                (SELECT obs_id FROM obs where person_id = orders.patient_id AND concept_id = 7363 AND order_id = orders.order_id order by date_created desc limit 1 ) AS lab_result_obs_id,
+                (SELECT value_text FROM obs where  order_id = orders.order_id AND obs_group_id = lab_result_obs_id AND concept_id = order_concept_id) AS lab_result_value
+          FROM encounter
+          INNER JOIN obs ON obs.encounter_id = encounter.encounter_id
+          INNER JOIN orders ON orders.encounter_id = obs.encounter_id
+                          AND orders.order_id = obs.order_id
+          WHERE obs.concept_id = ?
+        SQL
+
+        sql_params = [7856]
+
+        if params[:patient_id].present?
+          sql += " AND encounter.patient_id = ?"
+          sql_params << params[:patient_id]
+        end
+
+        # Filter by lab_result_value if the param is present
+        if params[:filter_by_lab_result].present?
+          sql = "SELECT * FROM (#{sql}) AS results WHERE lab_result_value IS NULL"
+        end
+
+        data = ActiveRecord::Base.connection.exec_query(
+          ActiveRecord::Base.sanitize_sql_array([sql] + sql_params)
+        )
+
+        # exec_query returns an ActiveRecord::Result object that can be converted to hash
+        render json: data.to_a
+      end
+
       private
 
       def patient
