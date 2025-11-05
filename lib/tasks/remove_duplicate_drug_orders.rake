@@ -8,11 +8,11 @@
 #   COUNT(*) as duplicate_count,
 #   GROUP_CONCAT(o.order_id ORDER BY o.order_id ASC SEPARATOR ',') as order_ids,
 #   GROUP_CONCAT(TIME(o.start_date) ORDER BY o.order_id ASC SEPARATOR ', ') as order_times
-# FROM mahis.orders o
-# INNER JOIN mahis.drug_order do ON o.order_id = do.order_id
+# FROM dbName.orders o
+# INNER JOIN dbName.drug_order do ON o.order_id = do.order_id
 # WHERE o.voided = 0
-#   AND o.order_type_id = (SELECT order_type_id FROM mahis.order_type WHERE name = 'Drug order' LIMIT 1)
-#   AND o.patient_id = (SELECT patient_id FROM mahis.encounter WHERE encounter_id = 560954)
+#   AND o.order_type_id = (SELECT order_type_id FROM dbName.order_type WHERE name = 'Drug order' LIMIT 1)
+#   AND o.patient_id = (SELECT patient_id FROM dbName.encounter WHERE encounter_id = 560954)
 #   AND DATE(o.start_date) = '2025-06-02'
 # GROUP BY o.patient_id, DATE(o.start_date), do.drug_inventory_id
 # HAVING COUNT(*) > 1;
