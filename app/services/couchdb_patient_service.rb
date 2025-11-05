@@ -193,9 +193,7 @@ class CouchdbPatientService
     def save_patient_record(record_data, patient_id)
       # Ensure the document has the required CouchDB fields
       doc_data = record_data.as_json.merge({
-        '_id' => patient_id,
-        'patientID' => patient_id,
-        'ID' => patient_id,
+        '_id' => record_data[:ID] || record_data.dig(:record, :ID),
         'last_sync_at' => Time.current.iso8601,
         'sync_status' => 'synced'
       })
