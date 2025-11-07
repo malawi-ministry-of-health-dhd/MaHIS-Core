@@ -1,4 +1,5 @@
 class VisitsService
+  include CouchdbSync 
   def create_update_visit(visit_params)
     sync_status = visit_params[:sync_status]  
     if sync_status == 'update'
@@ -11,6 +12,8 @@ class VisitsService
   
     patientId = visit_params[:patientId] 
     identifier = visit_params[:identifier]
+    stage_params = visit_params[:stage]
+    
     if identifier.present?
       patient_identifier = PatientIdentifier.where(identifier: identifier)
       patientId = patient_identifier[0][:patient_id]
@@ -32,6 +35,11 @@ class VisitsService
       visit_data = visit.attributes
       visit_data[:fullName] =  Patient.find_by(patient_id: patientId).try(:name)
       visit_data[:identifier] = identifier if identifier.present?
+      
+      if stage_params.present?
+            data = StagesService.new.create_stage(stage_params)
+            sync_to_couchdb(data, "stages", data[:identifier])
+      end
       visit_data
     end
   end
