@@ -8,15 +8,25 @@ class CouchdbPatientService
   PATIENTS_DB = 'patients_records'
 
   class << self
+    # Check if CouchDB is configured
+    def couchdb_configured?
+      COUCHDB_URL.present?
+    end
+
     def ensure_db_exists(db_name = PATIENTS_DB)
-      RestClient.put("#{COUCHDB_URL}/#{db_name}", '')
+      if couchdb_configured?
+        RestClient.put("#{COUCHDB_URL}/#{db_name}", '')
+      end
+      true
     rescue RestClient::PreconditionFailed
-      # Database already exists
+      true # Database already exists
+    rescue => e
+      Rails.logger.error "CouchDB error: #{e.message}"
+      false
     end
 
     def get_patient_record(patient_ids: nil, patient_id: nil)
       ensure_db_exists
-
       if patient_ids.present?
         # Handle multiple patient IDs
         ids = patient_ids.is_a?(String) ? patient_ids.split(',') : patient_ids
@@ -27,11 +37,18 @@ class CouchdbPatientService
       else
         raise ArgumentError, 'Missing patient identifier'
       end
+    rescue => e
+      Rails.logger.error "Error getting patient record: #{e.message}"
+      patient_ids.present? ? [] : nil
     end
 
     def get_latest_encounter_date_changed(db_name = 'patients_records')
+      unless couchdb_configured?
+        Rails.logger.warn "CouchDB not configured. Cannot fetch latest encounter date."
+        return nil
+      end
+
       ensure_db_exists(db_name)
-      
       
       # Create the correct index
       create_encounter_date_index(db_name)
@@ -43,8 +60,7 @@ class CouchdbPatientService
         sort: [{ encounter_date_changed: "desc" }],
         limit: 1,
         use_index: "encounter_date_changed_simple",
-        fields: [ "encounter_date_changed"]
-        
+        fields: ["encounter_date_changed"]
       }
       
       response = RestClient.post(
@@ -64,14 +80,16 @@ class CouchdbPatientService
     rescue RestClient::ExceptionWithResponse => e
       error_message = "Error querying latest encounter date: #{e.response&.body || e.message}"
       Rails.logger.error error_message
-      return { success: false, error: error_message }
+      return nil
     rescue StandardError => e
       error_message = "Unexpected error: #{e.message}"
       Rails.logger.error error_message
-      return { success: false, error: error_message }
+      return nil
     end
 
     def create_encounter_date_index(db_name)
+      return unless couchdb_configured?
+
       # Check if the correct index already exists
       begin
         response = RestClient.get("#{COUCHDB_URL}/#{db_name}/_index")
@@ -100,8 +118,8 @@ class CouchdbPatientService
             encounter_date_changed: { "$exists": true, "$ne": nil }
           }
         },
-        name: "encounter_date_changed_simple",  # Different name to avoid conflicts
-        ddoc: "encounter_date_changed_simple",  # Different name to avoid conflicts
+        name: "encounter_date_changed_simple",
+        ddoc: "encounter_date_changed_simple",
         type: "json"
       }
 
@@ -130,11 +148,53 @@ class CouchdbPatientService
       Rails.logger.error "Unexpected error creating index: #{e.message}"
     end
 
- 
+    # Method to sync from external source to CouchDB
+    def sync_patient_to_couchdb(patient_data, patient_id)
+      unless couchdb_configured?
+        Rails.logger.warn "CouchDB not configured. Skipping sync."
+        return { success: false, error: 'CouchDB not configured' }
+      end
+
+      ensure_db_exists
+      save_patient_record(patient_data, patient_id)
+      { success: true }
+    rescue => e
+      Rails.logger.error "Error syncing patient to CouchDB: #{e.message}"
+      { success: false, error: e.message }
+    end
+
+    # Utility method for bulk operations
+    def bulk_update_patients(patient_records)
+      unless couchdb_configured?
+        Rails.logger.warn "CouchDB not configured. Skipping bulk update."
+        return { success: false, error: 'CouchDB not configured' }
+      end
+
+      docs = patient_records.map do |record|
+        record.merge({
+          'last_sync_at' => Time.current.iso8601,
+          'sync_status' => 'synced'
+        })
+      end
+
+      bulk_payload = { docs: docs }.to_json
+
+      response = RestClient.post(
+        "#{COUCHDB_URL}/#{PATIENTS_DB}/_bulk_docs",
+        bulk_payload,
+        { content_type: :json, accept: :json }
+      )
+      
+      { success: true, response: JSON.parse(response.body) }
+    rescue => e
+      Rails.logger.error "Error in bulk update: #{e.message}"
+      { success: false, error: e.message }
+    end
 
     private
 
     def get_multiple_patients(patient_ids)
+      return false unless couchdb_configured?
       # Use CouchDB _all_docs endpoint with keys parameter
       keys_payload = { keys: patient_ids }.to_json
       
@@ -164,12 +224,16 @@ class CouchdbPatientService
     end
 
     def get_single_patient(patient_id)
-      begin
-        # Try to fetch existing document
-        response = RestClient.get("#{COUCHDB_URL}/#{PATIENTS_DB}/#{patient_id}")
-        JSON.parse(response.body)
-      rescue RestClient::NotFound
-        # Patient doesn't exist, build new record
+      if couchdb_configured?
+        begin
+          # Try to fetch existing document
+          response = RestClient.get("#{COUCHDB_URL}/#{PATIENTS_DB}/#{patient_id}")
+          JSON.parse(response.body)
+        rescue RestClient::NotFound
+          # Patient doesn't exist, build new record
+          build_patient_record(patient_id)
+        end
+      else
         build_patient_record(patient_id)
       end
     end
@@ -191,6 +255,8 @@ class CouchdbPatientService
     end
 
     def save_patient_record(record_data, patient_id)
+      return unless couchdb_configured?
+
       # Ensure the document has the required CouchDB fields
       doc_data = record_data.as_json.merge({
         '_id' => record_data[:ID] || record_data.dig(:record, :ID),
@@ -211,30 +277,6 @@ class CouchdbPatientService
         doc_data.to_json,
         { content_type: :json, accept: :json }
       )
-    end
-
-    # Utility method for bulk operations
-    def bulk_update_patients(patient_records)
-      docs = patient_records.map do |record|
-        record.merge({
-          'last_sync_at' => Time.current.iso8601,
-          'sync_status' => 'synced'
-        })
-      end
-
-      bulk_payload = { docs: docs }.to_json
-
-      RestClient.post(
-        "#{COUCHDB_URL}/#{PATIENTS_DB}/_bulk_docs",
-        bulk_payload,
-        { content_type: :json, accept: :json }
-      )
-    end
-
-    # Method to sync from external source to CouchDB
-    def sync_patient_to_couchdb(patient_data, patient_id)
-      ensure_db_exists
-      save_patient_record(patient_data, patient_id)
     end
   end
 end
