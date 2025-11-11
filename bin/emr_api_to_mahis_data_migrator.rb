@@ -11,7 +11,9 @@ include Sys
 
 NON_RESET_MODELS = %w[Patient DrugOrder GlobalProperty UserRole UserProperty DrugIngredient
                       LimsAcknowledgementStatus].freeze
-NON_LOCATION_ID_MODELS = %w[Person Relationship PersonName PersonAddress PersonAttribute Patient ReportingReportDesignResource Order PatientState DrugOrder]
+NON_LOCATION_ID_MODELS = %w[Person Relationship PersonName PersonAddress PersonAttribute Patient
+                            ReportingReportDesignResource Order PatientState DrugOrder].freeze
+NON_UUID_MODELS = %w[UserRole UserProperty].freeze
 
 # @orphaned_order_id = []
 
@@ -38,11 +40,46 @@ def prepare_centralized_db
     SQL
   end
 
-  # if ActiveRecord::Base.connection.primary_key(:global_property)
-  #   ActiveRecord::Base.connection.execute <<~SQL
-  #     ALTER TABLE global_property DROP PRIMARY KEY;
+  # # 1. Drop the foreign key
+  # foreign_keys = ActiveRecord::Base.connection.foreign_keys(:user_property).map(&:name)
+  # if foreign_keys.include?('user_property')
+  #   ActiveRecord::Base.connection.execute <<-SQL
+  #     ALTER TABLE user_property
+  #     DROP FOREIGN KEY user_property
   #   SQL
   # end
+
+  # # 2. Modify location_id to NOT NULL
+  # ActiveRecord::Base.connection.execute <<-SQL
+  #   ALTER TABLE user_property
+  #   MODIFY COLUMN location_id BIGINT NOT NULL DEFAULT 0
+  # SQL
+
+  # # 3. Drop existing primary key
+  # ActiveRecord::Base.connection.execute <<-SQL
+  #   ALTER TABLE user_property
+  #   DROP PRIMARY KEY
+  # SQL
+
+  # # 4. Add new primary key including location_id
+  # ActiveRecord::Base.connection.execute <<-SQL
+  #   ALTER TABLE user_property
+  #   ADD PRIMARY KEY (user_id, property, location_id)
+  # SQL
+
+  # # 5. Re-add the foreign key
+  # ActiveRecord::Base.connection.execute <<-SQL
+  #   ALTER TABLE user_property
+  #   ADD CONSTRAINT user_property
+  #   FOREIGN KEY (user_id) REFERENCES users(user_id)
+  # SQL
+
+  existing_columns = ActiveRecord::Base.connection.columns(:global_property).map(&:name)
+  unless existing_columns.include?('location_id')
+    ActiveRecord::Base.connection.execute <<~SQL
+      ALTER TABLE global_property ADD COLUMN location_id INT;
+    SQL
+  end
 
   foreign_keys = ActiveRecord::Base.connection.foreign_keys(:drug_ingredient).map(&:name)
 
@@ -181,6 +218,8 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
                     Order.unscoped.where(uuid: uuids).pluck(:order_id)
                   when 'GlobalProperty'
                     records.map { |r| [r[:property]] }
+                  when 'UserRole'
+                    records.map { |r| [r[:user_id]] }
                   else
                     records.map { |r| r[:uuid] }
                   end
@@ -193,6 +232,9 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
                     when 'GlobalProperty'
                       target_model.unscoped.where(property: record_keys.map(&:first),
                                                   location_id: SITE_ID).pluck(:property, :location_id).to_set
+                    when 'UserRole'
+                      target_model.unscoped.where(user_id: record_keys, location_id: SITE_ID)
+                                  .pluck(:user_id, :location_id, :property)
                     else
                       target_model.unscoped.where(uuid: record_keys).pluck(:uuid).to_set
                     end
@@ -209,6 +251,8 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
         existing_keys.include?(record[:order_id]) || record[:order_id].blank?
       when 'GlobalProperty'
         existing_keys.include?([record[:property], SITE_ID.to_s])
+      when 'UserRole'
+        existing_keys.include?([record[:user_id], SITE_ID.to_s, record[:property]])
       else
         existing_keys.include?(record[:uuid])
       end
@@ -233,6 +277,7 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
         record[target_model.primary_key.to_sym] = nil unless NON_RESET_MODELS.include?(target_model.to_s)
         record[:location_id] = SITE_ID unless NON_LOCATION_ID_MODELS.include?(target_model.to_s)
         record.delete(:site_id) if record.include?(:site_id)
+        record.delete(:uuid) if NON_UUID_MODELS.include?(target_model.to_s)
         record.delete(:id) if target_model.to_s == 'GlobalProperty'
       end
     end
@@ -456,19 +501,20 @@ end
 prepare_centralized_db
 populate_users(source_db)
 def populate_group(group)
-  Parallel.each(group) do |(table, model, source_db, dependencies)|
+  group.each do |(table, model, source_db, dependencies)|
+    # add_uuids(source_db, table)
     populate_records(table, model, source_db, dependencies)
   end
 end
 
 if __FILE__ == $0
   group1_models = {
-    # user_role: [UserRole, {
-    #   user_id: :get_new_user_ids
-    # }],
-    # user_property: [UserProperty, {
-    #   user_id: :get_new_user_ids
-    # }],
+    user_role: [UserRole, {
+      user_id: :get_new_user_ids
+    }],
+    user_property: [UserProperty, {
+      user_id: :get_new_user_ids
+    }],
     global_property: [GlobalProperty, {}],
     person: [Person, {
       creator: :get_new_user_ids,
@@ -493,7 +539,7 @@ if __FILE__ == $0
       location_id: :get_location_ids
     }],
     pharmacy_stock_balances: [PharmacyStockBalance, {}],
-    pharmacy_stock_verifications: [PharmacyStockVerification, {}],
+    pharmacy_stock_verifications: [PharmacyStockVerification, {}]
     # drug_ingredient: [DrugIngredient, {}]
   }
 
