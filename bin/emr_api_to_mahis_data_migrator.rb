@@ -11,8 +11,7 @@ include Sys
 
 NON_RESET_MODELS = %w[Patient DrugOrder GlobalProperty UserRole UserProperty DrugIngredient
                       LimsAcknowledgementStatus].freeze
-NON_LOCATION_ID_MODELS = %w[Person Relationship PersonName PersonAddress PersonAttribute Patient
-                            ReportingReportDesignResource Order PatientState DrugOrder].freeze
+NON_LOCATION_ID_MODELS = %w[].freeze
 NON_UUID_MODELS = %w[UserRole UserProperty].freeze
 
 # @orphaned_order_id = []
@@ -196,7 +195,8 @@ def populate_person(person_data, source_db)
 
   person_data.delete(:site_id)
   new_person = Person.new(person_data)
-  new_person.save!(validate: false)
+  new_person.location_id = SITE_ID
+  new_person.save(validate: false)
   new_person.person_id
 end
 
@@ -205,6 +205,12 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
   process_in_batches(source_db, source_table) do |records|
     records.each(&:symbolize_keys!)
     # Fetch only the records that exist in the current batch
+
+    # Update foreign key mappings
+    foreign_keys.each do |foreign_key, mapping_method|
+      records = send(mapping_method, records, foreign_key, source_db)
+    end
+
     record_keys = case target_model.to_s
                   when 'Patient'
                     patient_ids = records.map { |r| r[:patient_id] }
@@ -219,7 +225,9 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
                   when 'GlobalProperty'
                     records.map { |r| [r[:property]] }
                   when 'UserRole'
-                    records.map { |r| [r[:user_id]] }
+                    records.map { |r| r[:user_id] }
+                  when 'UserProperty'
+                    records.map { |r| r[:user_id] }
                   else
                     records.map { |r| r[:uuid] }
                   end
@@ -234,14 +242,13 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
                                                   location_id: SITE_ID).pluck(:property, :location_id).to_set
                     when 'UserRole'
                       target_model.unscoped.where(user_id: record_keys, location_id: SITE_ID)
-                                  .pluck(:user_id, :location_id, :property)
+                                  .pluck(:user_id, :role).to_set
+                    when 'UserProperty'
+                      target_model.unscoped.where(user_id: record_keys, location_id: SITE_ID)
+                                  .pluck(:user_id, :property, :location_id)
                     else
                       target_model.unscoped.where(uuid: record_keys).pluck(:uuid).to_set
                     end
-    # Update foreign key mappings
-    foreign_keys.each do |foreign_key, mapping_method|
-      records = send(mapping_method, records, foreign_key, source_db)
-    end
 
     insertable_records = records.reject do |record|
       case target_model.to_s
@@ -252,7 +259,9 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
       when 'GlobalProperty'
         existing_keys.include?([record[:property], SITE_ID.to_s])
       when 'UserRole'
-        existing_keys.include?([record[:user_id], SITE_ID.to_s, record[:property]])
+        existing_keys.include?([record[:user_id], record[:role]])
+      when 'UserProperty'
+        existing_keys.include?([record[:user_id], record[:property], SITE_ID.to_s])
       else
         existing_keys.include?(record[:uuid])
       end
@@ -502,7 +511,6 @@ prepare_centralized_db
 populate_users(source_db)
 def populate_group(group)
   group.each do |(table, model, source_db, dependencies)|
-    # add_uuids(source_db, table)
     populate_records(table, model, source_db, dependencies)
   end
 end
