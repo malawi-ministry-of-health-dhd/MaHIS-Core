@@ -213,15 +213,9 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
 
     record_keys = case target_model.to_s
                   when 'Patient'
-                    patient_ids = records.map { |r| r[:patient_id] }
-                    uuids = query_with_columns("#{source_db}.person",
-                                               "person_id in (#{patient_ids.join(', ')})").pluck('uuid')
-                    Person.unscoped.where(uuid: uuids).pluck(:person_id)
+                    records.map { |r| r[:patient_id] }
                   when 'DrugOrder'
-                    order_ids = records.map { |r| r[:order_id] }
-                    uuids = query_with_columns("#{source_db}.orders",
-                                               "order_id in (#{order_ids.join(', ')})").pluck('uuid')
-                    Order.unscoped.where(uuid: uuids).pluck(:order_id)
+                    records.map { |r| r[:order_id] }
                   when 'GlobalProperty'
                     records.map { |r| [r[:property]] }
                   when 'UserRole'
@@ -261,7 +255,7 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
       when 'UserRole'
         existing_keys.include?([record[:user_id], record[:role]])
       when 'UserProperty'
-        existing_keys.include?([record[:user_id], record[:property], SITE_ID.to_s])
+        existing_keys.include?([record[:user_id], record[:property], SITE_ID])
       else
         existing_keys.include?(record[:uuid])
       end
