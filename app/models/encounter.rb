@@ -31,7 +31,15 @@ class Encounter < VoidableRecord
     super(options.merge(
       include: {
         type: {},
-        patient: {},
+        patient: {
+          include: {
+            person: {
+              include: {
+                names: {}
+              }
+            }
+          }
+        },
         location: {},
         provider: {
           include: {
