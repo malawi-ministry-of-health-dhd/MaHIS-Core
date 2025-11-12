@@ -13,7 +13,7 @@
     - [DDE](#dde)
       - [Configuration](#configuration-1)
       - [Enabling DDE](#enabling-dde)
-    - [EMR to MAHIS Migration](#EMR_Mahis_Migration)
+    - [EMR to MAHIS Migration](#emr_mahis_migration)
     - [Updating Metadata](#updating-metadata)
     - [EMC to POC](#emc-to-poc)
     - [AIT Intergration](#ait-intergration)
