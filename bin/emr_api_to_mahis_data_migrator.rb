@@ -504,7 +504,7 @@ end
 prepare_centralized_db
 populate_users(source_db)
 def populate_group(group)
-  group.each do |(table, model, source_db, dependencies)|
+  Parallel.each(group) do |(table, model, source_db, dependencies)|
     populate_records(table, model, source_db, dependencies)
   end
 end
