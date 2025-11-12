@@ -60,7 +60,7 @@ class VisitsService
 
     existing_stage = Stage.find_by(
       patient_id: visit.patientId,
-      location_id: User.current.location_id
+      location_id: visit_params[:location_id] || User.current.location_id
     )
     existing_stage.destroy if existing_stage
 
