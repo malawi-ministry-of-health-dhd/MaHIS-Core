@@ -21,6 +21,19 @@ class AddLocationIdToTxnTables < ActiveRecord::Migration[7.0]
 
       change_column t.to_sym, :location_id, :bigint, default: 0 if column_exists?(t, :location_id)
     end
+
+    # check if its only one site in the DB
+    sites = ActiveRecord::Base.connection.select_all <<~SQL
+      SELECT DISTINCT(location_id) FROM encounter;
+    SQL
+
+    unless sites.count > 1
+      TRANSACTIONAL_TABLES.each do |t|
+        ActiveRecord::Base.connection.execute <<~SQL
+          UPDATE #{t} SET location_id = #{id};
+        SQL
+      end
+    end
   end
 
 end
