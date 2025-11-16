@@ -36,7 +36,7 @@ class VisitsService
       return visit_data
     end
   
-    allowed_fields = visit_params.slice(:patientId, :startDate, :closedDateTime, :programId, :location_id, :provider_id)
+    allowed_fields = visit_params.slice(:patientId, :startDate, :closedDateTime, :programId, :location_id)
     visit = Visit.new(allowed_fields)
     visit.patientId = patientId
 
