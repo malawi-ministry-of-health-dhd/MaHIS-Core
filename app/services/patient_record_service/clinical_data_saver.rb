@@ -66,7 +66,7 @@ module PatientRecordService
       unsaved_data = record.dig(data_type, :unsaved)
       return false unless unsaved_data&.any?
 
-      if data_type == :diagnosis && record.dig('program_id') == 32
+      if data_type == :diagnosis && record.dig(:program_id) == 32
         unsaved_data.each do |item|
           if item["value_coded"] == 6409 || item["value_coded"] == 6410
             FhirService.sendConfirmedDiagnosisToMediator(patient_id, "Diabetes")

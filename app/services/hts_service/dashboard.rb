@@ -30,5 +30,22 @@ module HtsService
         tested_appointments: tested
       }]
     end
+
+    def self.dashboard_stats
+      clients_with_conclusive_results = Observation.where('value_text = ? AND concept_id= ? ','Yes',9774).count
+
+      clients_referred_to_ART = Observation.where('value_text = ? AND concept_id= ?','Yes',3576).count
+
+      clients_tested_today = Encounter.where('program_id = ? AND DATE(encounter_datetime) = ? AND encounter_type = ?', 37, Date.today, 32)
+                            .distinct
+                            .count(:patient_id)
+      {
+        total_clients: Encounter.where(program_id: 37).distinct.count(:patient_id),
+        clients_with_conclusive_results: clients_with_conclusive_results,
+        clients_tested_today: clients_tested_today,
+        clients_referred_to_ART: clients_referred_to_ART
+      }
+    end
+
   end
 end
