@@ -222,6 +222,8 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
                     records.map { |r| r[:user_id] }
                   when 'UserProperty'
                     records.map { |r| r[:user_id] }
+                  when 'Pharmacy'
+                    records.map { |r| r[:pharmacy_module_id] }
                   else
                     records.map { |r| r[:uuid] }
                   end
@@ -240,6 +242,9 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
                     when 'UserProperty'
                       target_model.unscoped.where(user_id: record_keys, location_id: SITE_ID)
                                   .pluck(:user_id, :property, :location_id)
+                    when 'Pharmacy'
+                      target_model.unscoped.where(pharmacy_module_id: record_keys, location_id: SITE_ID)
+                                  .pluck(:pharmacy_module_id, :location_id)
                     else
                       target_model.unscoped.where(uuid: record_keys).pluck(:uuid).to_set
                     end
@@ -256,6 +261,8 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
         existing_keys.include?([record[:user_id], record[:role]])
       when 'UserProperty'
         existing_keys.include?([record[:user_id], record[:property], SITE_ID])
+      when 'Pharmacy'
+        existing_keys.include?([record[:pharmacy_module_id], SITE_ID])
       else
         existing_keys.include?(record[:uuid])
       end
