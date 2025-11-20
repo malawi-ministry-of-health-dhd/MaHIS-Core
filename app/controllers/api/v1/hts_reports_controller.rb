@@ -3,7 +3,7 @@
 module Api
   module V1
     class HtsReportsController < ApplicationController
-      before_action :validate_params
+      #before_action :validate_params
       def index
         report = service.generate_report(name: @name,
                                          type: @name,
@@ -20,7 +20,7 @@ module Api
       end
 
       def daily_stats
-        render json: HtsService::Dashboard.daily_statistics(params[:start_date], params[:end_date])
+        render json: HtsService::Dashboard.dashboard_stats()
       end
 
       private

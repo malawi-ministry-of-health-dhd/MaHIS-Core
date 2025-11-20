@@ -4,8 +4,8 @@
 module PatientRecordService
   class SmsManager < BaseSaver
     def send_sms(_patient_id, record)
-      appointment_date = record.dig('sms', 'appointment_date')
-      cell_phones = record.dig('sms', 'cell_phone')
+      appointment_date = record.dig(:sms, :appointment_date)
+      cell_phones = record.dig(:sms, :cell_phone)
       return false unless appointment_date && cell_phones
 
       cell_phones.map do |phone|
