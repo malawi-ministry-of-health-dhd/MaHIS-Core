@@ -117,19 +117,7 @@ module Api
             end
         
             def serialize_facility(facility)
-            {
-                id: facility.id,
-                code: facility.code,
-                name: facility.name,
-                display_name: facility.display_name,
-                type: facility.facility_type,
-                status: facility.status,
-                district: facility.district,
-                coordinates: facility.coordinates,
-                has_coordinates: facility.has_coordinates?,
-                created_at: facility.created_at,
-                updated_at: facility.updated_at
-            }
+                facility
             end
         
             def serialize_facilities(facilities)
