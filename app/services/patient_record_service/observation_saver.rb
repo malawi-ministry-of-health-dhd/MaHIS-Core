@@ -41,7 +41,8 @@ module PatientRecordService
           encounter = Encounter.find(encounter_id)
           item[:obs].map do |archetype|
             archetype[:location_id] = record[:location_id]
-            observation_service.create_observation(encounter, archetype.permit!)
+            params = archetype.respond_to?(:permit!) ? archetype.permit! : archetype
+            observation_service.create_observation(encounter, params)
           end
         end
       end

@@ -69,6 +69,7 @@ module BuildPatientRecordService
         patient_identifiers: patient.patient_identifiers.as_json,
         location_id: latest_encounter&.location_id,
         encounter_datetime: latest_encounter&.encounter_datetime,
+        encounter_date_changed: latest_encounter&.date_changed,
         sync_status: ''
       }
     end
@@ -92,7 +93,7 @@ module BuildPatientRecordService
         vaccineAdministration: build_vaccine_administration_data(patient_id),
         appointments: build_observation_data(patient_id, 'APPOINTMENT'),
         diagnosis: build_observation_data(patient_id, 'DIAGNOSIS'),
-        screening: build_screening_data(patient_id),
+        screening: build_observation_data(patient_id, 'SCREENING'),
         substanceAbuse: build_observation_data(patient_id, 'ASSESSMENT'),
         labOrders: build_lab_orders_data(patient_id),
         MedicationOrder: build_medication_data(patient_id),

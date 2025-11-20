@@ -127,3 +127,4 @@ deduplication:
 
 BASE_MEDIATOR_URL: "http://localhost:3001/emr/"
 BASE_FHIR_URL: "http://localhost:8081/fhir"
+COUCHDB_URL: "http://username:password@127.0.0.1:5984"
