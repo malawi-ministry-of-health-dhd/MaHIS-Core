@@ -9,17 +9,10 @@ flag_potential_duplicates:
   queue: "default"
   description: "Flags potential duplicates at midnight"
 
-batch_sync_job:
-  cron: "0 0 2 * * *" # At 2:00 AM daily
-  class: "BatchPatientSyncJob"
-  args: [null, "Time.now.beginning_of_hour - 30.hours"]
-  queue: "batch_sync"
-
-incremental_sync_job:
-  cron: "0 * * * *" # Every hour
-  class: "BatchPatientSyncJob"
-  args: [null, "Time.now.beginning_of_hour - 2.hours"]
-  queue: "batch_sync"
+dde_ids_sync_job:
+  cron: "*/15 * * * *" # every 15 minutes
+  class: "Sync::DdeIdsSyncJob"
+  queue: default
 
 ncd_active_patients_for_each_facility:
   cron: "0 0 1 * * *" # At 1:00 AM daily
