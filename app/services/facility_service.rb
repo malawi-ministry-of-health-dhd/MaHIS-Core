@@ -5,7 +5,7 @@ class FacilityService
     end
   
     def list_facilities
-      facilities = Facility.all
+      facilities = Location.all
   
       facilities = apply_name_filter(facilities)
       facilities = apply_district_filter(facilities)
@@ -50,8 +50,8 @@ class FacilityService
     end
 
   
-    def find_nearby_facilities(facility_id)
-      facility = Facility.find(facility_id)
+    def find_nearby_facilities(location_id)
+      facility = Location.find(location_id)
       radius = @params[:radius].present? ? @params[:radius].to_f : 10
   
       nearby = facility.nearby_facilities(radius)
@@ -63,37 +63,22 @@ class FacilityService
         center_facility: facility
       }
     end
-  
-    def create_facility(facility_params)
-      Facility.create!(facility_params)
-    end
-  
-    def update_facility(facility_id, facility_params)
-      facility = Facility.find(facility_id)
-      facility.update!(facility_params)
-      facility
-    end
-  
-    def delete_facility(facility_id)
-      facility = Facility.find(facility_id)
-      facility.destroy
-    end
 
     def list_facility_codes
-      # Get all unique facility codes ordered alphabetically
-      codes = Facility.select('code')
+      # Get all unique location uuids ordered alphabetically
+      uuids = Location.select('uuid')
                      .distinct
-                     .order(:code)
-                     .map do |facility|
+                     .order(:uuid)
+                     .map do |location|
         {
-          code: facility.code,
-          name: Facility.find_by(code: facility.code)&.name
+          uuid: location.uuid,
+          name: Location.find_by(uuid: location.uuid)&.name
         }
       end.compact
   
       {
-        facility_codes: codes,
-        total: codes.size
+        location_uuids: uuids,
+        total: uuids.size
       }
     end
   
@@ -107,16 +92,16 @@ class FacilityService
     end
   
     def apply_district_filter(facilities)
-      return facilities unless @params[:district].present?
+      return facilities unless @params[:city_village].present?
   
-      facilities.by_district(@params[:district])
+      facilities.by_district(@params[:city_village])
     end
   
     def apply_district_name_filter(facilities)
       return facilities unless @params[:district_name].present?
   
       district_query = "%#{@params[:district_name]}%"
-      facilities.where("district ILIKE ?", district_query)
+      facilities.where("city_village ILIKE ?", district_query)
     end
   
     def apply_status_filter(facilities)
