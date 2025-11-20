@@ -39,7 +39,8 @@ class FacilityService
     def list_facilities_by_district(district_name)
       sanitized_district_name = district_name.to_s.gsub('?', '')
 
-      facilities = Facility.where(district: sanitized_district_name)
+      facilities = Location.where(city_village: sanitized_district_name)
+      # facilities = Facility.where(district: sanitized_district_name)
 
       {
         facilities: facilities,
