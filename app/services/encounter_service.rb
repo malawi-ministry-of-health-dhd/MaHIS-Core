@@ -25,7 +25,7 @@ class EncounterService
                                 encounter_datetime:, program:)
       if type.id == EncounterType.find_by(name: 'LAB ORDERS')&.id
         PatientProgramService.new.create(patient:, program: Program.find_by(name: 'Laboratory program'),
-                                        date_enrolled: encounter_datetime)
+                                        date_enrolled: encounter_datetime,location_id: location_id, user: provider )
       end
       return encounter if encounter
     end

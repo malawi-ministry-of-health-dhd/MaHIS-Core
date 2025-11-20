@@ -23,10 +23,20 @@ module EncounterCreation
 
     def save_obs(encounter_id:, observations:, location_id: nil)
       encounter = Encounter.find(encounter_id)
+
       observations.map do |archetype|
         archetype[:location_id] = location_id
-        service = ObservationService.new
-        service.create_observation(encounter, archetype.permit!)
+        safe_params = to_permitted_params(archetype)
+        ObservationService.new.create_observation(encounter, safe_params)
+      end
+    end
+
+    def to_permitted_params(hash_or_params)
+      case hash_or_params
+      when ActionController::Parameters
+        hash_or_params.permit!
+      else
+        ActionController::Parameters.new(hash_or_params).permit!
       end
     end
 

@@ -423,7 +423,9 @@ See the following for more:
 - [ANC](/bin/ANC/README.md)
 
 ## Contributors
+
 These are organizations that have contributed to the development of the HIS EMR API
+
 <p>
     <img src="public/malawi.png" alt="Malawi Government" style="background: white !important;height:60px;padding: 5px;border-radius:1%" />
     <img src="public/PEPFAR.jpg" alt="PEPFAR" style="background: white !important;height:60px;padding: 5px; object-fit:fit;border-radius:1%;" />
@@ -431,7 +433,6 @@ These are organizations that have contributed to the development of the HIS EMR 
     <img src="public/baobab.png" alt="Baobab Health Trust" style="background: white !important;height:60px;padding: 5px; object-fit:fit;border-radius:1%;" />
     <img src="public/LIN.jpg" alt="Luke International" style="background: white !important;height:60px;padding: 5px; object-fit:fit;border-radius:1%;" />
 </p>
-
 
 [Back to top](#table-of-contents)
 
@@ -451,9 +452,14 @@ These are organizations that have contributed to the development of the HIS EMR 
 - Copy config/schedule.yml.example config/schedule.yml
 - When you run everything it wiil setup a sidekiq cron to run a midnight refresh to set all the data to the current status for all sites
 
-# create indexes for mongo db
+# sync all records with couchDB
 
-- rails db:mongoid:create_indexes
+- rails sync:all
 
-# sync patient records with mongo
-- rails sync:batch
+# Run only one job (e.g. StageSyncJob)
+
+- rails "sync:run[StageSyncJob]"
+
+# Start all listeners
+
+- rails couchdb:start_all_listeners
