@@ -1,3 +1,4 @@
+# app/models/location.rb
 # frozen_string_literal: true
 
 class Location < RetirableRecord
@@ -8,7 +9,8 @@ class Location < RetirableRecord
   has_many :children, class_name: 'Location', foreign_key: :parent_location
   has_many :tag_maps, class_name: 'LocationTagMap', foreign_key: :location_id
   has_many :visits
-  has_many :stages  
+  has_many :stages 
+  has_many :location_attributes, foreign_key: 'location_id' 
 
   def self.current
     Thread.current['current_location']
@@ -19,7 +21,40 @@ class Location < RetirableRecord
   end
 
   def as_json(options = {})
-    super(options.merge(include: { parent: {} }, methods: %i[district]))
+      # Define the default inclusion for parent and district method
+      default_includes = { parent: {} }
+      default_methods = %i[district]
+      
+      # Start with the standard serialization
+      attributes_data = super(options.merge(
+        include: default_includes,
+        methods: default_methods
+      ))
+
+      # Manually restructure the included location_attributes into the 'attributes' wrapper
+      if options[:include] && options[:include][:location_attributes]
+        # Extract the attribute options (like :only keys) from the controller's request
+        attribute_options = options[:include][:location_attributes]
+        
+        # Remove the association from the standard options so it's not serialized twice
+        options_without_attributes = options.deep_dup
+        options_without_attributes[:include].delete(:location_attributes)
+        
+        # Re-call super with the modified options to get the base data structure
+        attributes_data = super(options_without_attributes.merge(
+          include: default_includes,
+          methods: default_methods
+        ))
+        
+        # Manually inject the attribute data under the correct nested key
+        attributes_data[:attributes] = {
+          location_attributes: location_attributes.as_json(
+            only: attribute_options[:only] || %i[location_attribute_id attribute_type_id value_reference]
+          )
+        }
+      end
+      
+      attributes_data
   end
 
   def self.current_health_center
