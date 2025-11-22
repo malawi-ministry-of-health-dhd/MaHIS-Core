@@ -117,11 +117,18 @@ module Api
             end
         
             def serialize_facility(facility)
-                facility
+                # the custom 'as_json' logic in the Location model.
+                facility.as_json(
+                    include: {
+                    location_attributes: {
+                        only: %i[location_attribute_id attribute_type_id value_reference]
+                    }
+                    }
+                )
             end
-        
+                    
             def serialize_facilities(facilities)
-            facilities.map { |facility| serialize_facility(facility) }
+                facilities.map { |facility| serialize_facility(facility) }
             end
         end
     end

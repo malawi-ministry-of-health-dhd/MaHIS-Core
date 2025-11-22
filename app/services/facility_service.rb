@@ -5,7 +5,7 @@ class FacilityService
     end
   
     def list_facilities
-      facilities = Location.all
+      facilities = Location.includes(:location_attributes).all
   
       facilities = apply_name_filter(facilities)
       facilities = apply_district_filter(facilities)
@@ -38,9 +38,9 @@ class FacilityService
     # Fetch facilities by district_name
     def list_facilities_by_district(district_name)
       sanitized_district_name = district_name.to_s.gsub('?', '')
+      facilities = Location.includes(:location_attributes).all
 
-      facilities = Location.where(city_village: sanitized_district_name)
-      # facilities = Facility.where(district: sanitized_district_name)
+      facilities = facilities.where(city_village: sanitized_district_name)
 
       {
         facilities: facilities,
