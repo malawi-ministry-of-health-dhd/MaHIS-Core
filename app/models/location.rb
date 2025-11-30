@@ -146,4 +146,67 @@ class Location < RetirableRecord
     end
     find_by_sql(sql).collect { |name| name.send(field_name) }
   end
+
+  # Geospatial methods for facility-like functionality
+  def coordinates
+    return nil if latitude.blank? || longitude.blank?
+    [latitude.to_f, longitude.to_f]
+  end
+
+  def has_coordinates?
+    coordinates.present?
+  end
+
+  def distance_to(other_location)
+    return nil unless has_coordinates? && other_location.has_coordinates?
+
+    rad_per_deg = Math::PI / 180
+    earth_radius = 6371 # km
+
+    lat1 = latitude.to_f * rad_per_deg
+    lat2 = other_location.latitude.to_f * rad_per_deg
+    lon1 = longitude.to_f * rad_per_deg
+    lon2 = other_location.longitude.to_f * rad_per_deg
+
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+
+    a = Math.sin(dlat / 2)**2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dlon / 2)**2
+    c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+
+    (earth_radius * c).round(3)
+  end
+
+  def nearby_facilities(radius_km = 10)
+    return [] unless has_coordinates?
+
+    # Rough approximation: 1 degree = 111km
+    lat_degree_range = radius_km / 111.0
+    lng_degree_range = radius_km / (111.0 * Math.cos(latitude.to_f * Math::PI / 180))
+
+    Location.where.not(location_id: location_id)
+            .where(latitude: (latitude.to_f - lat_degree_range)..(latitude.to_f + lat_degree_range))
+            .where(longitude: (longitude.to_f - lng_degree_range)..(longitude.to_f + lng_degree_range))
+            .select { |loc| distance_to(loc) <= radius_km }
+  end
+
+  def self.search_by_coordinates(lat, lng, radius_km = 10)
+    return none unless lat.present? && lng.present?
+
+    lat = lat.to_f
+    lng = lng.to_f
+
+    # Create temporary location for distance calculation
+    temp_location = new(latitude: lat, longitude: lng)
+
+    # Find locations within rough square first
+    lat_degree_range = radius_km / 111.0
+    lng_degree_range = radius_km / (111.0 * Math.cos(lat * Math::PI / 180))
+
+    where.not(latitude: nil)
+      .where.not(longitude: nil)
+      .where(latitude: (lat - lat_degree_range)..(lat + lat_degree_range))
+      .where(longitude: (lng - lng_degree_range)..(lng + lng_degree_range))
+      .select { |loc| temp_location.distance_to(loc) <= radius_km }
+  end
 end
