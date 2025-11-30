@@ -196,7 +196,7 @@ class SavePatientRecordService
         patient_data[:outCome] = BuildPatientRecordService.build_empty_data_structure 
       when :save_medication_order, :save_dispensation_data
         patient_data[:MedicationOrder] = BuildPatientRecordService.build_medication_data(patient_id)
-        patient_data[:dispensations] = BuildPatientRecordService.build_dispensations_data(patient)
+        # patient_data[:dispensations] = BuildPatientRecordService.build_dispensations_data(patient)
       when :create_ncd_identifier
         patient_data[:NcdID] = BuildPatientRecordService.patient_identifier(patient, 31)
       when :save_notes_and_pharmalogical_notes

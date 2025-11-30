@@ -37,10 +37,10 @@ module PatientRecordService
         return false unless permitted_data&.any?
 
         process_dispensations(permitted_data)
-        true
+        return true
       rescue StandardError => e
         log_error("Error in save_dispensation_data", e)
-        false
+        return false
       end
     end
 
