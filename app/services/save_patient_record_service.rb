@@ -139,7 +139,7 @@ class SavePatientRecordService
       create_ncd_identifier: managers[:identity_manager].create_ncd_identifier(patient_id, record),
       save_notes_and_pharmalogical_notes: managers[:observation_saver].save_notes_and_pharmalogical_notes(patient_id, record),
       save_allergies: managers[:observation_saver].save_allergies(patient_id, record),
-      save_dispensation_data: managers[:dispensation_saver].save_dispensation_data(patient_id, record),
+      save_dispensation_data: managers[:medication_order_saver].save_dispensation_data(patient_id, record),
       save_all_observations: managers[:observation_saver].save_all_observations(patient_id, record)
     }
   end
