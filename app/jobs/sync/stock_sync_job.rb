@@ -8,6 +8,9 @@ module Sync
           .joins('INNER JOIN drug ON drug.drug_id = pharmacy_batch_items.drug_id')
           .joins('INNER JOIN pharmacy_batches ON pharmacy_batches.id = pharmacy_batch_items.pharmacy_batch_id')
           .where(voided: false)
+          .where("DATE(pharmacy_batch_items.expiry_date) >= ?", Date.today)
+          .where('current_quantity > 0')
+          .where('expiry_date > ?', "#{ Date.today}")
       end
     end
 
@@ -15,7 +18,12 @@ module Sync
 
     def prepare_document(stock_item)
       # Fetch location_id from pharmacy_batches table
-      location_id = ::PharmacyBatch.where(id: stock_item.pharmacy_batch_id).pluck(:location_id).first
+      pharmacy_batch = ::PharmacyBatch.where(id: stock_item.pharmacy_batch_id)
+                                      .pluck(:location_id, :batch_number)
+                                      .first
+      
+      location_id = pharmacy_batch&.first
+      batch_number = pharmacy_batch&.last
 
       # Calculate doses_wasted
       doses_wasted = ::PharmacyBatchItemReallocation
@@ -47,7 +55,7 @@ module Sync
       {
         "dispensed_quantity" => dispensed_quantity,
         "doses_wasted" => doses_wasted,
-        "batch_number" => doses_wasted,
+        "batch_number" => batch_number,
         "drug_legacy_name" => stock_item.drug&.name,
         "type" => "stock",
         "stock_id" => stock_item.id,
