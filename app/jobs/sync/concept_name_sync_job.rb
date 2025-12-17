@@ -32,7 +32,7 @@ module Sync
     end
     
     def generate_document_id(concept_name)
-      "concept_name_#{concept_name.concept_name_id}"
+      concept_name.uuid
     end
   end
 end
