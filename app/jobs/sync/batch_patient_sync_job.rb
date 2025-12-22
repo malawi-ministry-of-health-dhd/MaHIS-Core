@@ -1,3 +1,4 @@
+# app/jobs/sync/batch_patient_sync_job.rb
 module Sync
   class BatchPatientSyncJob
     include Sidekiq::Job
@@ -9,24 +10,28 @@ module Sync
       else
         Rails.logger.info("Starting batch patient sync for ALL locations")
       end
-      since_date = CouchdbPatientService.get_latest_encounter_date_changed
+      
+      since_date ||= CouchdbPatientService.get_latest_encounter_date_changed
+      
       # Get unique patient IDs that need syncing
       patient_ids = get_patient_ids_to_sync(location_id, since_date)
       
       total_count = patient_ids.count
       Rails.logger.info("Found #{total_count} unique patients to sync")
 
-      # Process in batches to avoid memory issues
+      return if total_count.zero?
+
+      # Process in batches and bulk enqueue jobs
       counter = 0
       patient_ids.each_slice(100) do |batch_ids|
-        batch_ids.each do |patient_id|
-          # Queue individual sync jobs
-          PatientRecordSyncJob.perform_async(
-            patient_id,
-            { 'location_id' => location_id }
-          )
-          counter += 1
-        end
+        # Bulk enqueue jobs for this batch (much faster than individual perform_async calls)
+        Sidekiq::Client.push_bulk(
+          'class' => PatientRecordSyncJob,
+          'queue' => 'patient_sync',
+          'args' => batch_ids.map { |id| [id, { 'location_id' => location_id }] }
+        )
+        
+        counter += batch_ids.size
         
         # Log progress periodically
         Rails.logger.info("Queued #{counter}/#{total_count} patient sync jobs") if counter % 1000 == 0
@@ -39,24 +44,19 @@ module Sync
     private
 
     def get_patient_ids_to_sync(location_id, since_date)
-      # Build base query for patient IDs
-      query = Patient.joins(:encounters)
-                    .select('patients.patient_id')
-                    .distinct
-
+      
+      query = Encounter.select(:patient_id).distinct
+      
       # Add location filter if provided
-      if location_id.present?
-        query = query.where(encounters: { location_id: location_id })
-      end
-
+      query = query.where(location_id: location_id) if location_id.present?
+      
       # Add date filter if provided
       if since_date.present?
         parsed_date = Time.zone.parse(since_date.to_s)
         query = query.where('encounter.date_created >= ?', parsed_date)
       end
-
-      # Return array of patient IDs to avoid issues with complex joined queries
-      query.pluck(:patient_id).uniq
+      
+      query.pluck(:patient_id)
     end
   end
 end
