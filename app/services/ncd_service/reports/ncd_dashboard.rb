@@ -37,15 +37,30 @@ module NcdService
         }
       end
 
+     
+      def get_patient(location_id = "LL040996")
+        sql = <<-SQL
+          SELECT DISTINCT e.patient_id
+          FROM (
+            SELECT patient_id, location_id,
+                  ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY encounter_datetime DESC) as rn
+            FROM encounter WHERE voided = 0
+          ) e
+          INNER JOIN patient_program pp 
+            ON e.patient_id = pp.patient_id 
+            AND pp.program_id = 32 
+            AND pp.voided = 0
+          WHERE e.rn = 1 AND e.location_id = ?
+        SQL
+        
+        Encounter.connection.select_values(ActiveRecord::Base.sanitize_sql([sql, location_id]))
+      end
+
+
       private
 
       def fetch_registrations
-        registration_types = ['PATIENT REGISTRATION', 'REGISTRATION']
-        base_query
-          .where(
-            encounter_type: { name: registration_types }
-          )
-          .distinct
+        base_query.distinct
       end
 
       def fetch_diagnosis
@@ -71,7 +86,7 @@ module NcdService
       end
 
       def total_client_registered
-        @registrations.count(:person_id)
+       get_patient.count()
       end
 
       def total_male_registered
@@ -89,7 +104,6 @@ module NcdService
         base_patients = Patient.joins(encounters: [:program, :type])
                               .where(program: { program_id: 32 })
                               .where(encounters: { location_id: @location_id })
-                              .where(encounter_type: { name: ['PATIENT REGISTRATION', 'REGISTRATION'] })
                               .distinct
 
         all_patients = base_patients.pluck(:patient_id)
