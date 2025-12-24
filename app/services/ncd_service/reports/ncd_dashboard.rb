@@ -222,15 +222,15 @@ module NcdService
           start_date = end_date.beginning_of_quarter
           quarter_label = format_quarter_label(start_date)
           
-          # Get patients from base cohort who had ANY encounter in this quarter
-          # This matches the frontend logic which checks if patient.encounter_datetime falls in quarter
-          patients_in_quarter = Encounter.where(patient_id: @patient_ids)
-                                        .where(voided: 0)
-                                        .where(
-                                          encounter_datetime: start_date.beginning_of_day..end_date.end_of_day
-                                        )
-                                        .distinct
-                                        .pluck(:patient_id)
+          # Get patients from base cohort who had ANY observation in this quarter
+          # Using obs_datetime to match the diagnosis logic
+          patients_in_quarter = Observation.where(person_id: @patient_ids)
+                                          .where('obs.voided = 0')
+                                          .where('obs.obs_datetime BETWEEN ? AND ?', 
+                                                 start_date.beginning_of_day, 
+                                                 end_date.end_of_day)
+                                          .distinct
+                                          .pluck(:person_id)
 
           quarters[quarter_label] = {
             male: Person.where(person_id: patients_in_quarter, gender: 'M').count,
