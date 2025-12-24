@@ -24,15 +24,39 @@ module NcdService
           total_defaulters: count_defaulters,
           total_pending_dispensations: count_pending_dispensations,
           gender_data: {
-            categories: gender_quarterly_data.keys,
-            femaleSeries: gender_quarterly_data.values.map { |q| q[:female] || 0 },
-            maleSeries: gender_quarterly_data.values.map { |q| q[:male] || 0 }
+            categories: gender_quarterly_data[:categories],
+            series: [
+              {
+                name: 'Male',
+                data: gender_quarterly_data[:male],
+                group: 'apexcharts-axis-0'
+              },
+              {
+                name: 'Female',
+                data: gender_quarterly_data[:female],
+                group: 'apexcharts-axis-0'
+              }
+            ]
           },
           diagnosis_data: {
-            categories: diagnosis_quarterly_data.keys,
-            typeOneSeries: diagnosis_quarterly_data.values.map { |q| q[:type_one] || 0 },
-            typeTwoSeries: diagnosis_quarterly_data.values.map { |q| q[:type_two] || 0 },
-            hypertentionSeries: diagnosis_quarterly_data.values.map { |q| q[:hypertention] || 0 }
+            categories: diagnosis_quarterly_data[:categories],
+            series: [
+              {
+                name: 'Type 1 Diabetes',
+                data: diagnosis_quarterly_data[:type_one],
+                group: 'apexcharts-axis-0'
+              },
+              {
+                name: 'Type 2 Diabetes',
+                data: diagnosis_quarterly_data[:type_two],
+                group: 'apexcharts-axis-0'
+              },
+              {
+                name: 'Hypertension',
+                data: diagnosis_quarterly_data[:hypertension],
+                group: 'apexcharts-axis-0'
+              }
+            ]
           }
         }
       end
@@ -125,11 +149,9 @@ module NcdService
                  .count('orders.patient_id')
       end
 
-  
-
       # Quarterly breakdown by diagnosis for base patient cohort
       def diagnosis_quarterly_breakdown
-        return {} if @patient_ids.empty?
+        return default_quarterly_structure if @patient_ids.empty?
         
         quarters = {}
         end_date = @current_date
@@ -138,36 +160,60 @@ module NcdService
           start_date = end_date.beginning_of_quarter
           quarter_label = format_quarter_label(start_date)
           
-          # Get diagnosis observations for base patient cohort in this quarter
-          base_query = Observation.joins(encounter: :type)
-                                  .where(person_id: @patient_ids)
-                                  .where(encounter_type: { name: 'DIAGNOSIS' })
-                                  .where(location_id: @location_id)
-                                  .where(
-                                    encounter: { 
-                                      encounter_datetime: start_date.beginning_of_day..end_date.end_of_day 
-                                    }
-                                  )
+          # Initialize sets to track unique patients per diagnosis
+          type_one_patients = Set.new
+          type_two_patients = Set.new
+          hypertension_patients = Set.new
+          
+          # Get all diagnosis observations for base patient cohort
+          diagnosis_observations = Observation.joins(encounter: :type)
+                                              .where(person_id: @patient_ids)
+                                              .where(encounter_type: { name: 'DIAGNOSIS' })
+                                              .where(location_id: @location_id)
+                                              .where('obs.obs_datetime BETWEEN ? AND ?', 
+                                                     start_date.beginning_of_day, 
+                                                     end_date.end_of_day)
+                                              .where(concept_id: 6542) # Primary diagnosis concept
+                                              .select('obs.person_id, obs.value_coded, obs.obs_datetime')
+          
+          # Group by patient and get their diagnosis in this quarter
+          diagnosis_observations.group_by(&:person_id).each do |patient_id, observations|
+            # Get the last diagnosis for this patient in this quarter (based on obs_datetime)
+            last_diagnosis = observations.max_by(&:obs_datetime)
+            
+            case last_diagnosis.value_coded
+            when 6409
+              type_one_patients.add(patient_id)
+            when 6410
+              type_two_patients.add(patient_id)
+            when 8809, 903
+              hypertension_patients.add(patient_id)
+            end
+          end
 
           quarters[quarter_label] = {
-            type_one: base_query.where(obs: { value_coded: 6409 }).distinct.count(:person_id),
-            type_two: base_query.where(obs: { value_coded: 6410 }).distinct.count(:person_id),
-            hypertention: base_query.where(obs: { value_coded: [8809, 903] }).distinct.count(:person_id),
-            date_range: {
-              start: start_date.strftime('%Y-%m-%d'),
-              end: end_date.strftime('%Y-%m-%d')
-            }
+            type_one: type_one_patients.size,
+            type_two: type_two_patients.size,
+            hypertension: hypertension_patients.size
           }
           
           end_date = start_date - 1.day
         end
         
-        quarters.to_a.reverse.to_h
+        # Reverse to get chronological order and format for frontend
+        reversed_quarters = quarters.to_a.reverse.to_h
+        
+        {
+          categories: reversed_quarters.keys,
+          type_one: reversed_quarters.values.map { |q| q[:type_one] },
+          type_two: reversed_quarters.values.map { |q| q[:type_two] },
+          hypertension: reversed_quarters.values.map { |q| q[:hypertension] }
+        }
       end
 
       # Quarterly breakdown by gender for base patient cohort
       def gender_quarterly_breakdown
-        return {} if @patient_ids.empty?
+        return default_quarterly_structure if @patient_ids.empty?
         
         quarters = {}
         end_date = @current_date
@@ -176,10 +222,10 @@ module NcdService
           start_date = end_date.beginning_of_quarter
           quarter_label = format_quarter_label(start_date)
           
-          # Get patients from base cohort who had encounters in this quarter
+          # Get patients from base cohort who had ANY encounter in this quarter
+          # This matches the frontend logic which checks if patient.encounter_datetime falls in quarter
           patients_in_quarter = Encounter.where(patient_id: @patient_ids)
-                                        .where(program_id: 32)
-                                        .where(location_id: @location_id)
+                                        .where(voided: 0)
                                         .where(
                                           encounter_datetime: start_date.beginning_of_day..end_date.end_of_day
                                         )
@@ -194,7 +240,25 @@ module NcdService
           end_date = start_date - 1.day
         end
         
-        quarters.to_a.reverse.to_h
+        # Reverse to get chronological order and format for frontend
+        reversed_quarters = quarters.to_a.reverse.to_h
+        
+        {
+          categories: reversed_quarters.keys,
+          male: reversed_quarters.values.map { |q| q[:male] },
+          female: reversed_quarters.values.map { |q| q[:female] }
+        }
+      end
+
+      def default_quarterly_structure
+        {
+          categories: [],
+          male: [],
+          female: [],
+          type_one: [],
+          type_two: [],
+          hypertension: []
+        }
       end
 
       def format_quarter_label(date)
