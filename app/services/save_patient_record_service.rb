@@ -8,22 +8,11 @@ class SavePatientRecordService
   PatientIds = Struct.new(:national_id, :ichis_id, :birth_id)
 
   ENCOUNTER_TYPE_MAPPING = {
-    vitals: 'VITALS',
-    diagnosis: 'DIAGNOSIS',
-    substance_abuse: 'ASSESSMENT',
-    screening: 'SCREENING',
     lab_orders: 'LAB ORDERS',
     lab_results: 'LAB RESULTS',
-    family_medical_history: 'FAMILY MEDICAL HISTORY',
-    complications: 'COMPLICATIONS',
-    tb_reception: 'TB RECEPTION',
-    hiv_status_at_enrollment: 'HIV STATUS AT ENROLLMENT',
     medical_history: 'MEDICAL HISTORY',
     patient_registration: 'PATIENT REGISTRATION',
-    patient_outcome: 'PATIENT OUTCOME',
     treatment: 'TREATMENT',
-    notes: 'NOTES',
-    allergies: 'MEDICAL HISTORY'
   }.freeze
 
   def create_patient_record(record)
@@ -104,12 +93,9 @@ class SavePatientRecordService
       identity_manager: PatientRecordService::PatientIdentityManager.new,
       guardian_manager: PatientRecordService::GuardianManager.new,
       enrollment_manager: PatientRecordService::PatientEnrollmentManager.new,
-      clinical_data_saver: PatientRecordService::ClinicalDataSaver.new,
       lab_data_manager: PatientRecordService::LabDataManager.new,
       vaccine_manager: PatientRecordService::VaccineManager.new,
-      appointment_manager: PatientRecordService::AppointmentManager.new,
       sms_manager: PatientRecordService::SmsManager.new,
-      outcome_saver: PatientRecordService::OutcomeSaver.new,
       medication_order_saver: PatientRecordService::MedicationOrderSaver.new,
       dispensation_saver: PatientRecordService::DispensationSaver.new,
       observation_saver: PatientRecordService::ObservationSaver.new
@@ -121,24 +107,14 @@ class SavePatientRecordService
       update_person_info: managers[:identity_manager].update_person_information(patient_id, record),
       manage_guardian: managers[:guardian_manager].manage_guardian(patient_id, record),
       # enroll_program: managers[:enrollment_manager].enroll_program(patient_id, record),
-      save_birthday_data: managers[:clinical_data_saver].save_birthday_data(patient_id, record),
-      save_vitals_data: managers[:clinical_data_saver].save_vitals_data(patient_id, record),
-      save_diagnosis_data: managers[:clinical_data_saver].save_diagnosis_data(patient_id, record),
-      save_enrollment_data: managers[:clinical_data_saver].save_enrollment_data(patient_id, record),
-      save_substance_abuse_data: managers[:clinical_data_saver].save_substance_abuse_data(patient_id, record),
-      save_screening_data: managers[:clinical_data_saver].save_screening_data(patient_id, record),
       save_lab_orders_data: managers[:lab_data_manager].save_lab_orders_data(patient_id, record),
       save_lab_results_data: managers[:lab_data_manager].save_lab_results_data(patient_id, record),
       void_lab_order: managers[:lab_data_manager].void_lab_order(patient_id, record),
       save_vaccines: managers[:vaccine_manager].save_vaccines(patient_id, record),
-      save_appointments: managers[:appointment_manager].save_appointments(patient_id, record),
       send_sms: managers[:sms_manager].send_sms(patient_id, record),
       void_vaccine: managers[:vaccine_manager].void_vaccine(patient_id, record),
-      save_outcome: managers[:outcome_saver].save_outcome(patient_id, record),
       save_medication_order: managers[:medication_order_saver].save_medication_order(patient_id, record),
       create_ncd_identifier: managers[:identity_manager].create_ncd_identifier(patient_id, record),
-      save_notes_and_pharmalogical_notes: managers[:observation_saver].save_notes_and_pharmalogical_notes(patient_id, record),
-      save_allergies: managers[:observation_saver].save_allergies(patient_id, record),
       save_dispensation_data: managers[:medication_order_saver].save_dispensation_data(patient_id, record),
       save_all_observations: managers[:observation_saver].save_all_observations(patient_id, record)
     }
@@ -180,26 +156,6 @@ class SavePatientRecordService
       when :enroll_program
         patient_data[:activePrograms] = BuildPatientRecordService.fetch_active_programs(patient_id)
         
-      when :save_birthday_data
-        patient_data[:birthRegistration] = BuildPatientRecordService.build_observation_data(patient_id, 'REGISTRATION')
-        allowed_encounter_types << get_encounter_id('PATIENT REGISTRATION') 
-        
-      when :save_vitals_data
-        patient_data[:vitals] = BuildPatientRecordService.build_observation_data(patient_id, 'VITALS')
-        allowed_encounter_types << get_encounter_id('VITALS') 
-        
-      when :save_diagnosis_data
-        patient_data[:diagnosis] = BuildPatientRecordService.build_observation_data(patient_id, 'DIAGNOSIS')
-        allowed_encounter_types << get_encounter_id('DIAGNOSIS') 
-        
-      when :save_substance_abuse_data
-        patient_data[:substanceAbuse] = BuildPatientRecordService.build_observation_data(patient_id, 'ASSESSMENT')
-        allowed_encounter_types << get_encounter_id('ASSESSMENT') 
-        
-      when :save_screening_data
-        patient_data[:screening] = BuildPatientRecordService.build_screening_data(patient_id)
-        allowed_encounter_types << get_encounter_id('SCREENING')
-        
       when :save_lab_orders_data, :save_lab_results_data, :void_lab_order
         patient_data[:labOrders] = BuildPatientRecordService.build_lab_orders_data(patient_id)
         allowed_encounter_types << get_encounter_id('LAB ORDERS') 
@@ -209,27 +165,12 @@ class SavePatientRecordService
         patient_data[:vaccineAdministration] = BuildPatientRecordService.build_vaccine_administration_data(patient_id)
         patient_data[:vaccineSchedule] = BuildPatientRecordService.safe_get_vaccine_schedule(person)
         
-      when :save_appointments
-        patient_data[:appointments] = BuildPatientRecordService.build_observation_data(patient_id, 'APPOINTMENT')
-        
-      when :save_outcome
-        patient_data[:outCome] = BuildPatientRecordService.build_empty_data_structure
-        allowed_encounter_types << get_encounter_id('PATIENT OUTCOME')
-        
       when :save_medication_order, :save_dispensation_data
         patient_data[:MedicationOrder] = BuildPatientRecordService.build_medication_data(patient_id)
         allowed_encounter_types << get_encounter_id('TREATMENT') 
         
       when :create_ncd_identifier
         patient_data[:NcdID] = BuildPatientRecordService.patient_identifier(patient, 31)
-        
-      when :save_notes_and_pharmalogical_notes
-        patient_data[:notes] = BuildPatientRecordService.build_observation_data(patient_id, 'NOTES')
-        allowed_encounter_types << get_encounter_id('NOTES')
-        
-      when :save_allergies
-        patient_data[:allergies] = BuildPatientRecordService.build_observation_data(patient_id, 'MEDICAL HISTORY')
-        allowed_encounter_types << get_encounter_id('MEDICAL HISTORY')
         
       when :save_all_observations
         # Extract encounter types from observations that were marked as unsaved
