@@ -93,5 +93,3 @@ gem 'roo', '~> 2.8'
 
 #gem for object matching
 gem 'whitesimilarity'
-
-gem 'mongoid', '~> 9.0', '>= 9.0.6'

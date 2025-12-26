@@ -16,7 +16,7 @@ class NcdActivePatientService
     data_sql = build_data_query(filters, per_page, offset)
     raw_results = ActiveRecord::Base.connection.select_all(data_sql)
 
-    # Group and format results
+    # Format results
     formatted_results = format_patient_results(raw_results)
 
     {
@@ -86,30 +86,53 @@ class NcdActivePatientService
         pi.identifier,
         pit.patient_identifier_type_id,
         pit.name as identifier_type_name,
-        e.encounter_datetime,
-        e.location_id
+        pattr.person_attribute_id,
+        pattr.value as attribute_value,
+        pattr.creator as attribute_creator,
+        pattr.date_created as attribute_date_created,
+        pattr.changed_by as attribute_changed_by,
+        pattr.date_changed as attribute_date_changed,
+        pattr.voided as attribute_voided,
+        pattrtype.person_attribute_type_id,
+        pattrtype.name as attribute_type_name,
+        pattrtype.description as attribute_type_description,
+        pattrtype.format as attribute_type_format,
+        base.encounter_datetime,
+        base.location_id
       FROM (
-        SELECT patient_id, location_id, encounter_datetime,
-               ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY encounter_datetime DESC) as rn
-        FROM encounter 
-        WHERE voided = 0
-      ) e
-      INNER JOIN patient_program pp 
-        ON e.patient_id = pp.patient_id 
-        AND pp.program_id = 32 
-        AND pp.voided = 0
-      INNER JOIN patient p ON e.patient_id = p.patient_id
+        SELECT 
+          e.patient_id,
+          e.location_id,
+          e.encounter_datetime
+        FROM (
+          SELECT patient_id, location_id, encounter_datetime,
+                 ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY encounter_datetime DESC) as rn
+          FROM encounter 
+          WHERE voided = 0
+        ) e
+        INNER JOIN patient_program pp 
+          ON e.patient_id = pp.patient_id 
+          AND pp.program_id = 32 
+          AND pp.voided = 0
+        INNER JOIN patient p ON e.patient_id = p.patient_id
+        INNER JOIN person pe ON p.patient_id = pe.person_id
+        LEFT JOIN person_name pn ON pe.person_id = pn.person_id AND pn.voided = 0
+        WHERE e.rn = 1 
+          AND e.location_id = #{sanitize_number(@location_id)}
+          #{build_filter_clauses(filters)}
+        ORDER BY e.encounter_datetime DESC
+        LIMIT #{sanitize_number(limit)}
+        OFFSET #{sanitize_number(offset)}
+      ) base
+      INNER JOIN patient p ON base.patient_id = p.patient_id
       INNER JOIN person pe ON p.patient_id = pe.person_id
       LEFT JOIN person_name pn ON pe.person_id = pn.person_id AND pn.voided = 0
       LEFT JOIN person_address pa ON pe.person_id = pa.person_id AND pa.voided = 0
       LEFT JOIN patient_identifier pi ON p.patient_id = pi.patient_id AND pi.voided = 0
       LEFT JOIN patient_identifier_type pit ON pi.identifier_type = pit.patient_identifier_type_id
-      WHERE e.rn = 1 
-        AND e.location_id = #{sanitize_number(@location_id)}
-        #{build_filter_clauses(filters)}
-      ORDER BY e.encounter_datetime DESC
-      LIMIT #{sanitize_number(limit)}
-      OFFSET #{sanitize_number(offset)}
+      LEFT JOIN person_attribute pattr ON pe.person_id = pattr.person_id AND pattr.voided = 0
+      LEFT JOIN person_attribute_type pattrtype ON pattr.person_attribute_type_id = pattrtype.person_attribute_type_id
+      ORDER BY base.encounter_datetime DESC
     SQL
   end
 
@@ -140,7 +163,7 @@ class NcdActivePatientService
   end
 
   def format_patient_results(raw_results)
-    # Group by patient_id to handle multiple names, addresses, identifiers
+    # Group by patient_id to handle multiple names, addresses, identifiers, and attributes
     grouped = raw_results.group_by { |row| row['patient_id'] }
     
     grouped.map do |patient_id, rows|
@@ -150,7 +173,7 @@ class NcdActivePatientService
         patient_id: patient_id.to_s,
         encounter_datetime: first_row['encounter_datetime'],
         location_id: first_row['location_id'].to_s,
-        identifiers: extract_identifiers(rows),
+        patient_identifiers: extract_identifiers(rows),
         person: {
           person_id: first_row['person_id'],
           gender: first_row['gender'],
@@ -167,10 +190,9 @@ class NcdActivePatientService
           date_voided: first_row['date_voided'],
           void_reason: first_row['void_reason'],
           names: extract_names(rows),
-          addresses: extract_addresses(rows)
-        },
-        
-        
+          addresses: extract_addresses(rows),
+          person_attributes: extract_attributes(rows)
+        }
       }
     end
   end
@@ -215,12 +237,34 @@ class NcdActivePatientService
       {
         patient_identifier_id: row['patient_identifier_id'],
         identifier: row['identifier'],
-        identifier_type: {
+        type: {
           patient_identifier_type_id: row['patient_identifier_type_id'],
           name: row['identifier_type_name']
         }
       }
     end.compact.uniq { |i| i[:patient_identifier_id] }
+  end
+
+  def extract_attributes(rows)
+    rows.map do |row|
+      next if row['person_attribute_id'].nil?
+      
+      {
+        person_attribute_id: row['person_attribute_id'],
+        value: row['attribute_value'],
+        creator: row['attribute_creator'],
+        date_created: row['attribute_date_created'],
+        changed_by: row['attribute_changed_by'],
+        date_changed: row['attribute_date_changed'],
+        voided: row['attribute_voided'],
+        type: {
+          person_attribute_type_id: row['person_attribute_type_id'],
+          name: row['attribute_type_name'],
+          description: row['attribute_type_description'],
+          format: row['attribute_type_format']
+        }
+      }
+    end.compact.uniq { |attr| attr[:person_attribute_id] }
   end
 
   def sanitize_string(value)
