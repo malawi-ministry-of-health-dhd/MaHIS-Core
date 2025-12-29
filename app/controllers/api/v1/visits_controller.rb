@@ -10,7 +10,11 @@ module Api
 
             def create
               data = VisitsService.new.create_visit(visit_params)
-              create_couchdb_visit(data)
+
+              if couchdb_configured?
+                create_couchdb_visit(data)
+              end
+              
               render json: data
             end
 
