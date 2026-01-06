@@ -6,7 +6,7 @@ module BuildPatientRecordService
       begin
         return [] unless patient_id
 
-        encounters_query = Encounter.where(patient_id: patient_id)
+        encounters_query = Encounter.unscoped.where(patient_id: patient_id)
 
         if allowed_encounter_types.is_a?(Array) && allowed_encounter_types.any?
           encounters_query = encounters_query.where(encounter_type: allowed_encounter_types)
