@@ -98,7 +98,8 @@ class SavePatientRecordService
       sms_manager: PatientRecordService::SmsManager.new,
       medication_order_saver: PatientRecordService::MedicationOrderSaver.new,
       dispensation_saver: PatientRecordService::DispensationSaver.new,
-      observation_saver: PatientRecordService::ObservationSaver.new
+      observation_saver: PatientRecordService::ObservationSaver.new,
+      void_encounters: PatientRecordService::VoidEncounters.new
     }
   end
 
@@ -116,7 +117,8 @@ class SavePatientRecordService
       save_medication_order: managers[:medication_order_saver].save_medication_order(patient_id, record),
       create_ncd_identifier: managers[:identity_manager].create_ncd_identifier(patient_id, record),
       save_dispensation_data: managers[:medication_order_saver].save_dispensation_data(patient_id, record),
-      save_all_observations: managers[:observation_saver].save_all_observations(patient_id, record)
+      save_all_observations: managers[:observation_saver].save_all_observations(patient_id, record),
+      void_encounters: managers[:void_encounters].void_encounters(record)
     }
   end
 
@@ -171,6 +173,9 @@ class SavePatientRecordService
         
       when :create_ncd_identifier
         patient_data[:NcdID] = BuildPatientRecordService.patient_identifier(patient, 31)
+
+      when :void_encounters
+        patient_data[:void_encounters] = []
         
       when :save_all_observations
         # Extract encounter types from observations that were marked as unsaved
