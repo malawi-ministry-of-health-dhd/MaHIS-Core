@@ -175,7 +175,21 @@ class SavePatientRecordService
         patient_data[:NcdID] = BuildPatientRecordService.patient_identifier(patient, 31)
 
       when :void_encounters
+        # Extract encounter types from voided encounters to rebuild them
+        voided_encounter_ids = patient_data.dig(:void_encounters)&.map { |ve| ve[:id] }&.compact || []
+        
+        if voided_encounter_ids.any?
+          # Get encounter types for the voided encounters (use unscoped to bypass default scope)
+          voided_encounter_types = Encounter.unscoped
+                                            .where(encounter_id: voided_encounter_ids)
+                                            .pluck(:encounter_type)
+                                            .uniq
+          allowed_encounter_types.concat(voided_encounter_types)
+        end
+    
+        # Clear void_encounters after processing
         patient_data[:void_encounters] = []
+       
         
       when :save_all_observations
         # Extract encounter types from observations that were marked as unsaved

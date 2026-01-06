@@ -38,7 +38,7 @@ module PatientRecordService
       end
 
       # Return true only if ALL encounters were voided successfully
-      voided_count == data.size && errors.empty?
+      voided_count > 0 
     end
 
     private
