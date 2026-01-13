@@ -56,7 +56,7 @@ class ICD11Importer
 	end
 
   def handle_insert_icd11
-    xlsx = Roo::Excelx.new(Rails.root.join('db/data/ICD_11', 'LinearizationMiniOutput-MMS-en.xlsx'))
+    xlsx = Roo::Excelx.new(Rails.root.join('db/ICD11', 'LinearizationMiniOutput-MMS-en.xlsx'))
     rows = xlsx.sheet(0).parse
 
     headers = rows.first
