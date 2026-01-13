@@ -46,9 +46,16 @@ class ICD11Importer
 
     total_rows = sheet.last_row - 1
     processed  = 0
+    skipped    = 0
     start_time = Time.now
 
+    # Pre-load existing concept titles to avoid duplication
+    existing_titles = Set.new(
+      ConceptName.pluck(:name)
+    )
+
     puts "Starting ICD-11 import (#{total_rows} rows), batch size: #{batch_size}"
+    puts "Found #{existing_titles.size} existing concepts"
 
     batch_rows = []
 
@@ -65,6 +72,12 @@ class ICD11Importer
         leading_part = raw[dash_regex] || ''
         title        = raw.sub(dash_regex, '').strip
         next if title.blank?
+
+        # Skip if title already exists
+        if existing_titles.include?(title)
+          skipped += 1
+          next
+        end
 
         class_kind = row[2]&.to_s&.strip
         depth      = row[3].to_s.match?(int_regex) ? row[3].to_i : nil
@@ -111,7 +124,7 @@ class ICD11Importer
 
     normalize_concept_set_sort_weights
     total_time = (Time.now - start_time).round(1)
-    puts "ICD-11 import completed: #{processed} rows in #{total_time}s"
+    puts "ICD-11 import completed: #{processed} new rows, #{skipped} skipped (already exist) in #{total_time}s"
   end
 
   # -------------------------------
@@ -446,17 +459,21 @@ class ICD11Importer
   def normalize_concept_set_sort_weights
     # Group all members by concept_set
     members_by_set = ConceptSet
-                     .select(:concept_set_id, :concept_set)
+                     .select(:concept_set_id, :concept_set, :sort_weight)
                      .order(:concept_set, :concept_set_id)
                      .group_by(&:concept_set)
 
-    # Build bulk update cases
+    # Build bulk update cases - only for rows that need updating
     updates = []
     members_by_set.each do |_set_id, members|
       members.each_with_index do |member, index|
-        updates << { id: member.concept_set_id, sort_weight: index + 1 }
+        expected_weight = index + 1
+        # Only include if sort_weight differs from expected value
+        updates << { id: member.concept_set_id, sort_weight: expected_weight } if member.sort_weight != expected_weight
       end
     end
+
+    return if updates.empty? # Skip if no updates needed
 
     # Bulk update in batches
     updates.each_slice(1000) do |batch|
@@ -467,6 +484,8 @@ class ICD11Importer
         "UPDATE concept_set SET sort_weight = CASE concept_set_id #{sql_cases} END WHERE concept_set_id IN (#{ids})"
       )
     end
+
+    puts "Normalized #{updates.size} sort_weights that were out of order"
   end
 end
 
