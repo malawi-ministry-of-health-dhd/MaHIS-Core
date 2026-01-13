@@ -29,6 +29,30 @@ system(cmd)
 
 puts 'Harmonized DB Initialization Complete 🎉'
 
+
+
+
+# -----------------------------------------------------------
+# loop through db/data, get all .sql.gz and import them
+# -----------------------------------------------------------
+files = Dir.glob(Rails.root.join('db', 'data', '*.sql.gz'))
+total = files.size
+
+files.each_with_index do |file_path, idx|
+	puts "Importing file #{idx + 1}/#{total}: #{File.basename(file_path)}..."
+	cmd = "gunzip -c #{file_path} | mysql -u #{username}"
+	cmd += " -p#{password}" if password.present?
+	cmd += " #{database}"
+
+	system(cmd)
+
+	puts "Imported data from #{File.basename(file_path)}"
+end
+
+
+
+
+
 conn = ActiveRecord::Base.connection
 
 # -------------------------------------------------------------------
