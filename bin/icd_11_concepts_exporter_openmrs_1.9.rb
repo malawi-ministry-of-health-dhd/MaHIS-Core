@@ -176,32 +176,33 @@ class ICD11Importer
     parent_cache[:hierarchy_stack] ||= {}
 
     rows.each do |r|
+      # Update the hierarchy stack BEFORE skipping chapters
+      # so that blocks/categories can find their chapter parents
+      parent_cache[:hierarchy_stack][r[:sort_weight]] = r[:concept_id]
+
       next if r[:class_kind] == 'chapter'
 
       # Use sort_weight (dash count) to determine parent
       # A concept with sort_weight N is parent of concept with sort_weight N+1
-      if r[:sort_weight] > 0
-        # Find the last concept with sort_weight = r[:sort_weight] - 1
-        parent_id = parent_cache[:hierarchy_stack][r[:sort_weight] - 1]
+      next unless r[:sort_weight] > 0
 
-        if parent_id
-          concept_set_records << {
-            concept_set_id: parent_id,
-            concept_id: r[:concept_id],
-            sort_weight: 1, # Will be renormalized later
-            uuid: SecureRandom.uuid,
-            created_at: Time.current,
-            updated_at: Time.current
-          }
-        end
-      end
+      # Find the last concept with sort_weight = r[:sort_weight] - 1
+      parent_id = parent_cache[:hierarchy_stack][r[:sort_weight] - 1]
 
-      # Update the hierarchy stack for this level
-      parent_cache[:hierarchy_stack][r[:sort_weight]] = r[:concept_id]
+      next unless parent_id
+
+      concept_set_records << {
+        concept_set: parent_id,
+        concept_id: r[:concept_id],
+        sort_weight: 1, # Will be renormalized later
+        uuid: SecureRandom.uuid,
+        creator: 1,
+        date_created: Time.current
+      }
     end
 
     # --- 3️⃣ Bulk insert concept sets ---
-    ConceptSetMember.insert_all(concept_set_records) if concept_set_records.any?
+    ConceptSet.insert_all(concept_set_records) if concept_set_records.any?
   end
 
   private
@@ -389,19 +390,19 @@ class ICD11Importer
                      name: 'idx_name_tag_map_unique'
     end
 
-    unless conn.table_exists?(:concept_set_member)
-      conn.create_table :concept_set_member, primary_key: 'concept_set_member_id' do |t|
-        t.integer :concept_set_id, null: false
+    unless conn.table_exists?(:concept_set)
+      conn.create_table :concept_set, primary_key: 'concept_set_id' do |t|
+        t.integer :concept_set, null: false
         t.integer :concept_id, null: false
         t.float   :sort_weight
         t.string  :uuid, null: false
         t.timestamps
       end
 
-      conn.add_index :concept_set_member,
-                     %i[concept_set_id concept_id],
+      conn.add_index :concept_set,
+                     %i[concept_set concept_id],
                      unique: true,
-                     name: 'idx_concept_set_member_unique'
+                     name: 'idx_concept_set_unique'
     end
 
     upgrade_concept_map_table
@@ -443,17 +444,17 @@ class ICD11Importer
   end
 
   def normalize_concept_set_sort_weights
-    # Group all members by concept_set_id
-    members_by_set = ConceptSetMember
-                     .select(:concept_set_member_id, :concept_set_id)
-                     .order(:concept_set_id, :concept_set_member_id)
-                     .group_by(&:concept_set_id)
+    # Group all members by concept_set
+    members_by_set = ConceptSet
+                     .select(:concept_set_id, :concept_set)
+                     .order(:concept_set, :concept_set_id)
+                     .group_by(&:concept_set)
 
     # Build bulk update cases
     updates = []
     members_by_set.each do |_set_id, members|
       members.each_with_index do |member, index|
-        updates << { id: member.concept_set_member_id, sort_weight: index + 1 }
+        updates << { id: member.concept_set_id, sort_weight: index + 1 }
       end
     end
 
@@ -463,7 +464,7 @@ class ICD11Importer
       ids = batch.map { |u| u[:id] }.join(',')
 
       ActiveRecord::Base.connection.execute(
-        "UPDATE concept_set_member SET sort_weight = CASE concept_set_member_id #{sql_cases} END WHERE concept_set_member_id IN (#{ids})"
+        "UPDATE concept_set SET sort_weight = CASE concept_set_id #{sql_cases} END WHERE concept_set_id IN (#{ids})"
       )
     end
   end
