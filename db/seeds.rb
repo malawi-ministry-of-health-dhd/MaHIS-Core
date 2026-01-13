@@ -1,11 +1,197 @@
-db_config = YAML.load_file(Rails.root.join('config', 'database.yml'), aliases: true)[Rails.env]
+# frozen_string_literal: true
+
+require 'yaml'
+require 'digest/sha1'
+require 'securerandom'
+
+# -------------------------------------------------------------------
+# Load database configuration
+# -------------------------------------------------------------------
+
+db_config = YAML.load_file(
+  Rails.root.join('config', 'database.yml'),
+  aliases: true
+)[Rails.env]
+
 username = db_config['username']
 password = db_config['password']
 database = db_config['database']
+
+# -------------------------------------------------------------------
+# Load OpenMRS skeleton database
+# -------------------------------------------------------------------
 
 cmd = "gunzip -c db/mahis_skeleton.sql.gz | mysql -u #{username}"
 cmd += " -p#{password}" if password.present?
 cmd += " #{database}"
 
 system(cmd)
-puts 'Hamornized db Initialization Complete 🎉'
+
+puts 'Harmonized DB Initialization Complete 🎉'
+
+conn = ActiveRecord::Base.connection
+
+# -------------------------------------------------------------------
+# Disable FK checks (SAFE: fresh database bootstrap)
+# -------------------------------------------------------------------
+
+conn.execute 'SET FOREIGN_KEY_CHECKS = 0;'
+
+begin
+  # ================================================================
+  # 1. Bootstrap SYSTEM (daemon) user — user_id = 1
+  # ================================================================
+
+  system_person_uuid = SecureRandom.uuid
+
+  conn.execute <<~SQL
+    INSERT INTO person
+      (gender, creator, date_created, voided, uuid)
+    VALUES
+      ('U', 1, NOW(), 0, '#{system_person_uuid}');
+  SQL
+
+  system_person_id = conn.select_value <<~SQL
+    SELECT person_id FROM person WHERE uuid = '#{system_person_uuid}'
+  SQL
+
+  # Password: daemon
+  system_salt = 'daemon'
+  system_password_hash = Digest::SHA1.hexdigest("#{system_salt}daemon")
+
+  conn.execute <<~SQL
+    INSERT INTO users
+      (
+        user_id,
+        username,
+        password,
+        salt,
+        person_id,
+        creator,
+        date_created,
+        retired,
+        uuid
+      )
+    VALUES
+      (
+        1,
+        'daemon',
+        '#{system_password_hash}',
+        '#{system_salt}',
+        #{system_person_id},
+        1,
+        NOW(),
+        0,
+        UUID()
+      );
+  SQL
+
+  # ================================================================
+  # 2. Create ADMIN person
+  # ================================================================
+
+  admin_person_uuid = SecureRandom.uuid
+
+  conn.execute <<~SQL
+    INSERT INTO person
+      (gender, creator, date_created, voided, uuid)
+    VALUES
+      ('M', 1, NOW(), 0, '#{admin_person_uuid}');
+  SQL
+
+  admin_person_id = conn.select_value <<~SQL
+    SELECT person_id FROM person WHERE uuid = '#{admin_person_uuid}'
+  SQL
+
+  conn.execute <<~SQL
+    INSERT INTO person_name
+      (
+        person_id,
+        given_name,
+        family_name,
+        preferred,
+        creator,
+        date_created,
+        voided,
+        uuid
+      )
+    VALUES
+      (
+        #{admin_person_id},
+        'Admin',
+        'User',
+        1,
+        1,
+        NOW(),
+        0,
+        UUID()
+      );
+  SQL
+
+  # ================================================================
+  # 3. Create ADMIN user
+  # ================================================================
+
+  admin_salt = 'c788c'
+  admin_password = 'Admin123'
+  admin_password_hash = Digest::SHA1.hexdigest("#{admin_salt}#{admin_password}")
+
+  conn.execute <<~SQL
+    INSERT INTO users
+      (
+        username,
+        password,
+        salt,
+        person_id,
+        creator,
+        date_created,
+        retired,
+        uuid
+      )
+    VALUES
+      (
+        'admin',
+        '#{admin_password_hash}',
+        '#{admin_salt}',
+        #{admin_person_id},
+        1,
+        NOW(),
+        0,
+        UUID()
+      );
+  SQL
+
+  admin_user_id = conn.select_value <<~SQL
+    SELECT user_id FROM users WHERE username = 'admin'
+  SQL
+
+  # ================================================================
+  # 4. Assign SYSTEM DEVELOPER role
+  # ================================================================
+
+  conn.execute <<~SQL
+    INSERT INTO user_role (user_id, role)
+    VALUES (#{admin_user_id}, 'System Developer');
+  SQL
+
+ensure
+  # -----------------------------------------------------------------
+  # Re-enable FK checks (CRITICAL)
+  # -----------------------------------------------------------------
+  conn.execute 'SET FOREIGN_KEY_CHECKS = 1;'
+end
+
+puts <<~MSG
+  ----------------------------------------
+  OpenMRS initialization complete
+  ----------------------------------------
+  System user:
+    username: daemon
+    password: daemon
+
+  Admin user:
+    username: admin
+    password: Admin123
+    role:     System Developer
+  ----------------------------------------
+MSG

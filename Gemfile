@@ -100,3 +100,5 @@ gem 'sys-cpu'
 gem 'sys-filesystem'
 gem 'sys-memory'
 gem 'sys-proctable'
+
+gem "roda", "~> 3.100"
