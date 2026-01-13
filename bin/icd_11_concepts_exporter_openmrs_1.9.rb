@@ -81,6 +81,7 @@ class ICD11Importer
 
         batch_rows << {
           code: code,
+          title: title,
           icd_class: icd_class,
           is_set: is_set,
           depth: depth,
@@ -119,14 +120,15 @@ class ICD11Importer
   def insert_icd11_batch_bulk(rows, parent_cache)
     # --- 1️⃣ Bulk insert concepts ---
     require 'securerandom'
-    concept_records = rows.map do |_r|
+    concept_records = rows.map do |r|
       {
         uuid: SecureRandom.uuid,
         class_id: 4, # Diagnosis
         datatype_id: 4, # N/A
         creator: 1,
         date_created: Time.current,
-        date_changed: Time.current
+        date_changed: Time.current,
+        short_name: r[:icd_class]
       }
     end
 
@@ -140,36 +142,62 @@ class ICD11Importer
       r[:concept_id] = uuid_to_id[concept_records[idx][:uuid]]
     end
 
+    # Update local concept cache with newly inserted concepts
+    inserted_concepts = Concept.where(uuid: uuids).pluck(:concept_id, :short_name)
+    inserted_concepts.each do |concept_id, short_name|
+      parent_cache[:concepts_by_name] ||= {}
+      parent_cache[:concepts_by_name][short_name] ||= []
+      parent_cache[:concepts_by_name][short_name] << concept_id
+      # Sort in descending order for quick access to latest
+      parent_cache[:concepts_by_name][short_name].sort!.reverse!
+    end
+
+    # --- 1️⃣.5️⃣ Bulk create concept names ---
+    concept_name_records = []
+    rows.each do |r|
+      concept_name_records << {
+        concept_id: r[:concept_id],
+        name: r[:title],
+        locale: LOCALE,
+        locale_preferred: LOCALE_PREFERRED,
+        concept_name_type: CONCEPT_NAME_TYPE,
+        creator: 1,
+        date_created: Time.current,
+        uuid: SecureRandom.uuid
+      }
+    end
+
+    ConceptName.insert_all(concept_name_records) if concept_name_records.any?
+
     # --- 2️⃣ Prepare concept sets for bulk insert ---
     concept_set_records = []
+
+    # Initialize hierarchy stack on first batch
+    parent_cache[:hierarchy_stack] ||= {}
 
     rows.each do |r|
       next if r[:class_kind] == 'chapter'
 
-      cache_key = [r[:class_kind], r[:depth], r[:sort_weight]]
+      # Use sort_weight (dash count) to determine parent
+      # A concept with sort_weight N is parent of concept with sort_weight N+1
+      if r[:sort_weight] > 0
+        # Find the last concept with sort_weight = r[:sort_weight] - 1
+        parent_id = parent_cache[:hierarchy_stack][r[:sort_weight] - 1]
 
-      concept_set =
-        parent_cache[cache_key] ||=
-          if r[:depth] == 1 && r[:class_kind] == 'block'
-            get_last_category('Chapter', r[:concept_id])
-          elsif r[:depth] > 1 && r[:class_kind] == 'block'
-            get_last_category('Block', r[:concept_id], r[:sort_weight])
-          elsif r[:depth] == 1 && r[:class_kind] == 'category'
-            get_last_category('Block', r[:concept_id], r[:sort_weight])
-          elsif r[:depth] > 1 && r[:class_kind] == 'category'
-            get_last_category('Category', r[:concept_id], r[:sort_weight])
-          end
+        if parent_id
+          concept_set_records << {
+            concept_set_id: parent_id,
+            concept_id: r[:concept_id],
+            sort_weight: 1, # Will be renormalized later
+            uuid: SecureRandom.uuid,
+            created_at: Time.current,
+            updated_at: Time.current
+          }
+        end
+      end
 
-      next unless concept_set
-
-      concept_set_records << {
-        concept_set_id: concept_set.id,
-        concept_id: r[:concept_id],
-        sort_weight: r[:sort_weight],
-        uuid: SecureRandom.uuid,
-        created_at: Time.current,
-        updated_at: Time.current
-      }
+      # Update the hierarchy stack for this level
+      parent_cache[:hierarchy_stack][r[:sort_weight]] = r[:concept_id]
     end
 
     # --- 3️⃣ Bulk insert concept sets ---
@@ -246,6 +274,26 @@ class ICD11Importer
       return concept if concept_set&.sort_weight.to_i < sort_weight.to_i
     end
     nil
+  end
+
+  def get_last_category_from_cache(concept_class, target_concept_id, parent_cache, sort_weight = nil)
+    # Use in-memory cache instead of database queries
+    cached_concepts = parent_cache[:concepts_by_name] || {}
+    concept_ids = cached_concepts[concept_class] || []
+
+    # Track parents and their max sort_weight
+    parent_cache[:parent_sort_weights] ||= {}
+
+    # Filter out target concept and find first valid parent
+    concept_id = concept_ids.find do |cid|
+      cid != target_concept_id &&
+        (concept_class == 'Chapter' || parent_cache[:parent_sort_weights][cid].to_i < sort_weight.to_i)
+    end
+
+    # If we found a valid parent, update its sort weight tracking
+    parent_cache[:parent_sort_weights][concept_id] = sort_weight if concept_id
+
+    concept_id
   end
 
   def create_concept_map(concept, code)
@@ -395,16 +443,28 @@ class ICD11Importer
   end
 
   def normalize_concept_set_sort_weights
-    ConceptSetMember
-      .select(:concept_set_member_id, :concept_set_id)
-      .distinct
-      .find_each do |row|
-      ConceptSetMember
-        .where(concept_set_id: row.concept_set_id)
-        .order(:concept_set_member_id)
-        .each_with_index do |member, index|
-        member.update_column(:sort_weight, index + 1)
+    # Group all members by concept_set_id
+    members_by_set = ConceptSetMember
+                     .select(:concept_set_member_id, :concept_set_id)
+                     .order(:concept_set_id, :concept_set_member_id)
+                     .group_by(&:concept_set_id)
+
+    # Build bulk update cases
+    updates = []
+    members_by_set.each do |_set_id, members|
+      members.each_with_index do |member, index|
+        updates << { id: member.concept_set_member_id, sort_weight: index + 1 }
       end
+    end
+
+    # Bulk update in batches
+    updates.each_slice(1000) do |batch|
+      sql_cases = batch.map { |u| "WHEN #{u[:id]} THEN #{u[:sort_weight]}" }.join(' ')
+      ids = batch.map { |u| u[:id] }.join(',')
+
+      ActiveRecord::Base.connection.execute(
+        "UPDATE concept_set_member SET sort_weight = CASE concept_set_member_id #{sql_cases} END WHERE concept_set_member_id IN (#{ids})"
+      )
     end
   end
 end
