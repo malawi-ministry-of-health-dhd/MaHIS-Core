@@ -16,14 +16,18 @@ module Locatable
   included do
     # Check if table exists and has location_id column before setting up associations
     # This prevents errors during schema loading when tables don't exist yet
-    if ActiveRecord::Base.connection.table_exists?(table_name) && location_id_column?
+    begin
+      if ActiveRecord::Base.connection.table_exists?(table_name) && location_id_column?
 
-      belongs_to :location, foreign_key: :location_id, primary_key: :location_id, optional: true
+        belongs_to :location, foreign_key: :location_id, primary_key: :location_id, optional: true
 
-      default_scope { where(location_id: current_location_id) }
-      validates :location_id, presence: true
-      before_save :set_location_id
+        default_scope { where(location_id: current_location_id) }
+        validates :location_id, presence: true
+        before_save :set_location_id
 
+      end
+    rescue ActiveRecord::NoDatabaseError, Mysql2::Error
+      # Database doesn't exist yet, skip setup
     end
   end
 
