@@ -62,6 +62,14 @@ conn.execute 'SET FOREIGN_KEY_CHECKS = 0;'
 
 begin
   # ================================================================
+  # 0. Locations loaded from locations.sql.gz
+  # ================================================================
+  # All location data (1,930 facilities with IDs 1-1930) loaded from dump file
+  # Schema includes TINYINT(1) columns for voided/retired
+
+  puts 'Location data loaded from locations.sql.gz (1,930 facilities with IDs 1-1930).'
+
+  # ================================================================
   # 1. Bootstrap SYSTEM (daemon) user — user_id = 1
   # ================================================================
 
