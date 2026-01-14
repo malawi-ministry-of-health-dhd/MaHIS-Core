@@ -35,6 +35,7 @@ Rails.application.routes.draw do
       # Routes down here ... Best we move everything above into own modules
       resources :internal_sections, only: %i[index show create update destroy]
       resources :data_cleaning_supervisions, only: %i[index show create update destroy]
+      resources :data_verification, only: %i[index]
       resources :appointments
       resources :dispensations, only: %i[index create destroy]
       get '/check_username', to: 'users#check_username_exist'
