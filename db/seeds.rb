@@ -16,6 +16,8 @@ db_config = YAML.load_file(
 username = db_config['username']
 password = db_config['password']
 database = db_config['database']
+host     = db_config['host']
+port     = db_config['port']
 
 # -------------------------------------------------------------------
 # Load OpenMRS skeleton database
@@ -23,14 +25,13 @@ database = db_config['database']
 
 cmd = "gunzip -c db/mahis_skeleton.sql.gz | mysql -u #{username}"
 cmd += " -p#{password}" if password.present?
+cmd += " -h #{host}" if host.present?
+cmd += " -P #{port}" if port.present?
 cmd += " #{database}"
 
 system(cmd)
 
 puts 'Harmonized DB Initialization Complete 🎉'
-
-
-
 
 # -----------------------------------------------------------
 # loop through db/data, get all .sql.gz and import them
@@ -39,19 +40,17 @@ files = Dir.glob(Rails.root.join('db', 'data', '*.sql.gz'))
 total = files.size
 
 files.each_with_index do |file_path, idx|
-	puts "Importing file #{idx + 1}/#{total}: #{File.basename(file_path)}..."
-	cmd = "gunzip -c #{file_path} | mysql -u #{username}"
-	cmd += " -p#{password}" if password.present?
-	cmd += " #{database}"
+  puts "Importing file #{idx + 1}/#{total}: #{File.basename(file_path)}..."
+  cmd = "gunzip -c #{file_path} | mysql -u #{username}"
+  cmd += " -p#{password}" if password.present?
+  cmd += " -h #{host}" if host.present?
+  cmd += " -P #{port}" if port.present?
+  cmd += " #{database}"
 
-	system(cmd)
+  system(cmd)
 
-	puts "Imported data from #{File.basename(file_path)}"
+  puts "Imported data from #{File.basename(file_path)}"
 end
-
-
-
-
 
 conn = ActiveRecord::Base.connection
 
@@ -197,7 +196,6 @@ begin
     INSERT INTO user_role (user_id, role)
     VALUES (#{admin_user_id}, 'System Developer');
   SQL
-
 ensure
   # -----------------------------------------------------------------
   # Re-enable FK checks (CRITICAL)
