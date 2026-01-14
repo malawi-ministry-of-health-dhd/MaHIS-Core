@@ -3,6 +3,7 @@
 ## Requirements
 
 ### System Requirements
+
 - **Ruby**: ~> 3.2.0
 - **Rails**: ~> 7.0.6
 - **Database**: MySQL/MariaDB
@@ -11,6 +12,7 @@
 - **NPM**: For package management
 
 ### Dependencies
+
 - **Web Server**: Puma (~> 6.3)
 - **Background Jobs**: Sidekiq with Sidekiq-cron
 - **Database Driver**: mysql2 gem
