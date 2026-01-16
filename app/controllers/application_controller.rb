@@ -4,7 +4,7 @@ require 'require_params'
 require 'user_service'
 
 class ApplicationController < ActionController::API
-  before_action :check_location
+  # before_action :check_location
   before_action :authenticate
   before_action :check_client_version
   after_action  :refresh_dashboard, if: :refresh_dashboard_needed?
