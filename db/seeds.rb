@@ -90,6 +90,8 @@ begin
   system_salt = 'daemon'
   system_password_hash = Digest::SHA1.hexdigest("#{system_salt}daemon")
 
+  conn.execute('TRUNCATE TABLE users;')
+
   conn.execute <<~SQL
     INSERT INTO users
       (
@@ -101,7 +103,8 @@ begin
         creator,
         date_created,
         retired,
-        uuid
+        uuid,
+        location_id
       )
     VALUES
       (
@@ -113,7 +116,8 @@ begin
         1,
         NOW(),
         0,
-        UUID()
+        UUID(),
+        1
       );
   SQL
 
@@ -177,7 +181,8 @@ begin
         creator,
         date_created,
         retired,
-        uuid
+        uuid,
+        location_id
       )
     VALUES
       (
@@ -188,7 +193,8 @@ begin
         1,
         NOW(),
         0,
-        UUID()
+        UUID(),
+        1
       );
   SQL
 
