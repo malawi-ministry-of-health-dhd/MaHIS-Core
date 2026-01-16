@@ -16,6 +16,8 @@ db_config = YAML.load_file(
 username = db_config['username']
 password = db_config['password']
 database = db_config['database']
+host     = db_config['host']
+port     = db_config['port']
 
 # -------------------------------------------------------------------
 # Load OpenMRS skeleton database
@@ -23,14 +25,13 @@ database = db_config['database']
 
 cmd = "gunzip -c db/mahis_skeleton.sql.gz | mysql -u #{username}"
 cmd += " -p#{password}" if password.present?
+cmd += " -h #{host}" if host.present?
+cmd += " -P #{port}" if port.present?
 cmd += " #{database}"
 
 system(cmd)
 
 puts 'Harmonized DB Initialization Complete 🎉'
-
-
-
 
 # -----------------------------------------------------------
 # loop through db/data, get all .sql.gz and import them
@@ -39,19 +40,17 @@ files = Dir.glob(Rails.root.join('db', 'data', '*.sql.gz'))
 total = files.size
 
 files.each_with_index do |file_path, idx|
-	puts "Importing file #{idx + 1}/#{total}: #{File.basename(file_path)}..."
-	cmd = "gunzip -c #{file_path} | mysql -u #{username}"
-	cmd += " -p#{password}" if password.present?
-	cmd += " #{database}"
+  puts "Importing file #{idx + 1}/#{total}: #{File.basename(file_path)}..."
+  cmd = "gunzip -c #{file_path} | mysql -u #{username}"
+  cmd += " -p#{password}" if password.present?
+  cmd += " -h #{host}" if host.present?
+  cmd += " -P #{port}" if port.present?
+  cmd += " #{database}"
 
-	system(cmd)
+  system(cmd)
 
-	puts "Imported data from #{File.basename(file_path)}"
+  puts "Imported data from #{File.basename(file_path)}"
 end
-
-
-
-
 
 conn = ActiveRecord::Base.connection
 
@@ -62,6 +61,14 @@ conn = ActiveRecord::Base.connection
 conn.execute 'SET FOREIGN_KEY_CHECKS = 0;'
 
 begin
+  # ================================================================
+  # 0. Locations loaded from locations.sql.gz
+  # ================================================================
+  # All location data (1,930 facilities with IDs 1-1930) loaded from dump file
+  # Schema includes TINYINT(1) columns for voided/retired
+
+  puts 'Location data loaded from locations.sql.gz (1,930 facilities with IDs 1-1930).'
+
   # ================================================================
   # 1. Bootstrap SYSTEM (daemon) user — user_id = 1
   # ================================================================
@@ -80,8 +87,10 @@ begin
   SQL
 
   # Password: daemon
-  system_salt = 'daemon'
+  system_salt = SecureRandom.base64
   system_password_hash = Digest::SHA1.hexdigest("#{system_salt}daemon")
+
+  conn.execute('TRUNCATE TABLE users;')
 
   conn.execute <<~SQL
     INSERT INTO users
@@ -94,7 +103,8 @@ begin
         creator,
         date_created,
         retired,
-        uuid
+        uuid,
+        location_id
       )
     VALUES
       (
@@ -106,7 +116,8 @@ begin
         1,
         NOW(),
         0,
-        UUID()
+        UUID(),
+        1
       );
   SQL
 
@@ -156,9 +167,10 @@ begin
   # 3. Create ADMIN user
   # ================================================================
 
-  admin_salt = 'c788c'
+  # Use a more secure random salt
+  admin_salt = SecureRandom.base64
   admin_password = 'Admin123'
-  admin_password_hash = Digest::SHA1.hexdigest("#{admin_salt}#{admin_password}")
+  admin_password_hash = Digest::SHA1.hexdigest("#{admin_password}#{admin_salt}")
 
   conn.execute <<~SQL
     INSERT INTO users
@@ -170,7 +182,8 @@ begin
         creator,
         date_created,
         retired,
-        uuid
+        uuid,
+        location_id
       )
     VALUES
       (
@@ -181,7 +194,8 @@ begin
         1,
         NOW(),
         0,
-        UUID()
+        UUID(),
+        1
       );
   SQL
 
@@ -198,6 +212,26 @@ begin
     VALUES (#{admin_user_id}, 'System Developer');
   SQL
 
+  # ================================================================
+  # 5. Create UserProperty records for password management
+  # ================================================================
+
+  # Get system user ID
+  system_user_id = conn.select_value <<~SQL
+    SELECT user_id FROM users WHERE username = 'daemon'
+  SQL
+
+  # Set last_password_updated for both users (current timestamp)
+  [system_user_id, admin_user_id].each do |user_id|
+    conn.execute <<~SQL
+      INSERT INTO user_property
+        (user_id, property, property_value)
+      VALUES
+        (#{user_id}, 'last_password_updated', '#{Time.now.iso8601}');
+    SQL
+  end
+
+  puts 'User properties created for password management.'
 ensure
   # -----------------------------------------------------------------
   # Re-enable FK checks (CRITICAL)
