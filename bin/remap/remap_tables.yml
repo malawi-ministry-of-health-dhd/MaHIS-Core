@@ -114,3 +114,31 @@ user_roles:
 person_attribute_types:
   person_attribute:
     - person_attribute_type_id
+
+locations:
+  location:
+    - parent_location
+
+  location_tag_map:
+    - location_id
+
+  encounter:
+    - location_id
+
+  obs:
+    - location_id
+
+  patient_program:
+    - location_id
+
+  patient_identifier:
+    - location_id
+
+  users:
+    - location_id
+
+  program_location_restriction:
+    - location_id
+
+  global_property:
+    - location_id

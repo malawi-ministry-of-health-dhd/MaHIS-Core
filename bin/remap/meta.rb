@@ -60,7 +60,8 @@ def get_id_field(entity, section)
     'patient_identifier_types' => 'patient_identifier_type_id',
     'relationship_types' => 'relationship_type_id',
     'user_roles' => 'role',
-    'person_attribute_types' => 'person_attribute_type_id'
+    'person_attribute_types' => 'person_attribute_type_id',
+    'locations' => 'location_id'
   }
   
   id_field_map[section] || "#{section.singularize}_id"
