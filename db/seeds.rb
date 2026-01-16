@@ -167,9 +167,10 @@ begin
   # 3. Create ADMIN user
   # ================================================================
 
-  admin_salt = 'c788c'
+  # Use a more secure random salt
+  admin_salt = SecureRandom.base64(8)
   admin_password = 'Admin123'
-  admin_password_hash = Digest::SHA1.hexdigest("#{admin_salt}#{admin_password}")
+  admin_password_hash = Digest::SHA1.hexdigest("#{admin_password}#{admin_salt}")
 
   conn.execute <<~SQL
     INSERT INTO users
@@ -210,6 +211,27 @@ begin
     INSERT INTO user_role (user_id, role)
     VALUES (#{admin_user_id}, 'System Developer');
   SQL
+
+  # ================================================================
+  # 5. Create UserProperty records for password management
+  # ================================================================
+
+  # Get system user ID
+  system_user_id = conn.select_value <<~SQL
+    SELECT user_id FROM users WHERE username = 'daemon'
+  SQL
+
+  # Set last_password_updated for both users (current timestamp)
+  [system_user_id, admin_user_id].each do |user_id|
+    conn.execute <<~SQL
+      INSERT INTO user_property
+        (user_id, property, property_value)
+      VALUES
+        (#{user_id}, 'last_password_updated', '#{Time.now.iso8601}');
+    SQL
+  end
+
+  puts 'User properties created for password management.'
 ensure
   # -----------------------------------------------------------------
   # Re-enable FK checks (CRITICAL)
