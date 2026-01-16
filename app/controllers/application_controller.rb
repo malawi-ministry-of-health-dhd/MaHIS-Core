@@ -4,7 +4,7 @@ require 'require_params'
 require 'user_service'
 
 class ApplicationController < ActionController::API
-  before_action :check_location
+  # before_action :check_location
   before_action :authenticate
   after_action  :refresh_dashboard, if: :refresh_dashboard_needed?
   after_action  :refresh_client_details, if: :refresh_client_details_needed?
@@ -43,13 +43,13 @@ class ApplicationController < ActionController::API
   end
 
   def check_location
-    # location_id = GlobalProperty.unscoped.where(property: CURRENT_LOCATION_PROPERTY).first.property_value
-    # unless location_id
-    #   render json: { errors: ['Current location not set'] }, status: :service_unavailable
-    #   return false
-    # end
-    #
-    # Location.current = Location.find(location_id)
+    location_id = GlobalProperty.unscoped.where(property: CURRENT_LOCATION_PROPERTY).first.property_value
+    unless location_id
+      render json: { errors: ['Current location not set'] }, status: :service_unavailable
+      return false
+    end
+
+    Location.current = Location.find(location_id)
     true
   end
 
