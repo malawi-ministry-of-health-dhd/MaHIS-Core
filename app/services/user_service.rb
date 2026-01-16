@@ -239,8 +239,7 @@ module UserService
   end
 
   def self.authenticate(token)
-    user = User.where(authentication_token: token).first
-
+    user = User.unscoped.where(authentication_token: token).first
     return nil if user.nil? || user.token_expiry_time < Time.now
 
     user
