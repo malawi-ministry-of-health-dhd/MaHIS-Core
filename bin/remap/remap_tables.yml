@@ -1,0 +1,23 @@
+---
+# Remap configuration for transactional data
+
+concepts:
+  obs:
+    - concept_id
+    - value_coded
+
+  orders:
+    - concept_id
+
+  program_workflow:
+    - concept_id
+
+  program_workflow_state:
+    - concept_id
+
+  lims_acknowledgement_statuses:
+    - test
+
+  concept_set:
+    - concept_id
+    - concept_set
