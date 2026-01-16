@@ -16,14 +16,24 @@ db_config = YAML.load_file(
 username = db_config['username']
 password = db_config['password']
 database = db_config['database']
+host = db_config['host'] || 'localhost'
+port = db_config['port'] || 3306
+
+# Helper function to build mysql command with all connection parameters
+def build_mysql_cmd(username, password, database, host, port)
+  cmd = "gunzip -c db/mahis_skeleton.sql.gz | mysql -u #{username}"
+  cmd += " -p#{password}" if password.present?
+  cmd += " -h #{host}" if host.present?
+  cmd += " -P #{port}" if port.present?
+  cmd += " #{database}"
+  cmd
+end
 
 # -------------------------------------------------------------------
 # Load OpenMRS skeleton database
 # -------------------------------------------------------------------
 
-cmd = "gunzip -c db/mahis_skeleton.sql.gz | mysql -u #{username}"
-cmd += " -p#{password}" if password.present?
-cmd += " #{database}"
+cmd = build_mysql_cmd(username, password, database, host, port)
 
 system(cmd)
 
@@ -42,6 +52,8 @@ files.each_with_index do |file_path, idx|
 	puts "Importing file #{idx + 1}/#{total}: #{File.basename(file_path)}..."
 	cmd = "gunzip -c #{file_path} | mysql -u #{username}"
 	cmd += " -p#{password}" if password.present?
+	cmd += " -h #{host}" if host.present?
+	cmd += " -P #{port}" if port.present?
 	cmd += " #{database}"
 
 	system(cmd)
