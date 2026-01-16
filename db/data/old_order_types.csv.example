@@ -1,0 +1,5 @@
+order_type_id,name
+1,Drug order
+2,Test order
+3,Referral order
+4,Procedure order

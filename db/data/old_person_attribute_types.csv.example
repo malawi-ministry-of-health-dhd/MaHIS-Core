@@ -1,0 +1,17 @@
+person_attribute_type_id,name
+1,Occupation
+2,Cell phone number
+3,Office phone number
+4,Race
+5,Birthplace
+6,Citizenship
+7,Mother's name
+8,Civil status
+9,Health district
+10,Home phone number
+11,Landmark
+12,Nearest Health Facility
+13,guardian present
+14,Other phone number
+15,Secondary contact name
+16,Secondary contact phone number

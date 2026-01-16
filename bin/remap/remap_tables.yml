@@ -21,3 +21,96 @@ concepts:
   concept_set:
     - concept_id
     - concept_set
+
+  program_orders_map:
+    - concept_id
+
+  regimen:
+    - concept_id
+
+  concept_answer:
+    - answer_drug
+
+drugs:
+  drug_order:
+    - drug_inventory_id
+
+  obs:
+    - value_drug
+
+  regimen_drug_order:
+    - drug_inventory_id
+
+encounter_types:
+  encounter:
+    - encounter_type
+
+  program_encounter_type_map:
+    - encounter_type_id
+
+  pharmacy_obs:
+    - pharmacy_encounter_type
+
+programs:
+  patient_program:
+    - program_id
+
+  encounter:
+    - program_id
+
+  program_workflow:
+    - program_id
+
+  regimen:
+    - program_id
+
+  program_location_restriction:
+    - program_id
+
+  program_orders_map:
+    - program_id
+
+  program_patient_identifier_type_map:
+    - program_id
+
+  program_relationship_type_map:
+    - program_id
+
+  program_encounter_type_map:
+    - program_id
+
+  user_programs:
+    - program_id
+
+order_types:
+  orders:
+    - order_type_id
+
+patient_identifier_types:
+  patient_identifier:
+    - identifier_type
+
+  program_patient_identifier_type_map:
+    - patient_identifier_type_id
+
+relationship_types:
+  relationship:
+    - relationship
+
+  program_relationship_type_map:
+    - relationship_type_id
+
+user_roles:
+  user_role:
+    - role
+
+  role_privilege:
+    - role
+
+  role_role:
+    - parent_role
+    - child_role
+
+person_attribute_types:
+  person_attribute:
+    - person_attribute_type_id

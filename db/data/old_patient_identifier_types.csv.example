@@ -1,0 +1,9 @@
+patient_identifier_type_id,name
+1,National ID
+2,ARV Number
+3,Filing Number
+4,Archived filing number
+5,Pre ART Number
+6,TB Number
+7,ANC Number
+8,NCD Number

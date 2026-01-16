@@ -1,0 +1,8 @@
+relationship_type_id,a_is_to_b,b_is_to_a
+1,Guardian,Dependent
+2,Parent,Child
+3,Sibling,Sibling
+4,Spouse,Spouse
+5,Partner,Partner
+6,Doctor,Patient
+7,Treatment Supporter,Patient
