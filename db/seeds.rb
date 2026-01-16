@@ -87,7 +87,7 @@ begin
   SQL
 
   # Password: daemon
-  system_salt = 'daemon'
+  system_salt = SecureRandom.base64
   system_password_hash = Digest::SHA1.hexdigest("#{system_salt}daemon")
 
   conn.execute('TRUNCATE TABLE users;')
@@ -168,7 +168,7 @@ begin
   # ================================================================
 
   # Use a more secure random salt
-  admin_salt = SecureRandom.base64(8)
+  admin_salt = SecureRandom.base64
   admin_password = 'Admin123'
   admin_password_hash = Digest::SHA1.hexdigest("#{admin_password}#{admin_salt}")
 
