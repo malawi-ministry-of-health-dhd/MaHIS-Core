@@ -163,7 +163,7 @@ class PatientService
   def find_los_visit_dates(patient, date = nil)
     rows = ActiveRecord::Base.connection.select_all <<~SQL
       SELECT DISTINCT DATE(o.start_date) AS visit_date FROM orders o
-      INNER JOIN order_type ot ON ot.order_type_id = o.order_type_id AND ot.name = 'Lab' AND ot.retired = 0
+      INNER JOIN order_type ot ON ot.order_type_id = o.order_type_id AND ot.name = 'Laboratory order' AND ot.retired = 0
       WHERE o.patient_id = #{patient} AND o.voided = 0 AND o.start_date < DATE('#{date}') + INTERVAL 1 DAY
       ORDER BY visit_date DESC
     SQL
