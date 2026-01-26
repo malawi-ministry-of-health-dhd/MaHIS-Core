@@ -58,10 +58,7 @@ class Location < RetirableRecord
   end
 
   def self.current_health_center
-    property = GlobalProperty.unscoped.find_by_property('current_health_center_id')
-    raise 'Global property current_health_center not set' unless property
-
-    Location.find(property.property_value)
+    Location.current
   end
 
   def district
