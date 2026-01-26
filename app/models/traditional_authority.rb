@@ -14,4 +14,14 @@ class TraditionalAuthority < RetirableRecord
         .select(:location_id)
     )
   end
+
+  def as_json(options = {})
+    super(options.merge(
+      methods: %i[traditional_authority_id]
+    ))
+  end
+
+  def traditional_authority_id
+    self.location_id
+  end
 end

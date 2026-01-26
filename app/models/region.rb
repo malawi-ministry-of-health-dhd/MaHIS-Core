@@ -13,4 +13,14 @@ class Region < RetirableRecord
         .select(:location_id)
     )
   end
+
+  def as_json(options = {})
+    super(options.merge(
+      methods: %i[region_id]
+    ))
+  end
+
+  def region_id
+    self.location_id
+  end
 end

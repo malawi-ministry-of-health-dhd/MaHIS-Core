@@ -11,11 +11,21 @@ class District < RetirableRecord
     LocationTag.where(name: 'District').select(:location_tag_id)
   end
 
+  def as_json(options = {})
+    super(options.merge(
+      methods: %i[district_id]
+    ))
+  end
+
   default_scope do
     where(
       location_id: LocationTagMap
         .where(location_tag_id: district_tag)
         .select(:location_id)
     )
+  end
+
+  def district_id
+    self.location_id
   end
 end

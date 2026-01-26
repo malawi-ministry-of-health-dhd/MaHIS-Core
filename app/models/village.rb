@@ -14,4 +14,14 @@ class Village < RetirableRecord
         .select(:location_id)
     )
   end
+
+  def as_json(options = {})
+    super(options.merge(
+      methods: %i[village_id]
+    ))
+  end
+
+  def village_id
+    self.location_id
+  end
 end
