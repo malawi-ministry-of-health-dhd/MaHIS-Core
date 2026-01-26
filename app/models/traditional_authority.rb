@@ -1,9 +1,17 @@
 # frozen_string_literal: true
 
 class TraditionalAuthority < RetirableRecord
-  self.table_name  = 'traditional_authority'
-  self.primary_key = 'traditional_authority_id'
+  self.table_name = :location
+  self.primary_key = :location_id
 
-  belongs_to :district
-  has_many :villages, foreign_key: :traditional_authority_id
+  has_one :location_tag_map, foreign_key: :location_id
+  belongs_to :district, foreign_key: :parent_location
+
+  default_scope do
+    where(
+      location_id: LocationTagMap
+        .where(location_tag_id: LocationTag.where(name: 'Traditional Authority').select(:location_tag_id))
+        .select(:location_id)
+    )
+  end
 end
