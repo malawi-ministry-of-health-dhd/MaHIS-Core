@@ -42,7 +42,7 @@ module ArtService
             birthdate: demographics.birthdate,
             gender: demographics.gender,
             weight: demographics.weight,
-            drugs: regimen_drugs,
+            drugs: regimen_drugs(prescribed_drugs),
             regimen:
           }
         end
@@ -71,7 +71,7 @@ module ArtService
         '14A' => [984, 982],
         '14P' => [736, 982],
         '15A' => [969, 982],
-        '15P' => [1044, 982],
+        '15P' => [1339],
         '16A' => [969, 954],
         '16P' => [1044, 1043],
         '17A' => [969, 11],
@@ -116,8 +116,8 @@ module ArtService
 
       # Returns all orders in treatment encounter of HIV program
       def treatment_orders
-        o = Order.joins(:encounter)
-             .where(start_date: start_date..end_date)
+        Order.joins(:encounter)
+             .where(start_date: (start_date - 1.day)..(end_date + 1.day))
              .merge(treatment_encounter)
              .or(Order.joins(:encounter)
                       .where(auto_expire_date: start_date..end_date)
@@ -175,8 +175,8 @@ module ArtService
                    &.value_numeric
       end
 
-      def regimen_drugs
-        @regimen_drugs ||= Drug.where(drug_id: [736, 982]).map do |drug|
+      def regimen_drugs(drug_ids = [736, 982])
+        @regimen_drugs ||= Drug.where(drug_id: drug_ids).map do |drug|
           drug.alternative_names.first&.short_name || drug.name
         end.join(' + ')
       end

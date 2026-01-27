@@ -740,7 +740,8 @@ module ArtService
           INNER JOIN arv_drug ad ON ad.drug_id = do.drug_inventory_id
           LEFT JOIN temp_register_start_date trsd ON trsd.patient_id  = o.patient_id
           WHERE o.start_date < DATE('#{end_date}') + INTERVAL 1 DAY AND o.start_date >= COALESCE(trsd.start_date, DATE('1901-01-01'))
-          and o.order_type_id = 1 ANd o.voided  = 0
+            AND o.order_type_id = 1 -- Drug order 
+            AND o.voided  = 0
           GROUP BY o.patient_id;
         SQL
       end
@@ -1156,7 +1157,7 @@ module ArtService
             INNER JOIN orders
               ON orders.order_id = obs.order_id
               AND orders.concept_id IN (SELECT `concept_set`.`concept_id` FROM `concept_set` WHERE `concept_set`.`concept_set` = 1085)
-              AND orders.order_type_id = 1
+              AND orders.order_type_id = 1 -- Drug order
               AND orders.voided = 0
             INNER JOIN temp_patient_outcomes
               ON temp_patient_outcomes.patient_id = obs.person_id

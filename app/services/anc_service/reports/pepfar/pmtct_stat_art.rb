@@ -35,7 +35,7 @@ module AncService
           @end_date = end_date + 1.day
         end
 
-        def find_report(**_kwargs)
+        def find_report
           report = init_report_structure
           response = []
           process_clients(pmtct_clients, report).each do |key, value|

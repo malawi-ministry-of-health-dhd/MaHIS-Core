@@ -10,13 +10,13 @@ module RadiologyService
     end
 
     def examinations
-      order_type = OrderType.find_by_name('Radiology')
+      order_type = OrderType.find_by_name('Radiology Order')
       @patient.orders.where('order_type_id = ? AND start_date BETWEEN ? AND ?', order_type,
                             @date.to_date.strftime('%Y-%m-%d 00:00:00'), @date.to_date.strftime('%Y-%m-%d 23:59:59'))
     end
 
     def all_examinations
-      order_type = OrderType.find_by_name('Radiology')
+      order_type = OrderType.find_by_name('Radiology Order')
       results = @patient.orders.where('order_type_id = ?', order_type).order('start_date DESC')
 
       results.map do |order|
@@ -37,7 +37,7 @@ module RadiologyService
     # rubocop:disable Metrics/AbcSize
     # rubocop:disable Metrics/MethodLength
     def self.create_order(params)
-      order_type = OrderType.find_by_name('Radiology')
+      order_type = OrderType.find_by_name('Radiology Order')
       encounter = Encounter.find(params[:encounter_id])
       Order.create!(order_type:,
                     concept_id: params[:concept_id] || unknown_concept_id,

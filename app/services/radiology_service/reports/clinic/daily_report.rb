@@ -38,7 +38,7 @@ module RadiologyService
         end
 
         def radiology_order_type_id
-          @radiology_order_type_id ||= OrderType.find_by_name('Radiology').order_type_id
+          @radiology_order_type_id ||= OrderType.find_by_name('Radiology Order').order_type_id
         end
       end
     end
