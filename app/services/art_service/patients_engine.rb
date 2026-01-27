@@ -104,7 +104,10 @@ module ArtService
     end
 
     def current_arv_code
-      global_property("site_prefix")&.property_value
+      current_arv_code = global_property("site_prefix")&.property_value
+      raise "Global property `site_prefix` not set" unless current_arv_code
+      
+      current_arv_code
     end
 
     def arv_identifier_type

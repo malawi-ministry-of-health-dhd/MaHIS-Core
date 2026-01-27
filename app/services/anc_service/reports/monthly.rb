@@ -26,7 +26,7 @@ module AncService
         @cohort_builder.build(@cohort_struct, @start_date, @end_date)
       end
 
-      def find_report(**_kwargs)
+      def find_report
         build_report
         # Report.where(type: @type, name: @name,
         #             start_date: @start_date, end_date: @end_date)\

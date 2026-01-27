@@ -53,7 +53,7 @@ module LaboratoryService
             #{dsd_query(dsd: @dsd, model: 'orders') if @dsd}
             INNER JOIN order_type
               ON order_type.order_type_id = orders.order_type_id
-              AND order_type.name = 'Lab'
+              AND order_type.name = 'Laboratory order'
               AND order_type.retired = 0
             INNER JOIN concept_name AS specimen
               ON specimen.concept_id = orders.concept_id
@@ -109,7 +109,7 @@ module LaboratoryService
             SELECT `orders`.`order_id` FROM `orders` INNER JOIN `order_type`
             ON `order_type`.`retired` = 0 AND `order_type`.`order_type_id` = `orders`.`order_type_id`
             WHERE `orders`.`voided` = 0 AND `order_type`.`retired` = 0
-            AND `order_type`.`name` = 'Lab'
+            AND `order_type`.`name` = 'Laboratory Order'
             AND (DATE(start_date) BETWEEN #{start_date} AND #{end_date})
             #{additional_sql} ORDER BY `orders`.`start_date` DESC;
           SQL

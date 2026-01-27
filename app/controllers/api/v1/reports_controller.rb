@@ -46,6 +46,13 @@ module Api
         render json: stats
       end
 
+      def nid_utilization_report
+        start_date, end_date = params.require %i[start_date end_date]
+        stats = service.nid_utilization_report(start_date:, end_date:)
+
+        render json: stats
+      end
+
       def malaria_report
         start_date, end_date = params.require %i[start_date end_date]
         stats = service.malaria_report(start_date, end_date)
