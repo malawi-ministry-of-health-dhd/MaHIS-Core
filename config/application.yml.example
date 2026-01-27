@@ -9,8 +9,8 @@ lims_protocol: http
 lims_port: 3010
 lims_username: 'emr_api'
 lims_password: 'emr_api_password'
-lims_default_user: 'admin'
-lims_default_password: 'knock_knock'
+lims_default_user: 'lims_default_username'
+lims_default_password: 'lims_default_password'
 lims_partner: 'BHT'
 lims_app_name: 'bht_emr_api'
 # Uncomment the following to enable realtime updates through the LIMS socket
