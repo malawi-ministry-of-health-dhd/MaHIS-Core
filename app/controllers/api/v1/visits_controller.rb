@@ -76,6 +76,23 @@ module Api
             def close
               render json: VisitsService.new.close_visit(visit_params)
             end
+
+            def generate_visit_number
+
+              # close off hanging visits for screening screen
+              VisitService.daily_visits(category: 'screening')
+
+              taken_visit_ids = Observation.joins(encounter: :visit).where(
+                visit: { date_stopped: nil },
+                obs: { concept_id: ConceptName.find_by_name('AETC Visit number').concept_id }
+              ).select('obs.value_numeric')&.map(&:value_numeric)
+
+              visit_number = 1
+
+              visit_number += 1 while taken_visit_ids.include?(visit_number) && not_assigned_today?(visit_number)
+
+              render json: { next_visit_number: visit_number }, status: :ok
+            end
               
 
             private
