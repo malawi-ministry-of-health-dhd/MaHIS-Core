@@ -24,4 +24,24 @@ class Village < RetirableRecord
   def village_id
     self.location_id
   end
+
+  def traditional_authority_id=(traditional_authority_id)
+    self.parent_location = traditional_authority_id
+  end
+
+  def traditional_authority_id
+    self.parent_location
+  end
+
+  def traditional_authority=(traditional_authority)
+    self.parent_location = traditional_authority.location_id
+  end
+
+  def traditional_authority
+    TraditionalAuthority.find_by(location_id: parent_location)
+  end
+
+  def village_id=(village_id)
+    self.location_id = village_id
+  end
 end
