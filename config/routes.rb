@@ -82,6 +82,8 @@ Rails.application.routes.draw do
       resources :roles
       resources :printer_configurations, only: [:index, :create, :destroy, :update]
 
+      # Generate visit number 
+      get '/generate_visit_number' => 'visits#generate_visit_number'
       # Patients
       get '/get_patient_record' => 'patients#get_patient_record'
       get '/get_patient_list' => 'patients#get_patient_list'
