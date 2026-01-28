@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 require 'yaml'
-require 'digest/sha1'
-require 'securerandom'
 
 # -------------------------------------------------------------------
 # Load database configuration
@@ -19,22 +17,9 @@ database = db_config['database']
 host     = db_config['host']
 port     = db_config['port']
 
-# -------------------------------------------------------------------
-# Load OpenMRS skeleton database
-# -------------------------------------------------------------------
-
-cmd = "gunzip -c db/mahis_skeleton.sql.gz | mysql -u #{username}"
-cmd += " -p#{password}" if password.present?
-cmd += " -h #{host}" if host.present?
-cmd += " -P #{port}" if port.present?
-cmd += " #{database}"
-
-system(cmd)
-
-puts 'Harmonized DB Initialization Complete 🎉'
-
 # -----------------------------------------------------------
 # Loop through db/data, get all .sql.gz and import them
+# (Skeleton is loaded via migration, not in seeds)
 # -----------------------------------------------------------
 files = Dir.glob(Rails.root.join('db', 'data', '*.sql.gz'))
 total = files.size
