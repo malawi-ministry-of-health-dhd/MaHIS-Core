@@ -49,32 +49,21 @@ class LabMetadataCreator
       next if name.blank?
 
       begin
-        # Check if concept already exists
-        existing_concept = Concept.find_by(concept_id: concept_id)
+        # Check if concept already exists by name (using binary comparison)
+        existing_concept_name = ConceptName.where('BINARY name = ?', name)
+                                           .where(locale: locale || 'en')
+                                           .first
 
-        if existing_concept
-          puts "  ✓ Concept already exists: #{name} (ID: #{concept_id})"
+        if existing_concept_name
+          existing_concept = Concept.find(existing_concept_name.concept_id)
+          puts "  ✓ Concept already exists: #{name} (ID: #{existing_concept.concept_id})"
           @updated_concepts << name
-
-          # Update concept name if needed using binary comparison
-          concept_name = ConceptName.where(concept_id: concept_id, locale: locale || 'en')
-                                    .where('BINARY name = ?', name).first
-          if concept_name.nil?
-            # Check if there's a name with different collation
-            existing_name = ConceptName.find_by(concept_id: concept_id, locale: locale || 'en')
-            if existing_name && existing_name.name != name
-              existing_name.update!(name: name)
-              puts '    → Updated concept name'
-            elsif !existing_name
-              create_concept_name(concept_id, name, locale, concept_name_type)
-            end
-          end
         else
           # Create new concept
           concept = create_concept(concept_id, datatype, concept_class)
           create_concept_name(concept.concept_id, name, locale, concept_name_type)
           @created_concepts << name
-          puts "  ✓ Created concept: #{name} (ID: #{concept_id})"
+          puts "  ✓ Created concept: #{name} (ID: #{concept.concept_id})"
         end
       rescue StandardError => e
         error_msg = "Failed to create concept '#{name}': #{e.message}"
@@ -93,7 +82,7 @@ class LabMetadataCreator
 
     concept = Concept.new
     concept.concept_id = concept_id if concept_id.present?
-    concept.datatype = datatype
+    concept.datatype_id = datatype.concept_datatype_id
     concept.concept_class = concept_class
     concept.retired = false
     concept.is_set = (%w[ConvSet LabSet].include?(class_name))
@@ -234,7 +223,7 @@ end
 
 # Main execution
 if __FILE__ == $PROGRAM_NAME || caller.any? { |c| c.include?('rails/commands/runner') }
-  file_path = ARGV[0] || Rails.root.join('Lims concepts.xlsx').to_s
+  file_path = ARGV[0] || Rails.root.join('db', 'data', 'csv', 'Lims concepts.xlsx').to_s
 
   unless File.exist?(file_path)
     puts "❌ Error: File not found: #{file_path}"
