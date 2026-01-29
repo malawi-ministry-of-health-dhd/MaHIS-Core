@@ -177,10 +177,6 @@ module NeonatalService
         .select('patient.*, person.birthdate, MAX(encounter.encounter_datetime) as last_encounter_time')
         .joins(:patient)
         .joins('INNER JOIN person ON person.person_id = patient.patient_id')
-        .joins("INNER JOIN patient_program ON patient_program.patient_id = patient.patient_id
-                AND patient_program.program_id = #{@program.program_id}
-                AND patient_program.voided = 0
-                AND (patient_program.date_completed IS NULL OR patient_program.date_completed >= '#{date.to_date}')")
         .where('encounter.program_id = ?', @program.program_id)
         .where('encounter.voided = ?', 0)
         .where('DATE(encounter.encounter_datetime) BETWEEN ? AND ?', start_date, end_date)
