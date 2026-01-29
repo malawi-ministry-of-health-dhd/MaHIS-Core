@@ -74,7 +74,7 @@ module Api
             end   
             
             def close
-              render json: VisitsService.new.close_visit(visit_params)
+              render json: VisitService.new.close_visit(visit_params)
             end
 
             def generate_visit_number

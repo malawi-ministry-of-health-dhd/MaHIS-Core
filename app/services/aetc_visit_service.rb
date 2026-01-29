@@ -1,103 +1,17 @@
+# rubocop:disable Metrics/MethodLength, Metrics/ClassLength, Metrics/AbcSize
 # frozen_string_literal: true
 
-class VisitService
-  include CouchdbSync
-  include EncounterCreation
+# Visit Service
+class VisitService < OpenmrsService
+  # visit_Number, patient first_name and patient_last_name, encounter_datetime patient_uuid
 
-  def create_update_visit(visit_params)
-    sync_status = visit_params[:sync_status]
+  # TODO: MOVE THIS AETC LOGIC TO ITS OWN SERVICE/ENGINE
 
-    if sync_status == 'update'
-      close_visit(visit_params)
-    elsif sync_status == 'create'
-      create_visit(visit_params)
-    end
-  end
-
-  def create_visit(visit_params)
-    patientId = visit_params[:patientId]
-    identifier = visit_params[:identifier]
-    stage_params = visit_params[:stage]
-
-    if identifier.present?
-      patient_identifier = PatientIdentifier.where(identifier: identifier)
-      patientId = patient_identifier[0][:patient_id]
-    end
-
-    create_encounter(patientId, 1,
-      {
-        program_id: visit_params[:programId],
-        location_id: visit_params[:location_id],
-        encounter_datetime: visit_params[:date_started],
-        provider_id: visit_params[:provider_id]
-      })
-
-    checkVisit = Visit.where(patient_id: patientId, date_stopped: nil).first
-    if checkVisit.present?
-      visit_data = checkVisit.attributes
-      visit_data[:identifier] = identifier if identifier.present?
-      visit_data[:fullName] = Patient.find_by(patient_id: patientId).try(:name)
-      return visit_data
-    end
-
-    allowed_fields = visit_params.slice(:patient_id, :date_started, :date_stopped, :location_id, :visit_type_id, :indication_concept_id)
-    visit = Visit.new(allowed_fields)
-    visit.patient_id = patientId
-    visit.creator = User.current.user_id
-    visit.date_created = Time.now
-    visit.voided = false
-
-    if visit.save
-      visit_data = visit.attributes
-      visit_data[:fullName] = Patient.find_by(patient_id: patientId).try(:name)
-      visit_data[:identifier] = identifier if identifier.present?
-
-      if stage_params.present?
-        data = StagesService.new.create_stage(stage_params)
-        sync_to_couchdb(data, "stages", data[:identifier])
-      end
-      visit_data
-    end
-  end
-
-  def close_visit(visit_params)
-    identifier = visit_params[:identifier]
-    patientId = nil
-
-    if identifier.present?
-      patient_identifier = PatientIdentifier.where(identifier: identifier)
-      patientId = patient_identifier[0][:patient_id]
-    end
-
-    visit = Visit.find_by(patient_id: patientId, date_stopped: nil)
-
-    unless visit
-      return
-    end
-
-    existing_stage = Stage.find_by(
-      patient_id: visit.patient_id,
-      location_id: visit_params[:location_id] || User.current.location_id
-    )
-    existing_stage.destroy if existing_stage
-
-    closed_datetime = visit_params[:date_stopped]
-
-    visit.update(date_stopped: closed_datetime, changed_by: User.current.user_id, date_changed: Time.now)
-
-    visit_data = visit.attributes
-    visit_data[:identifier] = identifier if identifier.present?
-    visit_data[:fullName] = Patient.find_by(patient_id: visit.patient_id).try(:name)
-    visit_data
-  end
-
-  # ============================================================================
-  # AETC Visit Service Methods
-  # ============================================================================
+  # AETC encounters
 
   INITIAL_REGISTRATION = 'Initial Registration'
   SCREENING = 'Screening'
-  SOCIAL_HISTORY = 'SOCIAL HISTORY'
+  SOCICAL_HISTORY = 'SOCIAL HISTORY'
   FINANCING = 'Financing'
   REFERRAL = 'REFERRAL'
   VITALS = 'Vitals'
@@ -109,13 +23,17 @@ class VisitService
   TRIAGE_RESULT = 'Triage Result Observation'
   DISPOSITION = 'Disposition'
 
+  # AETC grouped encounters
+
   INITIAL_REGISTRATION_ENCOUNTERS = [INITIAL_REGISTRATION].freeze
   SCREENING_ENCOUNTERS = [SCREENING].freeze
-  REGISTRATION_ENCOUNTERS = [SOCIAL_HISTORY, FINANCING, REFERRAL].freeze
+  REGISTRATION_ENCOUNTERS = [SOCICAL_HISTORY, FINANCING, REFERRAL].freeze
   TRIAGE_ENCOUNTERS = [VITALS, PRESENTING_COMPLAINTS,
                        AIRWAY_BREATHING, BLOOD_CIRCULATION, DISABILITY_ASSESSMENT,
                        PERSISTENT_PAIN].freeze
   DISPOSITION_ENCOUNTERS = [DISPOSITION].freeze
+
+  # AETC screens to filter patients by group encounters completed
 
   SCREENS = {
     'screening' => INITIAL_REGISTRATION_ENCOUNTERS,
@@ -145,11 +63,12 @@ class VisitService
                              search: false)
     encounter_type_condition = encounter_type_uuid ? "encounter_type.uuid = '#{encounter_type_uuid}'" : '1=1'
 
+    # Subquery to get the latest obs for each encounter
     people = Patient.joins(encounters: [:type, :visit, { person: [:names] }])
                     .joins('INNER JOIN users ON users.user_id = encounter.creator')
                     .joins('INNER JOIN person_name le ON le.person_id = users.person_id')
                     .joins('INNER JOIN obs ON obs.encounter_id = encounter.encounter_id')
-                    .where(visit: { visit_type_id: VisitType.where(name: 'AETC').pluck(:visit_type_id) })
+                    .where(visit: { visit_type: VisitType.where(name: 'AETC') })
                     .select(
                       'visit.patient_id',
                       'visit.uuid AS visit_uuid',
@@ -157,15 +76,17 @@ class VisitService
                       'MIN(encounter.encounter_datetime) AS arrival_time',
                       'MAX(encounter.encounter_datetime) AS latest_encounter_time',
                       "MAX(CASE WHEN #{encounter_type_condition} THEN CONCAT(le.given_name, ' ', le.family_name) ELSE NULL END) AS last_encounter_creator",
-                      'obs.value_text AS disposition_type'
+                      'obs.value_text disposition_type',
                     )
                     .group('visit.patient_id', 'visit.uuid', 'disposition_type')
 
+    # Apply filters efficiently
     people = people.where(visit: { date_created: 3.months.ago..Time.now }) unless search.present?
     people = people.where('visit.date_started BETWEEN ? AND ?', date.beginning_of_day, date.end_of_day) if date.present?
     people = people.where('visit.date_stopped IS NULL') if open_visits_only
     people = people.where('visit.patient_id IN (?)', patient_ids) if patient_ids.present?
-    people = people.where(obs: { obs_group_id: nil })
+    people = people.where(obs: { obs_group_id: nil }) # Ensure we only get patients with a disposition type
+    # Ensure uniqueness by applying DISTINCT
     people.distinct
   end
 
@@ -191,23 +112,22 @@ class VisitService
                         WHERE obs.concept_id = #{concept_id}
                       ) last_obs ON last_obs.person_id = visit.patient_id
                     SQL
-                    .where(visit: { visit_type_id: VisitType.where(name: 'AETC').pluck(:visit_type_id) })
+                    .where(visit: { visit_type: VisitType.where(name: 'AETC') })
                     .select(
                       'visit.patient_id',
-                      'visit.uuid AS visit_uuid',
-                      'GROUP_CONCAT(DISTINCT encounter_type.name) AS encounters_done',
-                      'MIN(encounter.encounter_datetime) AS arrival_time',
-                      'MAX(encounter.encounter_datetime) AS latest_encounter_time',
-                      "MAX(CASE WHEN #{encounter_type_condition} THEN CONCAT(le.given_name, ' ', le.family_name) ELSE NULL END) AS last_encounter_creator",
+                      'visit.uuid visit_uuid',
+                      'GROUP_CONCAT(DISTINCT encounter_type.name) encounters_done',
+                      'MIN(encounter.encounter_datetime) arrival_time',
+                      'MAX(encounter.encounter_datetime) latest_encounter_time',
+                      "MAX(CASE WHEN #{encounter_type_condition} THEN CONCAT(le.given_name, ' ', le.family_name) ELSE NULL END) last_encounter_creator",
                       "CASE WHEN last_obs.value_text = 'red' THEN 1
-                            WHEN last_obs.value_text = 'yellow' THEN 2 ELSE 3 END AS triage_result_priority"
+                            WHEN last_obs.value_text = 'yellow' THEN 2 ELSE 3 END triage_result_priority"
                     )
                     .group('visit.patient_id', 'visit.uuid', 'last_obs.value_text')
-
     people = people.where(visit: { date_created: 3.months.ago..Time.now }) unless search.present? || date.present?
     people = people.where(visit: { date_started: date.beginning_of_day..date.end_of_day }) if date.present?
     people = people.where(visit: { date_stopped: nil }) if open_visits_only
-    people = people.where(visit: { patient_id: patient_ids }) if patient_ids.present? || search.present?
+    people = people.where(visit: { patient_id: patient_ids }) if !patient_ids.empty? || search.present?
     people
   end
 
@@ -215,18 +135,24 @@ class VisitService
     date = date.to_date if date.present?
     ActiveRecord::Base.transaction do
       if category == 'disposition'
-        patients = disposition_query(date:, open_visits_only:, patient_ids:, search:)
+        patients = disposition_query(date:, open_visits_only:, patient_ids:,
+                                     search:)
       else
-        patients = visits_query(date:, open_visits_only:, patient_ids:, search:)
+        patients = visits_query(date:, open_visits_only:, patient_ids:,
+                                search:)
         patients = patients.order(Arel.sql('triage_result_priority, arrival_time')) if category == 'assessment'
       end
+
+      #  debugger
+      # patients = visits_query(date: date, open_visits_only: open_visits_only, patient_ids: patient_ids, search: search)
+      # patients = patients.where(encounter_type: { name: SCREENS[category] }) if category.present?
 
       patients.select { |patient| eligible?(category, patient) }
     end
   end
 
   def self.eligible?(category, patient)
-    raise 'Invalid category' unless SCREENS.keys.include?(category)
+    raise 'Invalid category' unless SCREENS.keys.include? category
 
     %i[on_screening_for_less_than_24hrs? all_previous_encounters_completed?
        next_encounters_incomplete?].all? do |method|
@@ -234,19 +160,21 @@ class VisitService
     end
   end
 
+  # rubocop:disable Metrics/CyclomaticComplexity
+  # rubocop:disable Metrics/PerceivedComplexity
   def self.find_visits(params)
     patient_ids = patient_ids(params)
     search = params.include?('search') && params[:search].present?
-
-    if params.include?('category')
-      return daily_visits(date: params[:date], category: params[:category], patient_ids:, search:)
+    if params.include? 'category'
+      return daily_visits(date: params[:date], category: params[:category], patient_ids:,
+                          search:)
     end
 
     visits = Visit.all
     params.each do |key, value|
-      next unless Visit.column_names.include?(key)
+      next unless Visit.column_names.include? key
 
-      if key.include?('date')
+      if key.include? 'date'
         visits = visits.where("DATE(visit.#{key}) = ?", value&.to_date) unless value.nil? || value.empty?
         visits = visits.where(key => nil) if value.nil? || value.empty?
         next
@@ -257,7 +185,7 @@ class VisitService
   end
 
   def self.eligible_for_assessment(params)
-    return false unless params.include?('category')
+    return false unless params.include? 'category'
 
     patient_ids = patient_ids(params)
     return false if patient_ids.empty?
@@ -271,51 +199,108 @@ class VisitService
     if params.include?('search') && params[:search].present?
       patient_ids = Patient.where(patient_id: Person.where(person_id: PersonNameService.search(params[:search].strip).pluck(:person_id)).ids).ids
     end
-    if params.include?('patient_id')
+    if params.include? 'patient_id'
       patient_ids = Patient.where(patient_id: params[:patient_id]).ids
       patient_ids = Patient.joins(:person).where({ person: { uuid: params[:patient_id] } }).ids if patient_ids.empty?
     end
     patient_ids
   end
 
+  def self.create_visit(params)
+    person = Person.find_by_uuid(params[:patient])
+    visit_type = VisitType.find_by_uuid(params[:visit_type])
+    location = Location.find_by_uuid(params[:location]) if params[:location]
+    indication = ConceptName.find_by_name(params[:indication]) if params[:indication]
+    stop_datetime = params[:stop_datetime]
+    start_datetime = params[:start_datetime]
+    encounters = params.delete(:encounters)
+
+    visit = Visit.new
+    visit.patient = person.patient
+    visit.visit_type = visit_type
+    visit.location = location
+    visit.indication_concept_id = indication&.concept_id
+    visit.date_stopped = stop_datetime if stop_datetime.present?
+    visit.date_started = start_datetime
+    visit.save!
+
+    encounters&.each do |encounter|
+      visit.add_encounter(Encounter.find_by_uuid(encounter))
+    end
+
+    # TODO: Generate visit number
+    visit
+  end
+
+  def self.update_visit(visit, params)
+    visit_type = VisitType.find_by_uuid(params[:visit_type])
+    location = Location.find_by_uuid(params[:location]) if params[:location]
+    indication = ConceptName.find_by_name(params[:indication]) if params[:indication]
+    stop_datetime = params[:stop_datetime]
+    start_datetime = params[:start_datetime]
+    encounters = params.delete(:encounters)
+
+    visit.visit_type = visit_type if visit_type.present?
+    visit.location = location if location.present?
+    visit.indication_concept_id = indication&.concept_id if indication.present?
+    visit.date_stopped = stop_datetime if stop_datetime.present?
+    visit.date_started = start_datetime if start_datetime.present?
+    visit.save!
+
+    encounters&.each do |encounter|
+      visit.add_encounter(Encounter.find_by_uuid(encounter))
+    end
+
+    visit
+  end
+
   private_class_method def self.all_previous_encounters_completed?(category, patient)
-    SCREENS[category].all? { |encounter| patient.encounters_done.downcase.split(',').include?(encounter.downcase) }
+    SCREENS[category].all? { |encounter| patient.encounters_done.downcase.split(',').include? encounter.downcase }
   end
 
   private_class_method def self.next_encounters_incomplete?(category, patient)
-    return true if next_encounters(category).nil?
+    unless next_encounters(category).nil?
+      return !(next_encounters(category).all? do |encounter|
+        patient.encounters_done.downcase.split(',').include? encounter.downcase
+      end)
+    end
 
-    !(next_encounters(category).all? do |encounter|
-      patient.encounters_done.downcase.split(',').include?(encounter.downcase)
-    end)
+    true
   end
 
   private_class_method def self.on_screening_for_less_than_24hrs?(category, patient)
+    # Skip this check if the category is not 'screening'
+    # or if the patient has no open visit
+    # if the patient's open visit was started more than 24 hours ago, close it
+    # and return true
+    # otherwise, return true
+
     return true unless category == 'screening'
 
     patient_open_visit = Visit.find_by(patient_id: patient.id, date_stopped: nil)
     initial_reg_encounter = Encounter.find_by(
-      patient_id: patient.id,
+      patient:,
       encounter_type: EncounterType.find_by_name(INITIAL_REGISTRATION)
     )
 
     return true unless initial_reg_encounter
+
     return true if patient_open_visit.nil?
 
     if patient_open_visit.date_started < 48.hours.ago
-      reason = Obs.new
-      reason.person_id = patient.patient_id
-      reason.concept_id = ConceptName.find_by_name('Reason for exiting care')&.concept_id
+
+      # create an observation for the reason the patient is being exited
+
+      reason = Observation.new
+      reason.person = patient.person
+      reason.concept_id = ConceptName.find_by_name('Reason for exiting care').concept_id
       reason.value_text = 'Screening took more than 24 hours'
-      reason.encounter_id = initial_reg_encounter.encounter_id
+      reason.encounter = initial_reg_encounter
       reason.obs_datetime = Time.now
-      reason.creator = User.current.user_id
-      reason.date_created = Time.now
       reason.save!
 
+      # close the visit
       patient_open_visit.date_stopped = Time.now
-      patient_open_visit.changed_by = User.current.user_id
-      patient_open_visit.date_changed = Time.now
       patient_open_visit.save!
 
       return false
@@ -335,4 +320,10 @@ class VisitService
 
     keys[index + 1]
   end
+  # rubocop:enable Metrics/MethodLength
+  # rubocop:enable Metrics/AbcSize
+  # rubocop:enable Metrics/CyclomaticComplexity
+  # rubocop:enable Metrics/PerceivedComplexity
 end
+
+# rubocop:enable Metrics/ClassLength
