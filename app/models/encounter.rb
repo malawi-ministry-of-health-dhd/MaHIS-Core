@@ -17,6 +17,7 @@ class Encounter < VoidableRecord
 
   belongs_to :type, class_name: 'EncounterType', foreign_key: :encounter_type
   belongs_to :provider, class_name: 'Person', foreign_key: :provider_id
+  belongs_to :person, foreign_key: :patient_id, primary_key: :person_id
   belongs_to :patient
   belongs_to :location, optional: true
   belongs_to :program
