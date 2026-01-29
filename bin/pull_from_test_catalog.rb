@@ -140,6 +140,7 @@ def nlims_code_attribute_type
   attribute_type.max_occurs = 1
   attribute_type.creator = User.current.user_id
   attribute_type.date_created = Time.now
+  attribute_type.uuid = SecureRandom.uuid
   attribute_type.save!
 
   attribute_type.reload
@@ -157,16 +158,58 @@ def nlims_test_catalogue_name
   attribute_type.max_occurs = 1
   attribute_type.creator = User.current.user_id
   attribute_type.date_created = Time.now
+  attribute_type.uuid = SecureRandom.uuid
   attribute_type.save!
 
   attribute_type.reload
 end
 
+def find_or_create_concept_by_name(name, concept_class_name, concept_datatype_name)
+  concept = ConceptName.unscoped.find_by(name: name, voided: 0)&.concept
+  return concept if concept
+
+  concept = Concept.create!(
+    short_name: name,
+    creator: User.current.user_id,
+    date_created: Time.now,
+    changed_by: User.current.user_id,
+    date_changed: Time.now,
+    concept_class: ConceptClass.find_by_name(concept_class_name),
+    concept_datatype: ConceptDatatype.find_by_name(concept_datatype_name),
+    uuid: SecureRandom.uuid
+  )
+
+  ConceptName.create!(
+    concept: concept,
+    name: name,
+    locale_preferred: 1,
+    locale: 'en',
+    concept_name_type: 'FULLY_SPECIFIED',
+    creator: User.current.user_id,
+    date_created: Time.now,
+    uuid: SecureRandom.uuid
+  )
+
+  concept
+end
+
+def specimen_type_concept
+  @specimen_type_concept ||= find_or_create_concept_by_name('Specimen Type', 'Misc', 'N/A')
+end
+
+def test_type_concept
+  @test_type_concept ||= find_or_create_concept_by_name('Test type', 'Test', 'N/A')
+end
+
+def lab_test_result_indicator_concept
+  @lab_test_result_indicator_concept ||= find_or_create_concept_by_name('Lab test result indicator', 'Test', 'N/A')
+end
+
 def save_specimen_types(nlims_code, test_name, specimen_types)
   concept ||= find_concept(test_name, nlims_code)
 
-  specimen_type_id = ConceptName.find_by_name('Specimen Type').concept_id
-  test_type_id     = ConceptName.find_by_name('Test type').concept_id
+  specimen_type_id = specimen_type_concept.concept_id
+  test_type_id     = test_type_concept.concept_id
 
   # Add test type to "Test type" concept set if not already there
   set_exists = ConceptSet.find_by(concept_set: test_type_id, concept_id: concept.concept_id).present?
@@ -179,6 +222,17 @@ def save_specimen_types(nlims_code, test_name, specimen_types)
       date_created: Time.now
     )
   end
+
+  # delete old specimen types
+  ConceptSet.where(
+    concept_id: ConceptSet.where(
+      concept_set: specimen_type_id
+    ).pluck(:concept_id), 
+    concept_set: ConceptSet.where(
+      concept_set: test_type_id, 
+      concept_id: concept.concept_id
+    ).select(:concept_id)
+  ).each(&:delete)
 
   # Link specimens to test types: Specimen → Test Type
   specimen_types.each do |specimen_type|
@@ -201,8 +255,8 @@ def save_specimen_types(nlims_code, test_name, specimen_types)
 
     # Link: Specimen contains Test Type
     scs = ConceptSet.find_or_initialize_by(
-      concept_set: specimen_concept.concept_id,
-      concept_id: concept.concept_id
+      concept_set: concept.concept_id,
+      concept_id: specimen_concept.concept_id
     )
 
     next unless scs.new_record?
@@ -216,8 +270,8 @@ end
 def save_measures(nlims_code, test_name, measures)
   concept ||= find_concept(test_name, nlims_code)
 
-  lab_test_result_indicator_id = ConceptName.find_by_name('Lab test result indicator').concept_id
-  test_type_id = ConceptName.find_by_name('Test type').concept_id
+  lab_test_result_indicator_id = lab_test_result_indicator_concept.concept_id
+  test_type_id = test_type_concept.concept_id
 
   set_exists = ConceptSet.find_by(concept_set: test_type_id, concept_id: concept.concept_id).present?
 
@@ -238,8 +292,11 @@ def save_measures(nlims_code, test_name, measures)
 
     # remove all measures for this test type
     sets = ConceptSet.where(
-      concept_set: concept.concept_id,
-      concept_id: measure_concept_id
+      concept_set: measure_concept_id, 
+        concept_id: ConceptSet.where(
+          concept_set: test_type_id, 
+          concept_id: concept.concept_id
+        ).select(:concept_id)
     ).pluck(:concept_set_id)
 
     ConceptSet.where(concept_set_id: sets).delete_all
