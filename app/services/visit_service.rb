@@ -15,15 +15,16 @@ class VisitService
   end
 
   def create_visit(visit_params)
-    patientId = visit_params[:patientId]
+    patientId = visit_params[:patientId] || visit_params[:patient_id]
     identifier = visit_params[:identifier]
     stage_params = visit_params[:stage]
 
     if identifier.present?
-      patient_identifier = PatientIdentifier.where(identifier: identifier)
-      patientId = patient_identifier[0][:patient_id]
+      patient_identifier = PatientIdentifier.where(identifier: identifier).first
+      patientId = patient_identifier[:patient_id] if patient_identifier.present?
     end
 
+    # Create encounter first
     create_encounter(patientId, 1,
       {
         program_id: visit_params[:programId],
@@ -32,6 +33,7 @@ class VisitService
         provider_id: visit_params[:provider_id]
       })
 
+    # Check if visit already exists
     checkVisit = Visit.where(patient_id: patientId, date_stopped: nil).first
     if checkVisit.present?
       visit_data = checkVisit.attributes
@@ -40,12 +42,25 @@ class VisitService
       return visit_data
     end
 
-    allowed_fields = visit_params.slice(:patient_id, :date_started, :date_stopped, :location_id, :visit_type_id, :indication_concept_id)
-    visit = Visit.new(allowed_fields)
+    # Build visit with all required fields
+    visit = Visit.new
+    
+    # Required fields
     visit.patient_id = patientId
-    visit.creator = User.current.user_id
-    visit.date_created = Time.now
+    visit.visit_type_id = visit_params[:visit_type_id] || VisitType.find_by(name: 'AETC')&.visit_type_id
+    visit.date_started = visit_params[:date_started] || Time.now
+    visit.creator = visit_params[:creator] || User.current&.user_id || 1
     visit.voided = false
+    
+    # Optional fields
+    visit.date_stopped = visit_params[:date_stopped] if visit_params[:date_stopped].present?
+    visit.date_stopped = visit_params[:closedDateTime] if visit_params[:closedDateTime].present?
+    visit.location_id = visit_params[:location_id] if visit_params[:location_id].present?
+    visit.indication_concept_id = visit_params[:indication_concept_id] if visit_params[:indication_concept_id].present?
+    
+    # Custom columns for AETC
+    visit.patientId = visit_params[:patientId] if visit_params[:patientId].present?
+    visit.programId = visit_params[:programId] if visit_params[:programId].present?
 
     if visit.save
       visit_data = visit.attributes
@@ -54,9 +69,13 @@ class VisitService
 
       if stage_params.present?
         data = StagesService.new.create_stage(stage_params)
-        sync_to_couchdb(data, "stages", data[:identifier])
+        sync_to_couchdb(data, "stages", data[:identifier]) if data.present?
       end
+      
       visit_data
+    else
+      Rails.logger.error("Visit creation failed: #{visit.errors.full_messages.join(', ')}")
+      raise "Visit creation failed: #{visit.errors.full_messages.join(', ')}"
     end
   end
 
@@ -65,25 +84,32 @@ class VisitService
     patientId = nil
 
     if identifier.present?
-      patient_identifier = PatientIdentifier.where(identifier: identifier)
-      patientId = patient_identifier[0][:patient_id]
+      patient_identifier = PatientIdentifier.where(identifier: identifier).first
+      patientId = patient_identifier[:patient_id] if patient_identifier.present?
     end
+
+    patientId = visit_params[:patientId] || visit_params[:patient_id] unless patientId.present?
 
     visit = Visit.find_by(patient_id: patientId, date_stopped: nil)
 
-    unless visit
+    unless visit.present?
+      Rails.logger.warn("No open visit found for patient #{patientId}")
       return
     end
 
     existing_stage = Stage.find_by(
       patient_id: visit.patient_id,
-      location_id: visit_params[:location_id] || User.current.location_id
+      location_id: visit_params[:location_id] || (User.current&.location_id)
     )
-    existing_stage.destroy if existing_stage
+    existing_stage.destroy if existing_stage.present?
 
-    closed_datetime = visit_params[:date_stopped]
+    closed_datetime = visit_params[:date_stopped] || visit_params[:closedDateTime] || Time.now
 
-    visit.update(date_stopped: closed_datetime, changed_by: User.current.user_id, date_changed: Time.now)
+    visit.update(
+      date_stopped: closed_datetime,
+      changed_by: User.current&.user_id || 1,
+      date_changed: Time.now
+    )
 
     visit_data = visit.attributes
     visit_data[:identifier] = identifier if identifier.present?
