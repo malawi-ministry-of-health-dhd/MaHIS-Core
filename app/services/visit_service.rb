@@ -64,7 +64,7 @@ class VisitService < OpenmrsService
     encounter_type_condition = encounter_type_uuid ? "encounter_type.uuid = '#{encounter_type_uuid}'" : '1=1'
 
     # Subquery to get the latest obs for each encounter
-    people = Patient.joins(encounters: [:encounter_type, :visit, { person: [:names] }])
+    people = Patient.joins(encounters: [:type, :visit, { person: [:names] }])
                     .joins('INNER JOIN users ON users.user_id = encounter.creator')
                     .joins('INNER JOIN person_name le ON le.person_id = users.person_id')
                     .joins('INNER JOIN obs ON obs.encounter_id = encounter.encounter_id')
@@ -96,7 +96,7 @@ class VisitService < OpenmrsService
 
     encounter_type_condition = encounter_type_uuid ? "encounter_type.uuid = '#{encounter_type_uuid}'" : '1=1'
 
-    people = Patient.joins(encounters: [:encounter_type, :visit, { person: [:names] }])
+    people = Patient.joins(encounters: [:type, :visit, { person: [:names] }])
                     .joins('INNER JOIN users ON users.user_id = encounter.creator')
                     .joins('INNER JOIN person_name le ON le.person_id = users.person_id')
                     .joins(<<-SQL)

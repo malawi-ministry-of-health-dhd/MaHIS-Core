@@ -13,6 +13,7 @@ class Encounter < VoidableRecord
   has_many :observations, dependent: :destroy
   has_many :drug_orders, through: :orders, foreign_key: 'order_id'
   has_many :orders, dependent: :destroy
+  has_many :visit
 
   belongs_to :type, class_name: 'EncounterType', foreign_key: :encounter_type
   belongs_to :provider, class_name: 'Person', foreign_key: :provider_id

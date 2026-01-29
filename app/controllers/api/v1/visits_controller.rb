@@ -9,7 +9,7 @@ module Api
             end
 
             def create
-              data = VisitsService.new.create_visit(visit_params)
+              data = VisitService.new.create_visit(visit_params)
               create_couchdb_visit(data)
               render json: data
             end

@@ -6,4 +6,5 @@ class Visit < ApplicationRecord
 
     has_many :stages
     belongs_to :location, optional: true   
+    belongs_to :encounter
 end   
