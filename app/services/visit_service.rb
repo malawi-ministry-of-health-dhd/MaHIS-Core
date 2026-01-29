@@ -49,6 +49,7 @@ class VisitService
     visit.patient_id = patientId
     visit.visit_type_id = visit_params[:visit_type_id] || VisitType.find_by(name: 'AETC')&.visit_type_id
     visit.date_started = visit_params[:date_started] || Time.now
+    visit.date_created = visit_params[:date_created] || Time.now
     visit.creator = visit_params[:creator] || User.current&.user_id || 1
     visit.voided = false
     
@@ -57,10 +58,6 @@ class VisitService
     visit.date_stopped = visit_params[:closedDateTime] if visit_params[:closedDateTime].present?
     visit.location_id = visit_params[:location_id] if visit_params[:location_id].present?
     visit.indication_concept_id = visit_params[:indication_concept_id] if visit_params[:indication_concept_id].present?
-    
-    # Custom columns for AETC
-    visit.patientId = visit_params[:patientId] if visit_params[:patientId].present?
-    visit.programId = visit_params[:programId] if visit_params[:programId].present?
 
     if visit.save
       visit_data = visit.attributes
