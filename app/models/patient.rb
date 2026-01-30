@@ -2,6 +2,7 @@
 
 class Patient < VoidableRecord
   include ModelUtils
+  include Locatable
   
   attr_accessor :npid
   after_void :void_related_models
@@ -11,8 +12,6 @@ class Patient < VoidableRecord
   
   self.table_name = 'patient'
   self.primary_key = 'patient_id'
-  
-  include Locatable
   has_one :person, foreign_key: :person_id
   has_many :patient_identifiers, foreign_key: :patient_id, dependent: :destroy
   has_many :patient_programs

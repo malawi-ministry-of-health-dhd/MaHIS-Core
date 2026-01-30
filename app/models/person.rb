@@ -8,6 +8,7 @@ class Person < VoidableRecord
   self.primary_key = 'person_id'
   
   include Locatable
+  
   has_one :patient, foreign_key: :patient_id
   has_many :names, class_name: 'PersonName', foreign_key: :person_id
   has_many :addresses, class_name: 'PersonAddress', foreign_key: :person_id

@@ -1,9 +1,10 @@
 # frozen_string_literal: true
 
 class ReportValue < RetirableRecord
+  include Locatable
+  
   self.table_name = :reporting_report_design_resource
 
-  include Locatable
 
   belongs_to :report, foreign_key: :report_design_id
 

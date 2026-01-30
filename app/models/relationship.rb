@@ -3,8 +3,9 @@
 class Relationship < VoidableRecord
   self.table_name = :relationship
   self.primary_key = :relationship_id
-
+  
   include Locatable
+
 
   belongs_to :person, class_name: 'Person', foreign_key: :person_a,
                       optional: true

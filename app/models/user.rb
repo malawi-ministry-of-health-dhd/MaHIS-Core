@@ -3,8 +3,9 @@
 class User < RetirableRecord
   self.table_name = :users
   self.primary_key = :user_id
-
+  
   include Locatable
+
 
   audited except: %i[date_changed authentication_token token_expiry_time]
 
