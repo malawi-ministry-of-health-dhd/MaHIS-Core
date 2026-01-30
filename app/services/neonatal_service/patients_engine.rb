@@ -481,8 +481,8 @@ module NeonatalService
         next false unless person
 
         # Check if has minimal demographics (created via emergency triage)
-        has_minimal_demographics = person.birthdate_estimated == 1 && person.gender == 'U'
-        next false unless has_minimal_demographics
+        # has_minimal_demographics = person.birthdate_estimated == 1 && person.gender == 'U'
+        # next false unless has_minimal_demographics
 
         # Check if patient ONLY has NEONATAL_TRIAGE encounter (no other neonatal encounters)
         # Exclude patients who also have enrollment or other encounters
