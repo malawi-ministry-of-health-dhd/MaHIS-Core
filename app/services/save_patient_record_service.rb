@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 class SavePatientRecordService
+  include CouchdbSync
   # Defines expected required fields and their keys within the record hash.
   RequiredFields = Struct.new(:program_id, :provider_id, :location_id, :encounter_datetime)
   # Defines expected ID fields and their keys within the record hash.
@@ -62,7 +63,13 @@ class SavePatientRecordService
     end
 
     # 6. Build and Save Final Patient Record
-    build_and_save_patient_record(patient_id, record, operation_results, overall_sync_status)
+    patient_record = build_and_save_patient_record(patient_id, record, operation_results, overall_sync_status)
+
+    if couchdb_configured?
+      sync_to_couchdb(patient_record, "patients_records", patient_record["ID"])
+    end
+
+    patient_record
   end
 
   private
