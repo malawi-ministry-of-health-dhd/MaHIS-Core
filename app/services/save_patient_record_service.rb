@@ -62,7 +62,9 @@ class SavePatientRecordService
     end
 
     # 6. Build and Save Final Patient Record
-    build_and_save_patient_record(patient_id, record, operation_results, overall_sync_status)
+    patient_record = build_and_save_patient_record(patient_id, record, operation_results, overall_sync_status)
+    job = Sync::PatientRecordSyncJob.new
+    job.sync_record_to_couchdb(patient_record, 'patients_records')
   end
 
   private
