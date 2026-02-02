@@ -10,6 +10,25 @@ module Sync
     def perform(batch_size = 100)
       raise NotImplementedError, "Subclasses must implement the perform method"
     end
+
+    # Generic sync individual record method
+    def sync_record_to_couchdb(record, db_name)
+      doc_data = prepare_document(record)
+      doc_id = generate_document_id(record)
+      
+      retries = 0
+      begin
+        sync_to_couchdb(doc_data, db_name, doc_id)
+      rescue RestClient::Exception, SocketError => e
+        retries += 1
+        if retries <= 2
+          sleep(0.1 * retries) # Progressive delay
+          retry
+        else
+          raise e
+        end
+      end
+    end
     
     protected
     
@@ -405,24 +424,7 @@ module Sync
       end
     end
     
-    # Generic sync individual record method
-    def sync_record_to_couchdb(record, db_name)
-      doc_data = prepare_document(record)
-      doc_id = generate_document_id(record)
-      
-      retries = 0
-      begin
-        sync_to_couchdb(doc_data, db_name, doc_id)
-      rescue RestClient::Exception, SocketError => e
-        retries += 1
-        if retries <= 2
-          sleep(0.1 * retries) # Progressive delay
-          retry
-        else
-          raise e
-        end
-      end
-    end
+
     
     private
     
