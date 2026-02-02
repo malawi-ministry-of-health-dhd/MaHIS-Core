@@ -10,26 +10,7 @@ module Sync
     def perform(batch_size = 100)
       raise NotImplementedError, "Subclasses must implement the perform method"
     end
-
-    # Generic sync individual record method
-    def sync_record_to_couchdb(record, db_name)
-      doc_data = prepare_document(record)
-      doc_id = generate_document_id(record)
       
-      retries = 0
-      begin
-        sync_to_couchdb(doc_data, db_name, doc_id)
-      rescue RestClient::Exception, SocketError => e
-        retries += 1
-        if retries <= 2
-          sleep(0.1 * retries) # Progressive delay
-          retry
-        else
-          raise e
-        end
-      end
-    end
-    
     protected
     
   # Generic sync method that handles the common sync logic for model-based records
@@ -424,7 +405,24 @@ module Sync
       end
     end
     
-
+    # Generic sync individual record method
+    def sync_record_to_couchdb(record, db_name)
+      doc_data = prepare_document(record)
+      doc_id = generate_document_id(record)
+      
+      retries = 0
+      begin
+        sync_to_couchdb(doc_data, db_name, doc_id)
+      rescue RestClient::Exception, SocketError => e
+        retries += 1
+        if retries <= 2
+          sleep(0.1 * retries) # Progressive delay
+          retry
+        else
+          raise e
+        end
+      end
+    end
     
     private
     
@@ -491,14 +489,9 @@ module Sync
     end
     
     # Final sync completion handling
-    def handle_sync_completion(processed, errors, total_count, model_name, skipped = 0)
+    def handle_sync_completion(processed, errors, total_count, model_name)
       success_count = processed - errors.length
-      
-      if skipped > 0
-        Sidekiq.logger.info "Sync completed: #{success_count} successful, #{errors.length} errors, #{skipped} skipped"
-      else
-        Sidekiq.logger.info "Sync completed: #{success_count} successful, #{errors.length} errors"
-      end
+      Sidekiq.logger.info "Sync completed: #{success_count} successful, #{errors.length} errors"
       
       if errors.any?
         Sidekiq.logger.error "Total errors: #{errors.length}"
