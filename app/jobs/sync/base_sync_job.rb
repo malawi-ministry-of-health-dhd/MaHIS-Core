@@ -10,7 +10,7 @@ module Sync
     def perform(batch_size = 100)
       raise NotImplementedError, "Subclasses must implement the perform method"
     end
-      
+    
     protected
     
   # Generic sync method that handles the common sync logic for model-based records
@@ -489,9 +489,14 @@ module Sync
     end
     
     # Final sync completion handling
-    def handle_sync_completion(processed, errors, total_count, model_name)
+    def handle_sync_completion(processed, errors, total_count, model_name, skipped = 0)
       success_count = processed - errors.length
-      Sidekiq.logger.info "Sync completed: #{success_count} successful, #{errors.length} errors"
+      
+      if skipped > 0
+        Sidekiq.logger.info "Sync completed: #{success_count} successful, #{errors.length} errors, #{skipped} skipped"
+      else
+        Sidekiq.logger.info "Sync completed: #{success_count} successful, #{errors.length} errors"
+      end
       
       if errors.any?
         Sidekiq.logger.error "Total errors: #{errors.length}"
