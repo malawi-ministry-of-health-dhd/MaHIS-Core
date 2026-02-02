@@ -7,6 +7,16 @@ require 'securerandom'
 # -------------------------------------------------------------------
 # Load database configuration
 # -------------------------------------------------------------------
+if ENV['INITIAL_SETUP']
+  puts "\e[31mWARNING: This will wipe out your database. Do you want to continue? (y/N)\e[0m"
+  response = $stdin.gets.chomp.downcase
+  response = 'n' if response.empty?
+
+  unless response == 'y'
+    puts 'Database initialization cancelled.'
+    exit 0
+  end
+end
 
 db_config = YAML.load_file(
   Rails.root.join('config', 'database.yml'),
@@ -22,16 +32,17 @@ port     = db_config['port']
 # -------------------------------------------------------------------
 # Load OpenMRS skeleton database
 # -------------------------------------------------------------------
+if ENV['INITIAL_SETUP']
+  cmd = "gunzip -c db/mahis_skeleton.sql.gz | mysql -u #{username}"
+  cmd += " -p#{password}" if password.present?
+  cmd += " -h #{host}" if host.present?
+  cmd += " -P #{port}" if port.present?
+  cmd += " #{database}"
 
-cmd = "gunzip -c db/mahis_skeleton.sql.gz | mysql -u #{username}"
-cmd += " -p#{password}" if password.present?
-cmd += " -h #{host}" if host.present?
-cmd += " -P #{port}" if port.present?
-cmd += " #{database}"
+  system(cmd)
 
-system(cmd)
-
-puts 'Harmonized DB Initialization Complete 🎉'
+  puts 'Harmonized DB Initialization Complete 🎉'
+end
 
 # -----------------------------------------------------------
 # loop through db/data, get all .sql.gz and import them
@@ -73,144 +84,166 @@ begin
   # 1. Bootstrap SYSTEM (daemon) user — user_id = 1
   # ================================================================
 
-  system_person_uuid = SecureRandom.uuid
+  # Check if daemon user already exists
+  system_user_exists = conn.select_value("SELECT COUNT(*) FROM users WHERE username = 'daemon'").to_i > 0
 
-  conn.execute <<~SQL
-    INSERT INTO person
-      (gender, creator, date_created, voided, uuid)
-    VALUES
-      ('U', 1, NOW(), 0, '#{system_person_uuid}');
-  SQL
+  if system_user_exists
+    puts 'Daemon user already exists, skipping creation.'
+  else
+    # Truncate users table to reset auto increment when no users exist
+    %i[users person person_name].each { |table| conn.execute("TRUNCATE TABLE #{table};") }
+    puts 'Truncated tables to reset auto increment.'
+    system_person_uuid = SecureRandom.uuid
 
-  system_person_id = conn.select_value <<~SQL
-    SELECT person_id FROM person WHERE uuid = '#{system_person_uuid}'
-  SQL
+    conn.execute <<~SQL
+      INSERT INTO person
+        (gender, creator, date_created, voided, uuid)
+      VALUES
+        ('U', 1, NOW(), 0, '#{system_person_uuid}');
+    SQL
 
-  # Password: daemon
-  system_salt = SecureRandom.base64
-  system_password_hash = Digest::SHA1.hexdigest("#{system_salt}daemon")
+    system_person_id = conn.select_value <<~SQL
+      SELECT person_id FROM person WHERE uuid = '#{system_person_uuid}'
+    SQL
 
-  conn.execute('TRUNCATE TABLE users;')
+    # Password: daemon
+    system_salt = SecureRandom.base64
+    system_password_hash = Digest::SHA1.hexdigest("#{system_salt}daemon")
 
-  conn.execute <<~SQL
-    INSERT INTO users
-      (
-        user_id,
-        username,
-        password,
-        salt,
-        person_id,
-        creator,
-        date_created,
-        retired,
-        uuid,
-        location_id
-      )
-    VALUES
-      (
-        1,
-        'daemon',
-        '#{system_password_hash}',
-        '#{system_salt}',
-        #{system_person_id},
-        1,
-        NOW(),
-        0,
-        UUID(),
-        1
-      );
-  SQL
+    conn.execute <<~SQL
+      INSERT INTO users
+        (
+          user_id,
+          username,
+          password,
+          salt,
+          person_id,
+          creator,
+          date_created,
+          retired,
+          uuid,
+          location_id
+        )
+      VALUES
+        (
+          1,
+          'daemon',
+          '#{system_password_hash}',
+          '#{system_salt}',
+          #{system_person_id},
+          1,
+          NOW(),
+          0,
+          UUID(),
+          1
+        );
+    SQL
+
+    puts 'Created daemon user.'
+  end
 
   # ================================================================
   # 2. Create ADMIN person
   # ================================================================
 
-  admin_person_uuid = SecureRandom.uuid
+  # Check if admin user already exists
+  admin_user_exists = conn.select_value("SELECT COUNT(*) FROM users WHERE username = 'admin'").to_i > 0
 
-  conn.execute <<~SQL
-    INSERT INTO person
-      (gender, creator, date_created, voided, uuid)
-    VALUES
-      ('M', 1, NOW(), 0, '#{admin_person_uuid}');
-  SQL
+  if admin_user_exists
+    puts 'Admin user already exists, skipping creation.'
+    admin_user_id = conn.select_value("SELECT user_id FROM users WHERE username = 'admin'")
+  else
+    admin_person_uuid = SecureRandom.uuid
 
-  admin_person_id = conn.select_value <<~SQL
-    SELECT person_id FROM person WHERE uuid = '#{admin_person_uuid}'
-  SQL
+    conn.execute <<~SQL
+      INSERT INTO person
+        (gender, creator, date_created, voided, uuid)
+      VALUES
+        ('M', 1, NOW(), 0, '#{admin_person_uuid}');
+    SQL
 
-  conn.execute <<~SQL
-    INSERT INTO person_name
-      (
-        person_id,
-        given_name,
-        family_name,
-        preferred,
-        creator,
-        date_created,
-        voided,
-        uuid
-      )
-    VALUES
-      (
-        #{admin_person_id},
-        'Admin',
-        'User',
-        1,
-        1,
-        NOW(),
-        0,
-        UUID()
-      );
-  SQL
+    admin_person_id = conn.select_value <<~SQL
+      SELECT person_id FROM person WHERE uuid = '#{admin_person_uuid}'
+    SQL
 
-  # ================================================================
-  # 3. Create ADMIN user
-  # ================================================================
+    conn.execute <<~SQL
+      INSERT INTO person_name
+        (
+          person_id,
+          given_name,
+          family_name,
+          preferred,
+          creator,
+          date_created,
+          voided,
+          uuid
+        )
+      VALUES
+        (
+          #{admin_person_id},
+          'Admin',
+          'User',
+          1,
+          1,
+          NOW(),
+          0,
+          UUID()
+        );
+    SQL
 
-  # Use a more secure random salt
-  admin_salt = SecureRandom.base64
-  admin_password = 'Admin123'
-  admin_password_hash = Digest::SHA1.hexdigest("#{admin_password}#{admin_salt}")
+    # ================================================================
+    # 3. Create ADMIN user
+    # ================================================================
 
-  conn.execute <<~SQL
-    INSERT INTO users
-      (
-        username,
-        password,
-        salt,
-        person_id,
-        creator,
-        date_created,
-        retired,
-        uuid,
-        location_id
-      )
-    VALUES
-      (
-        'admin',
-        '#{admin_password_hash}',
-        '#{admin_salt}',
-        #{admin_person_id},
-        1,
-        NOW(),
-        0,
-        UUID(),
-        1
-      );
-  SQL
+    # Use a more secure random salt
+    admin_salt = SecureRandom.base64
+    admin_password = 'Admin123'
+    admin_password_hash = Digest::SHA1.hexdigest("#{admin_password}#{admin_salt}")
 
-  admin_user_id = conn.select_value <<~SQL
-    SELECT user_id FROM users WHERE username = 'admin'
-  SQL
+    conn.execute <<~SQL
+      INSERT INTO users
+        (
+          username,
+          password,
+          salt,
+          person_id,
+          creator,
+          date_created,
+          retired,
+          uuid,
+          location_id
+        )
+      VALUES
+        (
+          'admin',
+          '#{admin_password_hash}',
+          '#{admin_salt}',
+          #{admin_person_id},
+          1,
+          NOW(),
+          0,
+          UUID(),
+          1
+        );
+    SQL
 
-  # ================================================================
-  # 4. Assign SYSTEM DEVELOPER role
-  # ================================================================
+    admin_user_id = conn.select_value <<~SQL
+      SELECT user_id FROM users WHERE username = 'admin'
+    SQL
 
-  conn.execute <<~SQL
-    INSERT INTO user_role (user_id, role)
-    VALUES (#{admin_user_id}, 'System Developer');
-  SQL
+    # ================================================================
+    # 4. Assign SYSTEM DEVELOPER role
+    # ================================================================
+
+    conn.execute <<~SQL
+      INSERT INTO user_role (user_id, role)
+      VALUES#{' '}
+        (#{admin_user_id}, 'System Developer'),
+        (#{admin_user_id}, 'Superuser');
+    SQL
+
+    puts 'Created admin user with System Developer role.'
+  end
 
   # ================================================================
   # 5. Create UserProperty records for password management
@@ -223,6 +256,14 @@ begin
 
   # Set last_password_updated for both users (current timestamp)
   [system_user_id, admin_user_id].each do |user_id|
+    # Check if property already exists
+    property_exists = conn.select_value(<<~SQL).to_i > 0
+      SELECT COUNT(*) FROM user_property#{' '}
+      WHERE user_id = #{user_id} AND property = 'last_password_updated'
+    SQL
+
+    next if property_exists
+
     conn.execute <<~SQL
       INSERT INTO user_property
         (user_id, property, property_value)
@@ -231,7 +272,7 @@ begin
     SQL
   end
 
-  puts 'User properties created for password management.'
+  puts 'User properties for password management verified.'
 ensure
   # -----------------------------------------------------------------
   # Re-enable FK checks (CRITICAL)
