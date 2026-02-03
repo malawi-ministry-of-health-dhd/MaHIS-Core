@@ -79,7 +79,7 @@ Rails.application.routes.draw do
       end
 
       resources :roles
-
+      get '/find_relationships_with_details', to: 'person_relationships#find_relationships_with_details'
       # Patients
       get '/get_patient_record' => 'patients#get_patient_record'
       get '/get_patient_list' => 'patients#get_patient_list'

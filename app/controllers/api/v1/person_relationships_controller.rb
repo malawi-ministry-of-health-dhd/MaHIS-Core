@@ -9,6 +9,12 @@ module Api
         render json: paginate(relationships)
       end
 
+      def find_relationships_with_details()
+        filters = params.permit %i[person_b relationship person_id]
+        relationships = service.find_relationships_with_details filters
+        render json: paginate(relationships)
+      end
+      
       def guardians
         render json: paginate(service.find_guardians).collect(&:relation)
       end

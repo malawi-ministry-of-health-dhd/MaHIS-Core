@@ -66,7 +66,8 @@ class SavePatientRecordService
     patient_record = build_and_save_patient_record(patient_id, record, operation_results, overall_sync_status)
 
     if couchdb_configured?
-      sync_to_couchdb(patient_record, "patients_records", patient_record["ID"])
+      patient_record["_id"] = patient_record["ID"]
+      sync_to_couchdb(patient_record, "patients_records", "#{patient_record["ID"]}")
     end
 
     patient_record
