@@ -99,7 +99,7 @@ begin
       INSERT INTO person
         (gender, creator, date_created, voided, uuid)
       VALUES
-        ('U', 1, NOW(), 0, '#{system_person_uuid}');
+        ('F', 1, NOW(), 0, '#{system_person_uuid}');
     SQL
 
     system_person_id = conn.select_value <<~SQL
