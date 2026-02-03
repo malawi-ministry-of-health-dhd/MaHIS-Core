@@ -66,6 +66,31 @@ end
 conn = ActiveRecord::Base.connection
 
 # -------------------------------------------------------------------
+# Check if database is properly initialized
+# -------------------------------------------------------------------
+begin
+  tables = conn.tables
+  required_tables = %w[users person person_name location user_property user_role]
+  missing_tables = required_tables - tables
+
+  if missing_tables.any?
+    puts "\e[31mERROR: Database is missing required tables: #{missing_tables.join(', ')}\e[0m"
+    puts "\e[33mPlease run the initial setup first:\e[0m"
+    puts '  INITIAL_SETUP=1 rails db:seed'
+    exit 1
+  end
+rescue ActiveRecord::NoDatabaseError
+  puts "\e[31mERROR: Database does not exist!\e[0m"
+  puts "\e[33mPlease create the database first:\e[0m"
+  puts '  rails db:create'
+  puts '  INITIAL_SETUP=1 rails db:seed'
+  exit 1
+rescue StandardError => e
+  puts "\e[31mERROR: Failed to connect to database: #{e.message}\e[0m"
+  exit 1
+end
+
+# -------------------------------------------------------------------
 # Disable FK checks (SAFE: fresh database bootstrap)
 # -------------------------------------------------------------------
 
@@ -78,11 +103,24 @@ begin
   # All location data (1,930 facilities with IDs 1-1930) loaded from dump file
   # Schema includes TINYINT(1) columns for voided/retired
 
-  puts 'Location data loaded from locations.sql.gz (1,930 facilities with IDs 1-1930).'
+  location_count = conn.select_value('SELECT COUNT(*) FROM location').to_i
+  if location_count.zero?
+    puts "\e[33mWARNING: No locations found in database. Location data should be loaded from locations.sql.gz\e[0m"
+  else
+    puts "Location data verified: #{location_count} locations in database."
+  end
 
   # ================================================================
   # 1. Bootstrap SYSTEM (daemon) user — user_id = 1
   # ================================================================
+
+  # Validate that location_id=1 exists before proceeding
+  default_location = conn.select_value('SELECT location_id FROM location WHERE location_id = 1')
+  if default_location.nil?
+    puts "\e[31mERROR: Default location (ID=1) not found. Cannot create users.\e[0m"
+    puts "\e[33mPlease ensure location data is loaded first.\e[0m"
+    exit 1
+  end
 
   # Check if daemon user already exists
   system_user_exists = conn.select_value("SELECT COUNT(*) FROM users WHERE username = 'daemon'").to_i > 0
