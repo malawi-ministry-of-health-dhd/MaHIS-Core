@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 # Rake task to dump metadata tables into a single gzipped SQL file
-# Usage: rake db:dump_metadata
 namespace :db do
   desc 'Dump entire database skeleton (schema + routines + triggers) into a gzipped SQL file'
   task dump_skeleton_metadata: :environment do
