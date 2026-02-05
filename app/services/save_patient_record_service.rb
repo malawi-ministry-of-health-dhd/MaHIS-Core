@@ -66,7 +66,8 @@ class SavePatientRecordService
     patient_record = build_and_save_patient_record(patient_id, record, operation_results, overall_sync_status)
 
     if couchdb_configured?
-      sync_to_couchdb(patient_record, "patients_records", patient_record["ID"])
+      patient_record["_id"] = patient_record["ID"]
+      sync_to_couchdb(patient_record, "patients_records", "#{patient_record["ID"]}")
     end
 
     patient_record
@@ -114,6 +115,7 @@ class SavePatientRecordService
     {
       update_person_info: managers[:identity_manager].update_person_information(patient_id, record),
       manage_guardian: managers[:guardian_manager].manage_guardian(patient_id, record),
+      create_relationship: managers[:guardian_manager].create_relationship(record),
       # enroll_program: managers[:enrollment_manager].enroll_program(patient_id, record),
       save_lab_orders_data: managers[:lab_data_manager].save_lab_orders_data(patient_id, record),
       save_lab_results_data: managers[:lab_data_manager].save_lab_results_data(patient_id, record),
@@ -159,7 +161,7 @@ class SavePatientRecordService
         address = person&.addresses&.first
         patient_data[:personInformation] = BuildPatientRecordService.build(person, name, address, patient)
         
-      when :manage_guardian
+      when :manage_guardian, :create_relationship
         patient_data[:guardianInformation] = BuildPatientRecordService.build_guardian_data(patient_id)
         
       when :enroll_program
