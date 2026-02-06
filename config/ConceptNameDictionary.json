@@ -81,7 +81,7 @@
    {
       "categories": [],
       "concept_id": 7455,
-      "name": "TB Suspected",
+      "name": "TB Suspected"
    },
    {
       "categories": [],
@@ -166,12 +166,12 @@
    {
       "categories": [],
       "concept_id": 1058,
-      "name": "Divorced",
+      "name": "Divorced"
    },
    {
       "categories": [],
       "concept_id": 6686,
-      "name": 'Ultrasound'
+      "name": "Ultrasound"
    },
    {
       "categories": [],
@@ -635,7 +635,7 @@
       "concept_id": 9764
    },
    {
-      "categories": ['art_extra_medication_order'],
+      "categories": ["art_extra_medication_order"],
       "name": "INH 300 / RFP 300 (3HP)",
       "concept_id": 10565
    },
@@ -746,7 +746,7 @@
    {
       "categories": ["reason_for_no_cxca"],
       "concept_id": 10007,
-      "name": "Client preferred counseling",
+      "name": "Client preferred counseling"
    },
    {
       "categories": ["reason_for_no_cxca"],
@@ -809,12 +809,12 @@
       "name": "Previous TB treatment history"
    },
    {
-      "categories": ['bp_measures'],
+      "categories": ["bp_measures"],
       "concept_id": 5085,
       "name": "Systolic blood pressure"
    },
    {
-      "categories": ['bp_measures'],
+      "categories": ["bp_measures"],
       "concept_id": 5086,
       "name": "Diastolic blood pressure"
    },
@@ -826,95 +826,95 @@
    {
       "categories": [],
       "concept_id": 8677,
-      "name": 'Specific presenting complaint'
+      "name": "Specific presenting complaint"
    },
    {
       "categories": [],
       "concept_id": 8578,
-      "name": 'Presenting complaint'
+      "name": "Presenting complaint"
    },
    {
       "categories": [],
       "concept_id": 10319,
-      "name": 'Presenting complaint group'
+      "name": "Presenting complaint group"
    },
    {
       "categories": [],
       "concept_id": 6266,
-      "name": 'Trauma'
+      "name": "Trauma"
    },
    {
       "categories": [],
       "concept_id": 7027,
-      "name": 'General'
+      "name": "General"
    },
    {
       "categories": [],
       "concept_id": 7411,
-      "name": 'ILI'
+      "name": "ILI"
    },
    {
       "categories": [],
       "concept_id": 7644,
-      "name": 'Respiratory'
+      "name": "Respiratory"
    },
    {
       "categories": [],
       "concept_id": 7661,
-      "name": 'Gastrointestinal'
+      "name": "Gastrointestinal"
    },
    {
       "categories": [],
       "concept_id": 9546,
-      "name": 'Haema'
+      "name": "Haema"
    },
    {
       "categories": [],
       "concept_id": 9551,
-      "name": 'Nephro'
+      "name": "Nephro"
    },
    {
       "categories": [],
       "concept_id": 9560,
-      "name": 'Cardiovascular'
+      "name": "Cardiovascular"
    },
    {
       "categories": [
-         'art_patient_type'
+         "art_patient_type"
       ],
       "order": 1,
       "concept_id": 7572,
       "name": "New patient"
    },
    {
-      "categories": ['art_patient_type'],
+      "categories": ["art_patient_type"],
       "order": 2,
       "concept_id": 10522,
       "name": "Emergency supply"
    },
    {
-      "categories": ['risk factors', 'anc_medical_history'],
+      "categories": ["risk factors", "anc_medical_history"],
       "concept_id": 3720,
       "name": "Diabetes"
    },{
-      "categories": ['risk factors'],
+      "categories": ["risk factors"],
       "concept_id": 7623,
       "name": "CKD"
    },{
-      "categories": ['risk factors'],
+      "categories": ["risk factors"],
       "concept_id": 9499,
       "name": "history of CVD"
    },{
-      "categories": ['risk factors'],
+      "categories": ["risk factors"],
       "concept_id": 9501,
       "name": "relative with CVD"
    },{
-      "categories": ['risk factors'],
+      "categories": ["risk factors"],
       "concept_id": 3339,
       "name": "patient smokes"
    },
    {
-      "categories": ['risk factors'],
+      "categories": ["risk factors"],
       "concept_id": 2318,
       "name": "Patient drinks alcohol"
    },
@@ -1234,7 +1234,7 @@
          "tb_symptom": 3
       },
       "concept_id": 6029,
-      name: "Night sweats"
+      "name": "Night sweats"
    },
    {
       "categories":[
@@ -1962,7 +1962,7 @@
    },
    {
       "categories": [
-         'art_patient_type'
+         "art_patient_type"
       ],
       "concept_id": 9684,
       "order": 3,
@@ -2676,26 +2676,26 @@
    {
       "categories": [],
       "concept_id": 8426,
-      "name": 'Radiology Orders'
+      "name": "Radiology Orders"
    },
    {
-      "name": 'Hand x-ray',
+      "name": "Hand x-ray",
       "concept_id": 10337
    },
    {
-      "name": 'Foot x-ray',
+      "name": "Foot x-ray",
       "concept_id": 10334
    },
    {
-      "name": 'Leg x-ray',
+      "name": "Leg x-ray",
       "concept_id": 10342
    },
    {
-      "name": 'Pelvis x-ray',
+      "name": "Pelvis x-ray",
       "concept_id": 10343
    },
    {
-      "name": 'Shoulder x-ray',
+      "name": "Shoulder x-ray",
       "concept_id": 10344
    },
    {
