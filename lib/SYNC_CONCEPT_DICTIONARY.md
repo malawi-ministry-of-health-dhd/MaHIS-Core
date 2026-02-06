@@ -1,12 +1,69 @@
-# Concept Dictionary Sync Script
+# Concept Dictionary Scripts
 
-This script synchronizes the `config/ConceptNameDictionary.json` file with the current concept names from the OpenMRS database.
+This document describes two scripts for managing the `config/ConceptNameDictionary.json` file with the OpenMRS database.
 
-## Purpose
+## 1. Concept ID Remapper (`remap_concept_ids.rb`)
+
+**NEW SCRIPT** - This script takes concept names from the ConceptNameDictionary.json and finds matching concepts in the OpenMRS database, then updates the concept_id in the JSON file.
+
+### Purpose
+
+When you have concept names in your dictionary but need to find the correct concept IDs from the database. This is useful when:
+- Migrating from one OpenMRS instance to another
+- Concept IDs have changed but names remain similar
+- You have a dictionary with names but need to verify/update the concept IDs
+
+### Features
+
+- ✅ Uses concept names from JSON to search the database
+- ✅ Exact matching (case insensitive) for precise matches
+- ✅ Fuzzy matching using Levenshtein distance for similar names
+- ✅ Excludes retired concepts from matching
+- ✅ Updates concept_id in the JSON with the matched database concept_id
+- ✅ Creates timestamped backup before making changes
+- ✅ Detailed progress reporting and match statistics
+
+### Usage
+
+```bash
+# Run the concept ID remapper
+bundle exec rails runner lib/remap_concept_ids.rb
+```
+
+### Output Example
+
+```
+Starting concept ID remapping...
+Reading dictionary from: /path/to/config/ConceptNameDictionary.json
+Found 500 entries in dictionary
+Backup created at: /path/to/config/ConceptNameDictionary.json.backup.20260206_143022
+
+Remapping concept IDs from database...
+Looking for matches (non-retired concepts only)...
+  [1/500] 'Reason for BDE' (was ID: 11887) ... EXACT match! ID: 11887 -> 11887 (name: 'Reason for BDE')
+  [2/500] 'Prescription refill date' (was ID: 2676) ... FUZZY match! ID: 2676 -> 2680 (name: 'Prescription refill')
+  [3/500] 'Benign warts' (was ID: 10550) ... no match found
+  ...
+
+CONCEPT ID REMAPPING SUMMARY
+======================================================================
+Total updated:    45 concept IDs
+Exact matches:    420 concepts
+Fuzzy matches:    35 concepts
+No matches:       45 concepts
+Skipped retired:  0 concepts
+======================================================================
+```
+
+## 2. Concept Name Sync (`sync_concept_dictionary.rb`)
+
+This script synchronizes concept names in the `config/ConceptNameDictionary.json` file with current names from the OpenMRS database.
+
+### Purpose
 
 Over time, concept names in the database may be updated or corrected. This script ensures that your `ConceptNameDictionary.json` file reflects the current concept names stored in the database, using the `concept_id` as the matching key.
 
-## Features
+### Features
 
 - ✅ Fetches the latest concept names from the database
 - ✅ Preserves the JSON structure and categories
@@ -15,7 +72,7 @@ Over time, concept names in the database may be updated or corrected. This scrip
 - ✅ Handles missing concepts gracefully
 - ✅ Prioritizes English locale and fully specified names
 
-## Usage
+### Usage
 
 You can run the script in two ways:
 
