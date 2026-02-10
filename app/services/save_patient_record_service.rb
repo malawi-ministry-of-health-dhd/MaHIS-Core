@@ -163,7 +163,6 @@ class SavePatientRecordService
         
       when :manage_guardian, :create_relationship
         patient_data[:guardianInformation] = BuildPatientRecordService.build_guardian_data(patient_id)
-        patient_data[:relationships] = []
         
       when :enroll_program
         patient_data[:activePrograms] = BuildPatientRecordService.fetch_active_programs(patient_id)

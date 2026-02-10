@@ -68,7 +68,8 @@ module BuildPatientRecordService
         location_id: latest_encounter&.location_id,
         encounter_datetime: latest_encounter&.encounter_datetime,
         encounter_date_changed: latest_encounter&.date_changed,
-        sync_status: ''
+        sync_status: '',
+        relationships: []
       }
     end
 
