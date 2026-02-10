@@ -49,6 +49,7 @@ module BuildPatientRecordService
         address = person.addresses&.first
 
         {
+          person_id: person.person_id.to_s || '',
           given_name: name&.given_name || '',
           middle_name: name&.middle_name || '',
           family_name: name&.family_name || '',
