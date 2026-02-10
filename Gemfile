@@ -49,12 +49,13 @@ gem 'rest-client'
 
 gem 'test-unit'
 
+
 gem 'rswag-api'
 gem 'rswag-ui'
 
 gem 'emr_ohsp_interface', '~> 2.2.5'
 
-gem 'his_emr_api_lab', '~> 2.0.9'
+gem 'his_emr_api_lab', '2.0.9.pre.mahis'
 
 # gem 'emr_ohsp_interface', '~> 2.2.3'
 # gem 'his_emr_api_lab', '~> 2.0.5'
