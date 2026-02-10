@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 module BuildPatientRecordService
-module GuardianService
+  module GuardianService
     def safe_get_guardians(patient_id)
       begin
         return [] unless patient_id
@@ -13,7 +13,7 @@ module GuardianService
         return [] unless relationships.is_a?(Enumerable) && relationships.any?
 
         relationships.map do |relationship|
-          build_guardian_hash(relationship)
+          build_guardian_hash(relationship, patient_id)
         end.compact
       rescue StandardError => e
         Rails.logger.error("Error getting guardians for patient #{patient_id}: #{e.message}")
@@ -23,17 +23,33 @@ module GuardianService
     
     private
 
-    def build_guardian_hash(relationship)
+    def build_guardian_hash(relationship, patient_id)
       return nil unless relationship
       
       begin
-        person = relationship.relation
+        # Determine if patient is person_a or person_b
+        patient_is_person_a = relationship.person_a == patient_id
+        
+        # Get the guardian (the other person in the relationship)
+        person = patient_is_person_a ? relationship.relation : relationship.person
         return nil unless person
+        
+        # Get the correct relationship type label
+        # If patient is person_a: use a_is_to_b (patient is X to guardian)
+        # If patient is person_b: use b_is_to_a (patient is X to guardian)
+        relationship_to_patient = patient_is_person_a ? 
+                                   relationship.type&.b_is_to_a : 
+                                   relationship.type&.a_is_to_b
+        
+        relationship_from_patient = patient_is_person_a ? 
+                                     relationship.type&.a_is_to_b : 
+                                     relationship.type&.b_is_to_a
         
         name = person.names&.first
         address = person.addresses&.first
 
         {
+          person_id: person.person_id.to_s || '',
           given_name: name&.given_name || '',
           middle_name: name&.middle_name || '',
           family_name: name&.family_name || '',
@@ -57,6 +73,11 @@ module GuardianService
 
           relationship_id: relationship.id.to_s || '',
           relationship_type: {
+            # What the guardian is to the patient (e.g., "Mother", "Father")
+            guardian_is_to_patient: relationship_to_patient || '',
+            # What the patient is to the guardian (e.g., "Child", "Daughter")
+            patient_is_to_guardian: relationship_from_patient || '',
+            # Original relationship type fields
             a_is_to_b: relationship.type&.a_is_to_b || '',
             b_is_to_a: relationship.type&.b_is_to_a || '',
             relationship_type_id: relationship.type&.id&.to_s || ''
