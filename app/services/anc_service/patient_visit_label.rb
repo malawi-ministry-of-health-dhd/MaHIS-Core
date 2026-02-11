@@ -162,7 +162,13 @@ module AncService
 
           vis["visit_no"] = visit
           vis["visit_date"] = element
-
+          vis["lmp"] = @current_range[0]["START"].to_date.strftime("%d/%b/%Y") rescue ""
+          vis["edd"] = @current_range[0]["END"].to_date.strftime("%d/%b/%Y") rescue ""
+          vis["bed_net_given"] = @current_range[0]["MOSQUITO NET"] rescue ""
+          vis["planned_delivery_place"] = @current_range[0]["PLANNED DELIVERY PLACE"] rescue ""
+          vis["height"] = @current_range[0]["HEIGHT (CM)"] rescue ""
+          vis["bmi"] = @current_range[0]["BMI"] rescue ""
+          
           fundal_height = encounters[element]["ANC EXAMINATION"]["FUNDUS"].to_i rescue 0
 
           gestation_weeks = getEquivFundalWeeks(fundal_height) rescue ""
@@ -304,6 +310,8 @@ module AncService
       encounter_date = orders&.first.encounter.encounter_datetime.strftime("%d/%b/%Y") if orders.present?
       orders.each do |o|
         drug_order = o.drug_order
+        next unless drug_order
+
         struct = drug_order.dosage_struct
         @drugs[encounter_date] ||= {}
         @drugs[encounter_date][struct[:drug_name]] = drug_order&.quantity

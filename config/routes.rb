@@ -35,6 +35,7 @@ Rails.application.routes.draw do
       # Routes down here ... Best we move everything above into own modules
       resources :internal_sections, only: %i[index show create update destroy]
       resources :data_cleaning_supervisions, only: %i[index show create update destroy]
+      resources :data_verification, only: %i[index]
       resources :appointments
       resources :dispensations, only: %i[index create destroy]
       get '/check_username', to: 'users#check_username_exist'
@@ -329,6 +330,7 @@ Rails.application.routes.draw do
       get '/dde/patients/sync_npids', to: 'dde#sync_npids'
 
       get '/labels/location', to: 'locations#print_label'
+      get '/location_attribute/:id', to: 'location_attribute#show'
 
       # Search
       get '/search/given_name' => 'person_names#search_given_name'
@@ -413,12 +415,14 @@ Rails.application.routes.draw do
   get '/api/v1/art_data_cleaning_tools' => 'api/v1/cleaning#art_tools'
   get '/api/v1/anc_data_cleaning_tools' => 'api/v1/cleaning#anc_tools'
   get '/api/v1/its_data_cleaning_tools' => 'api/v1/cleaning#its_tools'
+  get '/api/v1/tb_data_cleaning_tools' => 'api/v1/cleaning#tb_tools'
   post '/api/v1/sync/patients_ids' => 'api/v1/sync_patient_records#get_not_sync_ids'
 
   # OPD reports
   get '/api/v1/registration' => 'api/v1/reports#registration'
   get '/api/v1/diagnosis_by_address' => 'api/v1/reports#diagnosis_by_address'
   get '/api/v1/with_nids' => 'api/v1/reports#with_nids'
+  get '/api/v1/nid_utilization_report' => 'api/v1/reports#nid_utilization_report'
   get '/api/v1/dispensation' => 'api/v1/reports#dispensation'
 
   get '/api/v1/cohort_report_raw_data' => 'api/v1/reports#cohort_report_raw_data'

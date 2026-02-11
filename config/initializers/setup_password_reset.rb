@@ -1,13 +1,24 @@
 # frozen_string_literal: true
 
-# remove -e from the application.yml
-command = "sed -i '/^-e\s*$/d' config/application.yml"
-system(command) || return
+# frozen_string_literal: true
 
-if File.exist?('config/application.yml') &&
-  File.read('config/application.yml').include?('password_reset')
+file_path = Rails.root.join('config/application.yml')
+
+# remove -e from the application.yml if present
+if File.exist?(file_path)
+  content = File.read(file_path)
+  if content.match?(/^-e\s*$/)
+    new_content = content.gsub(/^-e\s*$\n?/, '')
+    File.write(file_path, new_content)
+  end
+end
+
+if File.exist?(file_path) &&
+   File.read(file_path).include?('password_reset')
   return
 end
 
-cmd = 'echo "\npassword_reset:\n  secret_key: CENTRALISED-EMR" >> config/application.yml'
-system(cmd) || return
+File.open(file_path, 'a') do |f|
+  f.puts "\npassword_reset:"
+  f.puts "  secret_key: CENTRALISED-EMR"
+end

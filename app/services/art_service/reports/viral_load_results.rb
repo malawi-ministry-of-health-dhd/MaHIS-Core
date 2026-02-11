@@ -86,7 +86,7 @@ module ArtService
             FROM obs
             INNER JOIN orders
               ON orders.order_id = obs.order_id
-              AND orders.order_type_id IN (SELECT order_type_id FROM order_type WHERE name = 'Lab' AND retired = 0)
+              AND orders.order_type_id IN (SELECT order_type_id FROM order_type WHERE name = 'Laboratory order' AND retired = 0)
               AND orders.concept_id IN (
                 SELECT concept_id FROM concept_name INNER JOIN concept USING (concept_id)
                 WHERE concept_name.name IN ('Blood', 'DBS (Free drop to DBS card)', 'DBS (Using capillary tube)', 'Plasma')
@@ -115,7 +115,7 @@ module ArtService
                  OR test_result_measure_obs.value_text IS NOT NULL)
             AND test_result_measure_obs.voided = 0
             AND (#{query_range})
-          WHERE orders.order_type_id IN (SELECT order_type_id FROM order_type WHERE name = 'Lab' AND retired = 0)
+          WHERE orders.order_type_id IN (SELECT order_type_id FROM order_type WHERE name = 'Laboratory order' AND retired = 0)
             AND orders.voided = 0 #{%w[Military Civilian].include?(@occupation) ? 'AND' : ''} #{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}
           GROUP BY orders.patient_id
         SQL

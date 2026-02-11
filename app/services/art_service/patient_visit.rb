@@ -142,11 +142,12 @@ module ArtService
         next unless drug
 
         drug_name = format_drug_name(drug)
-        pills_dispensed[drug_name] ||= 0
-        pills_dispensed[drug_name] += observation.value_numeric
+        pills_dispensed[drug_name] ||= { drug_name: drug_name, pills_dispensed: 0, runout_date: '' }
+        pills_dispensed[drug_name][:pills_dispensed] += observation.value_numeric
+        pills_dispensed[drug_name][:runout_date] = observation&.order&.auto_expire_date&.strftime('%d/%b/%Y')
       end
 
-      @pills_dispensed = @pills_dispensed.collect { |k, v| [k, v] }
+      @pills_dispensed = @pills_dispensed.map { |k, v| v.values }
     end
 
     def visit_by
@@ -219,11 +220,27 @@ module ArtService
         tb_status:,
         height:,
         weight:,
-        bmi:
+        bmi:,
+        systolic_blood_pressure:,
+        diastolic_blood_pressure:
       }
     end
 
     private
+
+    def systolic_blood_pressure
+      Observation.where(concept: concept('Systolic blood pressure'), person: patient.person)
+                 .where('obs_datetime BETWEEN ? AND ?', *TimeUtils.day_bounds(date))
+                 .last
+                 &.value_numeric
+    end
+
+    def diastolic_blood_pressure
+      Observation.where(concept: concept('Diastolic blood pressure'), person: patient.person)
+                 .where('obs_datetime BETWEEN ? AND ?', *TimeUtils.day_bounds(date))
+                 .last
+                 &.value_numeric
+    end
 
     def viral_load_tests(sql_params = '=')
       viral_load_concept = ConceptName.where(name: 'HIV Viral Load').select(:concept_id)
