@@ -89,7 +89,7 @@ module ArtService
             INNER JOIN person patient ON patient.person_id = orders.patient_id AND patient.voided = 0
             INNER JOIN order_type
               ON order_type.order_type_id = orders.order_type_id
-              AND order_type.name = 'Lab'
+              AND order_type.name = 'Laboratory Order'
               AND order_type.retired = 0
             INNER JOIN concept_name
               ON concept_name.concept_id = orders.concept_id
@@ -113,7 +113,7 @@ module ArtService
               FROM orders
               INNER JOIN order_type
                 ON order_type.order_type_id = orders.order_type_id
-                AND order_type.name = 'Lab'
+                AND order_type.name = 'Laboratory order'
                 AND order_type.retired = 0
               INNER JOIN concept_name
                 ON concept_name.concept_id = orders.concept_id
@@ -337,7 +337,9 @@ module ArtService
                 AND ab.order_id = b.order_id
                 AND ab.start_date < b.start_date
                 AND b.voided = 0
-              WHERE b.patient_id IS NULL AND ab.voided = 0 AND ab.order_type_id = 4 AND ab.start_date < DATE(#{ActiveRecord::Base.connection.quote(end_date)}) + INTERVAL 1 DAY
+              WHERE b.patient_id IS NULL AND ab.voided = 0 
+                AND ab.order_type_id = 2 -- Laboratory order
+                AND ab.start_date < DATE(#{ActiveRecord::Base.connection.quote(end_date)}) + INTERVAL 1 DAY
               GROUP BY ab.patient_id
             ) current_order ON current_order.patient_id = cum.patient_id
             WHERE cum.step > 0 AND e.date_enrolled < DATE(#{ActiveRecord::Base.connection.quote(end_date)}) + INTERVAL 1 DAY

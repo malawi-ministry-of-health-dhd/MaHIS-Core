@@ -152,7 +152,7 @@ module ArtService
             LEFT JOIN (#{current_occupation_query}) a ON a.person_id = orders.patient_id
             WHERE orders.voided = 0 #{%w[Military Civilian].include?(@occupation) ? 'AND' : ''} #{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}
             AND orders.start_date BETWEEN '#{@completion_start_date}' AND '#{@completion_end_date}'
-            AND orders.order_type_id = 1
+            AND orders.order_type_id = 1 -- Drug order
             ORDER BY orders.start_date ASC, orders.patient_id;
           SQL
         end

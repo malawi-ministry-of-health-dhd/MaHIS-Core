@@ -195,7 +195,7 @@ module TbService
       Order.create patient:,
                    encounter:,
                    concept: concept('Laboratory tests ordered'),
-                   order_type: order_type('Lab'),
+                   order_type: order_type('Laboratory order'),
                    orderer: User.current.user_id,
                    start_date: date,
                    accession_number:,
@@ -215,7 +215,7 @@ module TbService
 
     def next_id(seed_id)
       site_id = global_property('moh_site_id').property_value
-      local_id = Order.where(order_type: order_type('Lab')).count + 1
+      local_id = Order.where(order_type: order_type('Laboratory order')).count + 1
       format '%<site_id>s%<seed_id>s%<local_id>d', site_id:,
                                                    seed_id:,
                                                    local_id:
@@ -245,7 +245,7 @@ module TbService
     # Local Order
     def local_orders(patient)
       Order.where patient:,
-                  order_type: order_type('Lab'),
+                  order_type: order_type('Laboratory order'),
                   concept: concept('Laboratory tests ordered')
     end
 
