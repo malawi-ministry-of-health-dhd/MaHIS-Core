@@ -8,6 +8,7 @@ Rails.logger = Logger.new($stdout)
 ActiveRecord::Base.logger = Rails.logger
 user = User.find_by(username: 'admin')
 User.current = user.present? ? user : User.unscoped.where(retired: 0).first
+TEST_CATALOG_VERSION = 'v7'
 
 def consolelog(text)
   puts "\n=======================================================\n"
@@ -48,7 +49,7 @@ def fetch_test_catalog
 
   consolelog 'Getting test catalog from LIMS'
 
-  uri = URI(url + '/v2/test_catalog/v4')
+  uri = URI(url + "/v2/test_catalog/#{TEST_CATALOG_VERSION}")
 
   http = Net::HTTP.new(uri.host, uri.port)
   request = Net::HTTP::Get.new(uri, headers)
