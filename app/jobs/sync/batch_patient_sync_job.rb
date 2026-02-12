@@ -4,7 +4,7 @@ module Sync
     include Sidekiq::Job
     sidekiq_options queue: :batch_sync, retry: 3
 
-    def perform(location_id = nil, since_date = nil)
+    def perform(location_id = nil, since_date = nil, batch_size = 50)
       if location_id.present?
         Rails.logger.info("Starting batch patient sync for location #{location_id}")
       else
@@ -21,34 +21,36 @@ module Sync
 
       return if total_count.zero?
 
-      # Process in batches and bulk enqueue jobs
-      counter = 0
-      patient_ids.each_slice(100) do |batch_ids|
-        # Bulk enqueue jobs for this batch (much faster than individual perform_async calls)
-        Sidekiq::Client.push_bulk(
-          'class' => PatientRecordSyncJob,
-          'queue' => 'patient_sync',
-          'args' => batch_ids.map { |id| [id, { 'location_id' => location_id }] }
-        )
-        
-        counter += batch_ids.size
-        
-        # Log progress periodically
-        Rails.logger.info("Queued #{counter}/#{total_count} patient sync jobs") if counter % 1000 == 0
-      end
+      # Process patients in bulk batches
+      sync_patients_in_bulk(patient_ids, location_id, batch_size)
 
       location_msg = location_id.present? ? "for location #{location_id}" : "for ALL locations"
-      Rails.logger.info("Completed queuing #{counter} batch patient sync jobs #{location_msg}")
+      Rails.logger.info("Completed syncing #{total_count} patients #{location_msg}")
     end
 
     private
 
-    def get_patient_ids_to_sync(location_id, since_date)
+    def sync_patients_in_bulk(patient_ids, location_id, batch_size)
+      total_count = patient_ids.count
+      counter = 0
       
-      query = Encounter.select(:patient_id).distinct
+      patient_ids.each_slice(batch_size) do |batch_ids|
+        # Queue bulk patient sync job (processes multiple patients in one job)
+        BulkPatientRecordSyncJob.perform_async(batch_ids, { 'location_id' => location_id })
+        
+        counter += batch_ids.size
+        Rails.logger.info("Queued bulk sync for #{counter}/#{total_count} patients") if counter % 500 == 0
+      end
+      
+      num_jobs = (patient_ids.count.to_f / batch_size).ceil
+      Rails.logger.info("Queued #{num_jobs} bulk sync jobs for #{total_count} patients (#{batch_size} patients per job)")
+    end
+
+    def get_patient_ids_to_sync(location_id, since_date)
+      query = Encounter.unscoped.select(:patient_id).distinct
       
       # Add location filter if provided
-      query = query.where(location_id: location_id) if location_id.present?
+      query = query.where(location_id: 1) if location_id.present?
       
       # Add date filter if provided
       if since_date.present?
@@ -60,3 +62,10 @@ module Sync
     end
   end
 end
+
+# Usage examples:
+# Sync::BatchPatientSyncJob.perform_async                          # All locations, 50 patients per batch
+# Sync::BatchPatientSyncJob.perform_async(700)                     # Specific location
+# Sync::BatchPatientSyncJob.perform_async(700, '2024-01-01')      # With date filter
+# Sync::BatchPatientSyncJob.perform_async(nil, nil, 25)           # Smaller batches (25 patients)
+# Sync::BatchPatientSyncJob.perform_async(nil, nil, 100)          # Larger batches (100 patients)
