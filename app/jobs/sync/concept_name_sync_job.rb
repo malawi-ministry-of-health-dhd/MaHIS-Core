@@ -13,21 +13,11 @@ module Sync
     
     def prepare_document(concept_name)
       {
-        "type" => "concept_name",
         "concept_name_id" => concept_name.concept_name_id,
         "concept_id" => concept_name.concept_id,
         "name" => concept_name.name,
-        "locale" => concept_name.locale,
         "concept_name_type" => concept_name.concept_name_type,
-        "locale_preferred" => concept_name.locale_preferred,
-        "creator" => concept_name.creator,
-        "voided" => concept_name.voided,
-        "voided_by" => concept_name.voided_by,
-        "void_reason" => concept_name.void_reason,
-        "uuid" => concept_name.uuid,
         "date_created" => concept_name.date_created&.iso8601,
-        "date_voided" => concept_name.date_voided&.iso8601,
-        "synced_at" => Time.current.iso8601
       }
     end
     

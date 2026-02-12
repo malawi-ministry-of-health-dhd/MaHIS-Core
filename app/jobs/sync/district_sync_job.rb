@@ -14,9 +14,9 @@ module Sync
     def prepare_document(district)
       {
         "type" => "district",
-        "district_id" => district.district_id,
+        "location_id" => district.location_id,
         "name" => district.name,
-        "region_id" => district.region_id,
+        "parent_location" => district.parent_location,
         "synced_at" => Time.current.iso8601
       }
     end
