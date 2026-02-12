@@ -1,9 +1,7 @@
 # app/jobs/sync/specimen_sync_job.rb
 module Sync
   class SpecimenSyncJob < BaseSyncJob
-    # Sync all specimen types to CouchDB
     def perform(batch_size = 50)
-      # Get specimen types using the Lab service
       specimen_types = Lab::ConceptsService.specimen_types()
       
       sync_array_to_couchdb(
@@ -20,11 +18,9 @@ module Sync
 
     def prepare_document(specimen)
       {
-        "type" => "specimen",
         "concept_id" => specimen.concept_id,
         "name" => specimen.name,
-        "concept_set_id" => specimen.concept_set_id,
-        "synced_at" => Time.current.iso8601
+        "nlims_code" => specimen.nlims_code,
       }
     end
 

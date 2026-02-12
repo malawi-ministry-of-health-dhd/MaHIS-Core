@@ -1,9 +1,11 @@
 # app/jobs/sync/patient_record_sync_job.rb
+# Single patient sync - useful for ad-hoc updates and testing
 module Sync
   class PatientRecordSyncJob < BaseSyncJob
     sidekiq_options queue: :patient_sync, retry: 3
     
     # Sync a single patient record to CouchDB
+    # For bulk syncing multiple patients, use BulkPatientRecordSyncJob instead
     def perform(patient_id, options = {})
       return unless Patient.exists?(patient_id: patient_id)
       
@@ -33,6 +35,8 @@ module Sync
 end
 
 # Usage examples:
-# Single patient sync:
+# Single patient sync (for testing or real-time updates):
 # Sync::PatientRecordSyncJob.perform_async(12345, { 'location_id' => 700 })
-
+#
+# NOTE: For syncing multiple patients, always use BatchPatientSyncJob or BulkPatientRecordSyncJob
+# which are much faster due to bulk CouchDB operations
