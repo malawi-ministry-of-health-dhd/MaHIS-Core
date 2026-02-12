@@ -17,11 +17,11 @@ class StagesService
 
     if stage.new_record?
       stage.stage = stage_name
-      stage.arrivalTime = Time.current
+      stage.arrival_time = Time.current
     elsif stage.stage != stage_name
       # Only stage changes should bump arrival time
       stage.stage = stage_name
-      stage.arrivalTime = Time.current
+      stage.arrival_time = Time.current
     end
 
     stage.save!
@@ -34,7 +34,7 @@ class StagesService
 
     if stage.stage != stage_name
       stage.stage = stage_name
-      stage.arrivalTime = Time.current
+      stage.arrival_time = Time.current
       stage.save!
     end
 
@@ -73,8 +73,8 @@ class StagesService
       location_id: stage.location_id,
       stage: stage.stage,
       status: stage.status,
-      arrivalTime: stage.arrivalTime,
-      arrival_time: stage.arrivalTime,
+      arrivalTime: stage.arrival_time,
+      arrival_time: stage.arrival_time,
       latest_encounter_time: stage.created_at,
       created_at: stage.created_at,
       updated_at: stage.updated_at,

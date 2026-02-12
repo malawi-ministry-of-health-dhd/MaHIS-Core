@@ -1,23 +1,25 @@
 class CreateStages < ActiveRecord::Migration[7.0]
   def change
-    return if table_exists?(:stages)
+    unless table_exists?(:stages)
+      create_table :stages do |t|
+        t.integer :visit_id, null: false
+        t.integer :patient_id, null: false
+        t.integer :location_id
+        t.string :stage
+        t.datetime :arrivalTime, precision: 6
+        t.boolean :status
+        t.string :disposition_type
+        t.string :triage_result
+        t.integer :aetc_visit_number
+        t.string :patient_care_area
+        t.string :department
+        t.string :destination
 
-    create_table :stages do |t|
-      t.bigint :visit_id, null: false
-      t.integer :patient_id, null: false
-      t.integer :location_id
-      t.string :stage
-      t.datetime :arrivalTime, precision: 6
-      t.boolean :status
-      t.string :disposition_type
-      t.string :triage_result
-      t.integer :aetc_visit_number
-      t.string :patient_care_area
-      t.string :department
-      t.string :destination
-
-      t.timestamps precision: 6, null: false
+        t.timestamps precision: 6, null: false
+      end
     end
+
+    change_column :stages, :visit_id, :integer unless column_exists?(:stages, :visit_id, :integer)
 
     add_foreign_key :stages, :visit, column: :visit_id, primary_key: :visit_id unless foreign_key_exists?(:stages,
                                                                                                          :visit,
