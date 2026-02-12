@@ -510,7 +510,7 @@ Rails.application.routes.draw do
 
   namespace :api do
     namespace :v1 do
-      resources :stages, only: %i[index show create] do
+      resources :stages, only: %i[index show create update] do
         collection do
           get :active_stages
         end
