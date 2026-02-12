@@ -33,7 +33,8 @@ module Api
       end
  
       def show
-        render json: patient
+        active_visit = Visit.where(patient_id: patient.patient_id, date_stopped: nil).order(date_started: :desc).first
+        render json: patient.as_json.merge(active_visit: active_visit)
       end
       
       def get_patient_list

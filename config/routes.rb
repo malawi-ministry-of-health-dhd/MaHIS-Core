@@ -513,6 +513,7 @@ Rails.application.routes.draw do
       resources :stages, only: %i[index show create update] do
         collection do
           get :active_stages
+          put "visit/:visit_id", action: :update_by_visit
         end
       end
     end

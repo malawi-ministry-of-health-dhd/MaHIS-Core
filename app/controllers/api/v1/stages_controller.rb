@@ -37,6 +37,12 @@ module Api
         render json: data, status: :ok
       end
 
+      def update_by_visit
+        data = stages_service.update_stage_by_visit(params[:visit_id], stage_params)
+        sync_to_couchdb(data, 'stages', data[:identifier] || data[:patient_id].to_s)
+        render json: data, status: :ok
+      end
+
       private
 
       def stages_service

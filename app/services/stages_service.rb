@@ -11,30 +11,23 @@ class StagesService
     location_id = stage_params[:location_id] || User.current.location_id
     stage_name = normalize_stage(stage_params[:stage])
 
-    stage = Stage.find_or_initialize_by(patient_id: patient_id, location_id: location_id, status: true)
+    # Keep one stage record per active visit and update it as patient moves.
+    stage = Stage.where(visit_id: active_visit.visit_id).order(updated_at: :desc).first
+
+    if stage.nil?
+      stage = Stage.new(
+        patient_id: patient_id,
+        visit_id: active_visit.visit_id,
+        location_id: location_id,
+        status: true,
+        arrival_time: Time.current
+      )
+    end
+
+    stage.patient_id = patient_id
     stage.visit_id = active_visit.visit_id
+    stage.location_id = location_id
     stage.status = true
-
-    if stage.new_record?
-      stage.stage = stage_name
-      stage.arrival_time = Time.current
-    elsif stage.stage != stage_name
-      # Only stage changes should bump arrival time
-      stage.stage = stage_name
-      stage.arrival_time = Time.current
-    end
-
-    if stage_params[:aetc_visit_number].present? && stage.aetc_visit_number != stage_params[:aetc_visit_number]
-      stage.aetc_visit_number = stage_params[:aetc_visit_number]
-    end
-
-    stage.save! if stage.changed?
-    serialize(stage.reload)
-  end
-
-  def update_stage(stage_id, stage_params)
-    stage = Stage.find(stage_id)
-    stage_name = normalize_stage(stage_params[:stage])
 
     if stage.stage != stage_name
       stage.stage = stage_name
@@ -45,8 +38,20 @@ class StagesService
       stage.aetc_visit_number = stage_params[:aetc_visit_number]
     end
 
-    stage.save! if stage.changed?
+    stage.save! if stage.new_record? || stage.changed?
     serialize(stage.reload)
+  end
+
+  def update_stage(stage_id, stage_params)
+    stage = Stage.find(stage_id)
+    apply_stage_updates(stage, stage_params)
+  end
+
+  def update_stage_by_visit(visit_id, stage_params)
+    stage = Stage.where(visit_id: visit_id).order(updated_at: :desc).first
+    raise InvalidParameterError, "No stage record found for visit #{visit_id}" unless stage
+
+    apply_stage_updates(stage, stage_params)
   end
 
   def find_stages(filters = {})
@@ -76,6 +81,8 @@ class StagesService
     latest_encounter = latest_visit_encounter(stage)
 
     {
+      id: stage.id,
+      visit_id: stage.visit_id,
       uuid: patient_uuid(patient) || stage.patient_id.to_s,
       patient_id: stage.patient_id,
       visit_uuid: stage.visit&.uuid,
@@ -99,6 +106,22 @@ class StagesService
 
   private
 
+  def apply_stage_updates(stage, stage_params)
+    stage_name = normalize_stage(stage_params[:stage])
+
+    if stage.stage != stage_name
+      stage.stage = stage_name
+      stage.arrival_time = Time.current
+    end
+
+    if stage_params[:aetc_visit_number].present? && stage.aetc_visit_number != stage_params[:aetc_visit_number]
+      stage.aetc_visit_number = stage_params[:aetc_visit_number]
+    end
+
+    stage.save! if stage.changed?
+    serialize(stage.reload)
+  end
+
   def resolve_patient_id(params)
     return params[:patient_id] if params[:patient_id].present?
     return nil if params[:identifier].blank?
@@ -118,10 +141,6 @@ class StagesService
     return 'screening' if stage.to_s.upcase == 'SCREEN'
 
     stage.to_s.downcase
-  end
-
-  def patient_identifier(patient)
-    patient&.patient_identifiers&.find { |id| id.identifier_type == 3 }&.identifier
   end
 
   def person_name(patient)
