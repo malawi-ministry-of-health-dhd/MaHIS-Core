@@ -37,12 +37,10 @@ module Sync
     
     def prepare_document(concept_set_data)
       {
-        "type" => "concept_set",
         "concept_set_id" => concept_set_data[:id],
         "concept_set_name" => concept_set_data[:concept_set_name],
         "member_ids" => concept_set_data[:member_ids],
         "member_count" => concept_set_data[:member_ids].length,
-        "synced_at" => Time.current.iso8601
       }
     end
     
