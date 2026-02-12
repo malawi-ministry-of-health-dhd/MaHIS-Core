@@ -15,9 +15,10 @@ class EncounterService
     query.order(encounter_datetime: :desc).first
   end
 
-  def create(type:, patient:, program:, encounter_datetime: nil, provider: nil,  location_id: nil)
+  def create(type:, patient:, program:, encounter_datetime: nil, provider: nil, location_id: nil, visit: nil)
     encounter_datetime ||= Time.now
     provider ||= User.current.person
+    visit ||= Visit.find_by(patient_id: patient.patient_id, date_stopped: nil)
     
     # TODO To be refactored in future
     unless program.program_id.to_i == Program.find_by_name('IMMUNIZATION PROGRAM').program_id.to_i
@@ -32,6 +33,7 @@ class EncounterService
     Encounter.create(
       type:, patient:, provider:,
       encounter_datetime:, program:,
+      visit:,
       location_id: location_id || User.current.location_id
     )
   end
