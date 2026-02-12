@@ -82,20 +82,31 @@ module Api
               # close off hanging visits for screening screen
               VisitService.daily_visits(category: 'screening')
 
-              taken_visit_ids = Observation.joins(encounter: :visit).where(
-                visit: { date_stopped: nil },
-                obs: { concept_id: ConceptName.find_by_name('AETC Visit number').concept_id }
-              ).select('obs.value_numeric')&.map(&:value_numeric)
-
-              visit_number = 1
-
-              visit_number += 1 while taken_visit_ids.include?(visit_number) && not_assigned_today?(visit_number)
+              visit_number = next_daily_visit_number!
 
               render json: { next_visit_number: visit_number }, status: :ok
             end
               
 
             private
+            def next_daily_visit_number!
+              date_key = Time.zone.today.strftime('%Y-%m-%d')
+              property_name = "aetc_visit_number_counter:#{date_key}"
+              location_key = (User.current.location_id || 0).to_s
+
+              GlobalProperty.transaction do
+                counter = GlobalProperty.lock.find_or_create_by!(property: property_name, location_id: location_key) do |record|
+                  record.property_value = '0'
+                  record.description = 'Daily AETC visit number counter'
+                  record.uuid = SecureRandom.uuid
+                end
+
+                next_number = counter.property_value.to_i + 1
+                counter.update!(property_value: next_number.to_s)
+                next_number
+              end
+            end
+
             def visit_params
                 params.permit(:patientId, :identifier, :startDate,:fullName, :closedDateTime, :programId, :location_id)
             end
