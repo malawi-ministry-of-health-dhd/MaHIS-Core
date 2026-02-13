@@ -79,8 +79,7 @@ module Sync
         "product_code" => stock_item.product_code,
         "unit_doses" => stock_item.unit_doses,
         "manufacture" => stock_item.manufacture,
-        "dosage_form" => stock_item.dosage_form,
-        "synced_at" => Time.current.iso8601
+        "dosage_form" => stock_item.dosage_form
       }
     end
 

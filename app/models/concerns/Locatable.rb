@@ -21,7 +21,14 @@ module Locatable
 
         belongs_to :location, foreign_key: :location_id, primary_key: :location_id, optional: true
 
-        default_scope { where(location_id: current_location_id) }
+        default_scope do
+          location = current_location_id
+          if location.present?
+            where(location_id: location)
+          else
+            all
+          end
+        end
         validates :location_id, presence: true
         before_save :set_location_id
 
