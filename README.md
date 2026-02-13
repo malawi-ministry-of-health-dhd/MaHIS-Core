@@ -46,15 +46,20 @@ Edit `config/application.yml` with your application settings.
 ## Database Initialization
 
 ### For Empty Database
+
 To initialize a new empty database:
+
 ```bash
 rails db:create
-rails db:seed
+INITIAL_SETUP=true rails db:seed
 ```
+
+The `INITIAL_SETUP=true` environment variable ensures proper initialization of the database with all required seed data.
 
 ## Running the Application
 
 ### Development Mode
+
 ```bash
 rails server
 ```
