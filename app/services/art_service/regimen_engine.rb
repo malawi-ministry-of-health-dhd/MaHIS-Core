@@ -520,44 +520,44 @@ module ArtService
     end
 
     REGIMEN_CODES = {
-      # ABC/3TC (Abacavir and Lamivudine 60/30mg tablet) = 733
+      # ABC/3TC (Abacavir and Lamivudine 60/30mg tablet) = 575
       # NVP (Nevirapine 50 mg tablet) = 968
       # NVP (Nevirapine 200 mg tablet) = 22
-      # ABC/3TC (Abacavir and Lamivudine 600/300mg tablet) = 969
-      # AZT/3TC/NVP (60/30/50mg tablet) = 732
-      # AZT/3TC/NVP (300/150/200mg tablet) = 731
-      # AZT/3TC (Zidovudine and Lamivudine 60/30 tablet) = 736
-      # EFV (Efavirenz 200mg tablet) = 30
-      # EFV (Efavirenz 600mg tablet) = 11
-      # AZT/3TC (Zidovudine and Lamivudine 300/150mg) = 39
-      # TDF/3TC/EFV (300/300/600mg tablet) = 735
-      # TDF/3TC (Tenofavir and Lamivudine 300/300mg tablet = 734
-      # ATV/r (Atazanavir 300mg/Ritonavir 100mg) = 932
-      # LPV/r (Lopinavir and Ritonavir 100/25mg tablet) = 74
-      # LPV/r (Lopinavir and Ritonavir 200/50mg tablet) = 73
-      # Darunavir 600mg = 976
-      # Ritonavir 100mg = 977
-      # Etravirine 100mg = 978
-      # RAL (Raltegravir 400mg) = 954
+      # ABC/3TC (Abacavir and Lamivudine 600/300mg tablet) = 809
+      # AZT/3TC/NVP (60/30/50mg tablet) = 574
+      # AZT/3TC/NVP (300/150/200mg tablet) = 573
+      # AZT/3TC (Zidovudine and Lamivudine 60/30 tablet) = 578
+      # EFV (Efavirenz 200mg tablet) = 24
+      # EFV (Efavirenz 600mg tablet) = 7
+      # AZT/3TC (Zidovudine and Lamivudine 300/150mg) = 33
+      # TDF/3TC/EFV (300/300/600mg tablet) = 577
+      # TDF/3TC (Tenofavir and Lamivudine 300/300mg tablet = 576
+      # ATV/r (Atazanavir 300mg/Ritonavir 100mg) = 772
+      # LPV/r (Lopinavir and Ritonavir 100/25mg tablet) = 67
+      # LPV/r (Lopinavir and Ritonavir 200/50mg tablet) = 66
+      # Darunavir 600mg = 816
+      # Ritonavir 100mg = 817
+      # Etravirine 100mg = 818
+      # RAL (Raltegravir 400mg) = 794
       # NVP (Nevirapine 200 mg tablet) = 22
-      # LPV/r pellets = 979
-      '0' => [Set.new([1044, 968]), Set.new([1044, 22]), Set.new([969, 22]), Set.new([969, 968])],
-      '2' => [Set.new([732]), Set.new([732, 736]), Set.new([732, 39]), Set.new([731]), Set.new([731, 39]),
-              Set.new([731, 736])],
-      '4' => [Set.new([736, 30]), Set.new([736, 11]), Set.new([39, 11]), Set.new([39, 30])],
-      '5' => [Set.new([735])],
-      '6' => [Set.new([734, 22])],
-      '7' => [Set.new([734, 932])],
-      '8' => [Set.new([39, 932])],
-      '9' => [Set.new([1044, 74]), Set.new([1044, 73]), Set.new([969, 73]), Set.new([969, 74]), Set.new([1044, 979])],
-      '10' => [Set.new([734, 73])],
-      '11' => [Set.new([736, 74]), Set.new([736, 73]), Set.new([736, 1044]), Set.new([39, 73]), Set.new([39, 74])],
-      '12' => [Set.new([976, 977, 982])],
-      '13' => [Set.new([983])],
-      '14' => [Set.new([736, 982]), Set.new([984, 982])],
-      '15' => [Set.new([1044, 982]), Set.new([969, 982]), Set.new([1044, 980])],
-      '16' => [Set.new([1043, 1044]), Set.new([954, 969])],
-      '17' => [Set.new([30, 1044]), Set.new([11, 969])]
+      # LPV/r pellets = 819
+      '0' => [Set.new([1044, 968]), Set.new([1044, 22]), Set.new([809, 22]), Set.new([809, 968])],
+      '2' => [Set.new([574]), Set.new([574, 578]), Set.new([574, 33]), Set.new([573]), Set.new([573, 33]),
+              Set.new([573, 578])],
+      '4' => [Set.new([578, 24]), Set.new([578, 7]), Set.new([33, 7]), Set.new([33, 24])],
+      '5' => [Set.new([577])],
+      '6' => [Set.new([576, 22])],
+      '7' => [Set.new([576, 772])],
+      '8' => [Set.new([33, 772])],
+      '9' => [Set.new([1044, 67]), Set.new([1044, 66]), Set.new([809, 66]), Set.new([809, 67]), Set.new([1044, 819])],
+      '10' => [Set.new([576, 66])],
+      '11' => [Set.new([578, 67]), Set.new([578, 66]), Set.new([578, 1044]), Set.new([33, 66]), Set.new([33, 67])],
+      '12' => [Set.new([816, 817, 822])],
+      '13' => [Set.new([823])],
+      '14' => [Set.new([578, 822]), Set.new([824, 822])],
+      '15' => [Set.new([1044, 822]), Set.new([809, 822]), Set.new([1044, 820])],
+      '16' => [Set.new([1043, 1044]), Set.new([794, 809])],
+      '17' => [Set.new([24, 1044]), Set.new([7, 809])]
     }.freeze
   end
   # rubocop:enable Metrics/ClassLength
