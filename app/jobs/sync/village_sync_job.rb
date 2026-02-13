@@ -2,8 +2,8 @@
 module Sync
   class VillageSyncJob < BaseSyncJob
     
-    # Sync all villages to CouchDB
-    def perform(batch_size = 100)
+    # Sync all villages to CouchDB using BULK operations
+    def perform(batch_size = 5000) # Increased from 100 for bulk ops
       sync_records_to_couchdb(Village, 'villages', batch_size) do |model_class|
         model_class.where(retired: false)
       end
@@ -11,21 +11,30 @@ module Sync
     
     private
     
+    # Optional: Specify which columns to select for better performance
+    def get_required_columns
+      [
+        :location_id,
+        :name,
+        :parent_location
+      ]
+    end
+    
     def prepare_document(village)
       {
-        "type" => "village",
-        "village_id" => village.village_id,
+        "location_id" => village.location_id,
         "name" => village.name,
-        "traditional_authority_id" => village.traditional_authority_id,
-        "synced_at" => Time.current.iso8601
+        "parent_location" => village.parent_location,
       }
     end
     
     def generate_document_id(village)
-      "village_#{village.id}"
+      "village_#{village.location_id}"
     end
   end
 end
 
-# Usage examples:
-# Sync::VillageSyncJob.perform_async(50)
+# Usage - automatically uses bulk sync with enhanced BaseSyncJob:
+# Sync::VillageSyncJob.perform_async          # Uses default 5000 batch size
+# Sync::VillageSyncJob.perform_async(10000)   # Larger batches if many villages
+# Sync::VillageSyncJob.perform_async(2000)    # Smaller batches if needed

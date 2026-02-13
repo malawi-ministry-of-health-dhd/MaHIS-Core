@@ -21,7 +21,7 @@ module Sync
     end
     
     def generate_document_id(district)
-      "district_#{district.district_id}"
+      "district_#{district.location_id}"
     end
   end
 end
