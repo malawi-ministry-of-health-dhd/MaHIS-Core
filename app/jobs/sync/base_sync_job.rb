@@ -213,6 +213,7 @@ module Sync
     
     # Enhanced sync method for array-based data with bulk support
     def sync_array_to_couchdb(data_array, db_name, data_type_name, batch_size = DEFAULT_BULK_BATCH_SIZE, progress_interval: 25, rate_limit_interval: 5)
+    
       return if check_and_clean_couchdb_if_needed_for_array(data_array, db_name, data_type_name) == :skip_sync
       
       total_count = data_array.length
@@ -337,8 +338,8 @@ module Sync
     
     # NEW: Prepare document with _id for bulk operations
     def prepare_bulk_document(record)
-      doc = prepare_document(record)
-      doc_id = generate_document_id(record)
+      doc = prepare_document(record.with_indifferent_access)
+      doc_id = generate_document_id(record.with_indifferent_access)
       
       # Add _id for CouchDB bulk operations
       doc.merge("_id" => doc_id)
@@ -603,8 +604,8 @@ module Sync
     end
     
     def sync_record_to_couchdb(record, db_name)
-      doc_data = prepare_document(record)
-      doc_id = generate_document_id(record)
+      doc_data = prepare_document(record.with_indifferent_access)
+      doc_id = generate_document_id(record.with_indifferent_access)
       
       retries = 0
       begin
