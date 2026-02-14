@@ -18,14 +18,14 @@ module Sync
 
     def prepare_document(specimen)
       {
-        "concept_id" => specimen.concept_id,
-        "name" => specimen.name,
-        "nlims_code" => specimen.nlims_code,
+        "concept_id" => specimen["concept_id"],
+        "name" => specimen["name"],
+        "nlims_code" => specimen["nlims_code"],
       }
     end
 
     def generate_document_id(specimen)
-      "specimen_#{specimen.concept_id}"
+      "specimen_#{specimen["concept_id"]}"
     end
   end
 end
