@@ -11,9 +11,8 @@ module Sync
     
     private
     
-    def prepare_document(ward)
+    def prepare_document(ward)     
       {
-        "type" => "ward",
         "location_id" => ward.location_id,
         "name" => ward.name,
         "description" => ward.description,
@@ -31,10 +30,6 @@ module Sync
         "subregion" => ward.subregion,
         "township_division" => ward.township_division,
         "parent_location" => ward.parent_location,
-        "uuid" => ward.uuid,
-        "created_at" => ward.date_created&.iso8601,
-        "retired" => ward.retired,
-        "synced_at" => Time.current.iso8601
       }
     end
     
