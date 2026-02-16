@@ -326,7 +326,7 @@ class VisitService
     return true if patient_open_visit.nil?
 
     if patient_open_visit.date_started < 48.hours.ago
-      reason = Obs.new
+      reason = Observation.new
       reason.person_id = patient.patient_id
       reason.concept_id = ConceptName.find_by_name('Reason for exiting care')&.concept_id
       reason.value_text = 'Screening took more than 24 hours'
