@@ -33,7 +33,15 @@ module Api
       end
  
       def show
-        render json: patient
+        current_patient = patient
+        response = current_patient.as_json
+
+        if params[:aetc]&.casecmp?('true')
+          active_visit = Visit.where(patient_id: current_patient.patient_id, date_stopped: nil).order(date_started: :desc).first
+          response[:active_visit] = active_visit
+        end
+
+        render json: response
       end
       
       def get_patient_list
