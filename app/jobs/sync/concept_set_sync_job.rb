@@ -1,12 +1,15 @@
-# app/jobs/sync/concept_set_sync_job.rb
 module Sync
   class ConceptSetSyncJob < BaseSyncJob
     
-    # Sync all concept sets to CouchDB
-    def perform(batch_size = 100)
+    def perform(batch_size = 5000) 
       concept_sets_data = get_concept_sets_data
-      sync_array_to_couchdb(concept_sets_data, 'concept_sets', 'concept_sets', batch_size, 
-                           progress_interval: 50, rate_limit_interval: 10)
+      
+      sync_array_to_couchdb(
+        concept_sets_data, 
+        'concept_sets', 
+        'concept_sets', 
+        batch_size
+      )
     end
     
     private
@@ -24,7 +27,6 @@ module Sync
         .group("concept_name.concept_id")
         .order("concept_name.name")
       
-      # Transform the data to match the expected format
       concept_sets.map do |result|
         member_ids = result.member_ids.present? ? result.member_ids.split(",").map(&:to_i) : []
         {
@@ -37,12 +39,10 @@ module Sync
     
     def prepare_document(concept_set_data)
       {
-        "type" => "concept_set",
         "concept_set_id" => concept_set_data[:id],
         "concept_set_name" => concept_set_data[:concept_set_name],
         "member_ids" => concept_set_data[:member_ids],
         "member_count" => concept_set_data[:member_ids].length,
-        "synced_at" => Time.current.iso8601
       }
     end
     
@@ -52,7 +52,6 @@ module Sync
   end
 end
 
-# Usage examples:
-# Sync::ConceptSetSyncJob.perform_async(50)   # Smaller batches for testing
-# Sync::ConceptSetSyncJob.perform_async(100)  # Default batch size
-# Sync::ConceptSetSyncJob.perform_async(200)  # Larger batches for faster sync
+# Usage - automatically uses bulk sync:
+# Sync::ConceptSetSyncJob.perform_async           # Uses default 5000
+# Sync::ConceptSetSyncJob.perform_async(2000)     # Smaller batches
