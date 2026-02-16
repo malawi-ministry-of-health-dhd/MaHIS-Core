@@ -158,6 +158,8 @@ Rails.application.routes.draw do
         end
       end
 
+      get '/location/legacy/:id', to: 'locations#show_legacy_location'
+
       resources :regions, only: %i[index] do
         get('/districts', to: redirect do |params, request|
           paginate_url "/api/v1/districts?region_id=#{params[:region_id]}", request.params
