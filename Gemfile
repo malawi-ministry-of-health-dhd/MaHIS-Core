@@ -48,6 +48,7 @@ gem 'rest-client'
 
 gem 'test-unit'
 
+
 gem 'rswag-api'
 gem 'rswag-ui'
 
@@ -92,8 +93,6 @@ gem 'roo', '~> 2.8'
 
 # gem for object matching
 gem 'whitesimilarity'
-
-gem 'mongoid', '~> 9.0', '>= 9.0.6'
 
 # gems for centralized migration
 gem 'sys-cpu'

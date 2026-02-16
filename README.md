@@ -63,3 +63,17 @@ The `INITIAL_SETUP=true` environment variable ensures proper initialization of t
 ```bash
 rails server
 ```
+
+## OFFLINE 
+
+# sync all records with couchDB
+
+- rails sync:all
+
+# Run only one job (e.g. StageSyncJob)
+
+- rails "sync:run[StageSyncJob]"
+
+# Start all listeners
+
+- rails couchdb:start_all_listeners

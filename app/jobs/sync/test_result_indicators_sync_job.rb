@@ -20,13 +20,12 @@ module Sync
 
     def prepare_document(indicator)
       {
-        "type" => "test_result_indicator",
         "concept_id" => indicator[:concept_id],
         "name" => indicator[:name],
         "concept_set" => indicator[:concept_set],
-        "synced_at" => Time.current.iso8601
       }
     end
+
 
     def generate_document_id(indicator)
       "test_indicator_#{indicator[:concept_id]}_#{indicator[:concept_set]}"
