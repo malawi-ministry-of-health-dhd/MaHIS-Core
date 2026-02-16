@@ -9,12 +9,8 @@ module Api
             end
 
             def create
-              data = VisitsService.new.create_visit(visit_params)
-
-              if couchdb_configured?
-                create_couchdb_visit(data)
-              end
-              
+              data = VisitService.new.create_visit(visit_params)
+              create_couchdb_visit(data)
               render json: data
             end
 
@@ -79,11 +75,39 @@ module Api
           end
             
             def close
-              render json: VisitsService.new.close_visit(visit_params)
+              render json: VisitService.new.close_visit(visit_params)
+            end
+
+            def generate_visit_number
+
+              # close off hanging visits for screening screen
+              VisitService.daily_visits(category: 'screening')
+
+              visit_number = next_daily_visit_number!
+
+              render json: { next_visit_number: visit_number }, status: :ok
             end
               
 
             private
+            def next_daily_visit_number!
+              date_key = Time.zone.today.strftime('%Y-%m-%d')
+              property_name = "aetc_visit_number_counter:#{date_key}"
+              location_key = (User.current.location_id || 0).to_s
+
+              GlobalProperty.transaction do
+                counter = GlobalProperty.lock.find_or_create_by!(property: property_name, location_id: location_key) do |record|
+                  record.property_value = '0'
+                  record.description = 'Daily AETC visit number counter'
+                  record.uuid = SecureRandom.uuid
+                end
+
+                next_number = counter.property_value.to_i + 1
+                counter.update!(property_value: next_number.to_s)
+                next_number
+              end
+            end
+
             def visit_params
                 params.permit(:patientId, :identifier, :startDate,:fullName, :closedDateTime, :programId, :location_id)
             end

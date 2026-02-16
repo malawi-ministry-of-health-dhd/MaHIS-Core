@@ -81,6 +81,9 @@ Rails.application.routes.draw do
 
       resources :roles
       resources :printer_configurations, only: [:index, :create, :destroy, :update]
+
+      # Generate visit number 
+      get '/generate_visit_number' => 'visits#generate_visit_number'
       
       get '/find_relationships_with_details', to: 'person_relationships#find_relationships_with_details'
       # Patients
@@ -512,9 +515,10 @@ Rails.application.routes.draw do
 
   namespace :api do
     namespace :v1 do
-      resources :stages, only: %i[index show create] do
+      resources :stages, only: %i[index show create update] do
         collection do
           get :active_stages
+          put "visit/:visit_id", action: :update_by_visit
         end
       end
     end
