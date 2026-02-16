@@ -1,9 +1,7 @@
-# app/jobs/sync/program_sync_job.rb
 module Sync
   class ProgramSyncJob < BaseSyncJob
     
-    # Sync all programs to CouchDB
-    def perform(batch_size = 100)
+    def perform(batch_size = 5000) 
       sync_records_to_couchdb(Program, 'programs', batch_size) do |model_class|
         model_class.where(retired: 0)
       end
@@ -11,20 +9,19 @@ module Sync
     
     private
     
+    def get_required_columns
+      [
+        :program_id,
+        :concept_id,
+        :name
+      ]
+    end
+    
     def prepare_document(program)
       {
-        "type" => "program",
         "program_id" => program.program_id,
         "concept_id" => program.concept_id,
         "name" => program.name,
-        "description" => program.description,
-        "creator" => program.creator,
-        "changed_by" => program.changed_by,
-        "retired" => program.retired,
-        "uuid" => program.uuid,
-        "date_created" => program.date_created&.iso8601,
-        "date_changed" => program.date_changed&.iso8601,
-        "synced_at" => Time.current.iso8601
       }
     end
     
@@ -34,6 +31,7 @@ module Sync
   end
 end
 
-# Usage examples:
-# Sync::ProgramSyncJob.perform_async(50)  # Smaller batches
-# Sync::ProgramSyncJob.perform_async      # Default batch size of 100
+# Usage - automatically uses bulk sync with enhanced BaseSyncJob:
+# Sync::ProgramSyncJob.perform_async          # Uses default 5000 batch size
+# Sync::ProgramSyncJob.perform_async(10000)   # Larger batches if many programs
+# Sync::ProgramSyncJob.perform_async(2000)    # Smaller batches if needed

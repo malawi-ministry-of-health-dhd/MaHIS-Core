@@ -36,7 +36,6 @@ module Sync
       end
 
       {
-        "type" => "stage",
         "stage_id" => stage.id,
         "visit_id" => stage.visit_id,
         "patient_id" => stage.patient_id,
@@ -46,9 +45,6 @@ module Sync
         "location_id" => stage.location_id,
         "fullName" => stage.patient.name,
         "identifier" => type3_identifier,
-        "created_at" => stage.created_at&.iso8601,
-        "updated_at" => stage.updated_at&.iso8601,
-        "synced_at" => Time.current.iso8601
       }
     end
 
