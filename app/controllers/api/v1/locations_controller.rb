@@ -69,7 +69,13 @@ module Api
             }
           }
         else
-          render json: { error: "Location not found for Legacy Location ID #{legacy_location_id}" }, status: :not_found
+          # Just fallback to trying to find using any location
+          location = Location.includes(:location_attributes).find_by(location_id: legacy_location_id)
+          render json: location, include: {
+            location_attributes: {
+              only: %i[location_attribute_id attribute_type_id value_reference]
+            }
+          }
         end
       end
   
