@@ -69,7 +69,11 @@ module Api
 
       def create
         data = StagesService.new.create_stage(stage_params)
-        sync_to_couchdb(data, "stages", data[:identifier])
+
+        if couchdb_configured?
+          sync_to_couchdb(data, "stages", data[:identifier])
+        end
+        
         render json: data
       end
 

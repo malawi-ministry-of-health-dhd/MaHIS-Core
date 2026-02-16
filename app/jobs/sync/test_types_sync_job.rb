@@ -22,16 +22,14 @@ module Sync
     
     def prepare_document(test_type)
       {
-        "type" => "test_type",
-        "concept_id" => test_type.concept_id,
-        "name" => test_type.name,
-        "concept_set_id" => test_type.concept_set_id,
-        "synced_at" => Time.current.iso8601
+        "concept_id" => test_type["concept_id"],
+        "name" => test_type["name"],
+        "nlims_code" => test_type["nlims_code"],
       }
     end
     
     def generate_document_id(test_type)
-      "test_type_#{test_type.concept_id}"
+      "test_type_#{test_type["nlims_code"]}"
     end
     
     # Override the record identifier method for test types

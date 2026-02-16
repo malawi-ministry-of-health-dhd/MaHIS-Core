@@ -52,6 +52,43 @@ module PatientRecordService
       false
     end
 
+  def create_relationship(record)
+    return false unless record[:relationships].present? && record[:relationships].is_a?(Array)
+
+    record[:relationships].each do |relationship|
+      next unless relationship[:guardianID].present? && 
+                  relationship[:patientID].present? && 
+                  relationship[:relationshipID].present?
+
+      guardian_identifier = PatientIdentifier.find_by(identifier: relationship[:guardianID])
+      guardian_id = guardian_identifier&.patient_id
+
+      patient_identifier = PatientIdentifier.find_by(identifier: relationship[:patientID])
+      patient_id = patient_identifier&.patient_id
+
+      # Skip if either ID couldn't be found
+      next unless guardian_id && patient_id
+
+      # Check if relationship already exists
+      existing_relationship = Relationship.find_by(
+        person_a: guardian_id,
+        relationship: relationship[:relationshipID],
+        person_b: patient_id
+      )
+
+      # Only create if relationship doesn't exist
+      next if existing_relationship.present?
+
+      create_relation(
+        guardian_id: guardian_id,
+        relationship_type_id: relationship[:relationshipID],
+        person_id: patient_id
+      )
+    end
+
+    return true
+  end
+
     def guardian_info_complete?(record)
       guardian = record.dig(:guardianInformation, :unsaved, 0)
       relationship_id = record.dig(:otherPersonInformation, :relationshipID)

@@ -1,42 +1,34 @@
-# app/jobs/sync/concept_name_sync_job.rb
 module Sync
   class ConceptNameSyncJob < BaseSyncJob
     
-    # Sync all concept names to CouchDB
-    def perform(batch_size = 50) # Smaller default batch size due to large dataset
+    def perform(batch_size = 5000) 
       sync_records_to_couchdb(ConceptName, 'concept_names', batch_size) do |model_class|
         model_class.where(voided: 0)
       end
     end
     
     private
+    def get_required_columns
+      [:concept_name_id, :concept_id, :name, :concept_name_type]
+    end
     
     def prepare_document(concept_name)
       {
-        "type" => "concept_name",
         "concept_name_id" => concept_name.concept_name_id,
         "concept_id" => concept_name.concept_id,
         "name" => concept_name.name,
-        "locale" => concept_name.locale,
         "concept_name_type" => concept_name.concept_name_type,
-        "locale_preferred" => concept_name.locale_preferred,
-        "creator" => concept_name.creator,
-        "voided" => concept_name.voided,
-        "voided_by" => concept_name.voided_by,
-        "void_reason" => concept_name.void_reason,
-        "uuid" => concept_name.uuid,
         "date_created" => concept_name.date_created&.iso8601,
-        "date_voided" => concept_name.date_voided&.iso8601,
-        "synced_at" => Time.current.iso8601
       }
     end
     
     def generate_document_id(concept_name)
-      "concept_name_#{concept_name.concept_name_id}"
+      concept_name.uuid
     end
   end
 end
 
-# Usage examples:
-# Sync::ConceptNameSyncJob.perform_async(25)  # Even smaller batches for large dataset
-# Sync::ConceptNameSyncJob.perform_async      # Default batch size of 50
+# Usage - automatically uses bulk sync:
+# Sync::ConceptNameSyncJob.perform_async          # Uses default 5000
+# Sync::ConceptNameSyncJob.perform_async(10000)   # Even larger batches
+# Sync::ConceptNameSyncJob.perform_async(1000)    # Smaller batches if needed

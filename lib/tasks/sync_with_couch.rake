@@ -19,8 +19,7 @@ namespace :sync do
       Sync::VillageSyncJob,
       Sync::VisitSyncJob,
       Sync::WardSyncJob,
-      Sync::FacilitySyncJob,
-      Sync::TestTypesSyncJob
+      Sync::FacilitySyncJob
     ]
 
     jobs.each(&:perform_async)
@@ -43,3 +42,10 @@ namespace :sync do
     end
   end
 end
+
+
+# sync all records with couchDB
+# rails sync:all
+
+# Run only one job (e.g. StageSyncJob)
+# rails "sync:run[StageSyncJob]"
