@@ -51,6 +51,34 @@ module Api
         }
       end
 
+      # Using Legacy Location ID location_attribute_type
+      def show_legacy_location
+        legacy_location_id = params[:id]
+        location_attribute_type_id = LocationAttributeType.find_by(name: "Legacy Location ID").location_attribute_type_id
+
+        location_attribute = LocationAttribute.find_by(
+          attribute_type_id: location_attribute_type_id,
+          value_reference: legacy_location_id
+        )
+
+        if location_attribute
+          location = Location.find(location_attribute.location_id)
+          render json: location, include: {
+            location_attributes: {
+              only: %i[location_attribute_id attribute_type_id value_reference]
+            }
+          }
+        else
+          # Just fallback to trying to find using any location
+          location = Location.includes(:location_attributes).find_by(location_id: legacy_location_id)
+          render json: location, include: {
+            location_attributes: {
+              only: %i[location_attribute_id attribute_type_id value_reference]
+            }
+          }
+        end
+      end
+  
       # Retrieve the current configured facility
       #
       # GET /locations/current_facility
