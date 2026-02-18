@@ -34,7 +34,16 @@ module ArtService
       end
 
       def find_report
-        Report.where(type: @type, name: "#{@name} #{@occupation}",
+        # Find or create ReportType if @type is an OpenStruct
+        report_type = if @type.is_a?(OpenStruct)
+                        ReportType.find_or_create_by(name: @type.name) do |rt|
+                          rt.creator = User.current.id
+                        end
+                      else
+                        @type
+                      end
+
+        Report.where(type: report_type, name: "#{@name} #{@occupation}",
                      start_date: @start_date, end_date: @end_date)\
               .order(date_created: :desc)\
               .first
@@ -112,7 +121,16 @@ module ArtService
       LOGGER = Rails.logger
 
       def find_saved_report
-        @report = Report.where(type: @type, name: "#{@name} #{@occupation}",
+        # Find or create ReportType if @type is an OpenStruct
+        report_type = if @type.is_a?(OpenStruct)
+                        ReportType.find_or_create_by(name: @type.name) do |rt|
+                          rt.creator = User.current.id
+                        end
+                      else
+                        @type
+                      end
+
+        @report = Report.where(type: report_type, name: "#{@name} #{@occupation}",
                               start_date: @start_date, end_date: @end_date)
         @report&.map { |r| r['id'] } || []
       end
@@ -120,10 +138,19 @@ module ArtService
       # Writes the report to database
       def save_report
         Report.transaction do
+          # Find or create ReportType if @type is an OpenStruct
+          report_type = if @type.is_a?(OpenStruct)
+                          ReportType.find_or_create_by(name: @type.name) do |rt|
+                            rt.creator = User.current.id
+                          end
+                        else
+                          @type
+                        end
+
           report = Report.create(name: "#{@name} #{@occupation}",
                                  start_date: @start_date,
                                  end_date: @end_date,
-                                 type: @type,
+                                 type: report_type,
                                  creator: User.current.id,
                                  renderer_type: 'PDF')
 

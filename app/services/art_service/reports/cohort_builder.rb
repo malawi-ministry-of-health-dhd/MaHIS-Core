@@ -669,7 +669,7 @@ module ArtService
                  IF(person.birthdate IS NOT NULL, TIMESTAMPDIFF(YEAR, person.birthdate,  DATE(COALESCE(art_start_date_obs.value_datetime, MIN(art_order.start_date)))), NULL) AS age_at_initiation,
                  IF(person.birthdate IS NOT NULL, TIMESTAMPDIFF(DAY, person.birthdate,  DATE(COALESCE(art_start_date_obs.value_datetime, MIN(art_order.start_date)))), NULL) AS age_in_days,
                  (SELECT value_coded FROM obs
-                  WHERE concept_id = 7563 AND person_id = patient_program.patient_id AND voided = 0
+                  WHERE concept_id = (SELECT concept_id FROM concept_name WHERE name = 'Reason for ART eligibility' LIMIT 1) AND person_id = patient_program.patient_id AND voided = 0
                   AND obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
                   ORDER BY obs_datetime DESC, date_created DESC LIMIT 1) AS reason_for_starting_art,
                  pa.value AS occupation
@@ -1312,14 +1312,14 @@ module ArtService
             "SELECT patient_id, died_in(t.patient_id, moh_cum_outcome, earliest_start_date) died_in FROM temp_patient_outcomes o
             INNER JOIN temp_earliest_start_date t USING(patient_id)
             WHERE moh_cum_outcome = 'Patient died' GROUP BY patient_id
-            HAVING died_in IN ('4+ months', 'Unknown')"
+            HAVING died_in COLLATE utf8mb3_general_ci IN ('4+ months', 'Unknown')"
           )
         else
           data = ActiveRecord::Base.connection.select_all(
             "SELECT patient_id, died_in(t.patient_id, moh_cum_outcome, earliest_start_date) died_in FROM temp_patient_outcomes o
             INNER JOIN temp_earliest_start_date t USING(patient_id)
             WHERE moh_cum_outcome = 'Patient died' GROUP BY patient_id
-            HAVING died_in = '#{month_str}'"
+            HAVING died_in COLLATE utf8mb3_general_ci = '#{month_str}'"
           )
         end
 
@@ -1686,7 +1686,7 @@ module ArtService
             AND (gender = 'F' OR gender = 'Female')
             AND patient_id IN (#{pregnant_at_initiation_ids.join(',')})
           GROUP BY patient_id
-          HAVING re_initiated != 'Re-initiated'
+          HAVING re_initiated COLLATE utf8mb3_general_ci != 'Re-initiated'
         SQL
 
         transfer_ins_preg_women = []
