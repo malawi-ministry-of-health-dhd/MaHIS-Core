@@ -158,6 +158,7 @@ Rails.application.routes.draw do
         end)
 
         collection do
+          get :districts
           get :current_facility
         end
       end
