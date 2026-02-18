@@ -740,7 +740,7 @@ module ArtService
           INNER JOIN arv_drug ad ON ad.drug_id = do.drug_inventory_id
           LEFT JOIN temp_register_start_date trsd ON trsd.patient_id  = o.patient_id
           WHERE o.start_date < DATE('#{end_date}') + INTERVAL 1 DAY AND o.start_date >= COALESCE(trsd.start_date, DATE('1901-01-01'))
-            AND o.order_type_id = 1 -- Drug order 
+            AND o.order_type_id = 1 -- Drug order#{' '}
             AND o.voided  = 0
           GROUP BY o.patient_id;
         SQL
@@ -1641,12 +1641,16 @@ module ArtService
       end
 
       def load_temp_pregnant_obs(start_date, end_date)
+        # Get concept IDs dynamically
+        pregnant_concept_id = concept_name('Is patient pregnant?')&.concept_id || 54_319
+        yes_concept_id = concept_name('Yes')&.concept_id || 37_966
+
         ActiveRecord::Base.connection.execute <<~SQL
           INSERT INTO temp_pregnant_obs
           SELECT o.person_id,o.value_coded, DATE(o.obs_datetime) obs_datetime
           FROM obs o
-          WHERE o.concept_id IN (6131,1755,7972,7563)
-            AND o.value_coded IN (1065,1755)
+          WHERE o.concept_id IN (#{pregnant_concept_id})
+            AND o.value_coded IN (#{yes_concept_id})
             AND o.voided = 0
             AND o.obs_datetime >= '#{start_date}' AND o.obs_datetime < '#{end_date}' + INTERVAL 1 DAY
           GROUP BY o.person_id

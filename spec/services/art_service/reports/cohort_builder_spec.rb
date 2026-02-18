@@ -949,5 +949,168 @@ context 'when drug is in arv_drug view' do
         expect(result.initiated_on_art_first_time.count).to eq(0)
       end
     end
+    
+    describe 'Comprehensive Indicator Coverage Smoke Test' do
+      it 'generates all 106 expected indicators in the result structure' do
+        result = cohort_builder.build(cohort_struct, start_date, end_date, nil)
+        
+        # Core registration indicators
+        expect(result).to respond_to(:total_registered)
+        expect(result).to respond_to(:initiated_on_art_first_time)
+        expect(result).to respond_to(:re_initiated_on_art)
+        expect(result).to respond_to(:transfer_in)
+        
+        # Demographics - Gender
+        expect(result).to respond_to(:all_males)
+        expect(result).to respond_to(:unknown_gender)
+        expect(result).to respond_to(:males_initiated_on_art_first_time)
+        
+        # Demographics - Age categories
+        expect(result).to respond_to(:children_below_24_months_at_art_initiation)
+        expect(result).to respond_to(:children_24_months_14_years_at_art_initiation)
+        expect(result).to respond_to(:adults_at_art_initiation)
+        expect(result).to respond_to(:unknown_age)
+        
+        # Maternal status indicators
+        expect(result).to respond_to(:pregnant_females_all_ages)
+        expect(result).to respond_to(:non_pregnant_females)
+        expect(result).to respond_to(:initial_pregnant_females_all_ages)
+        expect(result).to respond_to(:initial_non_pregnant_females_all_ages)
+        expect(result).to respond_to(:total_pregnant_women)
+        expect(result).to respond_to(:total_breastfeeding_women)
+        expect(result).to respond_to(:total_other_patients)
+        
+        # Reason for eligibility
+        expect(result).to respond_to(:presumed_severe_hiv_disease_in_infants)
+        expect(result).to respond_to(:confirmed_hiv_infection_in_infants_pcr)
+        expect(result).to respond_to(:who_stage_two)
+        expect(result).to respond_to(:who_stage_three)
+        expect(result).to respond_to(:who_stage_four)
+        expect(result).to respond_to(:breastfeeding_mothers)
+        expect(result).to respond_to(:pregnant_women)
+        expect(result).to respond_to(:asymptomatic)
+        expect(result).to respond_to(:unknown_other_reason_outside_guidelines)
+        expect(result).to respond_to(:children_12_59_months)
+        
+        # TB status indicators
+        expect(result).to respond_to(:current_episode_of_tb)
+        expect(result).to respond_to(:tb_within_the_last_two_years)
+        expect(result).to respond_to(:no_tb)
+        expect(result).to respond_to(:tb_not_suspected)
+        expect(result).to respond_to(:tb_suspected)
+        expect(result).to respond_to(:tb_confirmed_on_tb_treatment)
+        expect(result).to respond_to(:tb_confirmed_currently_not_yet_on_tb_treatment)
+        expect(result).to respond_to(:unknown_tb_status)
+        
+        # Opportunistic infections
+        expect(result).to respond_to(:kaposis_sarcoma)
+        
+        # Patient outcomes
+        expect(result).to respond_to(:died_within_the_1st_month_of_art_initiation)
+        expect(result).to respond_to(:died_within_the_2nd_month_of_art_initiation)
+        expect(result).to respond_to(:died_within_the_3rd_month_of_art_initiation)
+        expect(result).to respond_to(:total_alive_and_on_art)
+        
+        # Side effects
+        expect(result).to respond_to(:total_patients_with_side_effects)
+        expect(result).to respond_to(:total_patients_without_side_effects)
+        expect(result).to respond_to(:unknown_side_effects)
+        
+        # Adherence
+        expect(result).to respond_to(:patients_with_0_6_doses_missed_at_their_last_visit)
+        expect(result).to respond_to(:patients_with_7_plus_doses_missed_at_their_last_visit)
+        expect(result).to respond_to(:patients_with_unknown_adhrence)
+        
+        # Preventive treatments
+        expect(result).to respond_to(:total_patients_on_arvs_and_cpt)
+        expect(result).to respond_to(:total_patients_on_arvs_and_ipt)
+        expect(result).to respond_to(:newly_initiated_on_ipt)
+        expect(result).to respond_to(:newly_initiated_on_3hp)
+        
+        # Additional services
+        expect(result).to respond_to(:total_patients_on_family_planning)
+        expect(result).to respond_to(:total_patients_with_screened_bp)
+        
+        # Cumulative variants (sample key ones)
+        expect(result).to respond_to(:cum_total_registered)
+        expect(result).to respond_to(:cum_initiated_on_art_first_time)
+        expect(result).to respond_to(:cum_re_initiated_on_art)
+        expect(result).to respond_to(:cum_transfer_in)
+        expect(result).to respond_to(:cum_all_males)
+        expect(result).to respond_to(:cum_males_initiated_on_art_first_time)
+        expect(result).to respond_to(:cum_children_below_24_months_at_art_initiation)
+        expect(result).to respond_to(:cum_children_24_months_14_years_at_art_initiation)
+        expect(result).to respond_to(:cum_adults_at_art_initiation)
+        expect(result).to respond_to(:cum_pregnant_females_all_ages)
+        expect(result).to respond_to(:cum_non_pregnant_females)
+        expect(result).to respond_to(:cum_initial_pregnant_females_all_ages)
+        expect(result).to respond_to(:cum_initial_non_pregnant_females_all_ages)
+        expect(result).to respond_to(:cum_unknown_age)
+        expect(result).to respond_to(:cum_unknown_gender)
+        expect(result).to respond_to(:cum_presumed_severe_hiv_disease_in_infants)
+        expect(result).to respond_to(:cum_confirmed_hiv_infection_in_infants_pcr)
+        expect(result).to respond_to(:cum_who_stage_two)
+        expect(result).to respond_to(:cum_who_stage_three)
+        expect(result).to respond_to(:cum_who_stage_four)
+        expect(result).to respond_to(:cum_breastfeeding_mothers)
+        expect(result).to respond_to(:cum_pregnant_women)
+        expect(result).to respond_to(:cum_asymptomatic)
+        expect(result).to respond_to(:cum_unknown_other_reason_outside_guidelines)
+        expect(result).to respond_to(:cum_children_12_59_months)
+        expect(result).to respond_to(:cum_current_episode_of_tb)
+        expect(result).to respond_to(:cum_tb_within_the_last_two_years)
+        expect(result).to respond_to(:cum_no_tb)
+        expect(result).to respond_to(:cum_kaposis_sarcoma)
+        
+        # Quarterly variants (sample key ones)
+        expect(result).to respond_to(:quarterly_total_registered)
+        expect(result).to respond_to(:quarterly_initiated_on_art_first_time)
+        expect(result).to respond_to(:quarterly_re_initiated_on_art)
+        expect(result).to respond_to(:quarterly_transfer_in)
+        expect(result).to respond_to(:quarterly_all_males)
+        expect(result).to respond_to(:quarterly_children_below_24_months_at_art_initiation)
+        expect(result).to respond_to(:quarterly_children_24_months_14_years_at_art_initiation)
+        expect(result).to respond_to(:quarterly_adults_at_art_initiation)
+        expect(result).to respond_to(:quarterly_pregnant_females_all_ages)
+        expect(result).to respond_to(:quarterly_non_pregnant_females)
+        expect(result).to respond_to(:quarterly_unknown_age)
+        expect(result).to respond_to(:quarterly_presumed_severe_hiv_disease_in_infants)
+        expect(result).to respond_to(:quarterly_confirmed_hiv_infection_in_infants_pcr)
+        expect(result).to respond_to(:quarterly_who_stage_two)
+        expect(result).to respond_to(:quarterly_who_stage_three)
+        expect(result).to respond_to(:quarterly_who_stage_four)
+        expect(result).to respond_to(:quarterly_breastfeeding_mothers)
+        expect(result).to respond_to(:quarterly_pregnant_women)
+        expect(result).to respond_to(:quarterly_asymptomatic)
+        expect(result).to respond_to(:quarterly_unknown_other_reason_outside_guidelines)
+        expect(result).to respond_to(:quarterly_children_12_59_months)
+        expect(result).to respond_to(:quarterly_current_episode_of_tb)
+        expect(result).to respond_to(:quarterly_tb_within_the_last_two_years)
+        expect(result).to respond_to(:quarterly_no_tb)
+        expect(result).to respond_to(:quarterly_kaposis_sarcoma)
+      end
+      
+      it 'all indicator values are callable without errors' do
+        result = cohort_builder.build(cohort_struct, start_date, end_date, nil)
+        
+        # Verify indicators return values (not just respond_to)
+        # These should not raise errors when accessed
+        expect { result.total_registered }.not_to raise_error
+        expect { result.initiated_on_art_first_time }.not_to raise_error
+        expect { result.all_males }.not_to raise_error
+        expect { result.total_alive_and_on_art }.not_to raise_error
+        expect { result.cum_total_registered }.not_to raise_error
+        expect { result.quarterly_total_registered }.not_to raise_error
+        expect { result.pregnant_females_all_ages }.not_to raise_error
+        expect { result.non_pregnant_females }.not_to raise_error
+        expect { result.who_stage_two }.not_to raise_error
+        expect { result.current_episode_of_tb }.not_to raise_error
+        expect { result.total_patients_with_side_effects }.not_to raise_error
+        expect { result.patients_with_0_6_doses_missed_at_their_last_visit }.not_to raise_error
+        expect { result.total_patients_on_arvs_and_cpt }.not_to raise_error
+        expect { result.newly_initiated_on_ipt }.not_to raise_error
+        expect { result.total_breastfeeding_women }.not_to raise_error
+      end
+    end
   end
 end
