@@ -5,12 +5,13 @@ class CreateStages < ActiveRecord::Migration[7.0]
         t.integer :visit_id, null: false
         t.integer :patient_id, null: false
         t.integer :location_id
+        t.integer :program_id
         t.string :stage
         t.datetime :arrivalTime, precision: 6
         t.boolean :status
         t.string :disposition_type
         t.string :triage_result
-        t.integer :aetc_visit_number
+        t.integer :visit_number
         t.string :patient_care_area
         t.string :department
         t.string :destination
@@ -35,6 +36,6 @@ class CreateStages < ActiveRecord::Migration[7.0]
     add_index :stages, :location_id unless index_exists?(:stages, :location_id)
     add_index :stages, :status unless index_exists?(:stages, :status)
     add_index :stages, :stage unless index_exists?(:stages, :stage)
-    add_index :stages, :aetc_visit_number unless index_exists?(:stages, :aetc_visit_number)
+    add_index :stages, :visit_number unless index_exists?(:stages, :visit_number)
   end
 end
