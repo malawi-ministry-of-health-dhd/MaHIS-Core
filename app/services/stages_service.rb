@@ -24,6 +24,10 @@ class StagesService
       )
     end
 
+    if stage_params[:visit_number].present?  && Program.find_by_name("AETC Program").id == stage_params["program_id"]
+      stage.visit_number = VisitService.next_daily_visit_number! 
+    end
+
     stage.patient_id = patient_id
     stage.visit_id = active_visit.visit_id
     stage.location_id = location_id
@@ -34,8 +38,8 @@ class StagesService
       stage.arrival_time = Time.current
     end
 
-    if stage_params[:aetc_visit_number].present? && stage.aetc_visit_number != stage_params[:aetc_visit_number]
-      stage.aetc_visit_number = stage_params[:aetc_visit_number]
+    if stage_params[:visit_number].present? && stage.visit_number != stage_params[:visit_number]
+      stage.visit_number = stage_params[:visit_number]
     end
 
     stage.save! if stage.new_record? || stage.changed?
@@ -94,7 +98,7 @@ class StagesService
       given_name: person_name(patient)&.given_name,
       family_name: person_name(patient)&.family_name,
       gender: patient&.gender,
-      aetc_visit_number: stage.aetc_visit_number,
+      visit_number: stage.visit_number,
       patient_care_area: stage.patient_care_area,
       category: normalize_category(stage.stage),
       created_at: stage.created_at,
@@ -114,8 +118,8 @@ class StagesService
       stage.arrival_time = Time.current
     end
 
-    if stage_params[:aetc_visit_number].present? && stage.aetc_visit_number != stage_params[:aetc_visit_number]
-      stage.aetc_visit_number = stage_params[:aetc_visit_number]
+    if stage_params[:visit_number].present? && stage.visit_number != stage_params[:visit_number]
+      stage.visit_number = stage_params[:visit_number]
     end
 
     stage.save! if stage.changed?

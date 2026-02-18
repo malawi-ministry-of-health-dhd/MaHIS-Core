@@ -51,11 +51,11 @@ module Api
 
       def stage_params
         # Keep arrivalTime permitted for backward compatibility; service controls when it is applied.
-        params.permit(:patient_id, :identifier, :aetc_visit_number, :stage, :arrivalTime, :arrival_time, :location_id)
+        params.permit(:patient_id, :identifier, :visit_number, :stage, :arrivalTime, :arrival_time, :location_id)
       end
 
       def index_filters
-        params.permit(:stage, :location_id, :patient_id, :identifier)
+        params.permit(:stage, :location_id, :patient_id, :identifier, :program_id)
       end
     end
   end
