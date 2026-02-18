@@ -3,8 +3,8 @@ module Api
         class Api::V1::VisitsController < ApplicationController
             include CouchdbSync
             def check_patient_status
-                patientId = params[:patient_id]
-                visit = Visit.where(patientId: patientId, closedDateTime: nil)
+                patient_id = params[:patient_id]
+                visit = Visit.where(patient_id: patient_id, date_stopped: nil)
                 render json: visit, status: :ok
             end
 
@@ -21,52 +21,52 @@ module Api
             def generate_document_id(visit)
               # Create composite _id from identifier and start_date
               identifier = visit[:identifier] || 'unknown'
-              start_date = visit["startDate"] ? visit["startDate"].to_time.strftime("%Y-%m-%dT%H:%M:%S") : 'no-date'
+              start_date = visit["date_started"] ? visit["date_started"].to_time.strftime("%Y-%m-%dT%H:%M:%S") : 'no-date'
               "#{identifier}_#{start_date}"
             end
 
-           def index
-            patientId = params[:patientId] 
+          def index
+            patient_id = params[:patient_id] 
             status = params[:status] 
             date = params[:date]
             identifier = params[:identifier]
-            closed_date_time = params[:closedDateTime]
+            closed_date_time = params[:date_stopped]
 
             # Handle "null" string from frontend
             closed_date_time = nil if closed_date_time == "null"
 
             if identifier.present?
               patient_identifier = PatientIdentifier.find_by(identifier: identifier)
-              patientId = patient_identifier&.patient_id
+              patient_id = patient_identifier&.patient_id
             end
 
             # Build base query with joins
             visits = Visit.includes(:patient)
-              .select('visits.*, patient_identifier.identifier AS identifier')
+              .select('visit.*, patient_identifier.identifier AS identifier')
               .where(location_id: User.current.location_id)
-              .joins('INNER JOIN patient ON patient.patient_id = visits.patientId')
+              .joins('INNER JOIN patient ON patient.patient_id = visit.patient_id')
               .joins('INNER JOIN patient_identifier ON patient_identifier.patient_id = patient.patient_id AND patient_identifier.identifier_type = 3')
 
             # Apply filters
-            visits = visits.where(patientId: patientId) if patientId.present?
+            visits = visits.where(patient_id: patient_id) if patient_id.present?
 
             # Filter by closed date - Fixed logic
             if closed_date_time.present?
               # If a specific date is provided, filter by that date
-              visits = visits.where('DATE(closedDateTime) = ?', closed_date_time)
-            elsif params[:closedDateTime] == "null"
+              visits = visits.where('DATE(date_stopped) = ?', closed_date_time)
+            elsif params[:date_stopped] == "null"
               # If "null" is explicitly passed, get only open visits
-              visits = visits.where(closedDateTime: nil)
+              visits = visits.where(date_stopped: nil)
             end
 
             # Filter by start date if provided
-            visits = visits.where('DATE(startDate) = ?', date) if date.present?
-
+            visits = visits.where('DATE(date_started) = ?', date) if date.present?
+            
             # Map visit data
             visit_data = visits.map do |visit|
               visit.attributes.merge(
                 identifier: visit.try(:identifier),
-                fullName: visit.patient.try(:name)
+                full_name: visit.patient.try(:name)
               )
             end
 
@@ -109,7 +109,7 @@ module Api
             end
 
             def visit_params
-                params.permit(:patientId, :identifier, :startDate,:fullName, :closedDateTime, :programId, :location_id)
+                params.permit(:patient_id, :identifier, :date_started,:full_name, :date_stopped, :program_id, :location_id, :stage, :visit_type_id)
             end
 
         end

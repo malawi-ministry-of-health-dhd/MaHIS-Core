@@ -79,9 +79,9 @@ class StagesService
   def serialize(stage)
     patient = stage.patient
     latest_encounter = latest_visit_encounter(stage)
-
     {
       id: stage.id,
+      identifier: BuildPatientRecordService::PatientIdentifierService.patient_identifier(patient,3),
       visit_id: stage.visit_id,
       uuid: patient_uuid(patient) || stage.patient_id.to_s,
       patient_id: stage.patient_id,

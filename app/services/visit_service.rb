@@ -15,30 +15,30 @@ class VisitService
   end
 
   def create_visit(visit_params)
-    patientId = visit_params[:patientId] || visit_params[:patient_id]
+    patient_id = visit_params[:patient_id]
     identifier = visit_params[:identifier]
     stage_params = visit_params[:stage]
 
     if identifier.present?
       patient_identifier = PatientIdentifier.where(identifier: identifier).first
-      patientId = patient_identifier[:patient_id] if patient_identifier.present?
+      patient_id = patient_identifier[:patient_id] if patient_identifier.present?
     end
 
     # Create encounter first
-    create_encounter(patientId, 1,
+    create_encounter(patient_id, 1,
       {
-        program_id: visit_params[:programId],
+        program_id: visit_params[:program_id],
         location_id: visit_params[:location_id],
         encounter_datetime: visit_params[:date_started],
         provider_id: visit_params[:provider_id]
       })
 
     # Check if visit already exists
-    checkVisit = Visit.where(patient_id: patientId, date_stopped: nil).first
+    checkVisit = Visit.where(patient_id: patient_id, date_stopped: nil).first
     if checkVisit.present?
       visit_data = checkVisit.attributes
       visit_data[:identifier] = identifier if identifier.present?
-      visit_data[:fullName] = Patient.find_by(patient_id: patientId).try(:name)
+      visit_data[:full_name] = Patient.find_by(patient_id: patient_id).try(:name)
       return visit_data
     end
 
@@ -46,22 +46,21 @@ class VisitService
     visit = Visit.new
     
     # Required fields
-    visit.patient_id = patientId
-    visit.visit_type_id = visit_params[:visit_type_id] || VisitType.find_by(name: 'AETC')&.visit_type_id
+    visit.patient_id = patient_id
+    visit.visit_type_id = visit_params[:visit_type_id] 
     visit.date_started = visit_params[:date_started] || Time.now
     visit.date_created = visit_params[:date_created] || Time.now
-    visit.creator = visit_params[:creator] || User.current&.user_id || 1
+    visit.creator = visit_params[:provider_id] || User.current&.user_id 
     visit.voided = false
     
     # Optional fields
     visit.date_stopped = visit_params[:date_stopped] if visit_params[:date_stopped].present?
-    visit.date_stopped = visit_params[:closedDateTime] if visit_params[:closedDateTime].present?
     visit.location_id = visit_params[:location_id] if visit_params[:location_id].present?
     visit.indication_concept_id = visit_params[:indication_concept_id] if visit_params[:indication_concept_id].present?
 
     if visit.save
       visit_data = visit.attributes
-      visit_data[:fullName] = Patient.find_by(patient_id: patientId).try(:name)
+      visit_data[:full_name] = Patient.find_by(patient_id: patient_id).try(:name)
       visit_data[:identifier] = identifier if identifier.present?
 
       if stage_params.present?
@@ -78,19 +77,19 @@ class VisitService
 
   def close_visit(visit_params)
     identifier = visit_params[:identifier]
-    patientId = nil
+    patient_id = nil
 
     if identifier.present?
       patient_identifier = PatientIdentifier.where(identifier: identifier).first
-      patientId = patient_identifier[:patient_id] if patient_identifier.present?
+      patient_id = patient_identifier[:patient_id] if patient_identifier.present?
     end
 
-    patientId = visit_params[:patientId] || visit_params[:patient_id] unless patientId.present?
+    patient_id = visit_params[:patient_id] || visit_params[:patient_id] unless patient_id.present?
 
-    visit = Visit.find_by(patient_id: patientId, date_stopped: nil)
+    visit = Visit.find_by(patient_id: patient_id, date_stopped: nil)
 
     unless visit.present?
-      Rails.logger.warn("No open visit found for patient #{patientId}")
+      Rails.logger.warn("No open visit found for patient #{patient_id}")
       return
     end
 
@@ -100,7 +99,7 @@ class VisitService
     )
     existing_stage.destroy if existing_stage.present?
 
-    closed_datetime = visit_params[:date_stopped] || visit_params[:closedDateTime] || Time.now
+    closed_datetime = visit_params[:date_stopped] || Time.now
 
     visit.update(
       date_stopped: closed_datetime,
@@ -110,7 +109,7 @@ class VisitService
 
     visit_data = visit.attributes
     visit_data[:identifier] = identifier if identifier.present?
-    visit_data[:fullName] = Patient.find_by(patient_id: visit.patient_id).try(:name)
+    visit_data[:full_name] = Patient.find_by(patient_id: visit.patient_id).try(:name)
     visit_data
   end
 

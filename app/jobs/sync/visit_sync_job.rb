@@ -21,12 +21,12 @@ module Sync
     def get_visits_with_identifiers
       Visit.includes(:patient)
         .select('visits.*, patient_identifier.identifier AS identifier')
-        .joins('INNER JOIN patient ON patient.patient_id = visits.patientId')
+        .joins('INNER JOIN patient ON patient.patient_id = visits.patient_id')
         .joins('INNER JOIN patient_identifier ON patient_identifier.patient_id = patient.patient_id AND patient_identifier.identifier_type = 3')
     end
     
     def get_visits_count_query
-      Visit.joins('INNER JOIN patient ON patient.patient_id = visits.patientId')
+      Visit.joins('INNER JOIN patient ON patient.patient_id = visits.patient_id')
         .joins('INNER JOIN patient_identifier ON patient_identifier.patient_id = patient.patient_id AND patient_identifier.identifier_type = 3')
     end
     
@@ -34,11 +34,11 @@ module Sync
       {
         "type" => "visit",
         "visit_id" => visit.id,
-        "patient_id" => visit.patientId,
+        "patient_id" => visit.patient_id,
         "identifier" => visit.try(:identifier),
         "fullName" => visit.patient.try(:name),
-        "startDate" => visit.startDate&.iso8601,
-        "closedDateTime" => visit.closedDateTime&.iso8601,
+        "date_started" => visit.date_started&.iso8601,
+        "date_stopped" => visit.date_stopped&.iso8601,
         "programId" => visit.programId,
         "location_id" => visit.location_id,
         "created_at" => visit.created_at&.iso8601,
@@ -50,7 +50,7 @@ module Sync
     def generate_document_id(visit)
       # Create composite _id from identifier and start_date
       identifier = visit.try(:identifier) || 'unknown'
-      start_date = visit.startDate ? visit.startDate.to_time.strftime("%Y-%m-%dT%H:%M:%S") : 'no-date'
+      start_date = visit.date_started ? visit.date_started.to_time.strftime("%Y-%m-%dT%H:%M:%S") : 'no-date'
       "#{identifier}_#{start_date}"
     end
   end

@@ -6,7 +6,7 @@ module Sync
       # Build the complex query with joins
       query = Stage.includes(patient: :patient_identifiers)
                    .joins(:visit)
-                   .joins('INNER JOIN patient ON patient.patient_id = visits.patientId')
+                   .joins('INNER JOIN patient ON patient.patient_id = visit.patient_id')
                    .joins('INNER JOIN patient_identifier ON patient_identifier.patient_id = patient.patient_id AND patient_identifier.identifier_type = 3')
 
       # Use the same query for counting
