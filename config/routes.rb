@@ -158,9 +158,12 @@ Rails.application.routes.draw do
         end)
 
         collection do
+          get :districts
           get :current_facility
         end
       end
+
+      get '/location/legacy/:id', to: 'locations#show_legacy_location'
 
       resources :regions, only: %i[index] do
         get('/districts', to: redirect do |params, request|

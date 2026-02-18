@@ -16,19 +16,31 @@ module Api
       #   name - Filter locations having this name
       #   tag - Filter locations having a tag matching this
       def index
-        name = params[:name]
-        tag = params[:tag]
-        city_village = params[:city_village]
-      
-        # Eager load location_attributes to prevent N+1 queries
-        locations = paginate(Location.includes(:location_attributes).order(:name))
+        # 1. Clean and standardize all inputs
+        name = params[:name].to_s.strip
+        tag = params[:tag].to_s.strip
+        city_village = params[:city_village].to_s.strip
+        district = params[:district].to_s.strip
+
+        # 2. Start the query scope
+        # We use 'where(retired: false)' because your logs show this is the system standard
+        locations = Location.includes(:location_attributes).where(retired: false)
         
-        locations = locations.where('name like ?', "%#{name}%") unless name.blank?
-        locations = filter_locations_by_tag locations, tag if tag
-        
-        locations = locations.where('city_village like ?', "%#{city_village}%") unless city_village.blank?
-      
-        # Pass 'include' option to trigger custom as_json and define fields
+        # 3. Apply Geography filters (Direct columns)
+        locations = locations.where('name LIKE ?', "%#{name}%") if name.present?
+        locations = locations.where('city_village LIKE ?', "%#{city_village}%") if city_village.present?
+        locations = locations.where('county_district LIKE ?', "%#{district}%") if district.present?
+
+        # 4. Apply Functional filter (Tags via Join)
+        # We only call this once to avoid SQL join conflicts
+        if tag.present?
+          locations = filter_locations_by_tag(locations, tag)
+        end
+
+        # 5. Apply Ordering and Pagination
+        locations = paginate(locations.order(:name))
+
+        # 6. Render with eager-loaded attributes
         render json: locations, include: {
           location_attributes: {
             only: %i[location_attribute_id attribute_type_id value_reference]
@@ -51,6 +63,34 @@ module Api
         }
       end
 
+      # Using Legacy Location ID location_attribute_type
+      def show_legacy_location
+        legacy_location_id = params[:id]
+        location_attribute_type_id = LocationAttributeType.find_by(name: "Legacy Location ID").location_attribute_type_id
+
+        location_attribute = LocationAttribute.find_by(
+          attribute_type_id: location_attribute_type_id,
+          value_reference: legacy_location_id
+        )
+
+        if location_attribute
+          location = Location.find(location_attribute.location_id)
+          render json: location, include: {
+            location_attributes: {
+              only: %i[location_attribute_id attribute_type_id value_reference]
+            }
+          }
+        else
+          # Just fallback to trying to find using any location
+          location = Location.includes(:location_attributes).find_by(location_id: legacy_location_id)
+          render json: location, include: {
+            location_attributes: {
+              only: %i[location_attribute_id attribute_type_id value_reference]
+            }
+          }
+        end
+      end
+  
       # Retrieve the current configured facility
       #
       # GET /locations/current_facility
@@ -72,6 +112,25 @@ module Api
         else
           render json: location
         end
+      end
+
+      # GET /locations/districts
+      def districts
+        # Fetch unique, non-blank districts sorted alphabetically
+        unique_names = Location.where.not(county_district: [nil, ''])
+                               .distinct
+                               .order(:county_district)
+                               .pluck(:county_district)
+
+        # Map to objects with an ascending counter starting at 1
+        formatted_districts = unique_names.each_with_index.map do |name, index|
+          {
+            id: index + 1,
+            name: name
+          }
+        end
+
+        render json: formatted_districts
       end
 
       def print_label
