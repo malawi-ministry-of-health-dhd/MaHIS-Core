@@ -12,7 +12,8 @@ class Order < VoidableRecord
   belongs_to :concept
   belongs_to :encounter
   belongs_to :patient
-  belongs_to :provider, foreign_key: 'orderer', class_name: 'User', optional: true
+  # Use unscoped for provider association since orderer (user_id) should not be location-dependent
+  belongs_to :provider, -> { unscoped }, foreign_key: 'orderer', class_name: 'User', optional: true
 
   validates_presence_of :patient_id, :concept_id, :encounter_id,
                         :provider, :orderer

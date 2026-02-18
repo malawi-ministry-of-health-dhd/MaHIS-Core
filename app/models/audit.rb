@@ -3,7 +3,8 @@
 class Audit < ApplicationRecord
   self.table_name = 'audits'
 
-  has_one :user, foreign_key: :user_id, primary_key: :user_id
+  # Use unscoped for user association since audit user should not be location-dependent
+  has_one :user, -> { unscoped }, foreign_key: :user_id, primary_key: :user_id
 
   def as_json(options = {})
     super(options.merge(
