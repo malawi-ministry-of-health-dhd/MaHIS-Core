@@ -415,7 +415,7 @@ Rails.application.routes.draw do
   post '/api/v1/erroneous_identifier' => 'api/v1/cleaning#erroneous_identifier'
   get '/api/v1/dead_encounters' => 'api/v1/cleaning#index'
   get '/api/v1/date_enrolled' => 'api/v1/cleaning#dateEnrolled'
-  get '/api/v1/start_date' => 'api/v1/cleaning#date_started'
+  get '/api/v1/start_date' => 'api/v1/cleaning#startDate'
   get '/api/v1/male' => 'api/v1/cleaning#male'
   get '/api/v1/incomplete_visits' => 'api/v1/cleaning#incompleteVisits'
   get '/api/v1/art_data_cleaning_tools' => 'api/v1/cleaning#art_tools'
