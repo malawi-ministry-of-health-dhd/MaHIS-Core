@@ -1543,15 +1543,15 @@ module ArtService
         all_patients = extract_patient_ids(total_registered)
         tb_2yrs_patients = extract_patient_ids(tb_within_the_last_two_years)
         current_tb_patients = extract_patient_ids(current_episode_of_tb)
-        
+
         # Patients with NO TB = all patients - (TB within 2 years + current TB)
         tb_patients = (tb_2yrs_patients + current_tb_patients).uniq
         no_tb_patient_ids = all_patients - tb_patients
-        
+
         # Return as array of hashes for consistency with other metrics
         no_tb_patient_ids.map { |pid| { 'patient_id' => pid } }
       end
-      
+
       # Helper method to extract patient IDs from various data types
       def extract_patient_ids(data)
         case data

@@ -8,7 +8,7 @@ class Report < RetirableRecord
   belongs_to :type, foreign_key: :report_definition_id, class_name: 'ReportType'
   has_many :values, class_name: 'ReportValue',
                     foreign_key: :report_design_id,
-                    dependent: :delete_all
+                    dependent: :destroy
 
   after_void :void_values
 

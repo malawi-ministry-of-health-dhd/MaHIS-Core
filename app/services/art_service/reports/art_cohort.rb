@@ -181,18 +181,44 @@ module ArtService
       end
 
       def clear_drill_down
-        saved_reports = find_saved_report
-        return if saved_reports.blank?
+        # Find existing reporting_report_design records for this cohort/date range
+        # Match on start_date and end_date (name is unreliable as it gets stored inconsistently)
+        existing_designs = ActiveRecord::Base.connection.select_all <<~SQL
+          SELECT id FROM reporting_report_design
+          WHERE start_date = '#{@start_date}'
+            AND end_date = '#{@end_date}'
+        SQL
+
+        design_ids = existing_designs.map { |d| d['id'] }
+        return if design_ids.blank?
+
+        LOGGER.info("Clear drill-down: Found #{design_ids.count} existing designs with date range #{@start_date} to #{@end_date}")
+
+        # Find all resource IDs for these designs
+        resource_ids = ActiveRecord::Base.connection.select_all <<~SQL
+          SELECT id FROM reporting_report_design_resource
+          WHERE report_design_id IN (#{design_ids.join(',')})
+        SQL
+
+        resource_id_list = resource_ids.map { |r| r['id'] }
+
+        # Delete in proper order: child records first
+        unless resource_id_list.blank?
+          ActiveRecord::Base.connection.execute <<~SQL
+            DELETE FROM cohort_drill_down WHERE reporting_report_design_resource_id IN (#{resource_id_list.join(',')})
+          SQL
+          LOGGER.info("Clear drill-down: Deleted drill-down records for #{resource_id_list.count} resources")
+        end
 
         ActiveRecord::Base.connection.execute <<~SQL
-          DELETE FROM cohort_drill_down WHERE reporting_report_design_resource_id IN (#{saved_reports.join(',')})
+          DELETE FROM reporting_report_design_resource WHERE report_design_id IN (#{design_ids.join(',')})
         SQL
+
         ActiveRecord::Base.connection.execute <<~SQL
-          DELETE FROM reporting_report_design_resource WHERE report_design_id IN (#{saved_reports.join(',')})
+          DELETE FROM reporting_report_design WHERE id IN (#{design_ids.join(',')})
         SQL
-        ActiveRecord::Base.connection.execute <<~SQL
-          DELETE FROM reporting_report_design WHERE id IN (#{saved_reports.join(',')})
-        SQL
+
+        LOGGER.info("Clear drill-down: Deleted #{design_ids.count} report designs and their resources")
       end
 
       def value_contents_to_json(value_contents)
