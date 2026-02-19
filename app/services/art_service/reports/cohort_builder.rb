@@ -1538,57 +1538,35 @@ module ArtService
       end
 
       def no_tb(total_registered, tb_within_the_last_two_years, current_episode_of_tb)
-        # Optimized: work with counts instead of building arrays
-        # Handle Array, ActiveRecord::Result, or Integer inputs
-        total_count = case total_registered
-                      when Array, ActiveRecord::Result
-                        total_registered.length
-                      else
-                        total_registered.to_i
-                      end
-
-        tb_2yrs_count = case tb_within_the_last_two_years
-                        when Array, ActiveRecord::Result
-                          tb_within_the_last_two_years.length
-                        else
-                          tb_within_the_last_two_years.to_i
-                        end
-
-        current_tb_count = case current_episode_of_tb
-                           when Array, ActiveRecord::Result
-                             current_episode_of_tb.length
-                           else
-                             current_episode_of_tb.to_i
-                           end
-
-        total_count - (tb_2yrs_count + current_tb_count)
+        # Return patients who don't have TB (for drill-down support)
+        # Extract patient IDs from ActiveRecord::Result or arrays
+        all_patients = extract_patient_ids(total_registered)
+        tb_2yrs_patients = extract_patient_ids(tb_within_the_last_two_years)
+        current_tb_patients = extract_patient_ids(current_episode_of_tb)
+        
+        # Patients with NO TB = all patients - (TB within 2 years + current TB)
+        tb_patients = (tb_2yrs_patients + current_tb_patients).uniq
+        no_tb_patient_ids = all_patients - tb_patients
+        
+        # Return as array of hashes for consistency with other metrics
+        no_tb_patient_ids.map { |pid| { 'patient_id' => pid } }
+      end
+      
+      # Helper method to extract patient IDs from various data types
+      def extract_patient_ids(data)
+        case data
+        when Array
+          data.map { |item| item.is_a?(Hash) ? (item['patient_id'] || item[:patient_id]) : item }.compact
+        when ActiveRecord::Result
+          data.map { |row| row['patient_id'] }.compact
+        else
+          []
+        end
       end
 
       def cum_no_tb(cum_total_registered, cum_tb_within_the_last_two_years, cum_current_episode_of_tb)
-        # Optimized: work with counts instead of building arrays
-        # Handle Array, ActiveRecord::Result, or Integer inputs
-        total_count = case cum_total_registered
-                      when Array, ActiveRecord::Result
-                        cum_total_registered.length
-                      else
-                        cum_total_registered.to_i
-                      end
-
-        tb_2yrs_count = case cum_tb_within_the_last_two_years
-                        when Array, ActiveRecord::Result
-                          cum_tb_within_the_last_two_years.length
-                        else
-                          cum_tb_within_the_last_two_years.to_i
-                        end
-
-        current_tb_count = case cum_current_episode_of_tb
-                           when Array, ActiveRecord::Result
-                             cum_current_episode_of_tb.length
-                           else
-                             cum_current_episode_of_tb.to_i
-                           end
-
-        total_count - (tb_2yrs_count + current_tb_count)
+        # Use the same logic as no_tb for drill-down support
+        no_tb(cum_total_registered, cum_tb_within_the_last_two_years, cum_current_episode_of_tb)
       end
 
       def children_12_59_months(start_date, end_date)
