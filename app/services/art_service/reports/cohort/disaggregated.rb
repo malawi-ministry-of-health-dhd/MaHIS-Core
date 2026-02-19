@@ -15,7 +15,7 @@ module ArtService
           @type = kwargs[:definition]
           @start_date = start_date
           @end_date = end_date
-          @rebuild = kwargs[:rebuild]&.casecmp?('true')
+          @rebuild = kwargs[:rebuild].is_a?(String) ? kwargs[:rebuild]&.casecmp?('true') : kwargs[:rebuild]
           @occupation = kwargs[:occupation]
           @maternal = {}
         end

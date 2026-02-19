@@ -174,7 +174,7 @@ module ArtService
 
           raise "Failed to save report value: #{report_value.errors.as_json}" unless report_value.errors.empty?
 
-          save_patients(report_value, value_contents_to_json(value).contents)
+          save_patients(report_value, value.contents)
 
           report_value
         end
@@ -231,7 +231,9 @@ module ArtService
         end
 
         sql_insert_statement = nil
-        patient_ids.select do |patient_id|
+        patient_ids.each do |patient_id|
+          next if patient_id.blank? || patient_id.to_i.zero?
+
           if sql_insert_statement.blank?
             sql_insert_statement = "(#{r.id}, #{patient_id})"
           else
