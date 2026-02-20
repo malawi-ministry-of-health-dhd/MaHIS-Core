@@ -8,8 +8,9 @@ class Report < RetirableRecord
   belongs_to :type, foreign_key: :report_definition_id, class_name: 'ReportType'
   has_many :values, class_name: 'ReportValue',
                     foreign_key: :report_design_id,
-                    dependent: :destroy
+                    dependent: false
 
+  before_destroy :batch_delete_associated_records
   after_void :void_values
 
   def as_json(options = {})
@@ -22,5 +23,21 @@ class Report < RetirableRecord
     values.each do |value|
       value.void(reason)
     end
+  end
+
+  private
+
+  # Batch delete all drill-down records and report values
+  # This prevents N individual DELETE queries
+  def batch_delete_associated_records
+    return if values.empty?
+
+    value_ids = values.pluck(:id)
+
+    # First delete all drill-down records in batch
+    CohortDrillDown.where(reporting_report_design_resource_id: value_ids).delete_all
+
+    # Then delete all report values in batch
+    ReportValue.where(id: value_ids).delete_all
   end
 end
