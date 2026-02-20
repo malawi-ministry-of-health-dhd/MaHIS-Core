@@ -3,10 +3,24 @@
 require 'rails_helper'
 
 describe ArtService::Reports::CohortBuilder do
+  # Set User.current and Location.current before any tests or let blocks
+  before(:all) do
+    User.current = User.first
+    Location.current = Location.first
+    @default_provider = Person.first
+  end
+  
   let(:start_date) { Date.parse('2026-02-01') }
   let(:end_date) { Date.parse('2026-02-28') }
-  let(:program) { Program.find_by_name!('HIV Program') }
+  let(:program) { Program.find_by_name!('HIV PROGRAM') }
   let(:location) { Location.current }
+  let(:provider) { @default_provider }
+  
+  before(:each) do
+    # Ensure User.current remains set
+    User.current ||= User.first
+    Location.current ||= Location.first
+  end
   
   # Concepts
   let(:arv_concept) { ConceptName.find_by_name!('Antiretroviral drugs').concept }
@@ -110,7 +124,7 @@ describe ArtService::Reports::CohortBuilder do
           type: hiv_clinic_registration,
           encounter_datetime: start_date + 5.days,
           location_id: location.location_id,
-          provider_id: 1
+          provider_id: provider.person_id
         )
       end
       
@@ -204,7 +218,7 @@ describe ArtService::Reports::CohortBuilder do
           type: hiv_clinic_registration,
           encounter_datetime: start_date + 10.days,
           location_id: location.location_id,
-          provider_id: 1
+          provider_id: provider.person_id
         )
       end
       
@@ -295,7 +309,7 @@ let!(:pregnant_observation) do
           type: hiv_clinic_registration,
           encounter_datetime: start_date + 3.days,
           location_id: location.location_id,
-          provider_id: 1
+          provider_id: provider.person_id
         )
       end
       
@@ -370,7 +384,7 @@ let!(:drug) do
           type: hiv_clinic_registration,
           encounter_datetime: start_date + 7.days,
           location_id: location.location_id,
-          provider_id: 1
+          provider_id: provider.person_id
         )
       end
       
@@ -452,7 +466,7 @@ let!(:drug) do
             type: hiv_clinic_registration,
             encounter_datetime: start_date + (index + 1).days,
             location_id: location.location_id,
-            provider_id: 1
+            provider_id: provider.person_id
           )
           
           # Add required reason for ART observation
@@ -533,7 +547,7 @@ let!(:drug) do
             type: hiv_clinic_registration,
             encounter_datetime: start_date - 100.days,
             location_id: location.location_id,
-            provider_id: 1
+            provider_id: provider.person_id
           )
         end
       
@@ -575,7 +589,7 @@ let!(:drug) do
             type: dispensing,
             encounter_datetime: start_date + 5.days,
             location_id: location.location_id,
-            provider_id: 1
+            provider_id: provider.person_id
           )
         end
         
@@ -692,7 +706,7 @@ let!(:drug) do
         type: hiv_clinic_registration,
         encounter_datetime: start_date - 200.days,
         location_id: location.location_id,
-        provider_id: 1
+        provider_id: provider.person_id
       )
       
       # Add required reason for ART observation
@@ -730,7 +744,7 @@ let!(:drug) do
         type: dispensing,
         encounter_datetime: start_date + 3.days,
         location_id: location.location_id,
-        provider_id: 1
+        provider_id: provider.person_id
       )
       
       ord = Order.create!(
@@ -776,7 +790,7 @@ let!(:drug) do
         type: hiv_clinic_registration,
         encounter_datetime: start_date + 5.days,
         location_id: location.location_id,
-        provider_id: 1
+        provider_id: provider.person_id
       )
       
       # Add required reason for ART observation
@@ -853,7 +867,7 @@ let!(:drug) do
         type: hiv_clinic_registration,
         encounter_datetime: start_date + 5.days,
         location_id: location.location_id,
-        provider_id: 1
+        provider_id: provider.person_id
       )
     end
       
