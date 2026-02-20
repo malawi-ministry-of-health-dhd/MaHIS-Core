@@ -41,25 +41,21 @@ jobs:
 
     - name: Setup config files
       run: |
-        cp config/database.yml.example config/database.yml 2>/dev/null || echo "Using existing database.yml"
+        cp config/database.yml.example config/database.yml
         cp config/application.yml.example config/application.yml
         cp config/secrets.yml.example config/secrets.yml 2>/dev/null || echo "secrets.yml not needed"
+        # Update database.yml with correct credentials for CI
+        sed -i 's/port: 3308/port: 3306/g' config/database.yml
+        sed -i 's/username: your_scoped_username/username: root/g' config/database.yml
+        sed -i 's/password: your_secret_password/password: test/g' config/database.yml
 
     - name: Setup database
       env:
         RAILS_ENV: test
-        DATABASE_HOST: 127.0.0.1
-        DATABASE_PORT: 3306
-        DATABASE_USERNAME: root
-        DATABASE_PASSWORD: test
       run: |
         bundle exec rails db:create db:schema:load || bundle exec rails db:setup
 
     - name: Run RSpec tests
       env:
         RAILS_ENV: test
-        DATABASE_HOST: 127.0.0.1
-        DATABASE_PORT: 3306
-        DATABASE_USERNAME: root
-        DATABASE_PASSWORD: test
       run: bundle exec rspec
