@@ -24,10 +24,11 @@ class StagesService
       )
     end
 
-    if stage_params[:visit_number].present?  && Program.find_by_name("AETC Program").id == stage_params["program_id"]
+    if Program.find_by_name("AETC Program").id == stage_params[:program_id]
       stage.visit_number = VisitService.next_daily_visit_number! 
     end
 
+    stage.program_id = stage_params["program_id"]
     stage.patient_id = patient_id
     stage.visit_id = active_visit.visit_id
     stage.location_id = location_id
@@ -36,10 +37,6 @@ class StagesService
     if stage.stage != stage_name
       stage.stage = stage_name
       stage.arrival_time = Time.current
-    end
-
-    if stage_params[:visit_number].present? && stage.visit_number != stage_params[:visit_number]
-      stage.visit_number = stage_params[:visit_number]
     end
 
     stage.save! if stage.new_record? || stage.changed?
@@ -92,7 +89,7 @@ class StagesService
       visit_uuid: stage.visit&.uuid,
       arrival_time: stage.arrival_time,
       latest_encounter_time: latest_encounter&.encounter_datetime || stage.created_at,
-      last_encounter_creator: encounter_creator_name(latest_encounter),
+      last_encounter_creator: encounter_creator_name(latest_encounter,patient),
       disposition_type: stage.disposition_type,
       triage_result: stage.triage_result,
       given_name: person_name(patient)&.given_name,
@@ -165,9 +162,11 @@ class StagesService
     Encounter.where(visit_id: stage.visit_id).order(encounter_datetime: :desc).first
   end
 
-  def encounter_creator_name(encounter)
-    return nil unless encounter&.creator
-
-    User.find_by(user_id: encounter.creator)&.name
+  def encounter_creator_name(encounter, patient)
+    if encounter&.creator
+      User.find_by(user_id: encounter.creator)&.name
+    else
+      User.find_by(user_id: patient.creator)&.name
+    end
   end
 end
