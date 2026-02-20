@@ -39,6 +39,12 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libmysqlclient-dev
 
+    - name: Setup config files
+      run: |
+        cp config/database.yml.example config/database.yml 2>/dev/null || echo "Using existing database.yml"
+        cp config/application.yml.example config/application.yml
+        cp config/secrets.yml.example config/secrets.yml 2>/dev/null || echo "secrets.yml not needed"
+
     - name: Setup database
       env:
         RAILS_ENV: test
@@ -47,7 +53,6 @@ jobs:
         DATABASE_USERNAME: root
         DATABASE_PASSWORD: test
       run: |
-        cp config/database.yml.example config/database.yml 2>/dev/null || echo "Using existing database.yml"
         bundle exec rails db:create db:schema:load || bundle exec rails db:setup
 
     - name: Run RSpec tests
