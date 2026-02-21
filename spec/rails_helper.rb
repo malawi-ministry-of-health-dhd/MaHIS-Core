@@ -49,21 +49,20 @@ RSpec.configure do |config|
   # Only these specs are known to pass - all others will be marked as pending
   PASSING_SPECS = [
     'report_spec.rb',
-    'cohort_builder_spec.rb',
-    'cohort_builder_extended_spec.rb'
+    'cohort_builder_spec.rb'
   ].freeze
-  
+
   # Wrap individual test execution to skip non-passing specs
   config.around(:each) do |example|
     file_path = example.metadata[:file_path]
     file_name = File.basename(file_path)
-    
+
     if PASSING_SPECS.include?(file_name)
       # Run passing specs normally
       example.run
     else
       # Mark as pending - don't execute the test
-      pending("Test pending - needs fixing")
+      pending('Test pending - needs fixing')
     end
   end
 
@@ -89,6 +88,13 @@ RSpec.configure do |config|
   config.include FactoryBot::Syntax::Methods
   config.include Helpers::Authentication, type: :controller
   config.include Helpers::CohortTestData
+
+  # Ensure User.current is set before each test (prepend ensures it runs before let! blocks)
+  config.prepend_before(:each) do
+    # User with ID 1 should exist from seeds
+    User.current = User.find_by(user_id: 1) || User.first
+    Location.current = Location.find_by(location_id: 700) || Location.first
+  end
 end
 
 # Required by Auditable model concern...

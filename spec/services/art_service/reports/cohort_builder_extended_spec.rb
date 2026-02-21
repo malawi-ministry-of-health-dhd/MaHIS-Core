@@ -2,19 +2,32 @@
 
 require 'rails_helper'
 
-describe ArtService::Reports::CohortBuilder, :type => :service do
+describe ArtService::Reports::CohortBuilder, type: :service do
+  before(:all) do
+    User.current = User.first
+    Location.current = Location.first
+    @default_provider = Person.first
+  end
+
+  before(:each) do
+    User.current ||= User.first
+    Location.current ||= Location.first
+  end
+
   describe 'WHO Stage indicators' do
     let(:start_date) { Date.parse('2026-02-01') }
     let(:end_date) { Date.parse('2026-02-28') }
     let(:program) { Program.find_by_name!('HIV Program') }
     let(:location) { Location.current }
     let(:arv_concept) { ConceptName.find_by_name!('Antiretroviral drugs').concept }
-    let(:on_arvs_state) { ProgramWorkflowState.where(concept: ConceptName.find_by_name('On antiretrovirals').concept).first }
+    let(:on_arvs_state) do
+      ProgramWorkflowState.where(concept: ConceptName.find_by_name('On antiretrovirals').concept).first
+    end
     let(:hiv_clinic_registration) { EncounterType.find_by_name!('HIV CLINIC REGISTRATION') }
     let(:hiv_staging) { EncounterType.find_by_name!('HIV STAGING') }
     let(:cohort_builder) { ArtService::Reports::CohortBuilder.new }
     let(:cohort_struct) { OpenStruct.new }
-    
+
     before(:each) do
       ActiveRecord::Base.connection.execute('DROP TABLE IF EXISTS temp_earliest_start_date')
       ActiveRecord::Base.connection.execute('DROP TABLE IF EXISTS temp_patient_outcomes')
@@ -30,18 +43,18 @@ describe ArtService::Reports::CohortBuilder, :type => :service do
           patient: patient,
           program: program,
           location_id: location.location_id,
-          date_enrolled: start_date + 5.days,
+          date_enrolled: start_date + 5.days
         )
       end
-      
+
       let!(:patient_state) do
         PatientState.create!(
           patient_program: patient_program,
           state: on_arvs_state.program_workflow_state_id,
-          start_date: start_date + 5.days,
+          start_date: start_date + 5.days
         )
       end
-      
+
       let!(:registration_encounter) do
         Encounter.create!(
           patient: patient,
@@ -49,10 +62,10 @@ describe ArtService::Reports::CohortBuilder, :type => :service do
           type: hiv_clinic_registration,
           encounter_datetime: start_date + 5.days,
           location_id: location.location_id,
-          provider_id: 1
+          provider_id: Person.first.person_id
         )
       end
-      
+
       let!(:staging_encounter) do
         Encounter.create!(
           patient: patient,
@@ -60,12 +73,12 @@ describe ArtService::Reports::CohortBuilder, :type => :service do
           type: hiv_staging,
           encounter_datetime: start_date + 5.days,
           location_id: location.location_id,
-          provider_id: 1
+          provider_id: Person.first.person_id
         )
       end
-      
+
       let!(:arv_order) do
-        drug = Drug.find_by(concept_id: arv_concept.concept_id) || 
+        drug = Drug.find_by(concept_id: arv_concept.concept_id) ||
                Drug.arv_drugs.first
         order_type = OrderType.find_by_name!('Drug order')
         order = Order.create!(
@@ -74,8 +87,9 @@ describe ArtService::Reports::CohortBuilder, :type => :service do
           patient: patient,
           start_date: start_date + 5.days,
           auto_expire_date: start_date + 35.days,
-          encounter_id: registration_encounter.encounter_id,
-          orderer: 1
+          encounter: registration_encounter,
+          provider: User.first,
+          orderer: User.first.user_id
         )
         DrugOrder.create!(order_id: order.order_id, drug_inventory_id: drug.drug_id, quantity: 60)
         order
@@ -87,26 +101,26 @@ describe ArtService::Reports::CohortBuilder, :type => :service do
         person = create(:person, gender: 'M', birthdate: 35.years.ago)
         create(:patient, patient_id: person.person_id)
       end
-      
+
       it_behaves_like 'a patient on ART'
-      
+
       let!(:reason_for_art_concept) do
         ConceptName.find_by_name('Reason for ART eligibility')&.concept ||
-        skip('Reason for ART eligibility concept not found')
+          skip('Reason for ART eligibility concept not found')
       end
-      
+
       let!(:who_stage_3_concept) do
         ConceptName.find_by_name('WHO stage III')&.concept ||
-        skip('WHO stage III concept not found')
+          skip('WHO stage III concept not found')
       end
-      
+
       let!(:who_stage_obs) do
         Observation.create!(
           person: patient.person,
           encounter: staging_encounter,
           concept: reason_for_art_concept,
           value_coded: who_stage_3_concept.concept_id,
-          obs_datetime: start_date + 5.days,
+          obs_datetime: start_date + 5.days
         )
       end
 
@@ -126,26 +140,26 @@ describe ArtService::Reports::CohortBuilder, :type => :service do
         person = create(:person, gender: 'F', birthdate: 28.years.ago)
         create(:patient, patient_id: person.person_id)
       end
-      
+
       it_behaves_like 'a patient on ART'
-      
+
       let!(:reason_for_art_concept) do
         ConceptName.find_by_name('Reason for ART eligibility')&.concept ||
-        skip('Reason for ART eligibility concept not found')
+          skip('Reason for ART eligibility concept not found')
       end
-      
+
       let!(:who_stage_4_concept) do
         ConceptName.find_by_name('WHO stage IV')&.concept ||
-        skip('WHO stage IV concept not found')
+          skip('WHO stage IV concept not found')
       end
-      
+
       let!(:who_stage_obs) do
         Observation.create!(
           person: patient.person,
           encounter: staging_encounter,
           concept: reason_for_art_concept,
           value_coded: who_stage_4_concept.concept_id,
-          obs_datetime: start_date + 5.days,
+          obs_datetime: start_date + 5.days
         )
       end
 
@@ -165,27 +179,27 @@ describe ArtService::Reports::CohortBuilder, :type => :service do
         person = create(:person, gender: 'M', birthdate: 30.years.ago)
         create(:patient, patient_id: person.person_id)
       end
-      
+
       it_behaves_like 'a patient on ART'
-      
+
       let!(:reason_for_art_concept) do
         ConceptName.find_by_name('Reason for ART eligibility')&.concept ||
-        skip('Reason for ART eligibility concept not found')
+          skip('Reason for ART eligibility concept not found')
       end
-      
+
       let!(:asymptomatic_concept) do
         ConceptName.find_by_name('Asymptomatic')&.concept ||
-        ConceptName.find_by_name('Lymphocyte count below threshold with WHO stage 2')&.concept ||
-        skip('Asymptomatic concepts not found')
+          ConceptName.find_by_name('Lymphocyte count below threshold with WHO stage 2')&.concept ||
+          skip('Asymptomatic concepts not found')
       end
-      
+
       let!(:asymptomatic_obs) do
         Observation.create!(
           person: patient.person,
           encounter: staging_encounter,
           concept: reason_for_art_concept,
           value_coded: asymptomatic_concept.concept_id,
-          obs_datetime: start_date + 5.days,
+          obs_datetime: start_date + 5.days
         )
       end
 
@@ -202,12 +216,14 @@ describe ArtService::Reports::CohortBuilder, :type => :service do
     let(:program) { Program.find_by_name!('HIV Program') }
     let(:location) { Location.current }
     let(:arv_concept) { ConceptName.find_by_name!('Antiretroviral drugs').concept }
-    let(:on_arvs_state) { ProgramWorkflowState.where(concept: ConceptName.find_by_name('On antiretrovirals').concept).first }
+    let(:on_arvs_state) do
+      ProgramWorkflowState.where(concept: ConceptName.find_by_name('On antiretrovirals').concept).first
+    end
     let(:hiv_clinic_registration) { EncounterType.find_by_name!('HIV CLINIC REGISTRATION') }
     let(:hiv_staging) { EncounterType.find_by_name!('HIV STAGING') }
     let(:cohort_builder) { ArtService::Reports::CohortBuilder.new }
     let(:cohort_struct) { OpenStruct.new }
-    
+
     before(:each) do
       ActiveRecord::Base.connection.execute('DROP TABLE IF EXISTS temp_earliest_start_date')
       ActiveRecord::Base.connection.execute('DROP TABLE IF EXISTS temp_patient_outcomes')
@@ -220,39 +236,39 @@ describe ArtService::Reports::CohortBuilder, :type => :service do
     def create_patient_on_art(gender: 'M', birthdate: 30.years.ago)
       person = create(:person, gender: gender, birthdate: birthdate)
       patient = create(:patient, patient_id: person.person_id)
-      
+
       patient_program = PatientProgram.create!(
         patient: patient,
         program: program,
         location_id: location.location_id,
-        date_enrolled: start_date + 5.days,
+        date_enrolled: start_date + 5.days
       )
-      
+
       PatientState.create!(
         patient_program: patient_program,
         state: on_arvs_state.program_workflow_state_id,
-        start_date: start_date + 5.days,
+        start_date: start_date + 5.days
       )
-      
+
       encounter = Encounter.create!(
         patient: patient,
         program: program,
         type: hiv_clinic_registration,
         encounter_datetime: start_date + 5.days,
         location_id: location.location_id,
-        provider_id: 1
+        provider_id: Person.first.person_id
       )
-      
+
       staging_encounter = Encounter.create!(
         patient: patient,
         program: program,
         type: hiv_staging,
         encounter_datetime: start_date + 5.days,
         location_id: location.location_id,
-        provider_id: 1
+        provider_id: Person.first.person_id
       )
-      
-      drug = Drug.find_by(concept_id: arv_concept.concept_id) || 
+
+      drug = Drug.find_by(concept_id: arv_concept.concept_id) ||
              Drug.arv_drugs.first
       order_type = OrderType.find_by_name!('Drug order')
       order = Order.create!(
@@ -261,11 +277,12 @@ describe ArtService::Reports::CohortBuilder, :type => :service do
         patient: patient,
         start_date: start_date + 5.days,
         auto_expire_date: start_date + 35.days,
-        encounter_id: encounter.encounter_id,
-        orderer: 1
+        encounter: encounter,
+        provider: User.first,
+        orderer: User.first.user_id
       )
       DrugOrder.create!(order_id: order.order_id, drug_inventory_id: drug.drug_id, quantity: 60)
-      
+
       { patient: patient, staging_encounter: staging_encounter }
     end
 
@@ -273,24 +290,24 @@ describe ArtService::Reports::CohortBuilder, :type => :service do
       let!(:patient_data) { create_patient_on_art }
       let!(:patient) { patient_data[:patient] }
       let!(:staging_encounter) { patient_data[:staging_encounter] }
-      
+
       let!(:current_tb_concept) do
         ConceptName.find_by_name('Current episode of TB')&.concept ||
-        skip('Current episode of TB concept not found')
+          skip('Current episode of TB concept not found')
       end
-      
+
       let!(:yes_concept) do
         ConceptName.find_by_name('Yes')&.concept ||
-        skip('Yes concept not found')
+          skip('Yes concept not found')
       end
-      
+
       let!(:tb_obs) do
         Observation.create!(
           person: patient.person,
           encounter: staging_encounter,
           concept: current_tb_concept,
           value_coded: yes_concept.concept_id,
-          obs_datetime: start_date + 5.days,
+          obs_datetime: start_date + 5.days
         )
       end
 
@@ -309,24 +326,24 @@ describe ArtService::Reports::CohortBuilder, :type => :service do
       let!(:patient_data) { create_patient_on_art }
       let!(:patient) { patient_data[:patient] }
       let!(:staging_encounter) { patient_data[:staging_encounter] }
-      
+
       let!(:tb_within_2_years_concept) do
         ConceptName.find_by_name('TB within the last 2 years')&.concept ||
-        skip('TB within the last 2 years concept not found')
+          skip('TB within the last 2 years concept not found')
       end
-      
+
       let!(:yes_concept) do
         ConceptName.find_by_name('Yes')&.concept ||
-        skip('Yes concept not found')
+          skip('Yes concept not found')
       end
-      
+
       let!(:tb_obs) do
         Observation.create!(
           person: patient.person,
           encounter: staging_encounter,
           concept: tb_within_2_years_concept,
           value_coded: yes_concept.concept_id,
-          obs_datetime: start_date + 5.days,
+          obs_datetime: start_date + 5.days
         )
       end
 
@@ -353,11 +370,13 @@ describe ArtService::Reports::CohortBuilder, :type => :service do
     let(:program) { Program.find_by_name!('HIV Program') }
     let(:location) { Location.current }
     let(:arv_concept) { ConceptName.find_by_name!('Antiretroviral drugs').concept }
-    let(:on_arvs_state) { ProgramWorkflowState.where(concept: ConceptName.find_by_name('On antiretrovirals').concept).first }
+    let(:on_arvs_state) do
+      ProgramWorkflowState.where(concept: ConceptName.find_by_name('On antiretrovirals').concept).first
+    end
     let(:hiv_clinic_registration) { EncounterType.find_by_name!('HIV CLINIC REGISTRATION') }
     let(:cohort_builder) { ArtService::Reports::CohortBuilder.new }
     let(:cohort_struct) { OpenStruct.new }
-    
+
     before(:each) do
       ActiveRecord::Base.connection.execute('DROP TABLE IF EXISTS temp_earliest_start_date')
       ActiveRecord::Base.connection.execute('DROP TABLE IF EXISTS temp_patient_outcomes')
@@ -370,31 +389,31 @@ describe ArtService::Reports::CohortBuilder, :type => :service do
     def create_patient_with_state(state_name, state_date: end_date - 10.days)
       person = create(:person, gender: 'M', birthdate: 30.years.ago)
       patient = create(:patient, patient_id: person.person_id)
-      
+
       patient_program = PatientProgram.create!(
         patient: patient,
         program: program,
         location_id: location.location_id,
-        date_enrolled: start_date - 50.days,
+        date_enrolled: start_date - 50.days
       )
-      
+
       # Initial state: On ARVs
       PatientState.create!(
         patient_program: patient_program,
         state: on_arvs_state.program_workflow_state_id,
-        start_date: start_date - 50.days,
+        start_date: start_date - 50.days
       )
-      
+
       encounter = Encounter.create!(
         patient: patient,
         program: program,
         type: hiv_clinic_registration,
         encounter_datetime: start_date - 50.days,
         location_id: location.location_id,
-        provider_id: 1
+        provider_id: Person.first.person_id
       )
-      
-      drug = Drug.find_by(concept_id: arv_concept.concept_id) || 
+
+      drug = Drug.find_by(concept_id: arv_concept.concept_id) ||
              Drug.arv_drugs.first
       order_type = OrderType.find_by_name!('Drug order')
       order = Order.create!(
@@ -403,23 +422,26 @@ describe ArtService::Reports::CohortBuilder, :type => :service do
         patient: patient,
         start_date: start_date - 50.days,
         auto_expire_date: start_date - 20.days,
-        encounter_id: encounter.encounter_id,
-        orderer: 1
+        encounter: encounter,
+        provider: User.first,
+        orderer: User.first.user_id
       )
       DrugOrder.create!(order_id: order.order_id, drug_inventory_id: drug.drug_id, quantity: 60)
-      
+
       # Change to specified state
       if state_name
         state_concept = ConceptName.find_by_name(state_name)&.concept
         new_state = ProgramWorkflowState.where(concept: state_concept).first if state_concept
-        
-        PatientState.create!(
-          patient_program: patient_program,
-          state: new_state.program_workflow_state_id,
-          start_date: state_date,
-        ) if new_state
+
+        if new_state
+          PatientState.create!(
+            patient_program: patient_program,
+            state: new_state.program_workflow_state_id,
+            start_date: state_date
+          )
+        end
       end
-      
+
       patient
     end
 
@@ -493,11 +515,13 @@ describe ArtService::Reports::CohortBuilder, :type => :service do
     let(:program) { Program.find_by_name!('HIV Program') }
     let(:location) { Location.current }
     let(:arv_concept) { ConceptName.find_by_name!('Antiretroviral drugs').concept }
-    let(:on_arvs_state) { ProgramWorkflowState.where(concept: ConceptName.find_by_name('On antiretrovirals').concept).first }
+    let(:on_arvs_state) do
+      ProgramWorkflowState.where(concept: ConceptName.find_by_name('On antiretrovirals').concept).first
+    end
     let(:hiv_clinic_registration) { EncounterType.find_by_name!('HIV CLINIC REGISTRATION') }
     let(:cohort_builder) { ArtService::Reports::CohortBuilder.new }
     let(:cohort_struct) { OpenStruct.new }
-    
+
     before(:each) do
       ActiveRecord::Base.connection.execute('DROP TABLE IF EXISTS temp_earliest_start_date')
       ActiveRecord::Base.connection.execute('DROP TABLE IF EXISTS temp_patient_outcomes')
@@ -511,46 +535,41 @@ describe ArtService::Reports::CohortBuilder, :type => :service do
       let!(:patient) do
         person = create(:person, gender: 'F', birthdate: 32.years.ago)
         patient = create(:patient, patient_id: person.person_id)
-        
+
         # Patient was on ARVs elsewhere, transferred in
         patient_program = PatientProgram.create!(
           patient: patient,
           program: program,
           location_id: location.location_id,
-          date_enrolled: start_date + 10.days,
+          date_enrolled: start_date + 10.days
         )
-        
+
         PatientState.create!(
           patient_program: patient_program,
           state: on_arvs_state.program_workflow_state_id,
-          start_date: start_date + 10.days,
+          start_date: start_date + 10.days
         )
-        
+
         encounter = Encounter.create!(
           patient: patient,
           program: program,
           type: hiv_clinic_registration,
           encounter_datetime: start_date + 10.days,
           location_id: location.location_id,
-          provider_id: 1
+          provider_id: Person.first.person_id
         )
-        
-        # Mark as transfer in
-        type_of_patient_concept = ConceptName.find_by_name('Type of patient')&.concept
-        transfer_in_concept = ConceptName.find_by_name('Patient transferred in')&.concept ||
-                             ConceptName.find_by_name('External consultation')&.concept
-        
+
         if type_of_patient_concept && transfer_in_concept
           Observation.create!(
             person: patient.person,
             encounter: encounter,
             concept: type_of_patient_concept,
             value_coded: transfer_in_concept.concept_id,
-            obs_datetime: start_date + 10.days,
+            obs_datetime: start_date + 10.days
           )
         end
-        
-        drug = Drug.find_by(concept_id: arv_concept.concept_id) || 
+
+        drug = Drug.find_by(concept_id: arv_concept.concept_id) ||
                Drug.arv_drugs.first
         order_type = OrderType.find_by_name!('Drug order')
         order = Order.create!(
@@ -559,11 +578,12 @@ describe ArtService::Reports::CohortBuilder, :type => :service do
           patient: patient,
           start_date: start_date + 10.days,
           auto_expire_date: start_date + 40.days,
-          encounter_id: encounter.encounter_id,
-          orderer: 1
+          encounter: encounter,
+          provider: User.first,
+          orderer: User.first.user_id
         )
         DrugOrder.create!(order_id: order.order_id, drug_inventory_id: drug.drug_id, quantity: 60)
-        
+
         patient
       end
 
