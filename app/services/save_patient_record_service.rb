@@ -107,13 +107,15 @@ class SavePatientRecordService
       medication_order_saver: PatientRecordService::MedicationOrderSaver.new,
       dispensation_saver: PatientRecordService::DispensationSaver.new,
       observation_saver: PatientRecordService::ObservationSaver.new,
-      void_encounters: PatientRecordService::VoidEncounters.new
+      void_encounters: PatientRecordService::VoidEncounters.new,
+      merge_patients_manager: PatientRecordService::MergePatientManager.new
     }
   end
 
   def execute_patient_operations(patient_id, record, managers)
     {
       update_person_info: managers[:identity_manager].update_person_information(patient_id, record),
+      merge_patients: managers[:merge_patients_manager].merge_patients(patient_id, record),
       manage_guardian: managers[:guardian_manager].manage_guardian(patient_id, record),
       create_relationship: managers[:guardian_manager].create_relationship(record),
       # enroll_program: managers[:enrollment_manager].enroll_program(patient_id, record),
