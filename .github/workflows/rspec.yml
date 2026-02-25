@@ -1,0 +1,63 @@
+name: RSpec Tests
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: test
+          MYSQL_DATABASE: openmrs_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.2.0'
+        bundler-cache: true
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libmysqlclient-dev
+
+    - name: Setup config files
+      run: |
+        cp config/database.yml.example config/database.yml
+        cp config/application.yml.example config/application.yml
+        cp config/secrets.yml.example config/secrets.yml 2>/dev/null || echo "secrets.yml not needed"
+        # Update database.yml with correct credentials for CI
+        sed -i 's/port: 3308/port: 3306/g' config/database.yml
+        sed -i 's/username: your_scoped_username/username: root/g' config/database.yml
+        sed -i 's/password: your_secret_password/password: test/g' config/database.yml
+
+    - name: Setup database
+      env:
+        RAILS_ENV: test
+      run: |
+        bundle exec rails db:create
+        bundle exec rails db:migrate
+        bundle exec rails db:seed
+
+    - name: Run RSpec tests
+      env:
+        RAILS_ENV: test
+      run: bundle exec rspec
