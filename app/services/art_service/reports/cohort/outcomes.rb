@@ -19,7 +19,7 @@ module ArtService
           @start_date = ActiveRecord::Base.connection.quote(start_date.to_date)
           @prev_date = ActiveRecord::Base.connection.quote((start_date.to_date - 2.months).beginning_of_month)
           @definition = definition
-          @rebuild = kwargs[:rebuild]&.casecmp?('true')
+          @rebuild = kwargs[:rebuild].is_a?(String) ? kwargs[:rebuild]&.casecmp?('true') : kwargs[:rebuild]
         end
 
         def update_cummulative_outcomes

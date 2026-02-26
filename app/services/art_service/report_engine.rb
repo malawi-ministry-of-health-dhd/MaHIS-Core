@@ -14,7 +14,7 @@ module ArtService
       'ARV_REFILL_PERIODS' => ArtService::Reports::ArvRefillPeriods,
       'VL_SUPRESSION' => ArtService::Reports::Clinic::VlSupressionReport,
       'COHORT' => ArtService::Reports::ArtCohort,
-      'COHORT_DISAGGREGATED' => ArtService::Reports::Cohort::Disaggregated,
+      'COHORT_DISAGGREGATED' => ArtService::Reports::CohortDisaggregated,
       'COHORT_DISAGGREGATED_ADDITIONS' => ArtService::Reports::CohortDisaggregatedAdditions,
       'COHORT_SURVIVAL_ANALYSIS' => ArtService::Reports::CohortSurvivalAnalysis,
       'DRUG_DISPENSATIONS' => ArtService::Reports::DrugDispensations,
