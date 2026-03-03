@@ -171,6 +171,9 @@ module DrugOrderService
     end
 
     def create_order(encounter:, create_params:, order_type:)
+      Rails.logger.debug "=== CREATE ORDER START ==="
+      Rails.logger.debug "create_params: #{create_params.inspect}"
+      
       start_date = TimeUtils.retro_timestamp(create_params[:start_date].to_date)
       drug_runout_date = TimeUtils.retro_timestamp(create_params[:auto_expire_date].to_date)
 
@@ -186,33 +189,32 @@ module DrugOrderService
         instructions: create_params[:instructions]
       )
 
-      # Store user specified drug run out date separately as it is overriden
-      # based on the drugs that actually get dispensed.
+      Rails.logger.debug "=== ORDER CREATED: #{order.id}, errors: #{order.errors.full_messages} ==="
 
-      # Determine which concept to use and any additional attributes based 
-      # on the encounter type and presence of batch number
       if create_params[:batch_number].present?
         concept_id = ConceptName.find_by_name!('Batch Number').concept_id
-        value_text = create_params[:batch_number]
-        comments = 'Batch Number for drug ordered'
+        Rails.logger.debug "=== USING BATCH NUMBER concept_id: #{concept_id} ==="
       else
-        concept_id = ConceptName.find_by_name('Drug end date').concept_id
-        value_text = nil
-        comments = 'User specified drug run out date during drug prescription'
+        concept = ConceptName.find_by_name('Drug end date')
+        Rails.logger.debug "=== Drug end date concept lookup: #{concept.inspect} ==="  # KEY LOG
+        concept_id = concept&.concept_id
       end
 
-      # Create the observation based on the determined logic
-      Observation.create!(
+      Rails.logger.debug "=== CREATING OBSERVATION with concept_id: #{concept_id} ==="
+
+      obs = Observation.create!(
         concept_id: concept_id,
         encounter:,
         person_id: encounter.patient_id,
-        order:, 
+        order:,
         obs_datetime: start_date,
         value_datetime: drug_runout_date,
-        value_text: value_text,
-        comments: comments,
+        value_text: create_params[:batch_number].present? ? create_params[:batch_number] : nil,
+        comments: create_params[:batch_number].present? ? 'Batch Number for drug ordered' : 'User specified drug run out date during drug prescription',
         location_id: User.current.location_id
       )
+
+      Rails.logger.debug "=== OBSERVATION CREATED: #{obs.id} ==="
 
       order
     end
