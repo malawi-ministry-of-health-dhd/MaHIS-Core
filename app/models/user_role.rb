@@ -2,7 +2,7 @@
 
 class UserRole < ApplicationRecord
   self.table_name = :user_role
-  self.primary_keys = :role, :user_id
+  self.primary_key = %i[role user_id]
 
   include Locatable
 

@@ -4,9 +4,10 @@ module Sync
     
     TARGET_ID_COUNT = 50 # Always maintain exactly 50 unassigned IDs per facility
     FACILITIES_DB_NAME = 'facilities' # Name of the facilities database
+    DDE_LOCATION_ID= 700
     
     # Sync DDE IDs to CouchDB for all DDE-activated facilities
-    def perform(location_id = 700, batch_size = 100)
+    def perform(batch_size = 100)
       db_name = 'dde'
       program_id = 14 # HIV Program - adjust as needed
       
@@ -29,14 +30,14 @@ module Sync
       
       # Process each facility
       dde_facilities.each_with_index do |facility, index|
-        facility_code = facility['code']
+        location_id = facility['location_id']
         
-        Sidekiq.logger.info "Processing facility #{index + 1}/#{dde_facilities.length}: #{facility_code}"
+        Sidekiq.logger.info "Processing facility #{index + 1}/#{dde_facilities.length}: #{location_id}"
         
         begin
-          process_facility_dde_sync(dde_service, facility_code, location_id, db_name, batch_size)
+          process_facility_dde_sync(dde_service, location_id, db_name, batch_size)
         rescue => e
-          Sidekiq.logger.error "Error processing facility #{facility_code}: #{e.message}"
+          Sidekiq.logger.error "Error processing facility #{location_id}: #{e.message}"
           # Continue with other facilities
         end
         
@@ -44,7 +45,7 @@ module Sync
         sleep(1) if index < dde_facilities.length - 1
       end
       
-      Sidekiq.logger.info "Completed DDE sync for all facilities at location #{location_id}"
+      Sidekiq.logger.info "Completed DDE sync for all facilities at location #{DDE_LOCATION_ID}"
     end
     
     private
@@ -73,7 +74,7 @@ module Sync
           
           if doc['dde_activated'] == true
             {
-              'code' => doc['code'],
+              'location_id' => doc['location_id'],
               'name' => doc['name'],
               'facility_id' => doc['_id']
             }
@@ -89,54 +90,54 @@ module Sync
       end
     end
     
-    def process_facility_dde_sync(dde_service, facility_code, location_id, db_name, batch_size)
+    def process_facility_dde_sync(dde_service, location_id, db_name, batch_size)
       # Check current count and calculate how many IDs we need to fetch for this facility
-      ids_needed = calculate_facility_ids_needed(db_name, facility_code, location_id)
+      ids_needed = calculate_facility_ids_needed(db_name, location_id)
       
       if ids_needed <= 0
         current_count = TARGET_ID_COUNT - ids_needed
-        Sidekiq.logger.info "Facility #{facility_code}: Target count already met. Current unassigned: #{current_count}"
+        Sidekiq.logger.info "Facility #{location_id}: Target count already met. Current unassigned: #{current_count}"
         return
       end
       
-      Sidekiq.logger.info "Facility #{facility_code}: Need to fetch #{ids_needed} DDE IDs to reach target of #{TARGET_ID_COUNT}"
+      Sidekiq.logger.info "Facility #{location_id}: Need to fetch #{ids_needed} DDE IDs to reach target of #{TARGET_ID_COUNT}"
       
       # Allocate only the exact number of IDs needed for this facility
-      dde_ids = allocate_exact_dde_ids_for_facility(dde_service, facility_code, location_id, ids_needed, batch_size)
+      dde_ids = allocate_exact_dde_ids_for_facility(dde_service, location_id, ids_needed, batch_size)
       
       if dde_ids.any?
         # Convert raw DDE IDs to properly formatted CouchDB documents
         formatted_documents = dde_ids.map { |dde_id| prepare_document(dde_id) }
         
-        sync_array_to_couchdb(formatted_documents, db_name, "DDE IDs for facility #{facility_code}", batch_size, 
+        sync_array_to_couchdb(formatted_documents, db_name, "DDE IDs for facility #{location_id}", batch_size, 
                              progress_interval: 25, rate_limit_interval: 5)
         
         # Verify final count for this facility
-        final_count = get_facility_unassigned_dde_count(db_name, facility_code, location_id)
-        Sidekiq.logger.info "Facility #{facility_code}: Sync completed. Final unassigned DDE IDs count: #{final_count}"
+        final_count = get_facility_unassigned_dde_count(db_name, location_id)
+        Sidekiq.logger.info "Facility #{location_id}: Sync completed. Final unassigned DDE IDs count: #{final_count}"
       else
-        Sidekiq.logger.warn "Facility #{facility_code}: No DDE IDs were allocated. Service may be unavailable."
+        Sidekiq.logger.warn "Facility #{location_id}: No DDE IDs were allocated. Service may be unavailable."
       end
     end
     
-    def calculate_facility_ids_needed(db_name, facility_code, location_id)
+    def calculate_facility_ids_needed(db_name, location_id)
       begin
-        current_count = get_facility_unassigned_dde_count(db_name, facility_code, location_id)
+        current_count = get_facility_unassigned_dde_count(db_name, location_id)
         ids_needed = TARGET_ID_COUNT - current_count
         
-        Sidekiq.logger.info "Facility #{facility_code}: Current unassigned DDE IDs: #{current_count}, Target: #{TARGET_ID_COUNT}, Needed: #{ids_needed}"
+        Sidekiq.logger.info "Facility #{location_id}: Current unassigned DDE IDs: #{current_count}, Target: #{TARGET_ID_COUNT}, Needed: #{ids_needed}"
         
         return ids_needed
         
       rescue => e
-        Sidekiq.logger.error "Error calculating IDs needed for facility #{facility_code}: #{e.message}"
+        Sidekiq.logger.error "Error calculating IDs needed for facility #{location_id}: #{e.message}"
         # If we can't determine current count, assume we need all TARGET_ID_COUNT
         return TARGET_ID_COUNT
       end
     end
     
-    def allocate_exact_dde_ids_for_facility(dde_service, facility_code, location_id, ids_needed, batch_size)
-      Sidekiq.logger.info "Starting allocation of exactly #{ids_needed} DDE IDs for facility #{facility_code} at location #{location_id}"
+    def allocate_exact_dde_ids_for_facility(dde_service, location_id, ids_needed, batch_size)
+      Sidekiq.logger.info "Starting allocation of exactly #{ids_needed} DDE IDs for facility #{location_id} at location #{DDE_LOCATION_ID}"
       
       all_dde_ids = []
       remaining_needed = ids_needed
@@ -147,17 +148,17 @@ module Sync
           current_batch_size = [remaining_needed, batch_size].min
           
           begin
-            Sidekiq.logger.info "Facility #{facility_code}: Requesting #{current_batch_size} DDE IDs for location #{location_id} (#{remaining_needed} remaining)"
+            Sidekiq.logger.info "Facility #{location_id}: Requesting #{current_batch_size} DDE IDs for location #{location_id} (#{remaining_needed} remaining)"
             response = dde_service.allocate_npids(current_batch_size, location_id)
             
             if response['npids'].nil? || response['npids'].empty?
-              Sidekiq.logger.warn "Facility #{facility_code}: No more DDE IDs available from service. Got #{all_dde_ids.length} out of #{ids_needed} requested."
+              Sidekiq.logger.warn "Facility #{location_id}: No more DDE IDs available from service. Got #{all_dde_ids.length} out of #{ids_needed} requested."
               break
             end
             
             npids = response['npids']
             received_count = npids.length
-            Sidekiq.logger.info "Facility #{facility_code}: Received #{received_count} DDE IDs from DDE service"
+            Sidekiq.logger.info "Facility #{location_id}: Received #{received_count} DDE IDs from DDE service"
             
             # Only take what we need and add facility information
             npids_to_add = npids.first([remaining_needed, received_count].min).map do |npid_data|
@@ -167,8 +168,8 @@ module Sync
                 actual_npid = npid_data['npid'] || npid_data[:npid]
                 {
                   'npid' => actual_npid,
+                  'dde_location_id' => DDE_LOCATION_ID,
                   'location_id' => location_id,
-                  'facility_code' => facility_code,
                   'assigned' => npid_data['assigned'] || npid_data[:assigned] || false,
                   'allocated' => npid_data['allocated'] || npid_data[:allocated] || true,
                   'dde_id' => npid_data['id'] || npid_data[:id] # Store original DDE ID if available
@@ -177,8 +178,8 @@ module Sync
                 # Handle simple string NPIDs
                 {
                   'npid' => npid_data,
+                  'dde_location_id' => DDE_LOCATION_ID,
                   'location_id' => location_id,
-                  'facility_code' => facility_code,
                   'assigned' => false,
                   'allocated' => true
                 }
@@ -190,33 +191,33 @@ module Sync
             
             # Log progress
             allocated_so_far = ids_needed - remaining_needed
-            Sidekiq.logger.info "Facility #{facility_code}: Progress: #{allocated_so_far}/#{ids_needed} DDE IDs allocated"
+            Sidekiq.logger.info "Facility #{location_id}: Progress: #{allocated_so_far}/#{ids_needed} DDE IDs allocated"
             
             # Pause between DDE service calls to avoid overwhelming the service
             sleep(0.5) if remaining_needed > 0
             
           rescue => e
-            Sidekiq.logger.error "Facility #{facility_code}: Error requesting DDE IDs: #{e.message}"
+            Sidekiq.logger.error "Facility #{location_id}: Error requesting DDE IDs: #{e.message}"
             break
           end
         end
         
       rescue => e
-        Sidekiq.logger.error "Facility #{facility_code}: Fatal error during DDE allocation: #{e.message}"
+        Sidekiq.logger.error "Facility #{location_id}: Fatal error during DDE allocation: #{e.message}"
         raise e
       end
       
       final_count = all_dde_ids.length
-      Sidekiq.logger.info "Facility #{facility_code}: Completed DDE ID allocation: #{final_count}/#{ids_needed} IDs allocated"
+      Sidekiq.logger.info "Facility #{location_id}: Completed DDE ID allocation: #{final_count}/#{ids_needed} IDs allocated"
       
       if final_count < ids_needed
-        Sidekiq.logger.warn "Facility #{facility_code}: Could not allocate full requested amount. Shortage: #{ids_needed - final_count} IDs"
+        Sidekiq.logger.warn "Facility #{location_id}: Could not allocate full requested amount. Shortage: #{ids_needed - final_count} IDs"
       end
       
       all_dde_ids
     end
     
-    def get_facility_unassigned_dde_count(db_name, facility_code, location_id)
+    def get_facility_unassigned_dde_count(db_name, location_id)
       begin
         db_url = "#{COUCHDB_URL}/#{db_name}"
         
@@ -238,18 +239,18 @@ module Sync
         result = JSON.parse(response.body)
         
         # Count unassigned IDs for this facility and location
-        # Note: facility_code might not exist in older documents, so we check both conditions
+        # Note: location_id might not exist in older documents, so we check both conditions
         unassigned_count = result['rows'].count do |row|
           doc = row['doc']
-          doc['location_id'] == location_id && 
+          doc['dde_location_id'] == DDE_LOCATION_ID && 
           (doc['status'].nil? || doc['status'].empty? || doc['status'] != 'used') &&
-          (doc['facility_code'] == facility_code || doc['facility_code'].nil?)
+          (doc['location_id'] == location_id || doc['location_id'].nil?)
         end
         
         return unassigned_count
         
       rescue => e
-        Sidekiq.logger.error "Error getting CouchDB DDE IDs count for facility #{facility_code}: #{e.message}"
+        Sidekiq.logger.error "Error getting CouchDB DDE IDs count for facility #{location_id}: #{e.message}"
         raise e
       end
     end
@@ -264,10 +265,9 @@ module Sync
                     
       {
         "_id" => generate_document_id(npid_data, actual_npid),
-        "type" => "dde_id",
         "dde_id" => actual_npid,
+        "dde_location_id" => npid_data['dde_location_id'],
         "location_id" => npid_data['location_id'],
-        "facility_code" => npid_data['facility_code'], # Added facility code
         "npid" => actual_npid,
         "assigned" => npid_data.fetch('assigned', false),
         "allocated" => npid_data.fetch('allocated', true),
@@ -281,10 +281,10 @@ module Sync
       npid_string = actual_npid || npid_data['npid']
       
       # Include facility code in document ID to ensure uniqueness across facilities
-      "dde_id_#{npid_data['facility_code']}_#{npid_string}"
+      "dde_id_#{npid_data['location_id']}_#{npid_string}"
     end
     
-    def clean_assigned_dde_ids(db_name, location_id, facility_code = nil)
+    def clean_assigned_dde_ids(db_name, location_id= nil)
       begin
         db_url = "#{COUCHDB_URL}/#{db_name}"
         
@@ -308,24 +308,24 @@ module Sync
         # Filter for assigned IDs at this location (and optionally specific facility)
         assigned_docs = result['rows'].select do |row|
           doc = row['doc']
-          matches_location = doc['location_id'] == location_id && doc['assigned'] == true
+          matches_location = doc['dde_location_id'] == DDE_LOCATION_ID && doc['assigned'] == true
           
-          # If facility_code is specified, also filter by facility
-          # Note: Handle older documents that might not have facility_code
-          if facility_code
-            matches_location && (doc['facility_code'] == facility_code || doc['facility_code'].nil?)
+          # If location_id is specified, also filter by location
+          # Note: Handle older documents that might not have location_id
+          if location_id
+            matches_location && (doc['location_id'] == location_id || doc['location_id'].nil?)
           else
             matches_location
           end
         end
         
         if assigned_docs.empty?
-          filter_msg = facility_code ? "facility #{facility_code} at location #{location_id}" : "location #{location_id}"
+          filter_msg = location_id ? "location #{location_id}" : "DDE location #{DDE_LOCATION_ID}"
           Sidekiq.logger.info "No assigned DDE ID documents found for #{filter_msg}. Nothing to clean."
           return
         end
         
-        filter_msg = facility_code ? "facility #{facility_code}" : "location #{location_id}"
+        filter_msg = location_id ? "location #{location_id}" : "DDE location #{DDE_LOCATION_ID}"
         Sidekiq.logger.info "Found #{assigned_docs.length} assigned DDE ID documents to delete for #{filter_msg}"
         
         # Use the base class bulk delete functionality
@@ -337,11 +337,11 @@ module Sync
           }
         end
         
-        delete_msg = facility_code ? "assigned DDE IDs for facility #{facility_code}" : "assigned DDE IDs for location #{location_id}"
+        delete_msg = location_id ? "assigned DDE IDs for location #{location_id}" : "assigned DDE IDs for DDE location #{DDE_LOCATION_ID}"
         perform_bulk_delete("#{COUCHDB_URL}/#{db_name}", docs_to_delete, delete_msg)
         
       rescue => e
-        error_msg = facility_code ? "facility #{facility_code}" : "location #{location_id}"
+        error_msg = location_id ? "location #{location_id}" : "DDE location #{DDE_LOCATION_ID}"
         Sidekiq.logger.error "Error cleaning assigned DDE IDs for #{error_msg}: #{e.message}"
         raise e
       end
@@ -369,13 +369,13 @@ module Sync
     
 
     # Helper method to sync a specific facility
-    def sync_specific_facility(facility_code, location_id = 700, batch_size = 100)
+    def sync_specific_facility(location_id = 700, batch_size = 100)
       program_id = 14
       begin
         dde_service = DdeService.new(program: Program.find(program_id))
-        process_facility_dde_sync(dde_service, facility_code, location_id, 'dde', batch_size)
+        process_facility_dde_sync(dde_service, location_id, 'dde', batch_size)
       rescue => e
-        Sidekiq.logger.error "Error syncing facility #{facility_code}: #{e.message}"
+        Sidekiq.logger.error "Error syncing facility #{location_id}: #{e.message}"
         raise e
       end
     end
