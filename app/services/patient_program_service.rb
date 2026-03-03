@@ -5,8 +5,16 @@ class PatientProgramService
   def create(patient:, program:, date_enrolled: nil, location_id: nil, user: nil)
     date_enrolled ||= Time.now
     location_id ||= Location.current
-    user ||= User.current
+    
+    
     return if program.blank? || patient.blank?
+
+    if user.present?
+      person = Person.find(user.id)
+      user = User.find_by(person_id: person.person_id)
+    else
+      user = User.current
+    end
 
     patient_program = find_patient_program(patient:, program:)
     return patient_program unless patient_program.blank?
