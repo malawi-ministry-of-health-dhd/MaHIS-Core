@@ -4,7 +4,8 @@ module Sync
     
     TARGET_ID_COUNT = 50 # Always maintain exactly 50 unassigned IDs per facility
     FACILITIES_DB_NAME = 'facilities' # Name of the facilities database
-    DDE_LOCATION_ID= 700
+    CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
+    DDE_LOCATION_ID = CONFIG['DDE_LOCATION_ID']
     
     # Sync DDE IDs to CouchDB for all DDE-activated facilities
     def perform(batch_size = 100)

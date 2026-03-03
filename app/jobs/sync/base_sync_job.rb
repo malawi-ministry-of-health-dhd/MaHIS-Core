@@ -338,8 +338,8 @@ module Sync
     
     # NEW: Prepare document with _id for bulk operations
     def prepare_bulk_document(record)
-      doc = prepare_document(record.with_indifferent_access)
-      doc_id = generate_document_id(record.with_indifferent_access)
+      doc = prepare_document(record)
+      doc_id = generate_document_id(record)
       
       # Add _id for CouchDB bulk operations
       doc.merge("_id" => doc_id)
@@ -604,8 +604,8 @@ module Sync
     end
     
     def sync_record_to_couchdb(record, db_name)
-      doc_data = prepare_document(record.with_indifferent_access)
-      doc_id = generate_document_id(record.with_indifferent_access)
+      doc_data = prepare_document(record)
+      doc_id = generate_document_id(record)
       
       retries = 0
       begin
