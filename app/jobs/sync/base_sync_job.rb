@@ -43,50 +43,106 @@ module Sync
     # Bulk sync implementation for model-based records
     def sync_records_bulk(query, db_name, batch_size, total_count, model_name)
       ensure_database_exists(db_name)
-      
+
       processed = 0
       errors = []
-      
+      batch_number = 0
+
       query.find_in_batches(batch_size: batch_size) do |batch|
-        begin
-          # Prepare all documents in batch
-          documents = batch.map { |record| prepare_bulk_document(record) }
-          
-          # Sync entire batch in one HTTP request
-          bulk_result = bulk_sync_to_couchdb(documents, db_name)
-          
+        batch_number += 1
+
+        success = sync_batch_with_retry(batch, db_name, model_name, batch_number, errors, max_retries: 5)
+
+        if success
           processed += batch.size
-          
-          # Check for errors in bulk response
-          if bulk_result[:errors].any?
-            errors.concat(bulk_result[:errors])
-            Sidekiq.logger.warn "Batch had #{bulk_result[:errors].length} errors"
-          end
-          
           Sidekiq.logger.info "Synced #{processed}/#{total_count} #{model_name.pluralize}"
-          
-        rescue => e
-          Sidekiq.logger.error "Failed to sync batch: #{e.message}"
-          errors << "Batch sync failed: #{e.message}"
-          
-          # Fallback: try individual sync for this batch
-          batch.each do |record|
-            begin
-              sync_record_to_couchdb(record, db_name)
-            rescue => individual_error
-              record_id = get_record_identifier(record)
-              errors << "Failed #{model_name} ID #{record_id}: #{individual_error.message}"
-            end
-          end
+        else
+          # Batch ultimately failed after all retries - log and continue
+          Sidekiq.logger.error "Batch #{batch_number} failed permanently, skipping #{batch.size} records"
+          batch.size.times { errors << "Batch #{batch_number} failed permanently" }
         end
-        
-        # Small delay between batches
-        sleep(0.05)
+
+        sleep(0.5) # Give CouchDB breathing room between batches
       end
-      
+
       handle_sync_completion(processed, errors, total_count, model_name)
     end
-    
+
+    # Retry a single batch with exponential backoff and CouchDB recovery waiting
+    def sync_batch_with_retry(batch, db_name, model_name, batch_number, errors, max_retries: 5)
+      retries = 0
+
+      begin
+        documents = batch.map { |record| prepare_bulk_document(record) }
+        bulk_result = bulk_sync_to_couchdb(documents, db_name)
+
+        if bulk_result[:success]
+          if bulk_result[:errors].any?
+            errors.concat(bulk_result[:errors])
+            Sidekiq.logger.warn "Batch #{batch_number} had #{bulk_result[:errors].length} document-level errors"
+          end
+          return true
+        else
+          raise "Bulk sync returned failure: #{bulk_result[:errors].join(', ')}"
+        end
+
+      rescue Errno::ECONNREFUSED, SocketError, RestClient::ServerBrokeConnection => e
+        retries += 1
+
+        if retries <= max_retries
+          wait_time = [2 ** retries, 30].min # 2, 4, 8, 16, 30 seconds
+          Sidekiq.logger.warn "Batch #{batch_number} connection error (attempt #{retries}/#{max_retries}): #{e.message}. Waiting #{wait_time}s for CouchDB to recover..."
+
+          sleep(wait_time)
+
+          # Verify CouchDB is back up before retrying
+          if wait_for_couchdb(timeout: wait_time * 2)
+            Sidekiq.logger.info "CouchDB recovered, retrying batch #{batch_number}..."
+            retry
+          else
+            Sidekiq.logger.error "CouchDB did not recover in time, skipping batch #{batch_number}"
+            errors << "Batch #{batch_number} failed: CouchDB unavailable after #{max_retries} retries"
+            return false
+          end
+        else
+          Sidekiq.logger.error "Batch #{batch_number} failed after #{max_retries} retries: #{e.message}"
+          errors << "Batch #{batch_number} permanently failed: #{e.message}"
+          return false
+        end
+
+      rescue => e
+        retries += 1
+        if retries <= max_retries
+          sleep(1 * retries)
+          retry
+        else
+          Sidekiq.logger.error "Batch #{batch_number} failed after #{max_retries} retries: #{e.message}"
+          errors << "Batch #{batch_number} failed: #{e.message}"
+          return false
+        end
+      end
+    end
+
+    # Poll CouchDB until it responds or timeout is reached
+    def wait_for_couchdb(timeout: 60)  # increase from 30 to 60
+      deadline = Time.now + timeout
+      interval = 3  # poll every 3 seconds
+
+      while Time.now < deadline
+        begin
+          RestClient.get("#{COUCHDB_URL}/_up")
+          Sidekiq.logger.info "CouchDB is back up!"
+          return true
+        rescue Errno::ECONNREFUSED, SocketError
+          Sidekiq.logger.info "Waiting for CouchDB to come back up..."
+          sleep(interval)
+        rescue => e
+          return true # any HTTP response means it's running
+        end
+      end
+
+      false
+    end
     # Original individual sync (kept for backwards compatibility and fallback)
     def sync_records_individual(query, db_name, batch_size, total_count, model_name)
       processed = 0
@@ -302,12 +358,20 @@ module Sync
     
     # NEW: Bulk sync to CouchDB using _bulk_docs endpoint
     def bulk_sync_to_couchdb(documents, db_name)
-      db_url = "#{COUCHDB_URL}/#{db_name}"
+      db_url = "#{CouchdbSync::COUCHDB_URL}/#{db_name}"
       bulk_url = "#{db_url}/_bulk_docs"
-      
-      # CouchDB bulk docs format
-      bulk_data = { "docs" => documents }
-      
+
+      # Fetch existing _revs to avoid conflicts
+      existing_revs = fetch_existing_revs(documents, db_url)
+
+      # Merge _rev into documents that already exist
+      documents = documents.map do |doc|
+        rev = existing_revs[doc['_id']]
+        rev ? doc.merge('_rev' => rev) : doc
+      end
+
+      bulk_data = { 'docs' => documents }
+
       retries = 0
       begin
         response = RestClient.post(
@@ -315,25 +379,31 @@ module Sync
           bulk_data.to_json,
           { content_type: :json, accept: :json }
         )
-        
         result = JSON.parse(response.body)
-        
-        # Collect errors from bulk response
         errors = result.select { |r| r.key?('error') }.map do |err|
           "Doc #{err['id']}: #{err['error']} - #{err['reason']}"
         end
-        
         { success: true, errors: errors }
-        
       rescue RestClient::Exception, SocketError => e
         retries += 1
-        if retries <= 2
-          sleep(0.1 * retries)
-          retry
-        else
-          { success: false, errors: ["Bulk sync failed: #{e.message}"] }
-        end
+        retries <= 2 ? (sleep(0.1 * retries); retry) : { success: false, errors: ["Bulk sync failed: #{e.message}"] }
       end
+    end
+
+    def fetch_existing_revs(documents, db_url)
+      ids = documents.map { |d| d['_id'] }
+      response = RestClient.post(
+        "#{db_url}/_all_docs",
+        { keys: ids }.to_json,
+        { content_type: :json, accept: :json }
+      )
+      result = JSON.parse(response.body)
+      result['rows'].each_with_object({}) do |row, hash|
+        hash[row['id']] = row['value']['rev'] if row['value'] && !row['value']['deleted']
+      end
+    rescue => e
+      Sidekiq.logger.warn "Could not fetch existing revs: #{e.message}"
+      {}
     end
     
     # NEW: Prepare document with _id for bulk operations
@@ -678,18 +748,19 @@ module Sync
     end
     
     def handle_sync_completion(processed, errors, total_count, model_name, skipped = 0)
-      success_count = processed - errors.length
-      
+      # processed already counts only successful batches, errors are logged separately
+      success_count = processed
+
       if skipped > 0
         Sidekiq.logger.info "Sync completed: #{success_count} successful, #{errors.length} errors, #{skipped} skipped"
       else
         Sidekiq.logger.info "Sync completed: #{success_count} successful, #{errors.length} errors"
       end
-      
+
       if errors.any?
         Sidekiq.logger.error "Total errors: #{errors.length}"
         if errors.length > total_count * 0.05
-          error_rate = (errors.length.to_f/total_count*100).round(2)
+          error_rate = (errors.length.to_f / total_count * 100).round(2)
           raise "#{model_name.capitalize} sync completed with unacceptable error rate: #{errors.length}/#{total_count} (#{error_rate}%)"
         end
       end
