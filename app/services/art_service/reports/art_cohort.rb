@@ -34,7 +34,16 @@ module ArtService
       end
 
       def find_report
-        Report.where(type: @type, name: "#{@name} #{@occupation}",
+        # Find or create ReportType if @type is an OpenStruct
+        report_type = if @type.is_a?(OpenStruct)
+                        ReportType.find_or_create_by(name: @type.name) do |rt|
+                          rt.creator = User.current.id
+                        end
+                      else
+                        @type
+                      end
+
+        Report.where(type: report_type, name: "#{@name} #{@occupation}",
                      start_date: @start_date, end_date: @end_date)\
               .order(date_created: :desc)\
               .first
@@ -52,7 +61,7 @@ module ArtService
             art_reason.name art_reason, a.value cell_number, landmark.value landmark,
             s.state_province district, s.county_district ta,
             s.city_village village, TIMESTAMPDIFF(year, DATE(e.birthdate), DATE('#{@end_date}')) age,
-            o.#{report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_' }outcome_date AS defaulter_date,
+            o.#{report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}outcome_date AS defaulter_date,
             DATE(appointment.appointment_date) AS appointment_date
           FROM temp_earliest_start_date e
           INNER JOIN temp_patient_outcomes o ON e.patient_id = o.patient_id
@@ -62,7 +71,7 @@ module ArtService
             INNER JOIN obs o ON o.encounter_id = e.encounter_id AND o.voided = 0 AND o.concept_id = 5096 -- appointment date
             WHERE e.encounter_type = 7 -- appointment encounter type
             AND e.program_id = 1 -- hiv program
-            AND e.patient_id IN (SELECT patient_id FROM temp_patient_outcomes WHERE #{report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_' }cum_outcome = 'Defaulted')
+            AND e.patient_id IN (SELECT patient_id FROM temp_patient_outcomes WHERE #{report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}cum_outcome = 'Defaulted')
             AND e.encounter_datetime < DATE('#{@end_date}') + INTERVAL 1 DAY
             GROUP BY e.patient_id
           ) appointment ON appointment.patient_id = e.patient_id
@@ -72,7 +81,7 @@ module ArtService
           LEFT JOIN person_attribute landmark ON landmark.person_id = e.patient_id AND landmark.voided = 0 AND landmark.person_attribute_type_id = 19
           LEFT JOIN person_address s ON s.person_id = e.patient_id AND s.voided = 0
           LEFT JOIN concept_name art_reason ON art_reason.concept_id = e.reason_for_starting_art AND art_reason.voided = 0
-          WHERE o.#{report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_' }cum_outcome = 'Defaulted'
+          WHERE o.#{report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}cum_outcome = 'Defaulted'
           GROUP BY e.patient_id
           HAVING (defaulter_date >= DATE('#{@start_date}') AND defaulter_date <= DATE('#{@end_date}')) OR (defaulter_date IS NULL)
           ORDER BY e.patient_id, n.date_created DESC;
@@ -97,9 +106,9 @@ module ArtService
           LEFT JOIN person_name n ON n.person_id = p.person_id AND n.voided = 0
           LEFT JOIN obs tb_start ON tb_start.person_id = p.person_id
             AND tb_start.concept_id = (
-              SELECT concept_id 
-              FROM concept_name 
-              WHERE name = 'TB status' 
+              SELECT concept_id#{' '}
+              FROM concept_name#{' '}
+              WHERE name = 'TB status'#{' '}
               LIMIT 1
             )
           WHERE c.reporting_report_design_resource_id = #{id}
@@ -112,18 +121,36 @@ module ArtService
       LOGGER = Rails.logger
 
       def find_saved_report
-        @report = Report.where(type: @type, name: "#{@name} #{@occupation}",
-                              start_date: @start_date, end_date: @end_date)
+        # Find or create ReportType if @type is an OpenStruct
+        report_type = if @type.is_a?(OpenStruct)
+                        ReportType.find_or_create_by(name: @type.name) do |rt|
+                          rt.creator = User.current.id
+                        end
+                      else
+                        @type
+                      end
+
+        @report = Report.where(type: report_type, name: "#{@name} #{@occupation}",
+                               start_date: @start_date, end_date: @end_date)
         @report&.map { |r| r['id'] } || []
       end
 
       # Writes the report to database
       def save_report
         Report.transaction do
+          # Find or create ReportType if @type is an OpenStruct
+          report_type = if @type.is_a?(OpenStruct)
+                          ReportType.find_or_create_by(name: @type.name) do |rt|
+                            rt.creator = User.current.id
+                          end
+                        else
+                          @type
+                        end
+
           report = Report.create(name: "#{@name} #{@occupation}",
                                  start_date: @start_date,
                                  end_date: @end_date,
-                                 type: @type,
+                                 type: report_type,
                                  creator: User.current.id,
                                  renderer_type: 'PDF')
 
@@ -147,25 +174,51 @@ module ArtService
 
           raise "Failed to save report value: #{report_value.errors.as_json}" unless report_value.errors.empty?
 
-          save_patients(report_value, value_contents_to_json(value).contents)
+          save_patients(report_value, value.contents)
 
           report_value
         end
       end
 
       def clear_drill_down
-        saved_reports = find_saved_report
-        return if saved_reports.blank?
+        # Find existing reporting_report_design records for this cohort/date range
+        # Match on start_date and end_date (name is unreliable as it gets stored inconsistently)
+        existing_designs = ActiveRecord::Base.connection.select_all <<~SQL
+          SELECT id FROM reporting_report_design
+          WHERE start_date = '#{@start_date}'
+            AND end_date = '#{@end_date}'
+        SQL
+
+        design_ids = existing_designs.map { |d| d['id'] }
+        return if design_ids.blank?
+
+        LOGGER.info("Clear drill-down: Found #{design_ids.count} existing designs with date range #{@start_date} to #{@end_date}")
+
+        # Find all resource IDs for these designs
+        resource_ids = ActiveRecord::Base.connection.select_all <<~SQL
+          SELECT id FROM reporting_report_design_resource
+          WHERE report_design_id IN (#{design_ids.join(',')})
+        SQL
+
+        resource_id_list = resource_ids.map { |r| r['id'] }
+
+        # Delete in proper order: child records first
+        unless resource_id_list.blank?
+          ActiveRecord::Base.connection.execute <<~SQL
+            DELETE FROM cohort_drill_down WHERE reporting_report_design_resource_id IN (#{resource_id_list.join(',')})
+          SQL
+          LOGGER.info("Clear drill-down: Deleted drill-down records for #{resource_id_list.count} resources")
+        end
 
         ActiveRecord::Base.connection.execute <<~SQL
-          DELETE FROM cohort_drill_down WHERE reporting_report_design_resource_id IN (#{saved_reports.join(',')})
+          DELETE FROM reporting_report_design_resource WHERE report_design_id IN (#{design_ids.join(',')})
         SQL
+
         ActiveRecord::Base.connection.execute <<~SQL
-          DELETE FROM reporting_report_design_resource WHERE report_design_id IN (#{saved_reports.join(',')})
+          DELETE FROM reporting_report_design WHERE id IN (#{design_ids.join(',')})
         SQL
-        ActiveRecord::Base.connection.execute <<~SQL
-          DELETE FROM reporting_report_design WHERE id IN (#{saved_reports.join(',')})
-        SQL
+
+        LOGGER.info("Clear drill-down: Deleted #{design_ids.count} report designs and their resources")
       end
 
       def value_contents_to_json(value_contents)
@@ -204,7 +257,9 @@ module ArtService
         end
 
         sql_insert_statement = nil
-        patient_ids.select do |patient_id|
+        patient_ids.each do |patient_id|
+          next if patient_id.blank? || patient_id.to_i.zero?
+
           if sql_insert_statement.blank?
             sql_insert_statement = "(#{r.id}, #{patient_id})"
           else

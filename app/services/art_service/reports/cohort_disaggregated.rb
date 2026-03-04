@@ -292,12 +292,23 @@ module ArtService
       def get_age_groups(age_group, _start_date, _end_date)
         if age_group != 'Pregnant' && age_group != 'FNP' && age_group != 'Not pregnant' && age_group != 'Breastfeeding'
 
-          age_group_patients = ActiveRecord::Base.connection.select_all <<~SQL
-            SELECT
-              patient_id, `disaggregated_age_group`(date(birthdate), date('#{@end_date}')) AS age_group
-            FROM temp_earliest_start_date e
-            GROUP BY e.patient_id HAVING age_group = '#{age_group}';
-          SQL
+          # Handle 'All' age group separately - include all patients
+          if age_group == 'All'
+            age_group_patients = ActiveRecord::Base.connection.select_all <<~SQL
+              SELECT
+                patient_id, `disaggregated_age_group`(date(birthdate), date('#{@end_date}')) AS age_group
+              FROM temp_earliest_start_date e
+              GROUP BY e.patient_id;
+            SQL
+          else
+            age_group_patients = ActiveRecord::Base.connection.select_all <<~SQL
+              SELECT
+                patient_id, `disaggregated_age_group`(date(birthdate), date('#{@end_date}')) AS age_group
+              FROM temp_earliest_start_date e
+              GROUP BY e.patient_id HAVING age_group COLLATE utf8mb3_unicode_ci = '#{age_group}' COLLATE utf8mb3_unicode_ci;
+            SQL
+          end
+
           age_group_patient_ids = [0]
           (age_group_patients || []).each do |patient|
             age_group_patient_ids << patient['patient_id'].to_i
@@ -305,7 +316,7 @@ module ArtService
 
           results = ActiveRecord::Base.connection.select_all <<~SQL
             SELECT
-              o.cum_outcome AS outcome, e.*
+              o.#{@type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}cum_outcome AS outcome, e.*
             FROM temp_earliest_start_date e
             LEFT JOIN temp_patient_outcomes o ON o.patient_id = e.patient_id
             WHERE date_enrolled <= '#{@end_date}'
@@ -329,11 +340,12 @@ module ArtService
             SELECT
               e.*, maternal_status AS mstatus,
               t2.initial_maternal_status,
-              t3.cum_outcome AS outcome
+              t3.#{@type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}cum_outcome AS outcome
             FROM temp_earliest_start_date e
             INNER JOIN temp_disaggregated t2 ON t2.patient_id = e.patient_id
             INNER JOIN temp_patient_outcomes t3 ON t3.patient_id = e.patient_id
-            WHERE maternal_status = 'FP' OR initial_maternal_status = 'FP'
+            WHERE maternal_status COLLATE utf8mb3_unicode_ci = 'FP' COLLATE utf8mb3_unicode_ci 
+              OR initial_maternal_status COLLATE utf8mb3_unicode_ci = 'FP' COLLATE utf8mb3_unicode_ci
             GROUP BY e.patient_id;
           SQL
 
@@ -343,11 +355,12 @@ module ArtService
             SELECT
               e.*, maternal_status AS mstatus,
               initial_maternal_status,
-              t3.cum_outcome AS outcome
+              t3.#{@type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}cum_outcome AS outcome
             FROM temp_earliest_start_date e
             INNER JOIN temp_disaggregated t2 ON t2.patient_id = e.patient_id
             INNER JOIN temp_patient_outcomes t3 ON t3.patient_id = e.patient_id
-            WHERE maternal_status = 'FBf' OR initial_maternal_status = 'FBf'
+            WHERE maternal_status COLLATE utf8mb3_unicode_ci = 'FBf' COLLATE utf8mb3_unicode_ci 
+              OR initial_maternal_status COLLATE utf8mb3_unicode_ci = 'FBf' COLLATE utf8mb3_unicode_ci
             GROUP BY e.patient_id;
           SQL
 
@@ -357,11 +370,11 @@ module ArtService
             SELECT
               e.*, maternal_status AS mstatus,
               initial_maternal_status,
-              t3.cum_outcome AS outcome
+              t3.#{@type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}cum_outcome AS outcome
             FROM temp_earliest_start_date e
             INNER JOIN temp_disaggregated t2 ON t2.patient_id = e.patient_id
             INNER JOIN temp_patient_outcomes t3 ON t3.patient_id = e.patient_id
-            WHERE maternal_status = 'FNP'
+            WHERE maternal_status COLLATE utf8mb3_unicode_ci = 'FNP' COLLATE utf8mb3_unicode_ci
             GROUP BY e.patient_id;
           SQL
 
