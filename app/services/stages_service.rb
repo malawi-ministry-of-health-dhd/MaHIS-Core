@@ -62,9 +62,12 @@ class StagesService
                  .where(visit: { date_stopped: nil })
 
     patient_id = resolve_patient_id(filters)
+    program_id = filters[:program_id]
+
     scope = scope.where(patient_id: patient_id) if patient_id.present?
     scope = scope.where(location_id: filters[:location_id]) if filters[:location_id].present?
     scope = scope.where(stage: normalize_stage(filters[:stage])) if filters[:stage].present?
+    scope = scope.where(program_id: program_id) if program_id.present?
 
     scope.order(updated_at: :desc)
   end
@@ -88,6 +91,7 @@ class StagesService
       patient_id: stage.patient_id,
       visit_uuid: stage.visit&.uuid,
       arrival_time: stage.arrival_time,
+      program_id: stage.program_id,
       latest_encounter_time: latest_encounter&.encounter_datetime || stage.created_at,
       last_encounter_creator: encounter_creator_name(latest_encounter,patient),
       disposition_type: stage.disposition_type,
