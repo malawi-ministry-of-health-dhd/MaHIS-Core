@@ -42,7 +42,7 @@ module Api
 
             # Build base query with joins
             visits = Visit.includes(:patient)
-              .select('visit.*, patient_identifier.identifier AS identifier')
+              .select('DISTINCT visit.*, patient_identifier.identifier AS identifier')
               .where(location_id: User.current.location_id)
               .joins('INNER JOIN encounter ON encounter.visit_id = visit.visit_id')
               .joins('INNER JOIN patient ON patient.patient_id = visit.patient_id')
