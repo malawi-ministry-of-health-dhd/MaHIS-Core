@@ -44,13 +44,13 @@ module Api
             visits = Visit.includes(:patient)
               .select('visit.*, patient_identifier.identifier AS identifier')
               .where(location_id: User.current.location_id)
-              .joins('INNER JOIN stages ON stages.visit_id = visit.visit_id')
+              .joins('INNER JOIN encounter ON encounter.visit_id = visit.visit_id')
               .joins('INNER JOIN patient ON patient.patient_id = visit.patient_id')
               .joins('INNER JOIN patient_identifier ON patient_identifier.patient_id = patient.patient_id AND patient_identifier.identifier_type = 3')
 
             # Apply filters
             visits = visits.where(patient_id: patient_id) if patient_id.present?
-            visits = visits.where(stages: { program_id: params[:program_id] })  if params[:program_id].present?
+            visits = visits.where(encounter: { program_id: params[:program_id] })  if params[:program_id].present?
 
             # Filter by closed date - Fixed logic
             if closed_date_time.present?
