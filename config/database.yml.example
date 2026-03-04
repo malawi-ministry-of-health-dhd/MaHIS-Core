@@ -13,8 +13,14 @@ default: &default
     sql_mode: STRICT_TRANS_TABLES
 
 development:
-  <<: *default
-  database: openmrs_dev
+  primary:
+    <<: *default
+    database: openmrs_development
+
+  primary_replica:
+    <<: *default
+    database: openmrs_development_replica
+    replica: true
 
 test:
   <<: *default
