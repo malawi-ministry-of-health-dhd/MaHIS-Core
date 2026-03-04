@@ -25,15 +25,6 @@ class VisitService
       patient_id = patient_identifier[:patient_id] if patient_identifier.present?
     end
 
-    # Create encounter first
-    create_encounter(patient_id, 1,
-      {
-        program_id: visit_params[:program_id],
-        location_id: visit_params[:location_id],
-        encounter_datetime: visit_params[:date_started],
-        provider_id: visit_params[:provider_id]
-      })
-
     # Check if visit already exists
     checkVisit = Visit.where(patient_id: patient_id, date_stopped: nil).first
     if checkVisit.present?
@@ -69,6 +60,16 @@ class VisitService
         sync_to_couchdb(data, "stages", data[:identifier]) if data.present?
       end
       
+      # Create encounter first
+      id = EncounterType.find_by_name("visit")
+      create_encounter(patient_id, id.encounter_type_id,
+        {
+          program_id: visit_params[:program_id],
+          location_id: visit_params[:location_id],
+          encounter_datetime: visit_params[:date_started],
+          provider_id: visit_params[:provider_id]
+        })
+
       visit_data
     else
       Rails.logger.error("Visit creation failed: #{visit.errors.full_messages.join(', ')}")
