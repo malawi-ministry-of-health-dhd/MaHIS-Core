@@ -17,18 +17,21 @@ module PatientRecordService
             encounter_id = create_encounter(patient_id, encounter_type.id, record)
             encounter = Encounter.find(encounter_id)
 
-            unless encounter.type.name == 'TREATMENT'
+            unless encounter.type.name.casecmp?('TREATMENT')
               Rails.logger.warn("Unexpected encounter type: #{encounter.type.name} for encounter ##{encounter.encounter_id}")
               next
             end
-            saved_drug_orders =DrugOrderService.create_drug_orders(encounter: encounter, drug_orders: [order])
-            save_dispensation_data(patient_id, record, saved_drug_orders[0][:order_id], order[:dispensation])
+
+            saved_drug_orders = DrugOrderService.create_drug_orders(encounter: encounter, drug_orders: [order])
+            raise "Drug order creation returned empty result for order: #{order.inspect}" if saved_drug_orders.blank?
+
+            save_dispensation_data(patient_id, record, saved_drug_orders[0].order_id, order[:dispensation])
           end
         end
         return true
       rescue StandardError => e
         log_error("Failed to create medication order", e)
-        raise # Re-raise if you want the transaction to rollback
+        raise
       end
     end
     def save_dispensation_data(patient_id, record, order_id = nil, dispensation_data = nil)
