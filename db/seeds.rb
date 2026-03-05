@@ -49,9 +49,17 @@ end
 files = Dir.glob(Rails.root.join('db', 'data', '*.sql.gz'))
 total = files.size
 
-if total > 0
+if total.positive?
   files.each_with_index do |file_path, idx|
     puts "Importing file #{idx + 1}/#{total}: #{File.basename(file_path)}..."
+    if File.basename(file_path) == 'locations.sql.gz' && Location.count.positive?
+      puts <<~DOC
+        DOCSkipping adding of location meta-data because locations is#{' '}
+        not empty might overwrite custom locations created ask admin to sync
+        and additional locations you might need.
+      DOC
+      next
+    end
     cmd = "gunzip -c #{file_path} | mysql -u #{username}"
     cmd += " -p#{password}" if password.present?
     cmd += " -h #{host}" if host.present?
@@ -67,7 +75,7 @@ else
 end
 
 role = Role.find_by(role: 'Superuser')
-UserRole.create!(user_id: 2, role: role)
+UserRole.find_or_create_by!(user_id: 2, role: role)
 
 puts <<~MSG
   ----------------------------------------
