@@ -44,7 +44,7 @@ module BHTEmrApi
       g.orm :active_record, primary_key_type: :integer
     end
 
-    #Action Cable
+    # Action Cable
     config.action_cable.mount_path = '/cable'
     config.action_cable.disable_request_forgery_protection = true
 
@@ -58,6 +58,5 @@ module BHTEmrApi
 
     # Use Sidekiq for Active Job
     config.active_job.queue_adapter = :sidekiq
-
   end
 end
