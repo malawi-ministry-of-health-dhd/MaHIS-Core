@@ -66,6 +66,9 @@ else
   puts 'No additional data files to import'
 end
 
+role = Role.find_by(role: 'Superuser')
+UserRole.create!(user_id: 2, role: role)
+
 puts <<~MSG
   ----------------------------------------
   Database seeding complete
