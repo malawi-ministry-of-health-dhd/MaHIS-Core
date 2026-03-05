@@ -150,7 +150,7 @@ module Sync
           
           begin
             Sidekiq.logger.info "Facility #{location_id}: Requesting #{current_batch_size} DDE IDs for location #{location_id} (#{remaining_needed} remaining)"
-            response = dde_service.allocate_npids(current_batch_size, location_id)
+            response = dde_service.allocate_npids(current_batch_size, DDE_LOCATION_ID)
             
             if response['npids'].nil? || response['npids'].empty?
               Sidekiq.logger.warn "Facility #{location_id}: No more DDE IDs available from service. Got #{all_dde_ids.length} out of #{ids_needed} requested."
