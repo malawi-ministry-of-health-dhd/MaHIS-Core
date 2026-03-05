@@ -27,7 +27,7 @@ module Sync
         return
       end
       
-      Sidekiq.logger.info "Processing #{dde_facilities.length} DDE-activated facilities for location #{location_id}"
+      Sidekiq.logger.info "Processing #{dde_facilities.length} DDE-activated facilities for location #{DDE_LOCATION_ID}"
       
       # Process each facility
       dde_facilities.each_with_index do |facility, index|
