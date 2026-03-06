@@ -9,6 +9,7 @@ ruby '~> 3.2.0'
 gem 'redis'
 gem 'sidekiq', '~> 8.1', '>= 8.1.1'
 gem 'sidekiq-cron'
+gem 'sidekiq-unique-jobs'
 
 # Bundle edge Rails instead: gem 'rails', github: 'rails/rails'
 gem 'rails', '~> 8.1', '>= 8.1.2'
