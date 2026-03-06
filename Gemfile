@@ -6,6 +6,7 @@ git_source(:github) { |repo| "https://github.com/#{repo}.git" }
 ruby '~> 3.2.0'
 
 # Gems for managing background jobs
+# gem 'activejob-uniqueness' # Not compatible with Rails 8.1 - removed temporarily
 gem 'redis'
 gem 'sidekiq', '~> 8.1', '>= 8.1.1'
 gem 'sidekiq-cron'
@@ -48,13 +49,12 @@ gem 'rest-client'
 
 gem 'test-unit'
 
-
 gem 'rswag-api'
 gem 'rswag-ui'
 
 gem 'emr_ohsp_interface', '~> 3.0.1'
-gem 'his_emr_api_radiology', '~> 2.0.0'
 gem 'his_emr_api_lab', '= 2.1.9-alpha'
+gem 'his_emr_api_radiology', '~> 2.0.0'
 
 # gem 'emr_ohsp_interface', '~> 2.2.3'
 # gem 'his_emr_api_lab', '~> 2.0.5'
