@@ -49,7 +49,7 @@ module Sync
         "program_id"   => visit.try(:program_id),
         "date_started" => visit.date_started&.iso8601,
         "date_stopped" => visit.date_stopped&.iso8601,
-        "location_id"  => visit.location_id,
+        "location_id"  => visit.location_id.to_s,
       }
     end
     
