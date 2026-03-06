@@ -759,6 +759,7 @@ module Sync
 
       if errors.any?
         Sidekiq.logger.error "Total errors: #{errors.length}"
+        Sidekiq.logger.error "Show all errors: #{errors}"
         if errors.length > total_count * 0.05
           error_rate = (errors.length.to_f / total_count * 100).round(2)
           raise "#{model_name.capitalize} sync completed with unacceptable error rate: #{errors.length}/#{total_count} (#{error_rate}%)"

@@ -3,23 +3,23 @@ namespace :sync do
   task all: :environment do
     jobs = [
       Sync::BatchPatientSyncJob,
+      Sync::FacilitySyncJob,
       Sync::SpecimenSyncJob,
+      Sync::VisitSyncJob,
       Sync::StageSyncJob,
       Sync::StockSyncJob,
       Sync::TestResultIndicatorsSyncJob,
       Sync::TestTypesSyncJob,
       Sync::ConceptNameSyncJob,
       Sync::ConceptSetSyncJob,
-      Sync::DdeIdsSyncJob,
       Sync::DistrictSyncJob,
       Sync::DrugSyncJob,
       Sync::ProgramSyncJob,
       Sync::RelationshipTypeSyncJob,
       Sync::TraditionalAuthoritySyncJob,
       Sync::VillageSyncJob,
-      Sync::VisitSyncJob,
-      Sync::WardSyncJob,
-      Sync::FacilitySyncJob
+      Sync::DdeIdsSyncJob,
+      Sync::WardSyncJob
     ]
 
     jobs.each(&:perform_async)
