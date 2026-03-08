@@ -23,6 +23,7 @@ module BuildPatientRecordService
           unless aggregated_observations.key?(encounter_type_name)
             aggregated_observations[encounter_type_name] = {
               encounter_type: encounter.encounter_type,
+              visit_id: encounter.visit_id,
               status: status,
               obs: [], 
             }
