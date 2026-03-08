@@ -90,7 +90,7 @@ module Api
             program: Program.find(program_id),
             visit:,
             provider: params[:provider_id] ? User.find(params[:provider_id])&.person : User.current.person,
-            encounter_datetime: TimeUtils.retro_timestamp(encounter_datetime)
+            encounter_datetime: encounter_datetime
           )
 
           save_observations(encounter, params[:obs]) if encounter.errors.empty? && params[:obs].present?
