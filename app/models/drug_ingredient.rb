@@ -1,10 +1,8 @@
 # frozen_string_literal: true
 
-require 'composite_primary_keys'
-
 class DrugIngredient < ActiveRecord::Base
   self.table_name = 'drug_ingredient'
-  self.primary_keys = %i[ingredient_id concept_id]
+  self.primary_key = %i[ingredient_id concept_id]
 
   include Locatable
 

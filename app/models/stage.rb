@@ -5,7 +5,7 @@ class Stage < ApplicationRecord
 
     VALID_STAGES = %w[
       VITALS CONSULTATION LAB DISPENSATION
-      SCREEN ASSESSMENT TRIAGE DISPOSITION SPECIATY REGISTRATION
+      SCREENING ASSESSMENT TRIAGE DISPOSITION SPECIALTY REGISTRATION
     ].freeze
 
     validates :status, inclusion: { in: [true, false], message: "must be true or false" }

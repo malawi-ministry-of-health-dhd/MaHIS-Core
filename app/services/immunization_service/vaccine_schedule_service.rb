@@ -21,7 +21,7 @@ module ImmunizationService
       # Immunization Drugs
       immunizations = immunization_drugs
 
-      if patient.gender.split.first.casecmp?('M')
+      if patient.gender&.split&.first&.casecmp?('M')
         immunizations = filter_female_specific_immunizations(immunizations)
       else
         immunizations

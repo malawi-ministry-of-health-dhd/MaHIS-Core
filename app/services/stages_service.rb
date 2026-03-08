@@ -24,6 +24,11 @@ class StagesService
       )
     end
 
+    if Program.find_by_name("AETC Program").id == stage_params[:program_id]
+      stage.visit_number = VisitService.next_daily_visit_number! 
+    end
+
+    stage.program_id = stage_params["program_id"]
     stage.patient_id = patient_id
     stage.visit_id = active_visit.visit_id
     stage.location_id = location_id
@@ -32,10 +37,6 @@ class StagesService
     if stage.stage != stage_name
       stage.stage = stage_name
       stage.arrival_time = Time.current
-    end
-
-    if stage_params[:aetc_visit_number].present? && stage.aetc_visit_number != stage_params[:aetc_visit_number]
-      stage.aetc_visit_number = stage_params[:aetc_visit_number]
     end
 
     stage.save! if stage.new_record? || stage.changed?
@@ -61,9 +62,12 @@ class StagesService
                  .where(visit: { date_stopped: nil })
 
     patient_id = resolve_patient_id(filters)
+    program_id = filters[:program_id]
+
     scope = scope.where(patient_id: patient_id) if patient_id.present?
     scope = scope.where(location_id: filters[:location_id]) if filters[:location_id].present?
     scope = scope.where(stage: normalize_stage(filters[:stage])) if filters[:stage].present?
+    scope = scope.where(program_id: program_id) if program_id.present?
 
     scope.order(updated_at: :desc)
   end
@@ -79,22 +83,23 @@ class StagesService
   def serialize(stage)
     patient = stage.patient
     latest_encounter = latest_visit_encounter(stage)
-
     {
       id: stage.id,
+      identifier: BuildPatientRecordService::PatientIdentifierService.patient_identifier(patient,3),
       visit_id: stage.visit_id,
       uuid: patient_uuid(patient) || stage.patient_id.to_s,
       patient_id: stage.patient_id,
       visit_uuid: stage.visit&.uuid,
       arrival_time: stage.arrival_time,
+      program_id: stage.program_id,
       latest_encounter_time: latest_encounter&.encounter_datetime || stage.created_at,
-      last_encounter_creator: encounter_creator_name(latest_encounter),
+      last_encounter_creator: encounter_creator_name(latest_encounter,patient),
       disposition_type: stage.disposition_type,
       triage_result: stage.triage_result,
       given_name: person_name(patient)&.given_name,
       family_name: person_name(patient)&.family_name,
       gender: patient&.gender,
-      aetc_visit_number: stage.aetc_visit_number,
+      visit_number: stage.visit_number,
       patient_care_area: stage.patient_care_area,
       category: normalize_category(stage.stage),
       created_at: stage.created_at,
@@ -114,8 +119,8 @@ class StagesService
       stage.arrival_time = Time.current
     end
 
-    if stage_params[:aetc_visit_number].present? && stage.aetc_visit_number != stage_params[:aetc_visit_number]
-      stage.aetc_visit_number = stage_params[:aetc_visit_number]
+    if stage_params[:visit_number].present? && stage.visit_number != stage_params[:visit_number]
+      stage.visit_number = stage_params[:visit_number]
     end
 
     stage.save! if stage.changed?
@@ -161,9 +166,11 @@ class StagesService
     Encounter.where(visit_id: stage.visit_id).order(encounter_datetime: :desc).first
   end
 
-  def encounter_creator_name(encounter)
-    return nil unless encounter&.creator
-
-    User.find_by(user_id: encounter.creator)&.name
+  def encounter_creator_name(encounter, patient)
+    if encounter&.creator
+      User.find_by(user_id: encounter.creator)&.name
+    else
+      User.find_by(user_id: patient.creator)&.name
+    end
   end
 end
