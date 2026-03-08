@@ -197,11 +197,14 @@ module Sync
     # Bulk sync for custom queries
     def sync_custom_bulk(query, db_name, batch_size, total_count, data_type_name)
       ensure_database_exists(db_name)
-      
+  
       processed = 0
       errors = []
       
-      query.find_in_batches(batch_size: batch_size) do |batch|
+      cursor_options = { batch_size: batch_size }
+      cursor_options[:cursor] = get_batch_cursor if respond_to?(:get_batch_cursor, true) && get_batch_cursor
+
+      query.find_in_batches(**cursor_options) do |batch|
         begin
           documents = batch.map { |record| prepare_bulk_document(record) }
           bulk_result = bulk_sync_to_couchdb(documents, db_name)
