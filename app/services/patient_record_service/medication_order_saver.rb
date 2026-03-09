@@ -129,7 +129,7 @@ module PatientRecordService
     end
 
     def find_provider(provider_id)
-      provider_id ? Person.find(provider_id) : User.current&.person
+      provider_id ? User.find(provider_id).person : User.current&.person
     rescue ActiveRecord::RecordNotFound
       Rails.logger.error "Provider not found: #{provider_id}"
       nil
