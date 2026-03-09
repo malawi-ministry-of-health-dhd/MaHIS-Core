@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class ApplicationJob < ActiveJob::Base
-  unique :until_executed, on_conflict: :log
+  # unique :until_executed, on_conflict: :log # Commented out - activejob-uniqueness not compatible with Rails 8.1
 
   def login(user_id, location_id)
     User.current = User.find(user_id)

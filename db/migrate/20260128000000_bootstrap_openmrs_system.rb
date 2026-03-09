@@ -144,12 +144,12 @@ class BootstrapOpenmrsSystem < ActiveRecord::Migration[7.0]
       SQL
 
       # ================================================================
-      # 4. Assign SYSTEM DEVELOPER role
+      # 4. Assign Superuser role
       # ================================================================
 
       conn.execute <<~SQL
         INSERT INTO user_role (user_id, role)
-        VALUES (#{admin_user_id}, 'System Developer');
+        VALUES (#{admin_user_id}, 'Superuser');
       SQL
 
       # ================================================================

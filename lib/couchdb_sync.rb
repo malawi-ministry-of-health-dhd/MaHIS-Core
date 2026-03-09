@@ -17,20 +17,22 @@ module CouchdbSync
   end
 
   def sync_to_couchdb(doc_data, db_name, doc_id)
-    ensure_db_exists(db_name)
+    if couchdb_configured?
+      ensure_db_exists(db_name)
 
-    # If updating, fetch _rev
-    begin
-      existing_doc = RestClient.get("#{COUCHDB_URL}/#{db_name}/#{doc_id}")
-      doc_data["_rev"] = JSON.parse(existing_doc.body)["_rev"]
-    rescue RestClient::NotFound
-      # First insert
+      # If updating, fetch _rev
+      begin
+        existing_doc = RestClient.get("#{COUCHDB_URL}/#{db_name}/#{doc_id}")
+        doc_data["_rev"] = JSON.parse(existing_doc.body)["_rev"]
+      rescue RestClient::NotFound
+        # First insert
+      end
+
+      RestClient.put(
+        "#{COUCHDB_URL}/#{db_name}/#{doc_id}",
+        doc_data.to_json,
+        { content_type: :json, accept: :json }
+      )
     end
-
-    RestClient.put(
-      "#{COUCHDB_URL}/#{db_name}/#{doc_id}",
-      doc_data.to_json,
-      { content_type: :json, accept: :json }
-    )
   end
 end

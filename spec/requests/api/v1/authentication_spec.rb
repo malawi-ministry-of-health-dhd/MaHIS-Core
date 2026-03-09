@@ -58,8 +58,8 @@ RSpec.describe 'User Authentication', type: :request do
         location_id: 1
       )
 
-      # Add System Developer role
-      role = Role.find_or_create_by!(role: 'System Developer')
+      # Add Superuser role
+      role = Role.find_or_create_by!(role: 'Superuser')
       UserRole.create!(user_id: admin_user.user_id, role: role.role)
 
       # Create password management property

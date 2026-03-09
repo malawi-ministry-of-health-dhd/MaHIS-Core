@@ -88,6 +88,6 @@ puts <<~MSG
   Admin user:
     username: admin
     password: Admin123
-    role:     System Developer
+    role:     Superuser
   ----------------------------------------
 MSG

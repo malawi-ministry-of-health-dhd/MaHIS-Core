@@ -10,7 +10,7 @@ namespace :couchdb do
       },
        {
         db_name: 'visits',
-        processor_service: VisitsService.new,
+        processor_service: VisitService.new,
         processor_method: :create_update_visit
       },
        {
