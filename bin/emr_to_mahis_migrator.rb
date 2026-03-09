@@ -1141,7 +1141,8 @@ if __FILE__ == $0
 
   group6_models = {
     drug_order: [DrugOrder, {
-      order_id: :get_order_ids
+      order_id: :get_order_ids,
+      drug_inventory_id: :get_drug_ids
     }]
   }
 
