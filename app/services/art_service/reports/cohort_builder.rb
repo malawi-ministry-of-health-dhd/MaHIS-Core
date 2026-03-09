@@ -650,7 +650,7 @@ module ArtService
           INSERT INTO temp_art_start_date
           SELECT o.person_id, DATE(MIN(o.value_datetime)) value_datetime
           FROM encounter e
-          INNER JOIN obs o ON o.encounter_id = e.encounter_id AND o.concept_id = 2516 AND e.encounter_type = 9 AND e.program_id = 1 AND e.voided = 0 AND e.encounter_datetime < DATE('#{end_date}') + INTERVAL 1 DAY
+          INNER JOIN obs o ON o.encounter_id = e.encounter_id AND o.concept_id = (SELECT concept_id FROM concept_name WHERE name = 'Date antiretrovirals started' AND voided = 0 LIMIT 1) AND e.encounter_type = 9 AND e.program_id = 1 AND e.voided = 0 AND e.encounter_datetime < DATE('#{end_date}') + INTERVAL 1 DAY
           AND o.obs_datetime < (DATE('#{end_date}') + INTERVAL 1 DAY) AND e.voided = 0
           WHERE e.voided = 0
           GROUP BY o.person_id
