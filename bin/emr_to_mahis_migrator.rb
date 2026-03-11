@@ -614,6 +614,7 @@ def populate_users(source_db)
     admin_user['creator'] = next_user_id
     admin_user['changed_by'] = next_user_id
     admin_user['person_id'] = create_user_person(admin_user.symbolize_keys, source_db)
+    admin_user['location_id'] = SITE_ID
     admin_user = User.new(admin_user)
     admin_user.save!(validate: false)
   end
@@ -631,6 +632,9 @@ def populate_users(source_db)
       end
 
       user[:person_id] = create_user_person(user, source_db) if user[:person_id]
+
+      # Set location_id from SITE_ID
+      user[:location_id] = SITE_ID
 
       user
     end
