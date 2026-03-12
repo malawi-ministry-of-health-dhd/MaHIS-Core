@@ -431,14 +431,14 @@ module ArtService
             INNER JOIN orders odr ON odr.order_id = co.order_id AND odr.voided = 0
             WHERE co.concept_id = #{ConceptName.find_by_name('HIV viral load').concept_id}
             AND co.voided = 0
-            AND co.obs_datetime <= '#{@end_date}'
+            AND DATE(co.obs_datetime) <= '#{@end_date}'
             AND (co.value_numeric IS NOT NULL || co.value_text IS NOT NULL)
             AND co.person_id IN (#{patient_list.join(',')})
             GROUP BY co.person_id
           ) AS latest_vl ON latest_vl.obs_datetime = o.obs_datetime AND latest_vl.person_id = o.person_id
           INNER JOIN orders odr ON odr.order_id = o.order_id AND odr.voided = 0
           WHERE o.concept_id = #{ConceptName.find_by_name('HIV viral load').concept_id}
-          AND o.voided = 0 AND o.obs_datetime <= '#{@end_date}'
+          AND o.voided = 0 AND DATE(o.obs_datetime) <= '#{@end_date}'
           AND (o.value_numeric IS NOT NULL || o.value_text IS NOT NULL)
           AND o.person_id IN (#{patient_list.join(',')})
           ORDER BY o.obs_datetime DESC
