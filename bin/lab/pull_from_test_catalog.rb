@@ -8,7 +8,7 @@ Rails.logger = Logger.new($stdout)
 ActiveRecord::Base.logger = Rails.logger
 user = User.find_by(username: 'admin')
 User.current = user.present? ? user : User.unscoped.where(retired: 0).first
-TEST_CATALOG_VERSION = 'v7'
+TEST_CATALOG_VERSION = 'v12'
 
 def consolelog(text)
   puts "\n=======================================================\n"
@@ -418,5 +418,5 @@ ActiveRecord::Base.transaction do
     save_specimen_types(nlims_code, test_name, specimen_types)
     save_measures(nlims_code, test_name, measures)
   end
-  cleanup
+  # cleanup
 end
