@@ -1764,22 +1764,76 @@ module ArtService
 
       def load_temp_pregnant_obs(start_date, end_date)
         # Get concept IDs dynamically
-        pregnant_concept_id = concept_name('Is patient pregnant?')&.concept_id || 54_319
-        yes_concept_id = concept_name('Yes')&.concept_id || 37_966
+        pregnancy_concept_names = [
+          'Patient pregnant',
+          'Gravida',
+          'Pregnant woman',
+          'Is patient pregnant?',
+          'Pregnant?',
+          'Reason for ART eligibility',
+          'Pregnant at initiation?',
+          'Is patient pregnant at initiation?'
+        ]
+
+        pregnant_concept_ids = ConceptName.where(name: pregnancy_concept_names, voided: 0)
+                                          .select(:concept_id)
+                                          .distinct
+                                          .pluck(:concept_id)
+
+        # Get concept IDs for answer values (Yes and pregnancy status concepts)
+        answer_concept_names = [
+          'Yes',
+          'Patient pregnant',
+          'Gravida',
+          'Pregnant woman'
+        ]
+
+        answer_concept_ids = ConceptName.where(name: answer_concept_names, voided: 0)
+                                        .select(:concept_id)
+                                        .distinct
+                                        .pluck(:concept_id)
 
         ActiveRecord::Base.connection.execute <<~SQL
           INSERT INTO temp_pregnant_obs
-          SELECT o.person_id,o.value_coded, DATE(o.obs_datetime) obs_datetime
-          FROM obs o
-          WHERE o.concept_id IN (#{pregnant_concept_id})
-            AND o.value_coded IN (#{yes_concept_id})
-            AND o.voided = 0
-            AND o.obs_datetime >= '#{start_date}' AND o.obs_datetime < '#{end_date}' + INTERVAL 1 DAY
-          GROUP BY o.person_id
+          SELECT person_id,
+                value_coded,
+                DATE(obs_datetime) AS obs_datetime
+          FROM (
+              SELECT o.person_id,
+                    o.value_coded,
+                    o.obs_datetime,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY o.person_id
+                        ORDER BY o.obs_datetime ASC
+                    ) AS rn
+              FROM obs o
+              WHERE o.concept_id IN (#{pregnant_concept_ids.join(',')})
+                AND o.value_coded IN (#{answer_concept_ids.join(',')})
+                AND o.voided = 0
+                AND o.obs_datetime >= '#{start_date}'
+                AND o.obs_datetime < '#{end_date}' + INTERVAL 1 DAY
+          ) t
+          WHERE rn = 1;
         SQL
       end
 
       def pregnant_females_all_ages(start_date, end_date)
+        # Fetch pregnancy-related concept IDs dynamically from the database using exact name matches
+        pregnancy_concept_names = [
+          'Patient pregnant',
+          'Gravida',
+          'Pregnant woman',
+          'Is patient pregnant?',
+          'Pregnant?',
+          'Pregnant at initiation?',
+          'Is patient pregnant at initiation?'
+        ]
+
+        pregnancy_concept_ids = ConceptName.where(name: pregnancy_concept_names, voided: 0)
+                                           .select(:concept_id)
+                                           .distinct
+                                           .pluck(:concept_id)
+
         # (patient_id_plus_date_enrolled || []).each do |patient_id, date_enrolled|
         registered = ActiveRecord::Base.connection.select_all <<~SQL
           SELECT tesd.*, ft.value_coded
@@ -1794,7 +1848,7 @@ module ArtService
           SELECT patient_id
           FROM temp_earliest_start_date
           WHERE date_enrolled >= '#{start_date}' AND date_enrolled <= '#{end_date}'
-            AND (gender = 'F' OR gender = 'Female') AND reason_for_starting_art IN (6131, 1755, 7972)
+            AND (gender = 'F' OR gender = 'Female') AND reason_for_starting_art IN (#{pregnancy_concept_ids.join(',')})
         SQL
 
         pregnant_at_initiation_ids = []
