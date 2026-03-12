@@ -5,6 +5,9 @@ class DdeService
 
   class DdeError < StandardError; end
 
+  CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
+  DDE_LOCATION_ID = CONFIG['DDE_LOCATION_ID'] || ""
+  
   DDE_CONFIG_PATH = 'config/application.yml'
   LOGGER = Rails.logger
 
@@ -64,7 +67,7 @@ class DdeService
   end
 
   def allocate_npids(count, location_id = nil)
-    response, status = dde_client.get("/allocate_npids?location_id=#{location_id || Location.current.id}&count=#{count}")
+    response, status = dde_client.get("/allocate_npids?location_id=#{DDE_LOCATION_ID || Location.current.id}&count=#{count}")
     raise DdeError, "Failed to fetch remaining npids: #{status} - #{response}" unless status == 200 
     
     response
