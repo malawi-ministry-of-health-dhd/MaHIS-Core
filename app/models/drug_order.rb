@@ -48,7 +48,7 @@ class DrugOrder < ApplicationRecord
 
   def amount_needed
     value = if weekly_dose?
-              (((duration * (equivalent_daily_dose || 1)) - (quantity || 0)) / 7)
+              (duration  * (equivalent_daily_dose || 1) / 7) - (quantity || 0)
             else
               (duration * (equivalent_daily_dose || 1)) - (quantity || 0)
             end
@@ -57,7 +57,12 @@ class DrugOrder < ApplicationRecord
   end
 
   def total_required
-    (duration * equivalent_daily_dose)
+    value = if weekly_dose?
+              (duration * equivalent_daily_dose) / 7
+            else
+              (duration * equivalent_daily_dose)
+            end
+    value.negative? ? 0 : value.ceil
   end
 
   # Construct
