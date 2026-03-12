@@ -57,7 +57,7 @@ module PatientRecordService
     end
 
     def validate_ids(national_id, birth_id, ichis_id)
-      validate_identifier(national_id, type: :national) && validate_identifier(birth_id, type: :birth)
+      validate_identifier(national_id, type: :national) || validate_identifier(birth_id, type: :birth)
     end
 
     def validate_identifier(id, type:)

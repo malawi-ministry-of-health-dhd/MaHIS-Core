@@ -76,6 +76,7 @@ class DdeMergingService
   # Binds the remote patient to the local patient by blessing the local patient
   # with the remotes npid and doc_id
   def link_local_to_remote_patient(local_patient, remote_patient)
+    
     return local_patient if local_patient_linked_to_remote?(local_patient, remote_patient)
 
     national_id_type = patient_identifier_type('National id')
@@ -175,9 +176,11 @@ class DdeMergingService
   end
 
   def create_local_patient_identifier(patient, value, type_name)
+    user = User.where(user_id:patient.creator).first
+    
     identifier = PatientIdentifier.create(identifier: value,
                                           type: patient_identifier_type(type_name),
-                                          location_id: Location.current.id,
+                                          location_id: user["location_id"],
                                           patient:)
     return patient.reload && identifier if identifier.errors.empty?
 
