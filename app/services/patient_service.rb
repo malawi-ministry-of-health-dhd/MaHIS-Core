@@ -4,6 +4,8 @@ class PatientService
   include ModelUtils
   include TimeUtils
 
+  CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
+  DDE_LOCATION_ID = CONFIG['DDE_LOCATION_ID'] || ""
   def create_patient(program, person, malawi_national_id = nil, npid = nil)
     ActiveRecord::Base.transaction do
       patient = Patient.create(patient_id: person.id)
@@ -696,7 +698,7 @@ class PatientService
   end
 
   def use_dde_service?
-    global_property('dde_enabled').property_value&.strip == 'true'
+    global_property('dde_enabled', DDE_LOCATION_ID).property_value&.strip == 'true'
   rescue StandardError
     false
   end
