@@ -160,16 +160,30 @@ module OpdService
       encounter.blank?
     end
 
-    # Checks if patient has lab  in today
+    # Checks if patient has lab order made today without results for this program
     #
     def patient_does_not_have_lab_results?
-        encounter_type = EncounterType.find_by name: LAB_RESULTS
-        encounter = Encounter.joins(:type).where(
-          'patient_id = ? AND encounter_type = ? AND DATE(encounter_datetime) = DATE(?)',
-          @patient.patient_id, encounter_type.encounter_type_id, @date
-        ).order(encounter_datetime: :desc).first
-        Rails.logger.warn "encounter.blank? activity in user properties: #{encounter.blank?}"
-        encounter.blank?
+      lab_orders_type = EncounterType.find_by(name: LAB_ORDERS)
+      lab_results_type = EncounterType.find_by(name: LAB_RESULTS)
+
+      # Get all lab order observations made today for this patient and program
+      lab_order_obs = Observation.joins(:encounter)
+                                 .where(encounter: { patient_id: @patient.patient_id,
+                                                     encounter_type: lab_orders_type.encounter_type_id,
+                                                     program_id: @program.program_id })
+                                 .where('DATE(encounter.encounter_datetime) = DATE(?)', @date)
+                                 .where.not(accession_number: nil)
+
+      return false if lab_order_obs.blank?
+
+      # Check if any of these orders lack results
+      lab_order_obs.any? do |order_obs|
+        !Observation.joins(:encounter)
+                    .where(encounter: { patient_id: @patient.patient_id,
+                                        encounter_type: lab_results_type.encounter_type_id })
+                    .where(accession_number: order_obs.accession_number)
+                    .exists?
+      end
     end
 
     # Checks if patient has lab  in today
