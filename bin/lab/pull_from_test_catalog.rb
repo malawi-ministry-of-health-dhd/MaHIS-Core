@@ -8,7 +8,7 @@ Rails.logger = Logger.new($stdout)
 ActiveRecord::Base.logger = Rails.logger
 user = User.find_by(username: 'admin')
 User.current = user.present? ? user : User.unscoped.where(retired: 0).first
-TEST_CATALOG_VERSION = 'v7'
+TEST_CATALOG_VERSION = 'v12'
 
 def consolelog(text)
   puts "\n=======================================================\n"
@@ -86,8 +86,52 @@ def add_to_concept_attributes(concept, name, code)
 end
 
 def find_concept(name, code)
+  # Handle special case where LIMS uses "Viral Load" but we want to map it to "HIV Viral Load"
+  if name.downcase == 'viral load'
+    # Find the HIV Viral Load concept
+    hiv_vl_concept = ConceptName.find_by(name: 'HIV Viral Load')&.concept
+    
+    if hiv_vl_concept.present?
+      # Check if a "Viral Load" concept name already exists
+      viral_load_concept_name = ConceptName.unscoped.find_by(name: 'Viral Load', voided: 0)
+      
+      if viral_load_concept_name.present?
+        # Update its concept_id to point to HIV Viral Load concept
+        viral_load_concept_name.update!(concept_id: hiv_vl_concept.concept_id)
+      else
+        # Create "Viral Load" concept name that points to HIV Viral Load concept
+        ConceptName.create!(
+          concept: hiv_vl_concept,
+          name: 'Viral Load',
+          locale: 'en',
+          concept_name_type: 'SYNONYM',
+          creator: User.current.id,
+          date_created: Time.now,
+          uuid: SecureRandom.uuid
+        )
+      end
+      
+      # Delete any "Viral Load" concept attributes that are not associated with HIV Viral Load concept
+      viral_load_concepts = ConceptName.unscoped.where('LOWER(name) = ?', 'viral load').where(voided: 0).pluck(:concept_id).uniq
+      wrong_concept_ids = viral_load_concepts - [hiv_vl_concept.concept_id]
+      
+      if wrong_concept_ids.any?
+        ConceptAttribute.where(concept_id: wrong_concept_ids).delete_all
+      end
+      
+      # Ensure preferred name is set
+      preffered = ConceptName.where(concept: hiv_vl_concept, locale_preferred: 1).count
+      if preffered == 0
+        concept_name = ConceptName.where(concept: hiv_vl_concept).first
+        concept_name.update_column(:locale_preferred, 1) if concept_name
+      end
+      
+      return add_to_concept_attributes(hiv_vl_concept, name, code)
+    end
+  end
+  
   # First, try to find by name (scoped to current locale by default_scope)
-  concept = ConceptName.find_by(name:)&.concept
+  concept = ConceptName.find_by(name: name)&.concept
 
   if concept.present?
     preffered = ConceptName.where(concept:, locale_preferred: 1).count
@@ -328,19 +372,22 @@ def save_measures(nlims_code, test_name, measures)
 end
 
 def cleanup
-  ConceptAttribute.where(attribute_type: nlims_test_catalogue_name).group(:value_reference).having('count(*) > 1')
-                  .each do |duplicate|
-    ConceptAttribute.where(
-      attribute_type: nlims_test_catalogue_name,
-      value_reference: duplicate.value_reference
-    )[1..].each(&:delete)
-  end
-  ConceptAttribute.where(attribute_type: nlims_code_attribute_type).group(:value_reference).having('count(*) > 1')
-                  .each do |duplicate|
-    ConceptAttribute.where(
-      attribute_type: nlims_code_attribute_type,
-      value_reference: duplicate.value_reference
-    )[1..].each(&:delete)
+  # Find and remove duplicates based on attribute_type_id, concept_id, and value_reference combination
+  [nlims_test_catalogue_name, nlims_code_attribute_type].each do |attribute_type|
+    duplicates = ConceptAttribute
+                   .where(attribute_type: attribute_type)
+                   .group(:attribute_type_id, :concept_id, :value_reference)
+                   .having('count(*) > 1')
+                   .pluck(:attribute_type_id, :concept_id, :value_reference)
+    
+    duplicates.each do |attr_type_id, concept_id, value_ref|
+      # Keep the first record and delete the rest
+      ConceptAttribute.where(
+        attribute_type_id: attr_type_id,
+        concept_id: concept_id,
+        value_reference: value_ref
+      )[1..].each(&:delete)
+    end
   end
 end
 
