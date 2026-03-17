@@ -594,6 +594,7 @@ module ArtService
             AND patient_program.program_id = 1
             AND outcome.state = 7
             AND outcome.start_date IS NOT NULL
+            AND patient_program.location_id = #{Location.current.location_id}
             /*AND patient_program.patient_id NOT IN (
               SELECT e.patient_id FROM encounter e
               LEFT JOIN (SELECT * FROM obs WHERE concept_id = #{type_of_patient_concept} AND voided = 0 AND value_coded = #{new_patient_concept}) AS new_patient ON e.patient_id = new_patient.person_id
@@ -626,6 +627,7 @@ module ArtService
           AND o.obs_datetime < DATE('#{end_date}') + INTERVAL 1 DAY
           WHERE pp.program_id = 1
           AND pp.voided = 0
+          AND pp.location_id = #{Location.current.location_id}
           GROUP BY patient_id
         SQL
       end
@@ -653,6 +655,7 @@ module ArtService
           INNER JOIN obs o ON o.encounter_id = e.encounter_id AND o.concept_id = (SELECT concept_id FROM concept_name WHERE name = 'Date antiretrovirals started' AND voided = 0 LIMIT 1) AND e.encounter_type = 9 AND e.program_id = 1 AND e.voided = 0 AND e.encounter_datetime < DATE('#{end_date}') + INTERVAL 1 DAY
           AND o.obs_datetime < (DATE('#{end_date}') + INTERVAL 1 DAY) AND e.voided = 0
           WHERE e.voided = 0
+          AND e.location_id = #{Location.current.location_id}
           GROUP BY o.person_id
           HAVING value_datetime IS NOT NULL
         SQL
@@ -673,6 +676,7 @@ module ArtService
           AND o.obs_datetime < DATE('#{end_date}') + INTERVAL 1 DAY
           WHERE pp.program_id = 1
           AND pp.voided = 0
+          AND pp.location_id = #{Location.current.location_id}
           GROUP BY patient_id
         SQL
       end

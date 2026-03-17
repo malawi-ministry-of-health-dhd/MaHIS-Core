@@ -125,7 +125,7 @@ module ArtService
             INSERT INTO temp_max_patient_state#{start ? '_start' : ''}
             SELECT pp.patient_id, MAX(ps.start_date) start_date
             FROM patient_state ps
-            INNER JOIN patient_program pp ON pp.patient_program_id = ps.patient_program_id AND pp.program_id = 1 AND pp.voided = 0
+            INNER JOIN patient_program pp ON pp.patient_program_id = ps.patient_program_id AND pp.program_id = 1 AND pp.voided = 0 AND pp.location_id = #{Location.current.location_id}
             WHERE ps.start_date < DATE(#{start ? start_date : end_date}) #{start ? '' : '+ INTERVAL 1 DAY'}
               AND ps.voided = 0 AND pp.patient_id IN (SELECT patient_id FROM temp_earliest_start_date)
             GROUP BY pp.patient_id
@@ -139,7 +139,7 @@ module ArtService
             INSERT INTO temp_current_state#{start ? '_start' : ''}
             SELECT mps.patient_id, cn.name AS cum_outcome, ps.start_date as outcome_date, ps.state, count(DISTINCT(ps.state)) outcomes, MAX(ps.patient_state_id) patient_state_id
             FROM temp_max_patient_state#{start ? '_start' : ''}  AS mps
-            INNER JOIN patient_program  AS pp ON pp.patient_id = mps.patient_id AND pp.program_id = 1 AND pp.voided = 0
+            INNER JOIN patient_program  AS pp ON pp.patient_id = mps.patient_id AND pp.program_id = 1 AND pp.voided = 0 AND pp.location_id = #{Location.current.location_id}
             INNER JOIN patient_state  AS ps ON ps.patient_program_id = pp.patient_program_id AND ps.start_date = mps.start_date AND ps.voided = 0
             INNER JOIN program_workflow_state pws ON pws.program_workflow_state_id = ps.state AND pws.retired = 0
             INNER JOIN concept_name cn ON cn.concept_id = pws.concept_id AND cn.concept_name_type = 'FULLY_SPECIFIED' AND cn.voided = 0
@@ -233,7 +233,7 @@ module ArtService
             INSERT INTO temp_patient_outcomes#{start ? '_start' : ''}
             SELECT tesd.patient_id, 'Patient died', MAX(ps.start_date), 'Patient died', MAX(ps.start_date), 1
             FROM temp_earliest_start_date tesd
-            INNER JOIN patient_program pp ON pp.patient_id = tesd.patient_id AND pp.program_id = 1 AND pp.voided = 0
+            INNER JOIN patient_program pp ON pp.patient_id = tesd.patient_id AND pp.program_id = 1 AND pp.voided = 0 AND pp.location_id = #{Location.current.location_id}
             INNER JOIN patient_state ps ON ps.patient_program_id = pp.patient_program_id AND ps.state = 3 AND ps.voided = 0 AND ps.start_date <= DATE(#{start ? start_date : end_date}) #{start ? '- INTERVAL 1 DAY' : ''}
             WHERE tesd.patient_id NOT IN (SELECT patient_id FROM temp_patient_outcomes#{start ? '_start' : ''} WHERE step = 1)
             AND tesd.date_enrolled < DATE(#{start ? start_date : end_date}) #{start ? '' : '+ INTERVAL 1 DAY'}
