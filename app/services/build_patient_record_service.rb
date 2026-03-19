@@ -61,6 +61,7 @@ module BuildPatientRecordService
       {
         patientID: patient.patient_id,
         ID: patient_identifier(patient, 3),
+        nationalID: patient_identifier(patient, 28),
         NcdID: patient_identifier(patient, 31),
         program_id: '',
         provider_id: '',
