@@ -11,6 +11,7 @@ class NidUtilizationReport
     @start_date = ActiveRecord::Base.connection.quote(start_date)
     @end_date = ActiveRecord::Base.connection.quote(end_date)
     @program_id = program_id
+    @location_id = User&.current&.location&.location_id
   end
 
   def find_report
@@ -143,7 +144,7 @@ class NidUtilizationReport
         AND pregnant_or_breastfeeding.value_coded = #{concept_name('Yes').concept_id}
         AND pregnant_or_breastfeeding.obs_datetime BETWEEN #{start_date} AND #{end_date}
       LEFT JOIN concept_name preg_or_breast ON preg_or_breast.concept_id = pregnant_or_breastfeeding.concept_id AND preg_or_breast.voided = 0
-      WHERE p.voided = 0 AND e.encounter_datetime BETWEEN #{start_date} AND #{end_date}
+      WHERE e.location_id=#{@location_id} AND p.voided = 0 AND e.encounter_datetime BETWEEN #{start_date} AND #{end_date}
       GROUP BY p.person_id
     SQL
   end
