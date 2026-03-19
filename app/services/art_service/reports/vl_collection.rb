@@ -19,8 +19,8 @@ module ArtService
       private
 
       def data
-        test_type = ConceptName.find_by_name('Test Type').concept_id
-        viral_load = ConceptName.find_by_name('HIV Viral Load').concept_id
+        test_type = ConceptName.find_by_name('Test Type')&.concept_id
+        viral_load = ConceptName.find_by_name('HIV Viral Load')&.concept_id
         ActiveRecord::Base.connection.select_all <<~SQL
           SELECT
             o.person_id AS patient_id,
