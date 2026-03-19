@@ -5,7 +5,6 @@ module ArtService
     # Report for Showing all HIV Viral Load Tests Done Or Sample Collected per the specified period
     class VlCollection
       include CommonSqlQueryUtils
-      include ModelUtils
       def initialize(start_date:, end_date:, **kwargs)
         @start_date = start_date.to_date.beginning_of_day
         @end_date = end_date.to_date.end_of_day
