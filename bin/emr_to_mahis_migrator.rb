@@ -925,7 +925,7 @@ def update_group_obs_ids(source_db, foreign_keys = {})
   puts "Found #{total_records} observations with obs_group_id to update"
 
   ActiveRecord::Base.connection.execute(<<-SQL)
-    CREATE TEMPORARY TABLE IF NOT EXISTS temp_obs_update (
+    CREATE TABLE IF NOT EXISTS temp_obs_update (
       uuid CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin PRIMARY KEY,
       obs_group_id INT,
       INDEX idx_obs_group_id (obs_group_id)
