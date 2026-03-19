@@ -924,13 +924,18 @@ def update_group_obs_ids(source_db, foreign_keys = {})
 
   puts "Found #{total_records} observations with obs_group_id to update"
 
+  # Drop existing temp table if exists and create fresh
+  ActiveRecord::Base.connection.execute('DROP TABLE IF EXISTS temp_obs_update')
   ActiveRecord::Base.connection.execute(<<-SQL)
-    CREATE TABLE IF NOT EXISTS temp_obs_update (
+    CREATE TABLE temp_obs_update (
       uuid CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin PRIMARY KEY,
       obs_group_id INT,
       INDEX idx_obs_group_id (obs_group_id)
-    ) ENGINE=MEMORY;
+    ) ENGINE=InnoDB;
   SQL
+
+  batch_update_threshold = 50_000 # Apply updates every 50k records to avoid huge temp table
+  current_batch_size = 0
 
   loop do
     source_obs_grouped = query_with_columns("#{source_db}.obs", 'obs_group_id IS NOT NULL', limit, offset)
@@ -958,6 +963,17 @@ def update_group_obs_ids(source_db, foreign_keys = {})
       ActiveRecord::Base.connection.execute("INSERT IGNORE INTO temp_obs_update (uuid, obs_group_id) VALUES #{values}")
 
       total_processed += updates.size
+      current_batch_size += updates.size
+
+      # Apply updates incrementally to avoid huge temp table
+      if current_batch_size >= batch_update_threshold
+        puts 'Applying batch obs_group_id updates...'
+        ActiveRecord::Base.connection.execute('UPDATE obs o
+            JOIN temp_obs_update t ON o.uuid = t.uuid
+            SET o.obs_group_id = t.obs_group_id')
+        ActiveRecord::Base.connection.execute('TRUNCATE TABLE temp_obs_update')
+        current_batch_size = 0
+      end
     end
 
     offset += limit
@@ -965,11 +981,14 @@ def update_group_obs_ids(source_db, foreign_keys = {})
     puts "Updating obs_group_id: #{percentage}% complete (#{total_processed}/#{total_records})"
   end
 
-  # Perform final update using join
-  puts 'Applying obs_group_id updates to obs table...'
-  ActiveRecord::Base.connection.execute('UPDATE obs o
-      JOIN temp_obs_update t ON o.uuid = t.uuid
-      SET o.obs_group_id = t.obs_group_id;')
+  # Perform final update for any remaining records
+  remaining_count = ActiveRecord::Base.connection.select_value('SELECT COUNT(*) FROM temp_obs_update').to_i
+  if remaining_count > 0
+    puts 'Applying final obs_group_id updates to obs table...'
+    ActiveRecord::Base.connection.execute('UPDATE obs o
+        JOIN temp_obs_update t ON o.uuid = t.uuid
+        SET o.obs_group_id = t.obs_group_id;')
+  end
   puts '✓ obs_group_id update complete'
 ensure
   ActiveRecord::Base.connection.execute('DROP TABLE IF EXISTS temp_obs_update;')
