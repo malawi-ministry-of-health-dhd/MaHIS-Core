@@ -8,6 +8,7 @@ module ArtService
       attr_reader :start_date, :end_date
 
       include ConcurrencyUtils
+      include ArtTempTablesNaming
 
       def initialize(start_date:, end_date:, outcomes_definition: 'moh', rebuild_outcomes: true, **kwargs)
         @start_date = start_date
@@ -33,11 +34,12 @@ module ArtService
       end
 
       def query
-        with_lock(ArtCohort::LOCK_FILE) do
+        lock_file = "art_service/reports/cohort_#{Location.current.location_id}.lock"
+        with_lock(lock_file) do
           refresh_outcomes_table if @rebuild_outcomes || !outcomes_table_exists?
 
           Patient.find_by_sql <<~SQL
-            SELECT patient_id FROM temp_patient_outcomes WHERE cum_outcome LIKE 'On antiretrovirals'
+            SELECT patient_id FROM #{temp_patient_outcomes} WHERE cum_outcome LIKE 'On antiretrovirals'
           SQL
         end
       end
@@ -45,7 +47,13 @@ module ArtService
       private
 
       def outcomes_table_exists?
-        ActiveRecord::Base.connection.table_exists?(:temp_patient_outcomes)
+        result = ActiveRecord::Base.connection.select_one <<~SQL
+          SELECT COUNT(*) AS count
+          FROM information_schema.tables
+          WHERE table_schema = DATABASE()
+          AND table_name = '#{temp_patient_outcomes}'
+        SQL
+        result['count'].to_i.positive?
       end
 
       def logger

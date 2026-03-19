@@ -67,6 +67,15 @@ Rails.application.configure do
 
   config.action_mailer.perform_caching = false
 
+  # Use inline adapter for development (runs jobs immediately, raises errors for debugging)
+  config.active_job.queue_adapter = :inline
+  
+  # Disable retries - fail immediately on error
+  config.active_job.retry_jitter = 0.0
+  
+  # Log failed jobs
+  config.active_job.logger = ActiveSupport::Logger.new($stdout)
+
   # Print deprecation notices to the Rails logger.
   config.active_support.deprecation = :log
 

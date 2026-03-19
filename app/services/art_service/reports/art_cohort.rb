@@ -10,8 +10,11 @@ module ArtService
     class ArtCohort
       include ConcurrencyUtils
       include ModelUtils
+      include ArtTempTablesNaming
 
-      LOCK_FILE = 'art_service/reports/cohort.lock'
+      def lock_file
+        "art_service/reports/cohort_#{Location.current.location_id}.lock"
+      end
 
       def initialize(name:, type:, start_date:, end_date:, **kwargs)
         @name = name
@@ -24,7 +27,7 @@ module ArtService
       end
 
       def build_report
-        with_lock(LOCK_FILE, blocking: false) do
+        with_lock(lock_file, blocking: false) do
           @cohort_builder.build(@cohort_struct, @start_date, @end_date, @occupation)
           clear_drill_down
           save_report
@@ -63,15 +66,15 @@ module ArtService
             s.city_village village, TIMESTAMPDIFF(year, DATE(e.birthdate), DATE('#{@end_date}')) age,
             o.#{report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}outcome_date AS defaulter_date,
             DATE(appointment.appointment_date) AS appointment_date
-          FROM temp_earliest_start_date e
-          INNER JOIN temp_patient_outcomes o ON e.patient_id = o.patient_id
+          FROM #{temp_earliest_start_date} e
+          INNER JOIN #{temp_patient_outcomes} o ON e.patient_id = o.patient_id
           INNER JOIN (
             SELECT e.patient_id, MAX(o.value_datetime) appointment_date
             FROM encounter e
             INNER JOIN obs o ON o.encounter_id = e.encounter_id AND o.voided = 0 AND o.concept_id = 5096 -- appointment date
             WHERE e.encounter_type = 7 -- appointment encounter type
             AND e.program_id = 1 -- hiv program
-            AND e.patient_id IN (SELECT patient_id FROM temp_patient_outcomes WHERE #{report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}cum_outcome = 'Defaulted')
+            AND e.patient_id IN (SELECT patient_id FROM #{temp_patient_outcomes} WHERE #{report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}cum_outcome = 'Defaulted')
             AND e.encounter_datetime < DATE('#{@end_date}') + INTERVAL 1 DAY
             GROUP BY e.patient_id
           ) appointment ON appointment.patient_id = e.patient_id
@@ -98,9 +101,9 @@ module ArtService
                  DATE(MAX(tb_start.obs_datetime)) tb_observation_date
           FROM person p
           INNER JOIN cohort_drill_down c ON c.patient_id = p.person_id
-          INNER JOIN temp_patient_outcomes AS outcomes
+          INNER JOIN #{temp_patient_outcomes} AS outcomes
             ON outcomes.patient_id = c.patient_id
-          INNER JOIN temp_earliest_start_date tesd ON tesd.patient_id = p.person_id
+          INNER JOIN #{temp_earliest_start_date} tesd ON tesd.patient_id = p.person_id
           LEFT JOIN patient_identifier i ON i.patient_id = p.person_id
           AND i.voided = 0 AND i.identifier_type = 4
           LEFT JOIN person_name n ON n.person_id = p.person_id AND n.voided = 0

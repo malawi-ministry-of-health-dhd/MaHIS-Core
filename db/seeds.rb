@@ -76,7 +76,7 @@ end
 
 roles = Role.where(role: ['Superuser', 'Global Superuser'])
 
-roles.each { |role| UserRole.find_or_create_by!(user_id: 2, role: role.role) }
+roles.each { |role| UserRole.find_or_create_by!(user_id: 2, role: role) }
 
 puts <<~MSG
   ----------------------------------------

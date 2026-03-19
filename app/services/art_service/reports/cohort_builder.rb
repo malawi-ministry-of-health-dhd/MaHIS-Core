@@ -28,8 +28,47 @@ module ArtService
         @concept_cache[name] ||= Concept.joins(:concept_names).where('concept_name.name = ?', name).first
       end
 
+      # Recreate MySQL functions with location-specific table names
+      def create_location_specific_mysql_functions
+        ActiveRecord::Base.connection.execute('DROP FUNCTION IF EXISTS died_in')
+        ActiveRecord::Base.connection.execute <<~SQL
+          CREATE FUNCTION died_in(set_patient_id INT, set_status VARCHAR(25), date_enrolled DATE)
+          RETURNS varchar(25) CHARSET utf8mb3 COLLATE utf8mb3_unicode_ci
+          DETERMINISTIC
+          BEGIN
+            DECLARE set_outcome varchar(25) default 'N/A';
+            DECLARE date_of_death DATE;
+            DECLARE num_of_days INT;
+
+            IF set_status = 'Patient died' THEN
+              SET date_of_death = (
+                SELECT COALESCE(death_date, moh_outcome_date)
+                FROM #{temp_patient_outcomes} INNER JOIN #{temp_earliest_start_date}
+                USING (patient_id)
+                WHERE moh_cum_outcome = 'Patient died' AND patient_id = set_patient_id
+              );
+
+              IF date_of_death IS NULL THEN
+                RETURN 'Unknown';
+              END IF;
+
+              set num_of_days = (TIMESTAMPDIFF(day, date(date_enrolled), date(date_of_death)));
+              IF num_of_days <= 30 THEN set set_outcome ="1st month";
+              ELSEIF num_of_days <= 60 THEN set set_outcome ="2nd month";
+              ELSEIF num_of_days <= 91 THEN set set_outcome ="3rd month";
+              ELSEIF num_of_days > 91 THEN set set_outcome ="4+ months";
+              ELSEIF num_of_days IS NULL THEN set set_outcome = "Unknown";
+              END IF;
+            END IF;
+
+            RETURN set_outcome;
+          END
+        SQL
+      end
+
       def init_temporary_tables(start_date, end_date, occupation)
         prepare_tables
+        create_location_specific_mysql_functions
         load_temp_other_patient_types(end_date)
         load_temp_register_start_date_table(end_date)
         load_temp_order_details(end_date)
@@ -41,6 +80,7 @@ module ArtService
       def build(cohort_struct, start_date, end_date, occupation)
         # load_tmp_patient_table(cohort_struct)
         prepare_tables
+        create_location_specific_mysql_functions
         load_temp_other_patient_types(end_date)
         load_temp_register_start_date_table(end_date)
         load_temp_order_details(end_date)
@@ -1289,13 +1329,15 @@ module ArtService
       end
 
       def load_tmp_max_adherence(end_date)
+        arv_drugs_concept_id = concept('Antiretroviral drugs')&.concept_id
+        
         ActiveRecord::Base.connection.execute <<~SQL
           INSERT INTO #{tmp_max_adherence}
           SELECT obs.person_id, DATE(MAX(obs.obs_datetime)) AS visit_date
             FROM obs
             INNER JOIN orders
               ON orders.order_id = obs.order_id
-              AND orders.concept_id IN (SELECT `concept_set`.`concept_id` FROM `concept_set` WHERE `concept_set`.`concept_set` = 1085)
+              AND orders.concept_id IN (SELECT `concept_set`.`concept_id` FROM `concept_set` WHERE `concept_set`.`concept_set` = #{arv_drugs_concept_id})
               AND orders.order_type_id = 1 -- Drug order
               AND orders.voided = 0
             INNER JOIN #{temp_patient_outcomes} tpo
@@ -1423,7 +1465,10 @@ module ArtService
       ].freeze
 
       def cal_regimem_category(_patient_list, _end_date)
-        Cohort::Regimens.patient_regimens.map do |prescription|
+        Cohort::Regimens.patient_regimens(
+          temp_current_medication: temp_current_medication,
+          temp_patient_outcomes: temp_patient_outcomes
+        ).map do |prescription|
           regimen = prescription['regimen_category']
 
           regimen = 'unknown_regimen' if regimen == 'Unknown' || !COHORT_REGIMENS.include?(regimen)
