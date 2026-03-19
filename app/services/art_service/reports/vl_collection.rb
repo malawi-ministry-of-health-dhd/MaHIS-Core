@@ -19,6 +19,8 @@ module ArtService
       private
 
       def data
+        test_type = ConceptName.find_by_name('Test Type').concept_id
+        viral_load = ConceptName.find_by_name('HIV Viral Load').concept_id
         ActiveRecord::Base.connection.select_all <<~SQL
           SELECT
             o.person_id AS patient_id,
@@ -35,8 +37,8 @@ module ArtService
           LEFT JOIN patient_identifier i ON i.patient_id = p.person_id AND i.voided = 0 AND i.identifier_type = #{indetifier_type}
           LEFT JOIN (#{current_occupation_query}) AS a ON a.person_id = p.person_id
           #{dsd_query(dsd: @dsd, model: 'ord') if @dsd}
-          WHERE o.concept_id = 9737 -- Test Type
-          AND o.value_coded = 856 -- Viral Load
+          WHERE o.concept_id = #{test_type}
+          AND o.value_coded = #{viral_load}
           AND o.obs_datetime BETWEEN '#{@start_date}' AND '#{@end_date}'
           AND o.voided = 0 #{%w[Military Civilian].include?(@occupation) ? 'AND' : ''} #{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}
         SQL
