@@ -12,6 +12,7 @@ module ArtService
         @end_date = end_date
         @occupation = kwargs[:occupation]
         @dsd = kwargs[:dsd]
+        @location_id = kwargs[:location_id] || Location.current&.id || User.current&.location_id
       end
 
       def find_report
@@ -48,7 +49,9 @@ module ArtService
             WHERE ts.voided = 0
           ) AS latest_test_status ON latest_test_status.obs_group_id = test.obs_id AND latest_test_status.rn = 1
           LEFT JOIN (#{current_occupation_query}) AS a ON a.person_id = e.patient_id
-          WHERE DATE(o.start_date) BETWEEN '#{start_date}' AND '#{end_date}' AND o.voided = 0 #{%w[Military Civilian].include?(@occupation) ? 'AND' : ''} #{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}
+          WHERE DATE(o.start_date) BETWEEN '#{start_date}' AND '#{end_date}' AND o.voided = 0
+          #{@location_id ? "AND e.location_id = #{ActiveRecord::Base.connection.quote(@location_id)}" : ''}
+          #{%w[Military Civilian].include?(@occupation) ? 'AND' : ''} #{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}
           AND cn.name = 'HIV viral load' GROUP BY o.order_id
         SQL
       end
