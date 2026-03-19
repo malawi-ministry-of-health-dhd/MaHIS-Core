@@ -1056,8 +1056,8 @@ if __FILE__ == $0
     relationship: [Relationship, {
       creator: :get_new_user_ids,
       voided_by: :get_new_user_ids,
-      person_a_id: :get_person_ids,
-      person_b_id: :get_person_ids
+      person_a: :get_person_ids,
+      person_b: :get_person_ids
     }],
     person_name: [PersonName, {
       person_id: :get_person_ids,
