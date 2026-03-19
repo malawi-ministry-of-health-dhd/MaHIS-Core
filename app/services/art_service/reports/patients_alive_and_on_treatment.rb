@@ -41,10 +41,21 @@ module ArtService
           Patient.find_by_sql <<~SQL
             SELECT patient_id FROM #{temp_patient_outcomes} WHERE cum_outcome LIKE 'On antiretrovirals'
           SQL
+        ensure
+          # Cleanup temporary tables if we rebuilt them
+          cleanup_tables if @rebuild_outcomes
         end
       end
 
       private
+
+      def cleanup_tables
+        Rails.logger.info("Cleaning up temporary tables for location #{Location.current&.location_id}")
+        builder = CohortBuilder.new(outcomes_definition: @outcomes_definition)
+        builder.cleanup_temporary_tables
+      rescue StandardError => e
+        Rails.logger.error("Failed to cleanup temporary tables: #{e.message}")
+      end
 
       def outcomes_table_exists?
         result = ActiveRecord::Base.connection.select_one <<~SQL

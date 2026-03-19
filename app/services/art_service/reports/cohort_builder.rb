@@ -30,9 +30,9 @@ module ArtService
 
       # Recreate MySQL functions with location-specific table names
       def create_location_specific_mysql_functions
-        ActiveRecord::Base.connection.execute('DROP FUNCTION IF EXISTS died_in')
+        ActiveRecord::Base.connection.execute("DROP FUNCTION IF EXISTS #{died_in_function_name}")
         ActiveRecord::Base.connection.execute <<~SQL
-          CREATE FUNCTION died_in(set_patient_id INT, set_status VARCHAR(25), date_enrolled DATE)
+          CREATE FUNCTION #{died_in_function_name}(set_patient_id INT, set_status VARCHAR(25), date_enrolled DATE)
           RETURNS varchar(25) CHARSET utf8mb3 COLLATE utf8mb3_unicode_ci
           DETERMINISTIC
           BEGIN
@@ -1498,14 +1498,14 @@ module ArtService
         registered = []
         if month_str == '4+ months'
           data = ActiveRecord::Base.connection.select_all(
-            "SELECT patient_id, died_in(t.patient_id, moh_cum_outcome, earliest_start_date) died_in FROM #{temp_patient_outcomes} o
+            "SELECT patient_id, #{died_in_function_name}(t.patient_id, moh_cum_outcome, earliest_start_date) died_in FROM #{temp_patient_outcomes} o
             INNER JOIN #{temp_earliest_start_date} t USING(patient_id)
             WHERE moh_cum_outcome = 'Patient died' GROUP BY patient_id
             HAVING died_in COLLATE utf8mb3_general_ci IN ('4+ months', 'Unknown')"
           )
         else
           data = ActiveRecord::Base.connection.select_all(
-            "SELECT patient_id, died_in(t.patient_id, moh_cum_outcome, earliest_start_date) died_in FROM #{temp_patient_outcomes} o
+            "SELECT patient_id, #{died_in_function_name}(t.patient_id, moh_cum_outcome, earliest_start_date) died_in FROM #{temp_patient_outcomes} o
             INNER JOIN #{temp_earliest_start_date} t USING(patient_id)
             WHERE moh_cum_outcome = 'Patient died' GROUP BY patient_id
             HAVING died_in COLLATE utf8mb3_general_ci = '#{month_str}'"

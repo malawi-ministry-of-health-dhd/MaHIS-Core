@@ -640,4 +640,59 @@ module ArtTempTablesUtils
     ActiveRecord::Base.connection.execute("TRUNCATE #{temp_current_state(start: start)}")
     ActiveRecord::Base.connection.execute("TRUNCATE #{temp_current_medication(start: start)}")
   end
+
+  public
+
+  # ===================================
+  #  Cleanup Methods - Drop Location-Specific Tables
+  # ===================================
+  
+  # Drop all location-specific temporary tables to free up database resources
+  # Should be called after report generation completes
+  def cleanup_temporary_tables
+    cleanup_cohort_tables
+    cleanup_outcome_tables
+    cleanup_maternal_tables
+    cleanup_mysql_functions
+  rescue StandardError => e
+    Rails.logger.warn("Failed to cleanup temporary tables: #{e.message}")
+  end
+
+  private
+
+  def cleanup_cohort_tables
+    ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_cohort_members}")
+    ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_earliest_start_date}")
+    ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_other_patient_types}")
+    ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_register_start_date}")
+    ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_order_details}")
+    ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_art_start_date}")
+    ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_patient_tb_status}")
+    ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_latest_tb_status}")
+    ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{tmp_max_adherence}")
+    ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_pregnant_obs}")
+    ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_patient_side_effects}")
+  end
+
+  def cleanup_outcome_tables
+    [false, true].each do |start|
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_patient_outcomes(start: start)}")
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_max_drug_orders(start: start)}")
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_min_auto_expire_date(start: start)}")
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_max_patient_state(start: start)}")
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_current_state(start: start)}")
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_current_medication(start: start)}")
+    end
+  end
+
+  def cleanup_maternal_tables
+    ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_maternal_status}")
+  end
+
+  def cleanup_mysql_functions
+    # Drop location-specific MySQL functions if they were created
+    ActiveRecord::Base.connection.execute("DROP FUNCTION IF EXISTS #{died_in_function_name}")
+  rescue StandardError => e
+    Rails.logger.debug("Failed to drop MySQL functions: #{e.message}")
+  end
 end

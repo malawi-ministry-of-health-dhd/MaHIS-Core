@@ -26,9 +26,20 @@ module ArtService
           process_initialization
           process_data
           flatten_and_sort_data
+        ensure
+          # Cleanup temporary tables if we rebuilt them
+          cleanup_tables if rebuild
         end
 
         private
+
+        def cleanup_tables
+          Rails.logger.info("Cleaning up temporary tables for location #{Location.current&.location_id}")
+          builder = ArtService::Reports::CohortBuilder.new(outcomes_definition: type)
+          builder.cleanup_temporary_tables
+        rescue StandardError => e
+          Rails.logger.error("Failed to cleanup temporary tables: #{e.message}")
+        end
 
         GENDER = %w[M F].freeze
         AGGREGATE_GENDER_ROWS = %w[M FP FNP FBf].freeze
