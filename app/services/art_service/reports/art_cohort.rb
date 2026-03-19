@@ -85,12 +85,19 @@ module ArtService
             FROM encounter e
             INNER JOIN obs o ON o.encounter_id = e.encounter_id AND o.voided = 0 AND o.concept_id = 5096 -- appointment date
             WHERE e.encounter_type = 7 -- appointment encounter type
-            AND e.program_id = 1 -- hiv program
+            AND e.program_id = (SELECT program_id FROM program WHERE name = 'HIV PROGRAM' LIMIT 1)
             AND e.patient_id IN (SELECT patient_id FROM #{temp_patient_outcomes} WHERE #{report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}cum_outcome = 'Defaulted')
             AND e.encounter_datetime < DATE('#{@end_date}') + INTERVAL 1 DAY
             GROUP BY e.patient_id
           ) appointment ON appointment.patient_id = e.patient_id
-          LEFT JOIN patient_identifier i ON i.patient_id = e.patient_id AND i.voided = 0 AND i.identifier_type = 4
+          LEFT JOIN patient_identifier i ON i.patient_id = e.patient_id#{' '}
+            AND i.voided = 0#{' '}
+            AND i.identifier_type = (
+              SELECT patient_identifier_type_id#{' '}
+              FROM patient_identifier_type#{' '}
+              WHERE name = 'ARV Number'#{' '}
+              LIMIT 1
+            )
           INNER JOIN person_name n ON n.person_id = e.patient_id AND n.voided = 0
           LEFT JOIN person_attribute a ON a.person_id = e.patient_id AND a.voided = 0 AND a.person_attribute_type_id = 12
           LEFT JOIN person_attribute landmark ON landmark.person_id = e.patient_id AND landmark.voided = 0 AND landmark.person_attribute_type_id = 19
@@ -102,6 +109,8 @@ module ArtService
           ORDER BY e.patient_id, n.date_created DESC;
         SQL
       end
+
+      public
 
       def cohort_report_drill_down(id)
         id = ActiveRecord::Base.connection.quote(id)
@@ -117,10 +126,22 @@ module ArtService
           FROM cohort_drill_down c
           INNER JOIN person p ON p.person_id = c.patient_id AND p.voided = 0
           LEFT JOIN patient_identifier i ON i.patient_id = p.person_id
-            AND i.voided = 0 AND i.identifier_type = 4
+            AND i.voided = 0#{' '}
+            AND i.identifier_type = (
+              SELECT patient_identifier_type_id#{' '}
+              FROM patient_identifier_type#{' '}
+              WHERE name = 'ARV Number'#{' '}
+              LIMIT 1
+            )
           LEFT JOIN person_name n ON n.person_id = p.person_id AND n.voided = 0
           LEFT JOIN patient_program pp ON pp.patient_id = p.person_id
-            AND pp.program_id = 1 AND pp.voided = 0
+            AND pp.program_id = (
+              SELECT program_id#{' '}
+              FROM program#{' '}
+              WHERE name = 'HIV PROGRAM'#{' '}
+              LIMIT 1
+            )
+            AND pp.voided = 0
           LEFT JOIN patient_state pst ON pst.patient_program_id = pp.patient_program_id
             AND pst.voided = 0
             AND pst.start_date = (
