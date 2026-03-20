@@ -832,6 +832,10 @@ def get_encounter_type_ids(records, key, source_db)
   fetch_new_ids_by_name(records, source_db, 'encounter_type', :encounter_type_id, :name, EncounterType, key)
 end
 
+def get_relationship_type_ids(records, key, source_db)
+  fetch_new_ids_by_name(records, source_db, 'relationship_type', :relationship_type_id, :a_is_to_b, RelationshipType, key)
+end
+
 def get_concept_ids(records, key, _source_db)
   # Use pre-built concept mapping for fast lookups
   old_ids = records.compact.map { |record| record[key] }.uniq.compact
@@ -1057,7 +1061,8 @@ if __FILE__ == $0
       creator: :get_new_user_ids,
       voided_by: :get_new_user_ids,
       person_a: :get_person_ids,
-      person_b: :get_person_ids
+      person_b: :get_person_ids,
+      relationship: :get_relationship_type_ids
     }],
     person_name: [PersonName, {
       person_id: :get_person_ids,
