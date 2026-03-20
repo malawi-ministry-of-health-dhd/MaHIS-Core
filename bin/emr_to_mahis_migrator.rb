@@ -615,6 +615,15 @@ def populate_users(source_db)
     admin_user['changed_by'] = next_user_id
     admin_user['person_id'] = create_user_person(admin_user.symbolize_keys, source_db)
     admin_user['location_id'] = SITE_ID
+    
+    # Check for duplicate username and append site code if needed
+    if admin_user['username'].present?
+      existing_user = User.unscoped.find_by(username: admin_user['username'])
+      if existing_user && existing_user.uuid != admin_user['uuid']
+        admin_user['username'] = "#{admin_user['username']}_#{SITE_ID}"
+      end
+    end
+    
     admin_user = User.new(admin_user)
     admin_user.save!(validate: false)
   end
@@ -635,6 +644,14 @@ def populate_users(source_db)
 
       # Set location_id from SITE_ID
       user[:location_id] = SITE_ID
+
+      # Check for duplicate username and append site code if needed
+      if user[:username].present?
+        existing_user = User.unscoped.find_by(username: user[:username])
+        if existing_user && existing_user.uuid != user[:uuid]
+          user[:username] = "#{user[:username]}_#{SITE_ID}"
+        end
+      end
 
       user
     end
