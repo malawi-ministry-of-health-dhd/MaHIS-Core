@@ -21,6 +21,7 @@ module Api
         tag = params[:tag].to_s.strip
         city_village = params[:city_village].to_s.strip
         district = params[:district].to_s.strip
+        parent_id = params[:parent_id].to_s.strip
 
         # 2. Start the query scope
         # We use 'where(retired: false)' because your logs show this is the system standard
@@ -30,6 +31,7 @@ module Api
         locations = locations.where('name LIKE ?', "%#{name}%") if name.present?
         locations = locations.where('city_village LIKE ?', "%#{city_village}%") if city_village.present?
         locations = locations.where('county_district LIKE ?', "%#{district}%") if district.present?
+        locations = locations.where('location.parent_location = ?', "#{parent_id}") if parent_id.present?
 
         # 4. Apply Functional filter (Tags via Join)
         # We only call this once to avoid SQL join conflicts

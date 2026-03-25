@@ -30,13 +30,13 @@ module UserService
   end
 
   def self.find_users(role: nil, search_string: nil, username: nil)
-    # Check if the current user is a "Superuser,Superuser"
-    is_super_super_user = User.current.user_roles.any? do |user_role|
-      user_role.role.role == "Superuser,Superuser,"
+    # Check if the current user is a "Global Superuser"
+    is__global_uperuser = User.current.user_roles.any? do |user_role|
+      user_role.role.role == "Global Superuser"
     end
   
     # Base query: all users for super-super-users, otherwise users in the current location
-    query = if is_super_super_user
+    query = if is__global_uperuser
              User.all
            else
              User.where(location_id: User.current.location_id)
