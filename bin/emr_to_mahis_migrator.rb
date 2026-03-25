@@ -145,13 +145,17 @@ source_db = database_config['centralized_source_db']['database']
 
 # Optimize connection pool for parallel processing
 optimal_thread_count = [Parallel.physical_processor_count * 2, 10].min
+# Increase pool size to handle nested queries in parallel processing
+# Each thread may need multiple connections for nested lookups
+pool_size = optimal_thread_count * 3 + 10  # More generous pool for nested queries
 ActiveRecord::Base.establish_connection(
   database_config[Rails.env].merge(
-    'pool' => optimal_thread_count + 5,
-    'reaping_frequency' => 10,
-    'checkout_timeout' => 10
+    'pool' => pool_size,
+    'reaping_frequency' => 5,          # More frequent reaping
+    'checkout_timeout' => 30           # Longer timeout for complex queries
   )
 )
+puts "✓ Connection pool configured: #{pool_size} connections, #{optimal_thread_count} threads"
 SITE_ID = get_validated_location_id(source_db)
 SITE_USER_MAPPING = Rails.root.join('log', "users_mapping_#{SITE_ID}.json")
 File.write(SITE_USER_MAPPING, '{}') unless File.exist?(SITE_USER_MAPPING)
@@ -182,6 +186,9 @@ ENCOUNTER_ID_CACHE = {}
 ORDER_ID_CACHE = {}
 PROGRAM_ID_CACHE = {}
 OBS_ID_CACHE = {}
+
+# Track orphaned references for data quality reporting
+ORPHANED_REFERENCES = Hash.new { |h, k| h[k] = [] }
 
 # Mutex for thread-safe cache updates
 CACHE_MUTEX = Mutex.new
@@ -239,6 +246,32 @@ def prepare_centralized_db
   end
 
   puts 'Database preparation complete!'
+end
+
+# Report data quality issues found during migration
+def report_data_quality_issues
+  return if ORPHANED_REFERENCES.empty?
+
+  puts "\n" + "="*80
+  puts "DATA QUALITY REPORT - Orphaned References Found"
+  puts "="*80
+  
+  ORPHANED_REFERENCES.each do |table, ids|
+    puts "\n⚠ #{table.to_s.upcase}: #{ids.size} orphaned reference(s)"
+    puts "  Missing IDs: #{ids.sort.join(', ')}"
+    puts "  → These references were mapped to admin user as fallback"
+  end
+  
+  # Save detailed report to log file
+  report_file = Rails.root.join('log', "data_quality_report_#{SITE_ID}_#{Time.now.strftime('%Y%m%d_%H%M%S')}.json")
+  File.write(report_file, JSON.pretty_generate({
+    site_id: SITE_ID,
+    timestamp: Time.now.iso8601,
+    orphaned_references: ORPHANED_REFERENCES
+  }))
+  
+  puts "\n✓ Detailed report saved to: #{report_file}"
+  puts "="*80
 end
 
 # Query Helper
@@ -335,11 +368,11 @@ def determine_optimal_batch_size(source_db, table_name)
                when 1001..10_000
                  [5_000, optimal_batch].min
                when 10_001..100_000
-                 [25_000, optimal_batch].min
+                 [10_000, optimal_batch].min
                when 100_001..1_000_000
-                 [50_000, optimal_batch].min
+                 [15_000, optimal_batch].min
                else
-                 [100_000, optimal_batch].min # Very large tables
+                 [20_000, optimal_batch].min # Very large tables
                end
 
   [batch_size, 1000].max # Minimum 1000 rows per batch
@@ -407,16 +440,10 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
       percentage = ((processed_records.to_f / total_records) * 100).round(2)
       puts "Processing #{table_name_str}: #{percentage}% complete (#{processed_records}/#{total_records})"
     end
-  ensure
-    # Explicitly close and release this thread's connection when done
-    if ActiveRecord::Base.connection_pool.active_connection?
-      ActiveRecord::Base.connection.close
-      ActiveRecord::Base.connection_pool.release_connection
-    end
   end
 ensure
-  # Clear any lingering connections after processing
-  ActiveRecord::Base.connection_pool.release_connection
+  # Clear any lingering connections after all parallel processing completes
+  ActiveRecord::Base.connection_pool.release_connection if ActiveRecord::Base.connection_pool.active_connection?
 end
 
 # Populate Person
@@ -606,6 +633,11 @@ end
 # User Migration with Percentage Tracking
 def populate_users(source_db)
   admin_user = query_with_columns("#{source_db}.users", 'user_id = 1').first
+  unless admin_user
+    puts "✗ Error: Admin user (user_id = 1) not found in source database"
+    return
+  end
+  
   if User.unscoped.exists?(uuid: admin_user['uuid'])
     admin_user = User.unscoped.find_by(uuid: admin_user['uuid'])
   else
@@ -615,7 +647,7 @@ def populate_users(source_db)
     admin_user['changed_by'] = next_user_id
     admin_user['person_id'] = create_user_person(admin_user.symbolize_keys, source_db)
     admin_user['location_id'] = SITE_ID
-    
+
     # Check for duplicate username and append site code if needed
     if admin_user['username'].present?
       existing_user = User.unscoped.find_by(username: admin_user['username'])
@@ -623,7 +655,7 @@ def populate_users(source_db)
         admin_user['username'] = "#{admin_user['username']}_#{SITE_ID}"
       end
     end
-    
+
     admin_user = User.new(admin_user)
     admin_user.save!(validate: false)
   end
@@ -648,9 +680,7 @@ def populate_users(source_db)
       # Check for duplicate username and append site code if needed
       if user[:username].present?
         existing_user = User.unscoped.find_by(username: user[:username])
-        if existing_user && existing_user.uuid != user[:uuid]
-          user[:username] = "#{user[:username]}_#{SITE_ID}"
-        end
+        user[:username] = "#{user[:username]}_#{SITE_ID}" if existing_user && existing_user.uuid != user[:uuid]
       end
 
       user
@@ -812,12 +842,29 @@ end
 def get_new_user_id(old_user_id, source_db)
   return unless old_user_id
 
-  user_uuid = query_with_columns("#{source_db}.users", "user_id = #{old_user_id}").first['uuid']
+  user_record = query_with_columns("#{source_db}.users", "user_id = #{old_user_id}").first
+  unless user_record
+    # Log orphaned user reference for data quality reporting
+    CACHE_MUTEX.synchronize do
+      ORPHANED_REFERENCES[:users] << old_user_id unless ORPHANED_REFERENCES[:users].include?(old_user_id)
+    end
+    return nil
+  end
+  
+  user_uuid = user_record['uuid']
   User.unscoped.find_by(uuid: user_uuid)&.id
 end
 
 def create_user_person(user, source_db)
   person_data = query_with_columns("#{source_db}.person", "person_id = #{user[:person_id]}").first
+  unless person_data
+    # Log orphaned person reference for data quality reporting
+    CACHE_MUTEX.synchronize do
+      ORPHANED_REFERENCES[:person] << user[:person_id] unless ORPHANED_REFERENCES[:person].include?(user[:person_id])
+    end
+    return nil
+  end
+  
   populate_person(person_data, source_db)
 end
 
@@ -850,7 +897,8 @@ def get_encounter_type_ids(records, key, source_db)
 end
 
 def get_relationship_type_ids(records, key, source_db)
-  fetch_new_ids_by_name(records, source_db, 'relationship_type', :relationship_type_id, :a_is_to_b, RelationshipType, key)
+  fetch_new_ids_by_name(records, source_db, 'relationship_type', :relationship_type_id, :a_is_to_b, RelationshipType,
+                        key)
 end
 
 def get_concept_ids(records, key, _source_db)
@@ -1026,16 +1074,10 @@ def populate_group(group)
   rescue StandardError => e
     puts "❌ Error processing #{table}: #{e.message}"
     puts e.backtrace.first(10).join("\n")
-  ensure
-    # Explicitly close and release this thread's connection after table completes
-    if ActiveRecord::Base.connection_pool.active_connection?
-      ActiveRecord::Base.connection.close
-      ActiveRecord::Base.connection_pool.release_connection
-    end
   end
 ensure
-  # Disconnect all remaining connections from pool after group completes
-  ActiveRecord::Base.connection_pool.disconnect!
+  # Release connections but don't disconnect the pool between groups
+  ActiveRecord::Base.connection_pool.release_connection if ActiveRecord::Base.connection_pool.active_connection?
 end
 
 if __FILE__ == $0
@@ -1206,6 +1248,9 @@ if __FILE__ == $0
                                   concept_id: :get_concept_ids,
                                   value_coded: :get_concept_ids,
                                   value_drug: :get_drug_ids)
+
+  # Report data quality issues
+  report_data_quality_issues
 
   # Final cleanup: Clear all active connections
   puts "\n✓ Migration complete! Cleaning up connections..."
