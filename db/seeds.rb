@@ -74,8 +74,9 @@ else
   puts 'No additional data files to import'
 end
 
-role = Role.find_by(role: 'Superuser')
-UserRole.find_or_create_by!(user_id: 2, role: role)
+roles = Role.where(role: ['Superuser', 'Global Superuser'])
+
+roles.each { |role| UserRole.find_or_create_by!(user_id: 2, role: role) }
 
 puts <<~MSG
   ----------------------------------------

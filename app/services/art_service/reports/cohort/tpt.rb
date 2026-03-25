@@ -4,6 +4,7 @@
 # TB Preventive Therapy indicators for ART cohort
 class ArtService::Reports::Cohort::Tpt
   include CommonSqlQueryUtils
+  include ArtTempTablesNaming
 
   def initialize(start_date, end_date, **kwargs)
     @start_date = start_date
@@ -115,7 +116,7 @@ class ArtService::Reports::Cohort::Tpt
         last_tpt_prescription.course AS last_course,
         last_tpt_prescription.start_date AS last_tpt_start_date,
         last_tpt_prescription.auto_expire_date AS last_tpt_end_date
-      FROM temp_earliest_start_date AS cohort_patients
+      FROM #{temp_earliest_start_date} AS cohort_patients
       #{dsd_query(dsd: @dsd, model: 'cohort_patients') if @dsd}
       INNER JOIN orders
         ON orders.patient_id = cohort_patients.patient_id
@@ -152,8 +153,8 @@ class ArtService::Reports::Cohort::Tpt
             WHEN o.concept_id = #{three_hp_concept.concept_id} THEN '3HP new'
             ELSE '6H'
           END AS course
-        FROM temp_earliest_start_date
-        INNER JOIN orders o ON o.patient_id = temp_earliest_start_date.patient_id
+        FROM #{temp_earliest_start_date}
+        INNER JOIN orders o ON o.patient_id = #{temp_earliest_start_date}.patient_id
         INNER JOIN concept_name AS tpt_drug_concepts ON tpt_drug_concepts.concept_id = o.concept_id AND tpt_drug_concepts.name IN ('Rifapentine', 'Isoniazid', 'Isoniazid/Rifapentine') AND tpt_drug_concepts.voided = 0
         INNER JOIN drug_order AS drug_orders ON drug_orders.order_id = o.order_id AND drug_orders.quantity > 0
         INNER JOIN encounter ON encounter.encounter_id = o.encounter_id AND encounter.encounter_type = (SELECT encounter_type_id FROM encounter_type WHERE name = 'Treatment' LIMIT 1) AND encounter.program_id = (SELECT program_id FROM program WHERE name = 'HIV Program' LIMIT 1) AND encounter.voided = 0
