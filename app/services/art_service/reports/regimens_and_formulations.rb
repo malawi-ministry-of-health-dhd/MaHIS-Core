@@ -6,7 +6,7 @@ module ArtService
     class RegimensAndFormulations
       include CommonSqlQueryUtils
 
-      attr_reader :start_date, :end_date, :regimen, :formulation
+      attr_reader :start_date, :end_date, :regimen, :formulation, :location_id
 
       def initialize(start_date:, end_date:, regimen: nil, formulation: 'tablets', **kwargs)
         raise InvalidParameterError, 'regimen is required' unless regimen
@@ -21,6 +21,7 @@ module ArtService
         @regimen = regimen
         @occupation = kwargs[:occupation]
         @dsd = kwargs[:dsd]
+        @location_id = Location.current.location_id
       end
 
       def find_report
@@ -129,7 +130,8 @@ module ArtService
 
       def treatment_encounter
         Encounter.where(encounter_type: EncounterType.find_by_name('Treatment'),
-                        program_id: Constants::PROGRAM_ID)
+                        program_id: Constants::PROGRAM_ID,
+                        location_id:)
       end
 
       # Returns drugs prescribed to patient on given day
@@ -153,10 +155,12 @@ module ArtService
                                          AND patient_identifier.voided = 0
             LEFT JOIN obs ON obs.person_id = person.person_id
                           AND obs.concept_id = #{weight_concept_id}
+                          AND obs.location_id = #{location_id}
                           AND obs.obs_datetime = (
                             SELECT MAX(obs_datetime) FROM obs
                             WHERE person_id = #{patient_id}
                               AND concept_id = #{weight_concept_id}
+                              AND location_id = #{location_id}
                               AND obs_datetime <= '#{prescription_date}'
                               AND voided = 0
                           ) AND obs.voided = 0
@@ -168,7 +172,8 @@ module ArtService
       def patient_recent_weight(patient_id, as_of)
         Observation.select(:value_numeric)
                    .where(concept_id: ConceptName.find_by_name('Weight (kg)').concept_id,
-                          person_id: patient_id)
+                          person_id: patient_id,
+                          location_id:)
                    .where('obs_datetime < ? AND value_numeric IS NOT NULL', as_of)
                    .order(obs_datetime: :desc)
                    .first
