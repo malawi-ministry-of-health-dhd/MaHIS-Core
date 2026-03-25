@@ -91,6 +91,14 @@ module ArtTempTablesNaming
     temp_table_name('temp_current_medication', start: start)
   end
 
+  def temp_tb_confirmed_and_on_treatment(start: false)
+    temp_table_name('temp_tb_confirmed_and_on_treatment', start: start)
+  end
+
+  def temp_tb_screened(start: false)
+    temp_table_name('temp_tb_screened', start: start)
+  end
+
   # MySQL function names (location-specific)
   def died_in_function_name
     location_id = Location.current&.location_id || 'default'
