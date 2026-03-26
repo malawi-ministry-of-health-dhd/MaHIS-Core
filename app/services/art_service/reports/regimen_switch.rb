@@ -9,6 +9,7 @@ module ArtService
         @end_date = end_date
         @occupation = kwargs[:occupation]
         @dsd = kwargs[:dsd]
+        @location_id = kwargs[:location_id] || Location.current&.location_id || User.current&.location&.location_id
       end
 
       def regimen_switch(pepfar)
@@ -42,6 +43,8 @@ module ArtService
             drug.name, d.quantity, o.start_date, obs.value_numeric,
             person.birthdate, person.gender
           FROM orders o
+          INNER JOIN encounter e ON e.encounter_id = o.encounter_id AND e.voided = 0
+            #{@location_id ? "AND e.location_id = #{@location_id}" : ''}
           INNER JOIN drug_order d ON d.order_id = o.order_id AND d.quantity > 0
           INNER JOIN drug ON drug.drug_id = d.drug_inventory_id
           INNER JOIN arv_drug On arv_drug.drug_id = drug.drug_id
@@ -51,6 +54,8 @@ module ArtService
           INNER JOIN (
             SELECT MAX(o.start_date) start_date, o.patient_id
             FROM orders o
+            INNER JOIN encounter e ON e.encounter_id = o.encounter_id AND e.voided = 0
+              #{@location_id ? "AND e.location_id = #{@location_id}" : ''}
             INNER JOIN drug_order dor ON dor.order_id = o.order_id AND dor.quantity > 0
               AND dor.drug_inventory_id IN (SELECT drug_id FROM arv_drug)
             WHERE o.voided = 0
@@ -121,14 +126,17 @@ module ArtService
 
         ActiveRecord::Base.connection.execute("
           create table tmp_latest_arv_dispensation
-          SELECT patient_id,DATE(MAX(start_date)) as start_date
-          FROM orders INNER JOIN drug_order t USING (order_id)
+          SELECT orders.patient_id,DATE(MAX(start_date)) as start_date
+          FROM orders
+          INNER JOIN encounter e ON e.encounter_id = orders.encounter_id AND e.voided = 0
+            #{@location_id ? "AND e.location_id = #{@location_id}" : ''}
+          INNER JOIN drug_order t USING (order_id)
           WHERE
           (
             start_date BETWEEN '#{@start_date.to_date.strftime('%Y-%m-%d 00:00:00')}' AND '#{@end_date.to_date.strftime('%Y-%m-%d 23:59:59')}'
             AND t.drug_inventory_id IN (#{drug_ids.join(',')}) AND t.quantity > 0
           )
-          group by patient_id")
+          group by orders.patient_id")
 
         ActiveRecord::Base.connection.execute('create index lad_patient_id_and_start_date on tmp_latest_arv_dispensation (start_date, patient_id);')
 
@@ -137,6 +145,8 @@ module ArtService
             o.patient_id patient_id, o.start_date,  o.order_id,
             d.quantity, drug.name
           FROM orders o
+          INNER JOIN encounter e ON e.encounter_id = o.encounter_id AND e.voided = 0
+            #{@location_id ? "AND e.location_id = #{@location_id}" : ''}
           INNER JOIN drug_order d ON o.order_id = d.order_id
           INNER JOIN drug ON d.drug_inventory_id = drug.drug_id
           INNER JOIN tmp_latest_arv_dispensation k on (o.patient_id = k.patient_id and DATE(o.start_date) =  k.start_date)
@@ -183,14 +193,18 @@ module ArtService
           SELECT
             o.patient_id,  drug.name, d.quantity, o.start_date
           FROM orders o
+          INNER JOIN encounter e ON e.encounter_id = o.encounter_id AND e.voided = 0
+            #{@location_id ? "AND e.location_id = #{@location_id}" : ''}
           INNER JOIN drug_order d ON d.order_id = o.order_id
           INNER JOIN drug ON drug.drug_id = d.drug_inventory_id
           WHERE d.drug_inventory_id IN(#{drug_ids.join(',')})
           AND o.patient_id = #{patient_id} AND
           d.quantity > 0 AND o.voided = 0 AND DATE(o.start_date) = (
             SELECT DATE(MAX(start_date)) FROM orders
+            INNER JOIN encounter e2 ON e2.encounter_id = orders.encounter_id AND e2.voided = 0
+              #{@location_id ? "AND e2.location_id = #{@location_id}" : ''}
             INNER JOIN drug_order t USING(order_id)
-            WHERE patient_id = o.patient_id
+            WHERE orders.patient_id = o.patient_id
             AND (
               start_date BETWEEN '#{@start_date.to_date.strftime('%Y-%m-%d 00:00:00')}'
               AND '#{@end_date.to_date.strftime('%Y-%m-%d 23:59:59')}'
@@ -286,7 +300,7 @@ module ArtService
           medications = arv_dispensention_data(patient_id)
 
           outcome_status = ActiveRecord::Base.connection.select_one <<~SQL
-            SELECT #{type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_' }cum_outcome cum_outcome FROM temp_patient_outcomes WHERE patient_id = #{patient_id};
+            SELECT #{type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}cum_outcome cum_outcome FROM temp_patient_outcomes WHERE patient_id = #{patient_id};
           SQL
 
           next if outcome_status.blank?
