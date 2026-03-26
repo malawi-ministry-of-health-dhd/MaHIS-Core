@@ -88,17 +88,15 @@ module PatientRecordService
     end
 
     def create_ncd_identifier(patient_id, record)
-      return ok unless record[:NcdID].present?
+        if record[:NcdID] == "-" || record[:unsavedNcdID].present?
+          PatientIdentifierService.create(
+            patient_id:      patient_id,
+            identifier:      record[:unsavedNcdID] || find_next_available_ncd_number(record[:location_id]),
+            identifier_type: 31
+          )
+        end
 
-      if record[:NcdID] == "-"
-        PatientIdentifierService.create(
-          patient_id:      patient_id,
-          identifier:      find_next_available_ncd_number(record[:location_id]),
-          identifier_type: 31
-        )
-      end
-
-      ok
+        ok
     rescue StandardError => e
       log_and_fail("Failed to create NCD identifier", e)
     end
@@ -108,7 +106,8 @@ module PatientRecordService
       raise 'Global property `site_prefix` not set' unless current_ncd_code
 
       type                           = PatientIdentifierType.find_by_name('NCD Number')
-      current_ncd_number_identifiers = PatientIdentifier.where(identifier_type: type)
+      current_ncd_number_identifiers = PatientIdentifier.where(identifier_type: type, location_id: location_id)
+      
 
       assigned_ncd_ids = current_ncd_number_identifiers&.filter_map do |identifier|
         Regexp.last_match(1).to_i if identifier.identifier =~ /#{current_ncd_code}-NCD- *(\d+)/
