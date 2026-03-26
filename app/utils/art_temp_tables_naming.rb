@@ -17,6 +17,26 @@ module ArtTempTablesNaming
     "#{base_name}#{suffix}_loc_#{location_id}"
   end
 
+  def idx_temp_initiated_on_art
+    temp_index_name('idx_temp_initiated_on_art')
+  end
+
+  def idx_temp_initiated_on_tpt
+    temp_index_name('idx_temp_initiated_on_tpt')
+  end
+  
+  def temp_initiated_on_tpt
+    temp_table_name('temp_initiated_on_tpt')
+  end
+
+  def temp_initiated_on_tpt
+    temp_table_name('temp_initiated_on_tpt')
+  end
+
+  def temp_initiated_on_art 
+    temp_table_name('temp_initiated_on_art')
+  end
+
   # Cohort tables
   def temp_cohort_members
     temp_table_name('temp_cohort_members')
