@@ -7,26 +7,20 @@ module ArtService
       # The current number of ARV drug units (bottles) at the end of the reporting period by ARV drug category
       class ScCurr
         DRUG_CATEGORY = {
-          'TLD 30-count bottles' => { drugs: [983], quantity: 30 },
-          'TLD 90-count bottles' => { drugs: [983], quantity: 90 },
-          'TLD 180-count bottles' => { drugs: [983], quantity: 180 },
-          'TLE/400 30-count bottles' => { drugs: [735], quantity: 30 },
-          'TLE/400 90-count bottles' => { drugs: [735], quantity: 90 },
-          'TLE 600/TEE bottles' => { drugs: [11], quantity: 'N/A' },
-          'DTG 10 90-count bottles' => { drugs: [980], quantity: 90 },
-          'DTG 50 30-count bottles' => { drugs: [982], quantity: 30 },
-          'LPV/r 100/25 tabs 60 tabs/bottle' => { drugs: [23, 73, 74, 739, 977, 1045], quantity: 60 },
-          'LPV/r 40/10 (pediatrics) bottles' => { drugs: [94, 979], quantity: 'N/A' },
-          'NVP (adult) bottles' => { drugs: [22, 613], quantity: 'N/A' },
-          'NVP (pediatric) bottles' => { drugs: [21, 817, 968, 971], quantity: 'N/A' },
-          'Other (adult) bottles' => { drugs: [
-            3, 5, 6, 10, 38, 39, 40, 42, 89, 614, 730, 731, 734, 738,
-            814, 815, 932, 933, 934, 952, 954, 955, 957, 969, 976, 978, 984, 1217, 1213, 14
-          ], quantity: 'N/A' },
-          'Other (pediatric) bottles' => { drugs: [
-            2, 9, 28, 29, 30, 31, 32, 36, 37, 41, 70, 71, 72, 90, 91,
-            95, 104, 177, 732, 733, 736, 737, 813, 816, 981, 1043, 1044, 1214, 1215
-          ], quantity: 'N/A' }
+          'TLD 30-count bottles' => { drugs: Drugs.sc_curr_ids_for('TLD 30-count bottles'), quantity: 30 },
+          'TLD 90-count bottles' => { drugs: Drugs.sc_curr_ids_for('TLD 90-count bottles'), quantity: 90 },
+          'TLD 180-count bottles' => { drugs: Drugs.sc_curr_ids_for('TLD 180-count bottles'), quantity: 180 },
+          'TLE/400 30-count bottles' => { drugs: Drugs.sc_curr_ids_for('TLE/400 30-count bottles'), quantity: 30 },
+          'TLE/400 90-count bottles' => { drugs: Drugs.sc_curr_ids_for('TLE/400 90-count bottles'), quantity: 90 },
+          'TLE 600/TEE bottles' => { drugs: Drugs.sc_curr_ids_for('TLE 600/TEE bottles'), quantity: 'N/A' },
+          'DTG 10 90-count bottles' => { drugs: Drugs.sc_curr_ids_for('DTG 10 90-count bottles'), quantity: 90 },
+          'DTG 50 30-count bottles' => { drugs: Drugs.sc_curr_ids_for('DTG 50 30-count bottles'), quantity: 30 },
+          'LPV/r 100/25 tabs 60 tabs/bottle' => { drugs: Drugs.sc_curr_ids_for('LPV/r 100/25 tabs 60 tabs/bottle'), quantity: 60 },
+          'LPV/r 40/10 (pediatrics) bottles' => { drugs: Drugs.sc_curr_ids_for('LPV/r 40/10 (pediatrics) bottles'), quantity: 'N/A' },
+          'NVP (adult) bottles' => { drugs: Drugs.sc_curr_ids_for('NVP (adult) bottles'), quantity: 'N/A' },
+          'NVP (pediatric) bottles' => { drugs: Drugs.sc_curr_ids_for('NVP (pediatric) bottles'), quantity: 'N/A' },
+          'Other (adult) bottles' => { drugs: Drugs.sc_curr_ids_for('Other (adult) bottles'), quantity: 'N/A' },
+          'Other (pediatric) bottles' => { drugs: Drugs.sc_curr_ids_for('Other (pediatric) bottles'), quantity: 'N/A' }
         }.freeze
 
         def initialize(start_date:, end_date:, **_kwargs)
