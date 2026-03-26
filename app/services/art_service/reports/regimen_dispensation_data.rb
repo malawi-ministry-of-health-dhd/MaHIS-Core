@@ -13,6 +13,15 @@ module ArtService
         @type = kwargs[:type]
         @occupation = kwargs[:occupation]
         @dsd = kwargs[:dsd]
+        @location_id = kwargs[:location_id] || Location.current&.location_id || User.current&.location&.location_id
+        @arv_number_identifier_type_id = PatientIdentifierType.find_by_name('ARV Number')&.id || 4
+        @hiv_program_id = Program.find_by_name('HIV Program')&.program_id || 1
+        @on_arv_state_id = ProgramWorkflowState.joins(:program_workflow)
+                                               .joins('INNER JOIN program ON program.program_id = program_workflow.program_id')
+                                               .where('program.name = ? AND program_workflow_state.concept_id = ?',
+                                                      'HIV Program',
+                                                      ConceptName.find_by_name('On antiretrovirals')&.concept_id)
+                                               &.first&.program_workflow_state_id || 7
       end
 
       def find_report
@@ -55,6 +64,8 @@ module ArtService
           CREATE TABLE temp_current_dispensation
           SELECT o.patient_id, MAX(o.start_date) AS start_date
           FROM orders o
+          INNER JOIN encounter e ON e.encounter_id = o.encounter_id AND e.voided = 0
+            #{@location_id ? "AND e.location_id = #{@location_id}" : ''}
           INNER JOIN drug_order od ON od.order_id = o.order_id AND od.quantity > 0 AND od.drug_inventory_id IN (SELECT drug_id FROM arv_drug)
           #{dsd_query(dsd: @dsd, model: 'o') if @dsd}
           LEFT JOIN (#{current_occupation_query}) a ON a.person_id = o.patient_id
@@ -71,6 +82,8 @@ module ArtService
           CREATE table temp_drug_dispensed
           SELECT o.patient_id, od.drug_inventory_id, d.name, o.start_date, od.quantity
           FROM orders o
+          INNER JOIN encounter e ON e.encounter_id = o.encounter_id AND e.voided = 0
+            #{@location_id ? "AND e.location_id = #{@location_id}" : ''}
           #{dsd_query(dsd: @dsd, model: 'o') if @dsd}
           INNER JOIN temp_current_dispensation tcd ON tcd.patient_id = o.patient_id AND tcd.start_date = o.start_date
           INNER JOIN drug_order od ON od.order_id = o.order_id AND od.quantity > 0 AND od.drug_inventory_id IN (SELECT drug_id FROM arv_drug)
@@ -109,11 +122,20 @@ module ArtService
       end
 
       def create_temp_patient_outcome
+        # Instead of using patient_outcome function, directly check patient_state
+        # This fixes the issue where states starting on end_date return 'Unknown'
         ActiveRecord::Base.connection.execute <<~SQL
           CREATE TABLE temp_reg_outcome
-          SELECT temp_current_dispensation.patient_id, #{type == 'pepfar' ? "pepfar_patient_outcome(temp_current_dispensation.patient_id, #{end_date})" : "patient_outcome(temp_current_dispensation.patient_id, #{end_date})"} outcome
-          FROM temp_current_dispensation
-          #{dsd_query(dsd: @dsd, model: 'temp_current_dispensation') if @dsd}
+          SELECT DISTINCT pp.patient_id, 'On antiretrovirals' as outcome
+          FROM patient_program pp
+          INNER JOIN patient_state ps ON ps.patient_program_id = pp.patient_program_id AND ps.voided = 0
+          INNER JOIN temp_current_dispensation tcd ON tcd.patient_id = pp.patient_id
+          WHERE pp.program_id = #{@hiv_program_id}
+            AND pp.voided = 0
+            AND ps.state = #{@on_arv_state_id}
+            AND ps.start_date <= #{end_date}
+            AND (ps.end_date IS NULL OR ps.end_date >= #{end_date})
+          #{dsd_query(dsd: @dsd, model: 'pp') if @dsd}
         SQL
         ActiveRecord::Base.connection.execute 'create index reg_outcome on temp_reg_outcome (patient_id)'
       end
@@ -127,6 +149,8 @@ module ArtService
             lab_result_obs.person_id AS patient_id
           FROM obs AS lab_result_obs
           INNER JOIN orders ON orders.order_id = lab_result_obs.order_id AND orders.voided = 0
+          INNER JOIN encounter e ON e.encounter_id = orders.encounter_id AND e.voided = 0
+            #{@location_id ? "AND e.location_id = #{@location_id}" : ''}
           INNER JOIN obs AS measure ON measure.obs_group_id = lab_result_obs.obs_id AND measure.voided = 0
           INNER JOIN (
             SELECT concept_id, name
@@ -192,8 +216,8 @@ module ArtService
            WHERE
             ((`p`.`voided` = 0)
             AND (`s`.`voided` = 0)
-            AND (`p`.`program_id` = 1)
-            AND (`s`.`state` = 7))
+            AND (`p`.`program_id` = #{@hiv_program_id})
+            AND (`s`.`state` = #{@on_arv_state_id}))
             AND (`s`.`start_date` < #{end_date} + INTERVAL 1 DAY)
             AND p.patient_id IN (SELECT patient_id FROM temp_reg_outcome WHERE outcome = 'On antiretrovirals')
           GROUP BY `p`.`patient_id`;
@@ -202,7 +226,7 @@ module ArtService
       end
 
       def clients_alive_on_treatment
-        ActiveRecord::Base.connection.select_all <<~SQL
+        result = ActiveRecord::Base.connection.select_all <<~SQL
           SELECT
             trc.patient_id,
             p.gender,
@@ -220,12 +244,15 @@ module ArtService
           #{dsd_query(dsd: @dsd, model: 'trc') if @dsd}
           INNER JOIN person p ON p.person_id = trc.patient_id AND p.voided = 0
           INNER JOIN person_name pn ON pn.person_id = p.person_id AND pn.voided = 0
-          LEFT JOIN patient_identifier i ON i.patient_id = p.person_id AND i.identifier_type = 4 AND i.voided = 0
+          LEFT JOIN patient_identifier i ON i.patient_id = p.person_id AND i.identifier_type = #{@arv_number_identifier_type_id} AND i.voided = 0
           LEFT JOIN temp_regimen_patient_weight tpw ON tpw.patient_id = trc.patient_id
           LEFT JOIN temp_current_vl_results tcvr ON tcvr.patient_id = trc.patient_id
           LEFT JOIN temp_current_patient_regimen tcp ON tcp.patient_id = trc.patient_id
           GROUP BY trc.patient_id
         SQL
+
+        Rails.logger.info "clients_alive_on_treatment returned #{result.count} patients"
+        result
       end
 
       def alive_clients
