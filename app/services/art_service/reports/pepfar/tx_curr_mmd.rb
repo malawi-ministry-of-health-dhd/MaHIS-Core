@@ -45,6 +45,10 @@ module ArtService
             INNER JOIN temp_patient_outcomes tpo ON tpo.patient_id = tesd.patient_id AND tpo.#{@report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_' }cum_outcome = 'On antiretrovirals'
             #{dsd_query(dsd: @dsd, model: 'tpo') if @dsd}
             INNER JOIN temp_current_medication tcm ON tcm.patient_id = tesd.patient_id
+            INNER JOIN patient_program pp ON pp.patient_id = tesd.patient_id 
+              AND pp.program_id = #{program('HIV PROGRAM').id}
+              AND pp.location_id = #{User.current.location_id}
+              AND pp.voided = 0
             WHERE tesd.date_enrolled <= '#{@end_date}' AND tesd.gender IN ('M', 'F')
             GROUP BY tesd.patient_id
           SQL

@@ -10,6 +10,14 @@ module ArtService
       def cohort(_cohort_struct, start_date, end_date)
         time_started = Time.now.strftime('%Y-%m-%d %H:%M:%S')
 
+        # Initialize temporary tables
+        prepare_tables
+        load_temp_other_patient_types(end_date)
+        load_temp_register_start_date_table(end_date)
+        load_temp_order_details(end_date)
+        load_art_start_date(end_date)
+        load_data_into_temp_earliest_start_date(end_date.to_date, nil)
+
         @cohort_struct = cohort_struct = CohortStruct.new
 
         #=end
@@ -29,8 +37,8 @@ module ArtService
         cohort_struct.cum_re_initiated_on_art = re_initiated_on_art(cum_start_date, end_date)
 
         # Patients transferred in on ART
-        cohort_struct.transfer_in = transfer_in(start_date, end_date)
-        cohort_struct.cum_transfer_in = transfer_in(cum_start_date, end_date)
+        cohort_struct.transfer_in = transfer_in(start_date, end_date, cohort_struct.re_initiated_on_art)
+        cohort_struct.cum_transfer_in = transfer_in(cum_start_date, end_date, cohort_struct.cum_re_initiated_on_art)
 
         # All males
         cohort_struct.all_males = males(start_date, end_date)
@@ -67,6 +75,7 @@ module ArtService
         #  ON ARVs and earliest start date of the 'ON ARVs' state within the quarter
         #  and having a REASON FOR ELIGIBILITY observation with an answer as BREASTFEEDING
         cohort_struct.total_breastfeeding_women = total_breastfeeding_women(cohort_struct.total_alive_and_on_art,
+                                                                            cohort_struct.total_pregnant_women,
                                                                             cum_start_date, end_date)
 
         # Non-pregnant females (all ages)
