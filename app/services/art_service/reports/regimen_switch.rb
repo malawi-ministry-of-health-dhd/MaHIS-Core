@@ -4,6 +4,8 @@ module ArtService
   module Reports
     class RegimenSwitch
       include CommonSqlQueryUtils
+      include ArtTempTablesNaming
+
       def initialize(start_date:, end_date:, **kwargs)
         @start_date = start_date
         @end_date = end_date
@@ -42,10 +44,11 @@ module ArtService
             drug.name, d.quantity, o.start_date, obs.value_numeric,
             person.birthdate, person.gender
           FROM orders o
+          INNER JOIN encounter e ON e.encounter_id = o.encounter_id
           INNER JOIN drug_order d ON d.order_id = o.order_id AND d.quantity > 0
           INNER JOIN drug ON drug.drug_id = d.drug_inventory_id
           INNER JOIN arv_drug On arv_drug.drug_id = drug.drug_id
-          INNER JOIN temp_patient_outcomes t ON o.patient_id = t.patient_id AND t.moh_cum_outcome = 'On antiretrovirals'
+          INNER JOIN #{temp_patient_outcomes} t ON o.patient_id = t.patient_id AND t.moh_cum_outcome = 'On antiretrovirals'
           INNER JOIN person ON person.person_id = o.patient_id AND person.voided = 0
           #{dsd_query(dsd: @dsd, model: 'o') if @dsd}
           INNER JOIN (
@@ -64,6 +67,7 @@ module ArtService
           WHERE o.voided = 0
             AND o.start_date <= '#{@end_date.to_date.strftime('%Y-%m-%d 23:59:59')}'
             AND o.start_date >= '#{@start_date.to_date.strftime('%Y-%m-%d 00:00:00')}'
+            AND e.location_id = #{Location.current.location_id}
           ORDER BY o.patient_id
         SQL
 
