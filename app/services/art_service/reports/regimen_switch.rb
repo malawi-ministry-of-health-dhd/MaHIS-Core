@@ -10,6 +10,14 @@ module ArtService
         @occupation = kwargs[:occupation]
         @dsd = kwargs[:dsd]
         @location_id = kwargs[:location_id] || Location.current&.location_id || User.current&.location&.location_id
+        @arv_number_identifier_type_id = PatientIdentifierType.find_by_name('ARV Number')&.id || 4
+        @hiv_program_id = Program.find_by_name('HIV Program')&.program_id || 1
+        @on_arv_state_id = ProgramWorkflowState.joins(:program_workflow)
+                                               .joins('INNER JOIN program ON program.program_id = program_workflow.program_id')
+                                               .where('program.name = ? AND program_workflow_state.concept_id = ?',
+                                                      'HIV Program',
+                                                      ConceptName.find_by_name('On antiretrovirals')&.concept_id)
+                                               &.first&.program_workflow_state_id || 7
       end
 
       def regimen_switch(pepfar)
@@ -174,8 +182,8 @@ module ArtService
            WHERE
             ((`p`.`voided` = 0)
             AND (`s`.`voided` = 0)
-            AND (`p`.`program_id` = 1)
-            AND (`s`.`state` = 7))
+            AND (`p`.`program_id` = #{@hiv_program_id})
+            AND (`s`.`state` = #{@on_arv_state_id}))
             AND (`s`.`start_date` <= '#{@end_date.to_date.strftime('%Y-%m-%d 23:59:59')}'
             AND p.patient_id IN(#{patient_ids.join(',')}))
           GROUP BY `p`.`patient_id`;
@@ -256,7 +264,7 @@ module ArtService
               FROM person p
               LEFT JOIN person_name n ON n.person_id = p.person_id AND n.voided = 0
               LEFT JOIN patient_identifier i ON i.patient_id = p.person_id
-              AND i.identifier_type = 4 AND i.voided = 0
+              AND i.identifier_type = #{@arv_number_identifier_type_id} AND i.voided = 0
               WHERE p.person_id = #{patient_id} GROUP BY p.person_id
               ORDER BY n.date_created DESC, i.date_created DESC;
             SQL
@@ -331,7 +339,7 @@ module ArtService
               FROM person p
               LEFT JOIN person_name n ON n.person_id = p.person_id AND n.voided = 0
               LEFT JOIN patient_identifier i ON i.patient_id = p.person_id
-              AND i.identifier_type = 4 AND i.voided = 0
+              AND i.identifier_type = #{@arv_number_identifier_type_id} AND i.voided = 0
               WHERE p.person_id = #{patient_id} GROUP BY p.person_id
               ORDER BY n.date_created DESC, i.date_created DESC
             SQL
