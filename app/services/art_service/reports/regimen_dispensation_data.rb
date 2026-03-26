@@ -122,20 +122,11 @@ module ArtService
       end
 
       def create_temp_patient_outcome
-        # Instead of using patient_outcome function, directly check patient_state
-        # This fixes the issue where states starting on end_date return 'Unknown'
         ActiveRecord::Base.connection.execute <<~SQL
           CREATE TABLE temp_reg_outcome
-          SELECT DISTINCT pp.patient_id, 'On antiretrovirals' as outcome
-          FROM patient_program pp
-          INNER JOIN patient_state ps ON ps.patient_program_id = pp.patient_program_id AND ps.voided = 0
-          INNER JOIN temp_current_dispensation tcd ON tcd.patient_id = pp.patient_id
-          WHERE pp.program_id = #{@hiv_program_id}
-            AND pp.voided = 0
-            AND ps.state = #{@on_arv_state_id}
-            AND ps.start_date <= #{end_date}
-            AND (ps.end_date IS NULL OR ps.end_date >= #{end_date})
-          #{dsd_query(dsd: @dsd, model: 'pp') if @dsd}
+          SELECT temp_current_dispensation.patient_id, #{@type == 'pepfar' ? "pepfar_patient_outcome(temp_current_dispensation.patient_id, #{@end_date})" : "patient_outcome(temp_current_dispensation.patient_id, #{@end_date})"} outcome
+          FROM temp_current_dispensation
+          #{dsd_query(dsd: @dsd, model: 'temp_current_dispensation') if @dsd}
         SQL
         ActiveRecord::Base.connection.execute 'create index reg_outcome on temp_reg_outcome (patient_id)'
       end
