@@ -15,6 +15,7 @@ module ArtService
 
         include Utils
         include CommonSqlQueryUtils
+        include ArtTempTablesNaming
 
         def initialize(start_date:, end_date:, **kwargs)
           super(start_date:, end_date:, **kwargs)
@@ -305,15 +306,15 @@ module ArtService
               current_order.start_date vl_order_date,
               st.start_date recorded_state_start_date,
               TIMESTAMPDIFF(month, e.earliest_start_date, '2024-03-31') diff_in_months
-            FROM temp_patient_outcomes cum
-            INNER JOIN temp_earliest_start_date e ON e.patient_id = cum.patient_id
-            INNER JOIN temp_max_patient_state st ON st.patient_id = cum.patient_id
+            FROM #{temp_patient_outcomes} cum
+            INNER JOIN #{temp_earliest_start_date} e ON e.patient_id = cum.patient_id
+            INNER JOIN #{temp_max_patient_state} st ON st.patient_id = cum.patient_id
             #{dsd_query(dsd: @dsd, model: 'st') if @dsd}
             INNER JOIN (
               SELECT prescriptions.patient_id, regimens.name AS regimen_category, prescriptions.drugs, prescriptions.prescription_date
               FROM (
                 SELECT tcm.patient_id, GROUP_CONCAT(DISTINCT(tcm.drug_id) ORDER BY tcm.drug_id ASC) AS drugs, DATE(tcm.start_date) prescription_date
-                FROM temp_current_medication tcm
+                FROM #{temp_current_medication} tcm
                 GROUP BY tcm.patient_id
               ) AS prescriptions
               LEFT JOIN (
