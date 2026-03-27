@@ -22,6 +22,7 @@ module ArtService
                                                       'HIV Program',
                                                       ConceptName.find_by_name('On antiretrovirals')&.concept_id)
                                                &.first&.program_workflow_state_id || 7
+        @drug_order_type_id = OrderType.find_by_name('Drug Order')&.order_type_id || 1
       end
 
       def find_report
@@ -71,7 +72,7 @@ module ArtService
           LEFT JOIN (#{current_occupation_query}) a ON a.person_id = o.patient_id
           WHERE o.start_date > #{end_date} - INTERVAL 18 MONTH AND o.start_date < #{end_date} + INTERVAL 1 DAY
           AND o.voided = 0 #{%w[Military Civilian].include?(@occupation) ? 'AND' : ''} #{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}
-          AND o.order_type_id = 1 -- drug order
+          AND o.order_type_id = #{@drug_order_type_id}
           GROUP BY o.patient_id
         SQL
         ActiveRecord::Base.connection.execute 'create index current_disp on temp_current_dispensation (patient_id, start_date)'
@@ -89,7 +90,7 @@ module ArtService
           INNER JOIN drug_order od ON od.order_id = o.order_id AND od.quantity > 0 AND od.drug_inventory_id IN (SELECT drug_id FROM arv_drug)
           INNER JOIN drug d ON d.drug_id = od.drug_inventory_id AND d.retired  = 0
           WHERE o.voided = 0
-          AND o.order_type_id = 1 -- drug order
+          AND o.order_type_id = #{@drug_order_type_id}
         SQL
         ActiveRecord::Base.connection.execute 'create index drug_disp on temp_drug_dispensed (patient_id, start_date)'
       end
