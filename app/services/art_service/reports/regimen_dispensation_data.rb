@@ -18,7 +18,7 @@ module ArtService
         @location_id = kwargs[:location_id] || Location.current&.location_id || User.current&.location&.location_id
         @arv_number_identifier_type_id = patient_identifier_type('ARV Number')&.id || 4
         @hiv_program_id = program('HIV Program')&.program_id || 1
-        @on_arv_state_id = program('HIV Program').state('On antiretrovirals').program_workflow_state_id 
+        @on_arv_state_id = program('HIV Program').state('On antiretrovirals').program_workflow_state_id
         @drug_order_type_id = order_type('Drug Order')&.order_type_id || 1
       end
 
