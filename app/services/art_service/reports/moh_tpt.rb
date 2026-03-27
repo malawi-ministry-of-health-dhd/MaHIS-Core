@@ -5,6 +5,8 @@ module ArtService
     # This class generates the MOH TPT report
     class MohTpt
       include CommonSqlQueryUtils
+      include ArtTempTablesNaming
+
       attr_reader :start_date, :end_date, :start_of_month, :end_of_month, :raw_end_date, :raw_start_date
 
       def initialize(start_date:, end_date:, **kwargs)
@@ -16,6 +18,7 @@ module ArtService
         @end_of_month = @end_date.end_of_month
         @occupation = kwargs[:occupation]
         @dsd = kwargs[:dsd]
+        @location_id = Location.current.location_id
       end
 
       def data
@@ -72,14 +75,14 @@ module ArtService
 
       def fetch_initiated_on_art
         ActiveRecord::Base.connection.select_all <<~SQL
-          SELECT patient_id, age_group, gender FROM temp_initiated_on_art
+          SELECT patient_id, age_group, gender FROM #{temp_initiated_on_art}
           WHERE art_start_date >= DATE('#{start_of_month}')
         SQL
       end
 
       def fetch_initiated_on_tpt
         result = ActiveRecord::Base.connection.select_all <<~SQL
-          SELECT * FROM temp_initiated_on_tpt
+          SELECT * FROM #{temp_initiated_on_tpt}
           WHERE start_date >= DATE('#{start_of_month}')
         SQL
         # convert to array of hashes
@@ -88,7 +91,7 @@ module ArtService
 
       def initiated_on_art
         ActiveRecord::Base.connection.execute <<~SQL
-          CREATE TABLE temp_initiated_on_art
+          CREATE TABLE #{temp_initiated_on_art}
           SELECT pop.patient_id, coalesce(o.value_datetime, min(art_order.start_date)) art_start_date, p.gender, disaggregated_age_group(p.birthdate, DATE('#{raw_end_date}')) age_group
           FROM patient_program pop
           INNER JOIN person p ON p.person_id = pop.patient_id AND p.voided = 0
@@ -107,7 +110,7 @@ module ArtService
             AND e.encounter_datetime < DATE('#{end_of_month}') + INTERVAL 1 DAY
             AND e.program_id = 1 -- HIV program
           LEFT JOIN obs o ON o.person_id = pop.patient_id
-            AND o.concept_id = 2516 -- ART start date
+            AND o.concept_id = (SELECT concept_id FROM concept_name WHERE name = 'Date antiretrovirals started' AND voided = 0 LIMIT 1) -- ART start date
             AND o.encounter_id = e.encounter_id
             AND o.voided = 0
           LEFT JOIN (#{current_occupation_query}) a ON a.person_id = pop.patient_id
@@ -121,6 +124,7 @@ module ArtService
               AND o.start_date < DATE('#{start_of_month}')
             GROUP BY o.patient_id
           )
+          AND pop.location_id = #{@location_id}
           AND pop.program_id = 1 #{%w[Military Civilian].include?(@occupation) ? 'AND' : ''} #{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}
           GROUP BY pop.patient_id
         SQL
@@ -128,7 +132,7 @@ module ArtService
 
       def initiated_on_tpt
         ActiveRecord::Base.connection.execute <<~SQL
-          CREATE TABLE temp_initiated_on_tpt
+          CREATE TABLE #{temp_initiated_on_tpt}
           SELECT
             pop.patient_id,
             coalesce(tpt_transfer_in_obs.value_datetime, min(tpt_order.start_date)) start_date,
@@ -169,7 +173,7 @@ module ArtService
             AND art_order.start_date >= DATE('1901-01-01')
             AND art_order.voided = 0
           LEFT JOIN obs AS art_start_date_obs
-            ON art_start_date_obs.concept_id = 2516
+            ON art_start_date_obs.concept_id = (SELECT concept_id FROM concept_name WHERE name = 'Date antiretrovirals started' AND voided = 0 LIMIT 1)
             AND art_start_date_obs.person_id = pop.patient_id
             AND art_start_date_obs.voided = 0
             AND art_start_date_obs.obs_datetime < (DATE('#{@end_of_month}') + INTERVAL 1 DAY)
@@ -190,19 +194,23 @@ module ArtService
               AND o.start_date < DATE('#{start_of_month}')
             GROUP BY o.patient_id
           )
+          AND pop.location_id = #{@location_id}
           AND pop.program_id = 1 #{%w[Military Civilian].include?(@occupation) ? 'AND' : ''} #{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}
           GROUP BY pop.patient_id
         SQL
       end
 
       def drop_tables
-        execute_query 'DROP TABLE IF EXISTS temp_initiated_on_art'
-        execute_query 'DROP TABLE IF EXISTS temp_initiated_on_tpt'
+        execute_query "DROP TABLE IF EXISTS #{temp_initiated_on_art}"
+        execute_query "DROP TABLE IF EXISTS #{temp_initiated_on_tpt}"
       end
 
       def create_indexes
-        execute_query 'CREATE INDEX idx_temp_initiated_on_art ON temp_initiated_on_art(patient_id)'
-        execute_query 'CREATE INDEX idx_temp_initiated_on_tpt ON temp_initiated_on_tpt(patient_id)'
+        execute_query "CREATE INDEX #{idx_temp_initiated_on_art} ON temp_initiated_on_art(patient_id)"
+        execute_query "CREATE INDEX #{idx_temp_initiated_on_tpt} ON temp_initiated_on_tpt(patient_id)"
+      rescue ActiveRecord::StatementInvalid => e
+        # Index may already exist, which is fine
+        raise e unless e.message.include?('Duplicate key name')
       end
 
       def execute_query(query)

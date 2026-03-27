@@ -4,93 +4,105 @@
 module PatientRecordService
   class GuardianManager < BaseSaver
     def manage_guardian(patient_id, record)
-      updated = update_guardian_information(patient_id, record)
-      created = create_guardian(patient_id, record)
-      updated || created
+      collected_errors = []
+
+      updated_result = update_guardian_information(patient_id, record)
+      collected_errors.concat(updated_result.errors) if updated_result.errors.any?
+
+      created_result = create_guardian(patient_id, record)
+      collected_errors.concat(created_result.errors) if created_result.errors.any?
+
+      overall_success = updated_result.success? || created_result.success?
+      OperationResult.new(success: overall_success, errors: collected_errors)
     end
 
     def update_guardian_information(patient_id, record)
-      return false unless record[:guardianInformation][:unsaved].present? &&
-                          record[:saveStatusGuardianInformation] == 'edit'
+      return ok unless record[:guardianInformation][:unsaved].present? &&
+                       record[:saveStatusGuardianInformation] == 'edit'
 
-      service = PersonRelationshipService.new Person.find(patient_id)
+      service           = PersonRelationshipService.new(Person.find(patient_id))
       relationship_data = service.find_relationships("")
-      return false unless relationship_data.present?
+      return ok unless relationship_data.present?
 
       person = Person.find(relationship_data[0].person_b)
       person_service.update_person(person, record[:guardianInformation][:unsaved][0].permit!)
 
       if relationship_data[0].relationship_id.present?
-        relationship_type = RelationshipType.find record[:otherPersonInformation][:relationshipID]
-        service.void_relationship relationship_data[0].relationship_id, "Guardian relationship updated"
-        service.create_relationship person, relationship_type
+        relationship_type = RelationshipType.find(record[:otherPersonInformation][:relationshipID])
+        service.void_relationship(relationship_data[0].relationship_id, "Guardian relationship updated")
+        service.create_relationship(person, relationship_type)
       end
 
-      true
+      ok
     rescue StandardError => e
-      log_error("Failed to update guardian information", e)
-      false
+      log_and_fail("Failed to update guardian information", e)
     end
 
     def create_guardian(patient_id, record)
-      return false unless record[:saveStatusGuardianInformation] == 'pending'
-      return false unless guardian_info_complete?(record)
+      return ok unless record[:saveStatusGuardianInformation] == 'pending'
+      return ok unless guardian_info_complete?(record)
 
-      patient =PatientRecordService::PatientIdentityManager.new
-      guardian_data = patient.create_person(record[:guardianInformation][:unsaved][0])
-      guardian_id = guardian_data.person_id
+      identity_manager = PatientRecordService::PatientIdentityManager.new
+      guardian_data    = identity_manager.create_person(record[:guardianInformation][:unsaved][0])
+      guardian_id      = guardian_data.person_id
 
       create_relation(
-        guardian_id: guardian_id,
+        guardian_id:          guardian_id,
         relationship_type_id: record[:otherPersonInformation][:relationshipID],
-        person_id: patient_id
+        person_id:            patient_id
       )
+
       record[:saveStatusGuardianInformation] = 'complete'
-      true
+      ok
     rescue StandardError => e
-      log_error("Failed to save guardian information", e)
-      false
+      log_and_fail("Failed to save guardian information", e)
     end
 
-  def create_relationship(record)
-    return false unless record[:relationships].present? && record[:relationships].is_a?(Array)
+    def create_relationship(record)
+      return ok unless record[:relationships].present? && record[:relationships].is_a?(Array)
 
-    record[:relationships].each do |relationship|
-      next unless relationship[:guardianID].present? && 
-                  relationship[:patientID].present? && 
-                  relationship[:relationshipID].present?
+      collected_errors = []
 
-      guardian_identifier = PatientIdentifier.find_by(identifier: relationship[:guardianID])
-      guardian_id = guardian_identifier&.patient_id
+      record[:relationships].each do |relationship|
+        unless relationship[:guardianID].present? &&
+               relationship[:patientID].present? &&
+               relationship[:relationshipID].present?
+          next
+        end
 
-      patient_identifier = PatientIdentifier.find_by(identifier: relationship[:patientID])
-      patient_id = patient_identifier&.patient_id
+        guardian_identifier = PatientIdentifier.find_by(identifier: relationship[:guardianID])
+        guardian_id         = guardian_identifier&.patient_id
 
-      # Skip if either ID couldn't be found
-      next unless guardian_id && patient_id
+        patient_identifier = PatientIdentifier.find_by(identifier: relationship[:patientID])
+        patient_id         = patient_identifier&.patient_id
 
-      # Check if relationship already exists
-      existing_relationship = Relationship.find_by(
-        person_a: guardian_id,
-        relationship: relationship[:relationshipID],
-        person_b: patient_id
-      )
+        next unless guardian_id && patient_id
 
-      # Only create if relationship doesn't exist
-      next if existing_relationship.present?
+        existing = Relationship.find_by(
+          person_a:     guardian_id,
+          relationship: relationship[:relationshipID],
+          person_b:     patient_id
+        )
+        next if existing.present?
 
-      create_relation(
-        guardian_id: guardian_id,
-        relationship_type_id: relationship[:relationshipID],
-        person_id: patient_id
-      )
+        begin
+          create_relation(
+            guardian_id:          guardian_id,
+            relationship_type_id: relationship[:relationshipID],
+            person_id:            patient_id
+          )
+        rescue StandardError => e
+          collected_errors << "Failed to create relationship guardian=#{relationship[:guardianID]}: #{e.message}"
+        end
+      end
+
+      OperationResult.new(success: true, errors: collected_errors)
     end
 
-    return true
-  end
+    private
 
     def guardian_info_complete?(record)
-      guardian = record.dig(:guardianInformation, :unsaved, 0)
+      guardian        = record.dig(:guardianInformation, :unsaved, 0)
       relationship_id = record.dig(:otherPersonInformation, :relationshipID)
 
       guardian&.dig(:given_name).present? &&
@@ -99,12 +111,13 @@ module PatientRecordService
     end
 
     def create_relation(guardian_id:, relationship_type_id:, person_id:)
-      relationship_type = RelationshipType.find relationship_type_id
-      person = Person.find guardian_id
-      service = PersonRelationshipService.new Person.find(person_id)
-      service.create_relationship person, relationship_type
+      relationship_type = RelationshipType.find(relationship_type_id)
+      person            = Person.find(guardian_id)
+      service           = PersonRelationshipService.new(Person.find(person_id))
+      service.create_relationship(person, relationship_type)
     rescue ActiveRecord::RecordNotFound => e
       Rails.logger.error(e.message)
+      raise # let callers handle and collect
     end
   end
 end

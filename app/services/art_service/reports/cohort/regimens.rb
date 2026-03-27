@@ -6,13 +6,13 @@ module ArtService
       # This module is responsible for generating the regimen report
       module Regimens
         # rubocop:disable Metrics/MethodLength
-        def self.patient_regimens
+        def self.patient_regimens(temp_current_medication:, temp_patient_outcomes:)
           ActiveRecord::Base.connection.select_all <<~SQL
             SELECT prescriptions.patient_id, regimens.name AS regimen_category, prescriptions.drugs, prescriptions.prescription_date
             FROM (
               SELECT tcm.patient_id, GROUP_CONCAT(DISTINCT(tcm.drug_id) ORDER BY tcm.drug_id ASC) AS drugs, DATE(tcm.start_date) prescription_date
-              FROM temp_current_medication tcm
-              INNER JOIN temp_patient_outcomes AS outcomes ON outcomes.patient_id = tcm.patient_id AND outcomes.moh_cum_outcome = 'On antiretrovirals'
+              FROM #{temp_current_medication} tcm
+              INNER JOIN #{temp_patient_outcomes} AS outcomes ON outcomes.patient_id = tcm.patient_id AND outcomes.moh_cum_outcome = 'On antiretrovirals'
               GROUP BY tcm.patient_id
             ) AS prescriptions
             LEFT JOIN (
