@@ -5,40 +5,32 @@ module PatientRecordService
   class VoidEncounters < BaseSaver
     def void_encounters(record)
       data = record.dig(:void_encounters)
-      return false unless data.is_a?(Array) && data.any?
+      return ok unless data.is_a?(Array) && data.any?
 
-      voided_count = 0
-      errors = []
+      collected_errors = []
 
       data.each do |void_request|
         encounter_id = void_request[:id]
-        reason = void_request[:reason]
+        reason       = void_request[:reason]
 
         unless encounter_id.present? && reason.present?
-          errors << { id: encounter_id, error: "Missing encounter_id or reason" }
+          collected_errors << "Missing encounter_id or reason for request=#{void_request.inspect}"
           next
         end
 
         begin
           encounter = Encounter.find(encounter_id)
           encounter_service.void(encounter, reason)
-          voided_count += 1
         rescue ActiveRecord::RecordNotFound => e
-          errors << { id: encounter_id, error: "Encounter not found: #{e.message}" }
+          collected_errors << "Encounter #{encounter_id} not found: #{e.message}"
           Rails.logger.error("Failed to void encounter #{encounter_id}: #{e.message}")
         rescue StandardError => e
-          errors << { id: encounter_id, error: e.message }
+          collected_errors << "Encounter #{encounter_id}: #{e.message}"
           Rails.logger.error("Failed to void encounter #{encounter_id}: #{e.message}")
         end
       end
 
-      # Log summary if there were errors
-      if errors.any?
-        Rails.logger.error("Failed to void #{errors.size}/#{data.size} encounters. Errors: #{errors.to_json}")
-      end
-
-      # Return true only if ALL encounters were voided successfully
-      voided_count > 0 
+      OperationResult.new(success: true, errors: collected_errors)
     end
 
     private
