@@ -78,6 +78,8 @@ module Api
 
           ImmunizationReportJob.perform_later(start_date, end_date, location_id)
           DashboardStatsJob.perform_later(location_id)
+        rescue StandardError => e
+          Rails.logger.error("Error in immunization_cache_update: #{e.message}")
         end
       end
     end

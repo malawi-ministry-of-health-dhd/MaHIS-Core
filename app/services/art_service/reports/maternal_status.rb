@@ -6,6 +6,7 @@ module ArtService
     class MaternalStatus
       include CommonSqlQueryUtils
       include ModelUtils
+      include ArtTempTablesNaming
       attr_reader :start_date, :end_date, :location
 
       def initialize(start_date:, end_date:, **kwargs)
@@ -22,7 +23,7 @@ module ArtService
         transformed = ids.split(',').map(&:to_i) if ids.class == String
         transformed = ids if ids.class == Array
 
-        @patient_ids = transformed       
+        @patient_ids = transformed
       end
 
       def find_report
@@ -38,7 +39,7 @@ module ArtService
       def pregnant_women(patient_list)
         ActiveRecord::Base.connection.select_all <<~SQL
           SELECT patient_id, maternal_status
-          FROM temp_maternal_status#{' '}
+          FROM #{temp_maternal_status}#{' '}
           WHERE maternal_status = 'FP' AND patient_id IN (#{patient_list.join(',')})
         SQL
       end
@@ -46,7 +47,7 @@ module ArtService
       def breast_feeding(patient_list)
         ActiveRecord::Base.connection.select_all <<~SQL
           SELECT patient_id, maternal_status
-          FROM temp_maternal_status#{' '}
+          FROM #{temp_maternal_status}#{' '}
           WHERE maternal_status = 'FBf' AND patient_id IN (#{patient_list.join(',')})
         SQL
       end
@@ -69,10 +70,10 @@ module ArtService
 
       def load_pregnant_women
         ActiveRecord::Base.connection.execute <<~SQL
-          INSERT INTO temp_maternal_status (patient_id, maternal_status)
+          INSERT INTO #{temp_maternal_status} (patient_id, maternal_status)
           SELECT o.person_id, 'FP' as maternal_status
           FROM obs  o
-          INNER JOIN temp_earliest_start_date  c ON c.patient_id = o.person_id AND c.gender = 'F'
+          INNER JOIN #{temp_earliest_start_date}  c ON c.patient_id = o.person_id AND c.gender = 'F'
           LEFT JOIN obs  a ON a.person_id = o.person_id AND a.obs_datetime > o.obs_datetime AND a.concept_id IN (#{pregnant_concepts.to_sql}) AND a.voided = 0
           AND a.obs_datetime >= DATE(#{ActiveRecord::Base.connection.quote(start_date)}) AND a.obs_datetime < DATE(#{ActiveRecord::Base.connection.quote(end_date)}) + INTERVAL 1 DAY
           WHERE a.obs_id is null
@@ -87,10 +88,10 @@ module ArtService
 
       def load_breast_feeding
         ActiveRecord::Base.connection.execute <<~SQL
-          INSERT INTO temp_maternal_status  (patient_id, maternal_status)
+          INSERT INTO #{temp_maternal_status}  (patient_id, maternal_status)
           SELECT o.person_id,  'FBf' as maternal_status
           FROM obs  o
-          INNER JOIN temp_earliest_start_date  c ON c.patient_id = o.person_id AND c.gender = 'F'
+          INNER JOIN #{temp_earliest_start_date}  c ON c.patient_id = o.person_id AND c.gender = 'F'
           LEFT JOIN obs  a ON a.person_id = o.person_id AND a.obs_datetime > o.obs_datetime AND a.concept_id IN (#{breast_feeding_concepts.to_sql}) AND a.voided = 0
           AND a.obs_datetime >= DATE(#{ActiveRecord::Base.connection.quote(start_date)}) AND a.obs_datetime < DATE(#{ActiveRecord::Base.connection.quote(end_date)}) + INTERVAL 1 DAY
           WHERE a.obs_id is null
@@ -99,14 +100,14 @@ module ArtService
             AND o.voided = 0
             AND o.concept_id IN (#{breast_feeding_concepts.to_sql})
             AND o.value_coded IN (#{yes_concepts.join(',')})
-            AND o.person_id NOT IN (SELECT c.patient_id FROM temp_maternal_status  c)
+            AND o.person_id NOT IN (SELECT c.patient_id FROM #{temp_maternal_status}  c)
           GROUP BY o.person_id
         SQL
       end
 
       def clear_maternal_status
         ActiveRecord::Base.connection.execute <<~SQL
-          DELETE FROM temp_maternal_status
+          DELETE FROM #{temp_maternal_status}
         SQL
       end
 

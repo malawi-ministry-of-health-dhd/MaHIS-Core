@@ -16,7 +16,7 @@ module ArtService
 
         def find_report
           return [] if start_date.blank? || end_date.blank?
-
+          @location_id = User&.current&.location&.location_id
           @report = init_report
           addittional_groups
           process_data
@@ -148,7 +148,7 @@ module ArtService
               AND pregnant_or_breastfeeding.value_coded = #{concept_name('Yes').concept_id}
               AND pregnant_or_breastfeeding.obs_datetime BETWEEN '#{start_date}' AND '#{end_date}'
             LEFT JOIN concept_name preg_or_breast ON preg_or_breast.concept_id = pregnant_or_breastfeeding.concept_id AND preg_or_breast.voided = 0
-            WHERE e.encounter_datetime BETWEEN '#{start_date}' AND '#{end_date}'
+            WHERE e.location_id=#{@location_id} AND e.encounter_datetime BETWEEN '#{start_date}' AND '#{end_date}'
             GROUP BY p.patient_id
           SQL
         end
