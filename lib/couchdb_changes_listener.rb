@@ -271,12 +271,19 @@ class CouchdbChangesListener
       end
 
       Location.current = Location.current_health_center
-      processed_data = processor_service.send(processor_method, doc.with_indifferent_access)
+      begin
+        Thread.current['skip_couchdb_sync'] = true
+        processed_data = processor_service.send(processor_method, doc.with_indifferent_access)
+      ensure
+        Thread.current['skip_couchdb_sync'] = false
+      end
       
       update_couchdb_with_retry(doc_id, processed_data)
       
     rescue StandardError => e
       Rails.logger.error("[CouchDB Listener] Failed to process document #{doc_id} in #{db_name}: #{e.message}")
+      Rails.logger.error("[CouchDB Listener] Error class: #{e.class}")
+      Rails.logger.error("[CouchDB Listener] Backtrace: #{e.backtrace&.first(5)&.join(' | ')}")
       raise e
     end
   end

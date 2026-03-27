@@ -69,7 +69,7 @@ module PatientRecordService
               })
             end
 
-            Lab::PushOrderJob.perform_later(order.fetch(:order_id))
+            enqueue_lab_push_order(order.fetch(:order_id), order_params[:offline_id])
           rescue StandardError => e
             log_error("Failed to save lab order for order_params=#{order_params[:offline_id]}", e)
             collected_errors << "Lab order #{order_params[:offline_id]}: #{e.message}"
@@ -87,6 +87,28 @@ module PatientRecordService
     def create_observation(encounter_id, params)
       encounter = Encounter.find(encounter_id)
       observation_service.create_observation(encounter, params)
+    end
+
+    def enqueue_lab_push_order(order_id, offline_id = nil)
+      specimen_name = specimen_catalogue_name(order_id)
+      if specimen_name.blank?
+        Rails.logger.warn("Skipping Lab::PushOrderJob for order_id=#{order_id} offline_id=#{offline_id}: specimen catalogue name is missing")
+        return
+      end
+
+      Lab::PushOrderJob.perform_later(order_id)
+    end
+
+    def specimen_catalogue_name(order_id)
+      order = Lab::LabOrder.unscoped.find_by(order_id: order_id)
+      return nil unless order&.concept_id
+
+      ConceptAttribute
+        .find_by(concept_id: order.concept_id, attribute_type: ConceptAttributeType.test_catalogue_name)
+        &.value_reference
+    rescue StandardError => e
+      Rails.logger.warn("Failed to resolve specimen catalogue name for order_id=#{order_id}: #{e.message}")
+      nil
     end
 
     def save_lab_results(data_type, patient_id, record, offline_id = nil, test_obs_id = nil)

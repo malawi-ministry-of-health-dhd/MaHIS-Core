@@ -17,15 +17,21 @@ module CouchdbSync
   end
 
   def sync_to_couchdb(doc_data, db_name, doc_id)
-    if couchdb_configured?
-      ensure_db_exists(db_name)
+    return if Thread.current['skip_couchdb_sync']
+    return unless couchdb_configured?
+
+    ensure_db_exists(db_name)
+
+    attempts = 0
+    begin
+      attempts += 1
 
       # If updating, fetch _rev
       begin
         existing_doc = RestClient.get("#{COUCHDB_URL}/#{db_name}/#{doc_id}")
         doc_data["_rev"] = JSON.parse(existing_doc.body)["_rev"]
       rescue RestClient::NotFound
-        # First insert
+        doc_data.delete("_rev")
       end
 
       RestClient.put(
@@ -33,6 +39,11 @@ module CouchdbSync
         doc_data.to_json,
         { content_type: :json, accept: :json }
       )
+    rescue RestClient::Conflict, RestClient::PreconditionFailed => e
+      raise e if attempts >= 3
+
+      sleep(0.1 * attempts)
+      retry
     end
   end
 end
