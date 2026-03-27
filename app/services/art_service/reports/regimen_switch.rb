@@ -5,20 +5,16 @@ module ArtService
     class RegimenSwitch
       include CommonSqlQueryUtils
       include ArtTempTablesNaming
+      include ModelUtils
       def initialize(start_date:, end_date:, **kwargs)
         @start_date = start_date
         @end_date = end_date
         @occupation = kwargs[:occupation]
         @dsd = kwargs[:dsd]
         @location_id = kwargs[:location_id] || Location.current&.location_id || User.current&.location&.location_id
-        @arv_number_identifier_type_id = PatientIdentifierType.find_by_name('ARV Number')&.id || 4
-        @hiv_program_id = Program.find_by_name('HIV Program')&.program_id || 1
-        @on_arv_state_id = ProgramWorkflowState.joins(:program_workflow)
-                                               .joins('INNER JOIN program ON program.program_id = program_workflow.program_id')
-                                               .where('program.name = ? AND program_workflow_state.concept_id = ?',
-                                                      'HIV Program',
-                                                      ConceptName.find_by_name('On antiretrovirals')&.concept_id)
-                                               &.first&.program_workflow_state_id || 7
+        @arv_number_identifier_type_id = patient_identifier_type('ARV Number')&.id || 4
+        @hiv_program_id = program('HIV Program')&.program_id || 1
+        @on_arv_state_id = program('HIV Program').state('On antiretrovirals').program_workflow_state_id
       end
 
       def regimen_switch(pepfar)
@@ -43,8 +39,8 @@ module ArtService
       private
 
       def latest_regimens
-        pills_dispensed = ConceptName.find_by_name('Amount of drug dispensed').concept_id
-        patient_identifier_type = PatientIdentifierType.find_by_name('ARV Number').id
+        pills_dispensed = concept_name_to_id('Amount of drug dispensed')
+        patient_identifier_type = patient_identifier_type('ARV Number').id
 
         arv_dispensentions = ActiveRecord::Base.connection.select_all <<~SQL
           SELECT
@@ -126,7 +122,7 @@ module ArtService
 
       def regimen_data
         EncounterType.find_by_name('DISPENSING').id
-        arv_concept_id = ConceptName.find_by_name('Antiretroviral drugs').concept_id
+        arv_concept_id = concept_name_to_id('Antiretroviral drugs')
 
         drug_ids = Drug.joins('INNER JOIN concept_set s ON s.concept_id = drug.concept_id')\
                        .where('s.concept_set = ?', arv_concept_id).map(&:drug_id)
@@ -193,7 +189,7 @@ module ArtService
 
       def arv_dispensention_data(patient_id)
         EncounterType.find_by_name('DISPENSING').id
-        arv_concept_id = ConceptName.find_by_name('Antiretroviral drugs').concept_id
+        arv_concept_id = concept_name_to_id('Antiretroviral drugs')
 
         drug_ids = Drug.joins('INNER JOIN concept_set s ON s.concept_id = drug.concept_id')\
                        .where('s.concept_set = ?', arv_concept_id).map(&:drug_id)
@@ -374,8 +370,8 @@ module ArtService
       def get_patient_type(patient_id, pepfar)
         return nil unless pepfar
 
-        concept_id = ConceptName.find_by_name('Type of patient').concept_id
-        ext_id = ConceptName.find_by_name('External consultation').concept_id
+        concept_id = concept_name_to_id('Type of patient')
+        ext_id = concept_name_to_id('External consultation')
         obs = Observation.where(concept_id:, value_coded: ext_id, person_id: patient_id)
         (obs.blank? ? 'Resident' : 'External')
       end
@@ -389,7 +385,7 @@ module ArtService
       end
 
       def current_weight(patient_id)
-        weight_concept = ConceptName.find_by_name('Weight (kg)').concept_id
+        weight_concept = concept_name_to_id('Weight (kg)')
         obs = Observation.where("person_id = ? AND concept_id = ?
           AND obs_datetime <= ? AND (value_numeric IS NOT NULL OR value_text IS NOT NULL)",
                                 patient_id, weight_concept, @end_date.to_date.strftime('%Y-%m-%d 23:59:59'))\
@@ -434,8 +430,8 @@ module ArtService
           SELECT odr.patient_id, MAX(start_date) AS order_date
           FROM obs o
           INNER JOIN orders odr ON odr.order_id = o.order_id AND odr.voided = 0 AND DATE(odr.start_date) <= '#{@end_date}'
-          WHERE o.concept_id = #{ConceptName.find_by_name('Test Type').concept_id}
-          AND o.value_coded = #{ConceptName.find_by_name('HIV viral load').concept_id}
+          WHERE o.concept_id = #{concept_name_to_id('Test Type')}
+          AND o.value_coded = #{concept_name_to_id('HIV viral load')}
           AND o.voided = 0
           AND o.person_id IN (#{patient_list.join(',')})
           GROUP BY odr.patient_id
@@ -452,7 +448,7 @@ module ArtService
             SELECT MAX(obs_datetime) AS obs_datetime, person_id
             FROM obs co
             INNER JOIN orders odr ON odr.order_id = co.order_id AND odr.voided = 0
-            WHERE co.concept_id = #{ConceptName.find_by_name('HIV viral load').concept_id}
+            WHERE co.concept_id = #{concept_name_to_id('HIV viral load')}
             AND co.voided = 0
             AND DATE(co.obs_datetime) <= '#{@end_date}'
             AND (co.value_numeric IS NOT NULL || co.value_text IS NOT NULL)
@@ -460,7 +456,7 @@ module ArtService
             GROUP BY co.person_id
           ) AS latest_vl ON latest_vl.obs_datetime = o.obs_datetime AND latest_vl.person_id = o.person_id
           INNER JOIN orders odr ON odr.order_id = o.order_id AND odr.voided = 0
-          WHERE o.concept_id = #{ConceptName.find_by_name('HIV viral load').concept_id}
+          WHERE o.concept_id = #{concept_name_to_id('HIV viral load')}
           AND o.voided = 0 AND DATE(o.obs_datetime) <= '#{@end_date}'
           AND (o.value_numeric IS NOT NULL || o.value_text IS NOT NULL)
           AND o.person_id IN (#{patient_list.join(',')})
