@@ -4,6 +4,7 @@ module ArtService
   module Reports
     class RegimenSwitch
       include CommonSqlQueryUtils
+      include ArtTempTablesNaming
       def initialize(start_date:, end_date:, **kwargs)
         @start_date = start_date
         @end_date = end_date
@@ -56,7 +57,7 @@ module ArtService
           INNER JOIN drug_order d ON d.order_id = o.order_id AND d.quantity > 0
           INNER JOIN drug ON drug.drug_id = d.drug_inventory_id
           INNER JOIN arv_drug On arv_drug.drug_id = drug.drug_id
-          INNER JOIN temp_patient_outcomes t ON o.patient_id = t.patient_id AND t.moh_cum_outcome = 'On antiretrovirals'
+          INNER JOIN #{temp_patient_outcomes} t ON o.patient_id = t.patient_id AND t.moh_cum_outcome = 'On antiretrovirals'
           INNER JOIN person ON person.person_id = o.patient_id AND person.voided = 0
           #{dsd_query(dsd: @dsd, model: 'o') if @dsd}
           INNER JOIN (
@@ -130,10 +131,10 @@ module ArtService
         drug_ids = Drug.joins('INNER JOIN concept_set s ON s.concept_id = drug.concept_id')\
                        .where('s.concept_set = ?', arv_concept_id).map(&:drug_id)
 
-        ActiveRecord::Base.connection.execute('drop table if exists tmp_latest_arv_dispensation ;')
+        execute_query("DROP TABLE IF EXISTS #{tmp_latest_arv_dispensation}")
 
-        ActiveRecord::Base.connection.execute("
-          create table tmp_latest_arv_dispensation
+        execute_query("
+          CREATE TABLE #{tmp_latest_arv_dispensation}
           SELECT orders.patient_id,DATE(MAX(start_date)) as start_date
           FROM orders
           INNER JOIN encounter e ON e.encounter_id = orders.encounter_id AND e.voided = 0
@@ -146,7 +147,7 @@ module ArtService
           )
           group by orders.patient_id")
 
-        ActiveRecord::Base.connection.execute('create index lad_patient_id_and_start_date on tmp_latest_arv_dispensation (start_date, patient_id);')
+        execute_query("CREATE INDEX #{idx_lad_patient_id_and_start_date} ON #{tmp_latest_arv_dispensation} (start_date, patient_id)")
 
         arv_dispensentions = ActiveRecord::Base.connection.select_all <<~SQL
           SELECT
@@ -157,7 +158,7 @@ module ArtService
             #{@location_id ? "AND e.location_id = #{@location_id}" : ''}
           INNER JOIN drug_order d ON o.order_id = d.order_id
           INNER JOIN drug ON d.drug_inventory_id = drug.drug_id
-          INNER JOIN tmp_latest_arv_dispensation k on (o.patient_id = k.patient_id and DATE(o.start_date) =  k.start_date)
+          INNER JOIN #{tmp_latest_arv_dispensation} k on (o.patient_id = k.patient_id and DATE(o.start_date) =  k.start_date)
           WHERE d.drug_inventory_id IN(#{drug_ids.join(',')})
           AND d.quantity > 0 AND o.voided = 0 AND o.start_date BETWEEN '#{@start_date.to_date.strftime('%Y-%m-%d 00:00:00')}'
           AND '#{@end_date.to_date.strftime('%Y-%m-%d 23:59:59')}' GROUP BY o.order_id;
@@ -308,7 +309,7 @@ module ArtService
           medications = arv_dispensention_data(patient_id)
 
           outcome_status = ActiveRecord::Base.connection.select_one <<~SQL
-            SELECT #{type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}cum_outcome cum_outcome FROM temp_patient_outcomes WHERE patient_id = #{patient_id};
+            SELECT #{type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}cum_outcome cum_outcome FROM #{temp_patient_outcomes} WHERE patient_id = #{patient_id};
           SQL
 
           next if outcome_status.blank?
@@ -476,6 +477,10 @@ module ArtService
         gender = 'FP' unless result[:FP].blank?
         gender = 'FBf' unless result[:FBf].blank?
         gender
+      end
+
+      def execute_query(query)
+        ActiveRecord::Base.connection.execute(query)
       end
     end
   end

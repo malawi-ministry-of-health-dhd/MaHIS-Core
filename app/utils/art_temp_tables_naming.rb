@@ -119,6 +119,15 @@ module ArtTempTablesNaming
     temp_table_name('temp_tb_screened', start: start)
   end
 
+  # Regimen switch report tables
+  def tmp_latest_arv_dispensation
+    temp_table_name('tmp_latest_arv_dispensation')
+  end
+
+  def idx_lad_patient_id_and_start_date
+    temp_index_name('idx_lad_patient_id_and_start_date')
+  end
+
   # MySQL function names (location-specific)
   def died_in_function_name
     location_id = Location.current&.location_id || 'default'
