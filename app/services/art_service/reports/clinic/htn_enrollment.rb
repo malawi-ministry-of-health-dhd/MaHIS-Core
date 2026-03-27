@@ -4,12 +4,13 @@ module ArtService
   module Reports
     module Clinic
       class HtnEnrollment < CachedReport
-        attr_reader :start_date, :end_date, :dsd, :report
+        attr_reader :start_date, :end_date, :dsd, :report, :location_id
 
         def initialize(start_date:, end_date:, **kwargs)
           super(start_date:, end_date:, definition: 'moh', **kwargs)
           @start_date = start_date.to_date
           @end_date = end_date.to_date
+          @location_id = Location.current.location_id
         end
 
         PERIODS = {
@@ -159,6 +160,7 @@ module ArtService
             INNER JOIN obs diagonised ON diagonised.encounter_id = hp.encounter_id
                   AND diagonised.voided = 0
                   AND diagonised.concept_id = #{concept('Hypertension diagnosis date').id}
+                  AND diagonised.location_id = #{location_id}
             LEFT JOIN (
                 SELECT o.patient_id,#{' '}
                     o.date_created,
@@ -173,6 +175,7 @@ module ArtService
             LEFT JOIN temp_patient_outcomes tpo ON tpo.patient_id = hp.patient_id
             WHERE hp.program_id = #{program('HIV Program').id}
               AND hp.voided = 0
+              AND hp.location_id = #{location_id}
               AND DATE(hp.encounter_datetime) <= #{ActiveRecord::Base.connection.quote(end_date)}
             GROUP BY patient_id
           SQL
@@ -189,13 +192,16 @@ module ArtService
             LEFT JOIN obs lts_systolic ON lts_systolic.voided = 0
               AND lts_systolic.person_id = e.patient_id
               AND lts_systolic.concept_id = #{concept('Systolic blood pressure').id}
+              AND lts_systolic.location_id = #{location_id}
             LEFT JOIN obs lts_diastolic ON lts_diastolic.person_id = lts_systolic.person_id
               AND lts_diastolic.voided = 0
               AND lts_diastolic.concept_id = #{concept('Diastolic blood pressure').id}
+              AND lts_diastolic.location_id = #{location_id}
             WHERE e.patient_id IN (#{patient_ids.push(0).join(',')})
               AND DATE(e.encounter_datetime) BETWEEN DATE('#{start_date - 3.months}') AND DATE('#{end_date}')
               AND e.encounter_type = #{encounter_type('VITALS').id}
               AND e.program_id = #{program('HIV Program').id}
+              AND e.location_id = #{location_id}
             GROUP BY e.patient_id
           SQL
         end
