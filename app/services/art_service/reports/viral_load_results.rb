@@ -27,6 +27,7 @@ module ArtService
         @range = range || 'viraemia-1000+'
         @occupation = kwargs[:occupation]
         @dsd = kwargs[:dsd]
+        @location_id = kwargs[:location_id] || Location.current&.location_id || User.current&.location_id
       end
 
       def find_report
@@ -68,11 +69,13 @@ module ArtService
             AND test_obs.concept_id IN #{concept_id_subquery('Test type')}
             AND test_obs.value_coded IN #{concept_id_subquery('HIV Viral load')}
             AND test_obs.voided = 0
+            #{@location_id ? "AND test_obs.location_id = #{ActiveRecord::Base.connection.quote(@location_id)}" : ''}
           /* Select each test's results */
           INNER JOIN obs AS test_results_obs
             ON test_results_obs.obs_group_id = test_obs.obs_id
             AND test_results_obs.concept_id IN #{concept_id_subquery('Lab test result')}
             AND test_results_obs.voided = 0
+            #{@location_id ? "AND test_results_obs.location_id = #{ActiveRecord::Base.connection.quote(@location_id)}" : ''}
             AND test_results_obs.obs_datetime >= DATE(#{start_date})
             AND test_results_obs.obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
           /* Limit the test result's to each patient's most recent result. */
@@ -91,6 +94,7 @@ module ArtService
               AND orders.voided = 0
             WHERE obs.concept_id IN #{concept_id_subquery('Lab test result')}
               AND obs.voided = 0
+              #{@location_id ? "AND obs.location_id = #{ActiveRecord::Base.connection.quote(@location_id)}" : ''}
               AND obs.obs_datetime >= DATE(#{start_date})
               AND obs.obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
             GROUP BY person_id
@@ -106,7 +110,8 @@ module ArtService
             AND test_result_measure_obs.voided = 0
             AND (#{query_range})
           WHERE #{lab_order_type_condition}
-            AND orders.voided = 0 #{%w[Military Civilian].include?(@occupation) ? 'AND' : ''} #{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}
+            AND orders.voided = 0
+            #{%w[Military Civilian].include?(@occupation) ? 'AND' : ''} #{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}
           GROUP BY orders.patient_id
         SQL
       end
