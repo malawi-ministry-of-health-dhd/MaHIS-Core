@@ -24,16 +24,12 @@ module ArtTempTablesNaming
   def idx_temp_initiated_on_tpt
     temp_index_name('idx_temp_initiated_on_tpt')
   end
-  
-  def temp_initiated_on_tpt
-    temp_table_name('temp_initiated_on_tpt')
-  end
 
   def temp_initiated_on_tpt
     temp_table_name('temp_initiated_on_tpt')
   end
 
-  def temp_initiated_on_art 
+  def temp_initiated_on_art
     temp_table_name('temp_initiated_on_art')
   end
 
