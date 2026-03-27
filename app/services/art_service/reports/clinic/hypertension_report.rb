@@ -50,6 +50,7 @@ module ArtService
           @end_date = ActiveRecord::Base.connection.quote(end_date)
           @process_due = kwargs[:process_due] == 'true'
           @dsd = kwargs[:dsd]
+          @location_id = Location.current.location_id
         end
 
         def find_report
@@ -206,7 +207,7 @@ module ArtService
             FROM (
                 SELECT MAX(o.obs_datetime) obs_date, o.person_id patient_id
                 FROM obs o
-                INNER JOIN encounter e ON e.encounter_id = o.encounter_id AND e.voided = 0 AND e.program_id = 1 -- HIV PROGRAM
+                INNER JOIN encounter e ON e.encounter_id = o.encounter_id AND e.voided = 0 AND e.program_id = 1 AND e.location_id = #{@location_id} -- HIV PROGRAM
                 WHERE o.concept_id = 5085 -- Systolic blood pressure
                 AND o.voided = 0 AND o.obs_datetime >= #{@start_date} AND o.obs_datetime < #{@end_date} + INTERVAL 1 DAY
                 GROUP BY o.person_id
@@ -215,7 +216,7 @@ module ArtService
             INNER JOIN obs sys ON sys.concept_id = 5085 AND sys.person_id = tpo.patient_id AND sys.obs_datetime = tpo.obs_date AND sys.voided = 0
             INNER JOIN obs dia ON dia.concept_id = 5086 AND dia.person_id = tpo.patient_id AND dia.obs_datetime = tpo.obs_date AND dia.voided = 0
             INNER JOIN person p ON p.person_id = tpo.patient_id AND p.voided = 0
-            INNER JOIN encounter e ON e.encounter_id = dia.encounter_id AND e.program_id = 1 AND e.voided = 0
+            INNER JOIN encounter e ON e.encounter_id = dia.encounter_id AND e.program_id = 1 AND e.voided = 0 AND e.location_id = #{@location_id}
             LEFT JOIN patient_identifier i ON i.patient_id = e.patient_id AND i.identifier_type = 4 AND i.voided = 0
             LEFT JOIN (
                 SELECT o.patient_id, MAX(o.start_date) start_date
@@ -244,11 +245,11 @@ module ArtService
               patient_start_date(p.person_id) art_start_date,
               i.identifier arv_number
             FROM person p
-            INNER JOIN patient_program pp2 ON pp2.patient_id = p.person_id AND pp2.voided = 0 AND pp2.program_id = 1 -- HIV PROGRAM
+            INNER JOIN patient_program pp2 ON pp2.patient_id = p.person_id AND pp2.voided = 0 AND pp2.program_id = 1 AND pp2.location_id = #{@location_id} -- HIV PROGRAM
             INNER JOIN (
               SELECT MAX(ps.start_date) as start_date, ps.patient_program_id
               FROM patient_state ps
-              INNER JOIN patient_program pp ON pp.patient_program_id = ps.patient_program_id AND pp.voided = 0 AND pp.patient_id NOT IN (#{external_clients}) AND pp.program_id = 1 -- HIV PROGRAM
+              INNER JOIN patient_program pp ON pp.patient_program_id = ps.patient_program_id AND pp.voided = 0 AND pp.patient_id NOT IN (#{external_clients}) AND pp.program_id = 1 AND pp.location_id = #{@location_id} -- HIV PROGRAM
               WHERE ps.voided = 0 AND ps.start_date < DATE(#{@start_date}) AND ps.end_date IS NULL
               GROUP BY ps.patient_program_id
             ) latest_state ON latest_state.patient_program_id = pp2.patient_program_id
@@ -257,7 +258,7 @@ module ArtService
             LEFT JOIN (
               SELECT MAX(o.obs_datetime) obs_date, o.person_id patient_id
               FROM obs o
-              INNER JOIN encounter e ON e.encounter_id = o.encounter_id AND e.voided = 0 AND e.encounter_datetime < DATE(#{@start_date}) AND e.patient_id NOT IN (#{external_clients}) AND e.program_id = 1 -- HIV PROGRAM AND we can add to filter encounters based on the vitals encounter
+              INNER JOIN encounter e ON e.encounter_id = o.encounter_id AND e.voided = 0 AND e.encounter_datetime < DATE(#{@start_date}) AND e.patient_id NOT IN (#{external_clients}) AND e.program_id = 1 AND e.location_id = #{@location_id} -- HIV PROGRAM AND we can add to filter encounters based on the vitals encounter
               WHERE o.concept_id = 5085 -- Systolic blood pressure
               AND o.voided = 0 AND o.obs_datetime < DATE(#{@start_date})
               GROUP BY o.person_id
