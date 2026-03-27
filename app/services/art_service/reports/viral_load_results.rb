@@ -16,6 +16,11 @@ module ArtService
     class ViralLoadResults
       include CommonSqlQueryUtils
 
+      # Specimen type constants
+      PLASMA_BLOOD_SPECIMENS = ['Blood', 'Venous Whole Blood', 'Plasma'].freeze
+      DBS_SPECIMENS = ['DBS (Free drop to DBS card)', 'DBS (Using capillary tube)'].freeze
+      ALL_SPECIMENS = (PLASMA_BLOOD_SPECIMENS + DBS_SPECIMENS).freeze
+
       def initialize(start_date:, end_date: nil, range: nil, **kwargs)
         @start_date = start_date
         @end_date = end_date
@@ -44,7 +49,7 @@ module ArtService
           FROM orders
           INNER JOIN concept_name AS specimen_type
             ON specimen_type.concept_id = orders.concept_id
-            AND specimen_type.name IN ('Blood', 'DBS (Free drop to DBS card)', 'DBS (Using capillary tube)', 'Plasma')
+            AND #{specimen_in_condition(ALL_SPECIMENS)}
             AND specimen_type.voided = 0
           LEFT JOIN patient_identifier
             ON patient_identifier.patient_id = orders.patient_id
@@ -60,22 +65,13 @@ module ArtService
           /* For each lab order find an HIV Viral Load test */
           INNER JOIN obs AS test_obs
             ON test_obs.order_id = orders.order_id
-            AND test_obs.concept_id IN (
-              SELECT concept_id FROM concept_name INNER JOIN concept USING (concept_id)
-              WHERE concept_name.name = 'Test type' AND concept.retired = 0 AND concept_name.voided = 0
-            )
-            AND test_obs.value_coded IN (
-              SELECT concept_id FROM concept_name INNER JOIN concept USING (concept_id)
-              WHERE concept_name.name = 'Viral load' AND concept.retired = 0 AND concept_name.voided = 0
-            )
+            AND test_obs.concept_id IN #{concept_id_subquery('Test type')}
+            AND test_obs.value_coded IN #{concept_id_subquery('HIV Viral load')}
             AND test_obs.voided = 0
           /* Select each test's results */
           INNER JOIN obs AS test_results_obs
             ON test_results_obs.obs_group_id = test_obs.obs_id
-            AND test_results_obs.concept_id IN (
-              SELECT concept_id FROM concept_name INNER JOIN concept USING (concept_id)
-              WHERE concept_name.name = 'Lab test result' AND concept.retired = 0 AND concept_name.voided = 0
-            )
+            AND test_results_obs.concept_id IN #{concept_id_subquery('Lab test result')}
             AND test_results_obs.voided = 0
             AND test_results_obs.obs_datetime >= DATE(#{start_date})
             AND test_results_obs.obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
@@ -86,17 +82,14 @@ module ArtService
             FROM obs
             INNER JOIN orders
               ON orders.order_id = obs.order_id
-              AND orders.order_type_id IN (SELECT order_type_id FROM order_type WHERE name = 'Laboratory order' AND retired = 0)
+              AND #{lab_order_type_condition}
               AND orders.concept_id IN (
                 SELECT concept_id FROM concept_name INNER JOIN concept USING (concept_id)
-                WHERE concept_name.name IN ('Blood', 'DBS (Free drop to DBS card)', 'DBS (Using capillary tube)', 'Plasma')
+                WHERE concept_name.name IN (#{ALL_SPECIMENS.map { |s| ActiveRecord::Base.connection.quote(s) }.join(', ')})
                   AND concept.retired = 0 AND concept_name.voided = 0
               )
               AND orders.voided = 0
-            WHERE obs.concept_id IN (
-                SELECT concept_id FROM concept_name INNER JOIN concept USING (concept_id)
-                WHERE concept_name.name = 'Lab test result' AND concept.retired = 0 AND concept_name.voided = 0
-              )
+            WHERE obs.concept_id IN #{concept_id_subquery('Lab test result')}
               AND obs.voided = 0
               AND obs.obs_datetime >= DATE(#{start_date})
               AND obs.obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
@@ -107,15 +100,12 @@ module ArtService
           /* Find a viral load measure that can be classified as High on the test results */
           INNER JOIN obs AS test_result_measure_obs
             ON test_result_measure_obs.obs_group_id = test_results_obs.obs_id
-            AND test_result_measure_obs.concept_id IN (
-              SELECT concept_id FROM concept_name INNER JOIN concept USING (concept_id)
-              WHERE concept_name.name = 'Viral load' AND concept.retired = 0 AND concept_name.voided = 0
-            )
+            AND test_result_measure_obs.concept_id IN #{concept_id_subquery('HIV Viral load')}
             AND (test_result_measure_obs.value_numeric IS NOT NULL
                  OR test_result_measure_obs.value_text IS NOT NULL)
             AND test_result_measure_obs.voided = 0
             AND (#{query_range})
-          WHERE orders.order_type_id IN (SELECT order_type_id FROM order_type WHERE name = 'Laboratory order' AND retired = 0)
+          WHERE #{lab_order_type_condition}
             AND orders.voided = 0 #{%w[Military Civilian].include?(@occupation) ? 'AND' : ''} #{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}
           GROUP BY orders.patient_id
         SQL
@@ -123,9 +113,26 @@ module ArtService
 
       def specimen_types
         Concept.joins(:concept_names)
-               .merge(ConceptName.where(name: ['Blood']))
+               .merge(ConceptName.where(name: ALL_SPECIMENS))
                .select(:concept_id)
                .to_sql
+      end
+
+      # Helper method to generate SQL IN clause for specimen types
+      def specimen_in_condition(specimens, field_name = 'specimen_type.name')
+        quoted_specimens = specimens.map { |s| ActiveRecord::Base.connection.quote(s) }.join(', ')
+        "#{field_name} IN (#{quoted_specimens})"
+      end
+
+      # Helper method for laboratory order type condition
+      def lab_order_type_condition(field_name = 'orders.order_type_id')
+        "#{field_name} IN (SELECT order_type_id FROM order_type WHERE (name = 'Laboratory order' OR name = 'Lab') AND retired = 0)"
+      end
+
+      # Helper method to get concept_id for a concept name
+      def concept_id_subquery(concept_name)
+        quoted_name = ActiveRecord::Base.connection.quote(concept_name)
+        "(SELECT concept_id FROM concept_name INNER JOIN concept USING (concept_id) WHERE concept_name.name = #{quoted_name} AND concept.retired = 0 AND concept_name.voided = 0)"
       end
 
       def dbs_query_range
@@ -148,20 +155,20 @@ module ArtService
         case @range.downcase
         when 'suppressed' then <<~SQL
           (/* Plasma/Blood */
-           (specimen_type.name IN ('Blood', 'Plasma')
+           (#{specimen_in_condition(PLASMA_BLOOD_SPECIMENS)}
             AND ((test_result_measure_obs.value_modifier IN ('<', '=') AND test_result_measure_obs.value_text = 'LDL')
                  OR (test_result_measure_obs.value_modifier = '<' AND test_result_measure_obs.value_numeric IN (20, 40, 150)))
                  OR (test_result_measure_obs.value_numeric >= 20 AND test_result_measure_obs.value_numeric < 200))
           /* DBS */
-          OR (specimen_type.name IN ('DBS (Free drop to DBS card)', 'DBS (Using capillary tube)')
+          OR (#{specimen_in_condition(DBS_SPECIMENS)}
               AND (test_result_measure_obs.value_modifier IN ('<', '=') AND test_result_measure_obs.value_text = 'LDL')))
         SQL
         when 'low-level-viraemia' then <<~SQL
           (/* Plasma/Blood */
-           (specimen_type.name IN ('Blood', 'Plasma')
+           (#{specimen_in_condition(PLASMA_BLOOD_SPECIMENS)}
             AND (test_result_measure_obs.value_numeric >= 200 AND test_result_measure_obs.value_numeric < 1000))
            /* DBS */
-           OR (specimen_type.name IN ('DBS (Free drop to DBS card)', 'DBS (Using capillary tube)')
+           OR (#{specimen_in_condition(DBS_SPECIMENS)}
                AND (test_result_measure_obs.value_modifier = '<' AND test_result_measure_obs.value_numeric IN (400, 550, 839))
                OR (test_result_measure_obs.value_numeric >= 400 AND test_result_measure_obs.value_numeric < 1000)))
         SQL
