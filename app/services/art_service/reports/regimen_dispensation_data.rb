@@ -6,6 +6,7 @@ module ArtService
     class RegimenDispensationData
       include CommonSqlQueryUtils
       include ArtTempTablesNaming
+      include ModelUtils
       attr_reader :start_date, :end_date, :type
 
       def initialize(start_date:, end_date:, **kwargs)
@@ -15,15 +16,10 @@ module ArtService
         @occupation = kwargs[:occupation]
         @dsd = kwargs[:dsd]
         @location_id = kwargs[:location_id] || Location.current&.location_id || User.current&.location&.location_id
-        @arv_number_identifier_type_id = PatientIdentifierType.find_by_name('ARV Number')&.id || 4
-        @hiv_program_id = Program.find_by_name('HIV Program')&.program_id || 1
-        @on_arv_state_id = ProgramWorkflowState.joins(:program_workflow)
-                                               .joins('INNER JOIN program ON program.program_id = program_workflow.program_id')
-                                               .where('program.name = ? AND program_workflow_state.concept_id = ?',
-                                                      'HIV Program',
-                                                      ConceptName.find_by_name('On antiretrovirals')&.concept_id)
-                                               &.first&.program_workflow_state_id || 7
-        @drug_order_type_id = OrderType.find_by_name('Drug Order')&.order_type_id || 1
+        @arv_number_identifier_type_id = patient_identifier_type('ARV Number')&.id || 4
+        @hiv_program_id = program('HIV Program')&.program_id || 1
+        @on_arv_state_id = program('HIV Program').state('On antiretrovirals').program_workflow_state_id 
+        @drug_order_type_id = order_type('Drug Order')&.order_type_id || 1
       end
 
       def find_report
