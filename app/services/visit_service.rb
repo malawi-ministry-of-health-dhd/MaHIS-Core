@@ -56,6 +56,7 @@ class VisitService
       visit_data[:full_name] = Patient.find_by(patient_id: patient_id).try(:name)
       visit_data[:identifier] = identifier if identifier.present?
       visit_data[:program_id] = visit_params[:program_id]
+      visit_data[:location_id] = visit_params[:location_id].to_s
 
       if stage_params.present?
         data = StagesService.new.create_stage(stage_params)
