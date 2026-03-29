@@ -273,17 +273,21 @@ class CouchdbChangesListener
       Location.current = Location.current_health_center
       begin
         Thread.current['skip_couchdb_sync'] = true
+        Thread.current[:skip_couchdb_sync] = true
         processed_data = processor_service.send(processor_method, doc.with_indifferent_access)
       ensure
         Thread.current['skip_couchdb_sync'] = false
+        Thread.current[:skip_couchdb_sync] = false
+      end
+
+      if db_name == 'patients_records' && !processed_data.is_a?(Hash)
+        raise "Patient record processing did not return a payload: #{processed_data.inspect}"
       end
       
       update_couchdb_with_retry(doc_id, processed_data)
       
     rescue StandardError => e
       Rails.logger.error("[CouchDB Listener] Failed to process document #{doc_id} in #{db_name}: #{e.message}")
-      Rails.logger.error("[CouchDB Listener] Error class: #{e.class}")
-      Rails.logger.error("[CouchDB Listener] Backtrace: #{e.backtrace&.first(5)&.join(' | ')}")
       raise e
     end
   end
@@ -328,7 +332,7 @@ class CouchdbChangesListener
       
       update_couchdb_document_direct(doc_id, updated_doc)
       
-    rescue RestClient::Conflict => e
+    rescue RestClient::Conflict, RestClient::PreconditionFailed => e
       Rails.logger.warn("[CouchDB Listener] Conflict on attempt #{attempt} for #{doc_id} in #{db_name}, retrying...")
       sleep(0.5 * (2 ** (attempt - 1)))
       update_couchdb_with_retry(doc_id, processed_data, attempt + 1)
