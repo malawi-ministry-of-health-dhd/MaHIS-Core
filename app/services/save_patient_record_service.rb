@@ -53,6 +53,7 @@ class SavePatientRecordService
     end
 
     patient_record = build_and_save_patient_record(patient_id, record, operation_results, overall_sync_status)
+    ensure_primary_identifier_persisted!(patient_id, patient_record)
 
     if couchdb_configured?
       patient_record["_id"] = patient_record["ID"]
@@ -131,6 +132,7 @@ class SavePatientRecordService
     patient_data[:encounter_datetime]    = latest_encounter&.encounter_datetime
     patient_data[:location_id]           = latest_encounter&.location_id
     patient_data[:ID]                    = BuildPatientRecordService.patient_identifier(patient, 3)
+    patient_data[:nationalID]            = BuildPatientRecordService.patient_identifier(patient, 28)
     patient_data[:patientID]             = patient_id
     patient_data[:NcdID]                 = BuildPatientRecordService.patient_identifier(patient, 31)
     patient_data[:sync_status]           = overall_sync_status
@@ -225,5 +227,21 @@ class SavePatientRecordService
     )
 
     patient_data[:observations] = updated_observations_hash.values.as_json
+  end
+
+  def ensure_primary_identifier_persisted!(patient_id, patient_record)
+    identifier = patient_record.with_indifferent_access[:ID].to_s.strip
+    raise "Primary identifier missing for patient #{patient_id}" if identifier.blank?
+
+    saved_identifier = PatientIdentifier.unscoped.find_by(
+      patient_id: patient_id,
+      identifier: identifier,
+      identifier_type: 3,
+      voided: 0
+    )
+
+    return if saved_identifier.present?
+
+    raise "Primary identifier #{identifier} not found in MySQL for patient #{patient_id}"
   end
 end

@@ -5,15 +5,22 @@ module PatientRecordService
   class PatientIdentityManager < BaseSaver
     def save_person_information(record)
       if record[:personInformation] && record[:saveStatusPersonInformation] == 'pending'
-        person     = create_person(record[:personInformation])
-        patient    = create_patient(person.person_id, record)
-        identifier = BuildPatientRecordService.patient_identifier(patient, 3)
-        patient_id = person.person_id
+        incoming_identifier = extract_incoming_identifier(record)
+        patient             = find_patient_by_identifier(incoming_identifier)
 
-        create_ids(record[:otherPersonInformation], patient_id)
+        if patient.blank?
+          person  = create_person(record[:personInformation])
+          patient = create_patient(person.person_id, record)
+        end
 
-        if record[:otherPersonInformation][:ichisID].present?
-          tei       = record[:otherPersonInformation][:TEI]
+        patient_id = patient.patient_id
+        identifier = ensure_primary_identifier(patient, incoming_identifier)
+        other_person_information = record[:otherPersonInformation] || {}
+
+        create_ids(other_person_information, patient_id)
+
+        if other_person_information[:ichisID].present?
+          tei = other_person_information[:TEI]
           ichis_data = { identifier: identifier, TEI: tei }
           FhirService.sendEMRIdToMediator(ichis_data)
         end
@@ -27,7 +34,16 @@ module PatientRecordService
         return { patient_id: patient_id, id: identifier }
       end
 
-      { patient_id: record[:patientID], id: record[:ID] }
+      existing_patient_id = record[:patientID]
+      return { patient_id: existing_patient_id, id: record[:ID] } if existing_patient_id.blank?
+
+      patient = Patient.unscoped.find_by(patient_id: existing_patient_id)
+      return { patient_id: existing_patient_id, id: record[:ID] } if patient.blank?
+
+      healed_identifier = ensure_primary_identifier(patient, extract_incoming_identifier(record))
+      record[:ID] = healed_identifier if healed_identifier.present?
+
+      { patient_id: existing_patient_id, id: healed_identifier }
     end
 
     def create_person(person_info)
@@ -47,6 +63,8 @@ module PatientRecordService
     end
 
     def create_ids(other_person_information, patient_id)
+      return if other_person_information.blank?
+
       if other_person_information[:nationalID].present?
         PatientIdentifierService.create(patient_id: patient_id, identifier: other_person_information[:nationalID], identifier_type: 28)
       end
@@ -88,17 +106,15 @@ module PatientRecordService
     end
 
     def create_ncd_identifier(patient_id, record)
-      return ok unless record[:NcdID].present?
+        if record[:NcdID] == "-" || record[:unsavedNcdID].present?
+          PatientIdentifierService.create(
+            patient_id:      patient_id,
+            identifier:      record[:unsavedNcdID] || find_next_available_ncd_number(record[:location_id]),
+            identifier_type: 31
+          )
+        end
 
-      if record[:NcdID] == "-"
-        PatientIdentifierService.create(
-          patient_id:      patient_id,
-          identifier:      find_next_available_ncd_number(record[:location_id]),
-          identifier_type: 31
-        )
-      end
-
-      ok
+        ok
     rescue StandardError => e
       log_and_fail("Failed to create NCD identifier", e)
     end
@@ -108,7 +124,8 @@ module PatientRecordService
       raise 'Global property `site_prefix` not set' unless current_ncd_code
 
       type                           = PatientIdentifierType.find_by_name('NCD Number')
-      current_ncd_number_identifiers = PatientIdentifier.where(identifier_type: type)
+      current_ncd_number_identifiers = PatientIdentifier.where(identifier_type: type, location_id: location_id)
+      
 
       assigned_ncd_ids = current_ncd_number_identifiers&.filter_map do |identifier|
         Regexp.last_match(1).to_i if identifier.identifier =~ /#{current_ncd_code}-NCD- *(\d+)/
@@ -126,6 +143,50 @@ module PatientRecordService
 
     def global_property(name)
       GlobalProperty.find_by(property: name)
+    end
+
+    def extract_incoming_identifier(record)
+      record[:ID].presence || record[:_id].presence
+    end
+
+    def find_patient_by_identifier(identifier)
+      return nil if identifier.blank?
+
+      patient_identifier = PatientIdentifier.find_by(identifier: identifier, identifier_type: 3) ||
+                           PatientIdentifier.unscoped.find_by(identifier: identifier, identifier_type: 3, voided: 0)
+
+      patient_identifier&.patient
+    end
+
+    def ensure_primary_identifier(patient, incoming_identifier)
+      identifier = BuildPatientRecordService.patient_identifier(patient, 3).to_s.split(',').first&.strip
+      return identifier if identifier.present?
+
+      fallback_identifier = incoming_identifier.presence
+      raise "Primary identifier missing for patient #{patient.patient_id}" if fallback_identifier.blank?
+
+      existing_identifier = PatientIdentifier.unscoped.find_by(
+        identifier: fallback_identifier,
+        identifier_type: 3,
+        voided: 0
+      )
+
+      if existing_identifier.present?
+        return fallback_identifier if existing_identifier.patient_id == patient.patient_id
+
+        raise "Identifier #{fallback_identifier} is already assigned to another patient"
+      end
+
+      created_identifier = PatientIdentifierService.create(
+        patient_id: patient.patient_id,
+        identifier: fallback_identifier,
+        identifier_type: 3
+      )
+
+      return fallback_identifier if created_identifier&.persisted?
+
+      creation_errors = created_identifier&.errors&.full_messages&.join(', ')
+      raise "Failed to persist primary identifier #{fallback_identifier}: #{creation_errors.presence || 'unknown error'}"
     end
   end
 end

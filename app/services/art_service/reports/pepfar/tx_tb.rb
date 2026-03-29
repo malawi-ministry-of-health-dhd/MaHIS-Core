@@ -10,6 +10,7 @@ module ArtService
 
         include Utils
         include CommonSqlQueryUtils
+        include ArtTempTablesNaming
 
         def initialize(start_date:, end_date:, **kwargs)
           super(start_date: (end_date - 2.months).beginning_of_month, end_date:, **kwargs)
@@ -17,6 +18,7 @@ module ArtService
           @dsd = kwargs[:dsd]
           @report_type = kwargs[:report_type] || 'pepfar'
           @tx_curr = []
+          @location_id = Location.current.location_id
         end
 
         def find_report
@@ -62,8 +64,8 @@ module ArtService
         end
 
         def drop_temporary_tables
-          execute_action('DROP TABLE IF EXISTS temp_tb_screened;')
-          execute_action('DROP TABLE IF EXISTS temp_tb_confirmed_and_on_treatment;')
+          execute_action("DROP TABLE IF EXISTS #{temp_tb_screened}")
+          execute_action("DROP TABLE IF EXISTS #{temp_tb_confirmed_and_on_treatment}")
         end
 
         def process_tb_screening
@@ -72,7 +74,7 @@ module ArtService
 
         def create_temp_tb_screened_query
           <<~SQL
-            CREATE TABLE temp_tb_screened AS
+            CREATE TABLE #{temp_tb_screened} AS
             SELECT
               o.person_id as patient_id,
               LEFT(current_obs.gender, 1) AS gender, MAX(o.obs_datetime) AS screened_date,
@@ -84,7 +86,7 @@ module ArtService
             INNER JOIN (
               SELECT o.person_id, MAX(o.obs_datetime) AS obs_datetime, tesd.earliest_start_date, tesd.gender, tesd.birthdate
               FROM obs o
-              INNER JOIN temp_earliest_start_date tesd ON tesd.patient_id = o.person_id #{@report_type == 'moh' ? '' : "AND tesd.patient_id IN (#{@tx_curr.join(',')})"}
+              INNER JOIN #{temp_earliest_start_date} tesd ON tesd.patient_id = o.person_id #{@report_type == 'moh' ? '' : "AND tesd.patient_id IN (#{@tx_curr.join(',')})"}
               #{dsd_query(dsd: @dsd, model: 'tesd') if @dsd}
               WHERE o.concept_id = #{ConceptName.find_by_name('TB status').concept_id}
               AND o.value_coded IN (SELECT concept_id FROM concept_name WHERE name IN ('TB Suspected', 'TB NOT suspected') AND voided = 0)
@@ -103,6 +105,7 @@ module ArtService
             AND o.value_coded IN (SELECT concept_id FROM concept_name WHERE name IN ('TB Suspected', 'TB NOT suspected') AND voided = 0)
             AND o.obs_datetime BETWEEN '#{start_date}' AND '#{end_date}'
             AND patient_present.obs_datetime BETWEEN '#{start_date}' AND '#{end_date}'
+            AND o.location_id = #{@location_id}
             GROUP BY o.person_id
           SQL
         end
@@ -113,7 +116,7 @@ module ArtService
 
         def create_temp_tb_confirmed_query
           <<~SQL
-            CREATE TABLE temp_tb_confirmed_and_on_treatment AS
+            CREATE TABLE #{temp_tb_confirmed_and_on_treatment} AS
             SELECT
               o.person_id as patient_id,
               LEFT(p.gender, 1) AS gender,
@@ -125,8 +128,8 @@ module ArtService
               END AS has_tb_confirmed_date,
               tesd.earliest_start_date as enrollment_date,
               prev.tb_confirmed_date prev_reading
-              FROM obs o
-            INNER JOIN temp_earliest_start_date tesd ON tesd.patient_id = o.person_id #{@report_type == 'moh' ? '' : "AND tesd.patient_id IN (#{@tx_curr.join(',')})"}
+            FROM obs o
+            INNER JOIN #{temp_earliest_start_date} tesd ON tesd.patient_id = o.person_id #{@report_type == 'moh' ? '' : "AND tesd.patient_id IN (#{@tx_curr.join(',')})"}
             #{dsd_query(dsd: @dsd, model: 'tesd') if @dsd}
             INNER JOIN person p ON p.person_id = o.person_id AND p.voided = 0
             LEFT JOIN obs tcd ON tcd.concept_id = #{ConceptName.find_by_name('TB treatment start date').concept_id} AND tcd.voided = 0 AND tcd.person_id = o.person_id
@@ -146,6 +149,7 @@ module ArtService
             AND o.value_coded = #{ConceptName.find_by_name('Confirmed TB on treatment').concept_id}
             AND o.voided = 0
             AND o.obs_datetime BETWEEN '#{start_date}' AND '#{end_date}'
+            AND o.location_id = #{@location_id}
             GROUP BY o.person_id
           SQL
         end
@@ -167,8 +171,8 @@ module ArtService
         def create_patients_alive_and_on_art_query
           <<~SQL
             SELECT tpo.patient_id, LEFT(tesd.gender, 1) AS gender, disaggregated_age_group(tesd.birthdate, DATE('#{end_date.to_date}')) age_group
-            FROM temp_patient_outcomes tpo
-            INNER JOIN temp_earliest_start_date tesd ON tesd.patient_id = tpo.patient_id
+            FROM #{temp_patient_outcomes} tpo
+            INNER JOIN #{temp_earliest_start_date} tesd ON tesd.patient_id = tpo.patient_id
             WHERE tpo.pepfar_cum_outcome = 'On antiretrovirals'
           SQL
         end
@@ -262,14 +266,14 @@ module ArtService
         def find_tb_screened_data_query
           <<~SQL
             SELECT tbs.patient_id, tbs.enrollment_date, LEFT(tbs.gender, 1) AS gender, tbs.age_group, tbs.tb_status, tbs.screened_date, tbs.screening_methods
-            FROM temp_tb_screened tbs
+            FROM #{temp_tb_screened} tbs
           SQL
         end
 
         def find_tb_confirmed_data_query
           <<~SQL
             SELECT t.patient_id, t.gender, t.age_group, t.enrollment_date, t.tb_confirmed_date
-            FROM temp_tb_confirmed_and_on_treatment t
+            FROM #{temp_tb_confirmed_and_on_treatment} t
             WHERE t.tb_confirmed_date > '#{start_date}'
             AND (t.has_tb_confirmed_date = TRUE OR t.prev_reading IS NULL OR TIMESTAMPDIFF(MONTH,t.prev_reading, t.tb_confirmed_date) > 6)
           SQL

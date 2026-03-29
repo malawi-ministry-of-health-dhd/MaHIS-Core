@@ -21,7 +21,8 @@ class VisitService
     stage_params = visit_params[:stage]
 
     if identifier.present?
-      patient_identifier = PatientIdentifier.where(identifier: identifier).first
+      patient_identifier = PatientIdentifier.find_by(identifier: identifier, identifier_type: 3) ||
+                           PatientIdentifier.unscoped.find_by(identifier: identifier, identifier_type: 3, voided: 0)
       patient_id = patient_identifier[:patient_id] if patient_identifier.present?
     end
 
@@ -82,7 +83,8 @@ class VisitService
     patient_id = nil
 
     if identifier.present?
-      patient_identifier = PatientIdentifier.where(identifier: identifier).first
+      patient_identifier = PatientIdentifier.find_by(identifier: identifier, identifier_type: 3) ||
+                           PatientIdentifier.unscoped.find_by(identifier: identifier, identifier_type: 3, voided: 0)
       patient_id = patient_identifier[:patient_id] if patient_identifier.present?
     end
 
