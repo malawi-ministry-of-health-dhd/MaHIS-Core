@@ -40,7 +40,7 @@ class VisitService
     
     # Required fields
     visit.patient_id = patient_id
-    visit.visit_type_id = visit_params[:visit_type_id] 
+    visit.visit_type_id = visit_params[:visit_type_id]
     visit.date_started = visit_params[:date_started] || Time.now
     visit.date_created = visit_params[:date_created] || Time.now
     visit.creator = visit_params[:provider_id] || User.current&.user_id 
@@ -55,6 +55,7 @@ class VisitService
       visit_data = visit.attributes
       visit_data[:full_name] = Patient.find_by(patient_id: patient_id).try(:name)
       visit_data[:identifier] = identifier if identifier.present?
+      visit_data[:program_id] = visit_params[:program_id]
 
       if stage_params.present?
         data = StagesService.new.create_stage(stage_params)
