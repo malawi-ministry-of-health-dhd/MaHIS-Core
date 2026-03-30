@@ -131,7 +131,9 @@ class StagesService
     return params[:patient_id] if params[:patient_id].present?
     return nil if params[:identifier].blank?
 
-    PatientIdentifier.find_by(identifier: params[:identifier])&.patient_id
+    patient_identifier = PatientIdentifier.find_by(identifier: params[:identifier], identifier_type: 3) ||
+                         PatientIdentifier.unscoped.find_by(identifier: params[:identifier], identifier_type: 3, voided: 0)
+    patient_identifier&.patient_id
   end
 
   def normalize_stage(stage)

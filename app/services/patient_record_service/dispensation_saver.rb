@@ -4,41 +4,47 @@
 module PatientRecordService
   class DispensationSaver < BaseSaver
     def save_dispensation_data(patient_id, record)
-      begin
-        unsaved_data = record.dig(:dispensations, :unsaved)
-        return false unless unsaved_data&.any?
+      unsaved_data = record.dig(:dispensations, :unsaved)
+      return ok unless unsaved_data&.any?
 
-        permitted_data = unsaved_data.map do |dispensation_params|
-          dispensation_params.permit(
-            :provider_id,
-            :program_id,
-            :patient_id,
-            dispensations: [:drug_order_id, :date, :quantity]
-          )
-        end
+      collected_errors = []
 
-        permitted_data.each do |params|
-          begin
-            dispensations = params[:dispensations]
-            program_id = params[:program_id]
-            provider_id = params[:provider_id]
+      permitted_data = unsaved_data.map do |dispensation_params|
+        dispensation_params.permit(
+          :provider_id,
+          :program_id,
+          :patient_id,
+          dispensations: [:drug_order_id, :date, :quantity]
+        )
+      end
 
-            program = Program.find(program_id) if program_id
-            provider = provider_id ? Person.find(provider_id) : User.current.person
+      permitted_data.each do |params|
+        begin
+          dispensations = params[:dispensations]
+          program_id    = params[:program_id]
+          provider_id   = params[:provider_id]
 
-            DispensationService.create(program, dispensations, provider, record[:location_id]) if program && dispensations
-          rescue ActiveRecord::RecordNotFound => e
-            Rails.logger.error "Record not found while processing dispensation: #{e.message}"
-            next
-          rescue StandardError => e
-            Rails.logger.error "Error processing individual dispensation: #{e.message}"
+          program  = Program.find(program_id) if program_id
+          provider = provider_id ? Person.find(provider_id) : User.current.person
+
+          unless program && dispensations
+            collected_errors << "Missing program or dispensations for program_id=#{program_id}"
             next
           end
+
+          DispensationService.create(program, dispensations, provider, record[:location_id])
+        rescue ActiveRecord::RecordNotFound => e
+          Rails.logger.error("Record not found while processing dispensation: #{e.message}")
+          collected_errors << "Record not found: #{e.message}"
+        rescue StandardError => e
+          Rails.logger.error("Error processing individual dispensation: #{e.message}")
+          collected_errors << e.message
         end
-        return true
-      rescue StandardError => e
-        log_error("Error in save_dispensation_data", e)
       end
+
+      OperationResult.new(success: true, errors: collected_errors)
+    rescue StandardError => e
+      log_and_fail("Error in save_dispensation_data", e)
     end
   end
 end
