@@ -9,7 +9,15 @@ module BuildPatientRecordService
         return [] unless person
         
         relationships_service = PersonRelationshipService.new(person)
-        relationships = relationships_service.find_relationships('')
+        relationships = relationships_service
+          .find_relationships({})
+          .includes(
+            :type,
+            person: [:names, :addresses, { person_attributes: :type }],
+            relation: [:names, :addresses, { person_attributes: :type }]
+          )
+          .to_a
+
         return [] unless relationships.is_a?(Enumerable) && relationships.any?
 
         relationships.map do |relationship|
@@ -28,7 +36,7 @@ module BuildPatientRecordService
       
       begin
         # Determine if patient is person_a or person_b
-        patient_is_person_a = relationship.person_a == patient_id
+        patient_is_person_a = relationship.person_a.to_i == patient_id.to_i
         
         # Get the guardian (the other person in the relationship)
         person = patient_is_person_a ? relationship.relation : relationship.person
@@ -47,6 +55,7 @@ module BuildPatientRecordService
         
         name = person.names&.first
         address = person.addresses&.first
+        attribute_values = person_attribute_values(person)
 
         {
           person_id: person.person_id.to_s || '',
@@ -67,9 +76,9 @@ module BuildPatientRecordService
           current_traditional_authority: address&.township_division || '',
           current_village: address&.city_village || '',
 
-          landmark: safe_get_person_attribute(person, 'Landmark Or Plot Number'),
-          cell_phone_number: safe_get_person_attribute(person, 'Cell Phone Number'),
-          national_id: safe_get_person_attribute(person, 'Guardian ID'),
+          landmark: attribute_values['Landmark Or Plot Number'] || '',
+          cell_phone_number: attribute_values['Cell Phone Number'] || '',
+          national_id: attribute_values['Guardian ID'] || '',
 
           relationship_id: relationship.id.to_s || '',
           relationship_type: {
@@ -89,16 +98,24 @@ module BuildPatientRecordService
       end
     end
     
-    def safe_get_person_attribute(person, attribute_name)
-      return '' unless person&.person_attributes
-      
-      begin
-        attribute = person.person_attributes.find { |attr| attr.type.name == attribute_name }
-        attribute ? attribute.value : ''
-      rescue StandardError => e
-        Rails.logger.error("Error getting person attribute '#{attribute_name}': #{e.message}")
-        ''
+    def person_attribute_values(person)
+      return {} unless person
+
+      attributes = if person.association(:person_attributes).loaded?
+                     person.person_attributes
+                   else
+                     person.person_attributes.includes(:type)
+                   end
+
+      attributes.each_with_object({}) do |attribute, values|
+        type_name = attribute.type&.name
+        next if type_name.blank?
+
+        values[type_name] ||= attribute.value
       end
+    rescue StandardError => e
+      Rails.logger.error("Error loading person attributes for person #{person&.person_id}: #{e.message}")
+      {}
     end
   end
 end
