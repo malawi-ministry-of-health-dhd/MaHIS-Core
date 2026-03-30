@@ -1062,6 +1062,24 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
       end
     end
 
+    # HIV Program Filtering PRE-PASS: Remove non-HIV LimsAcknowledgementStatus records BEFORE FK remapping.
+    # lims_acknowledgement_statuses has no SQL-level HIV filter, so we filter here using source order_ids
+    # (before they are remapped to destination IDs by get_order_ids).
+    if target_model.to_s == 'LimsAcknowledgementStatus' && records.any? && records.first.key?(:order_id)
+      source_lims_order_ids = records.map { |r| r[:order_id] }.compact.uniq
+      if source_lims_order_ids.any?
+        hiv_lims_order_ids = ActiveRecord::Base.connection.select_values(<<~SQL)
+          SELECT o.order_id
+          FROM #{source_db}.orders o
+          JOIN #{source_db}.encounter e ON e.encounter_id = o.encounter_id
+          WHERE o.order_id IN (#{source_lims_order_ids.join(',')})
+          AND e.program_id = #{HIV_PROGRAM_ID}
+        SQL
+        hiv_lims_order_ids_set = Set.new(hiv_lims_order_ids)
+        records.reject! { |r| !hiv_lims_order_ids_set.include?(r[:order_id]) }
+      end
+    end
+
     # Update foreign key mappings
     # Skip obs_group_id for Observations - will be updated in separate batch later
     # Skip obs_id for Orders - obs don't exist yet, will be backfilled after obs migration
@@ -1077,27 +1095,12 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
       records = send(mapping_method, records, foreign_key, source_db)
     end
 
-    # HIV Program Filtering: Filter out records not related to HIV program
-    # This handles tables where SQL-level filtering wasn't possible
-    if %w[DrugOrder LimsAcknowledgementStatus].include?(target_model.to_s)
-      # Keep only records linked to HIV orders (which are linked to HIV encounters)
-      if HIV_ENCOUNTER_IDS.empty?
-        puts "⚠️  WARNING: HIV_ENCOUNTER_IDS is empty for #{target_model} filtering. Skipping all records."
-        records.clear
-      elsif records.any? && records.first.key?(:order_id)
-        source_order_ids = records.map { |r| r[:order_id] }.compact.uniq
-        if source_order_ids.any?
-          hiv_order_ids = ActiveRecord::Base.connection.select_values(<<~SQL)
-            SELECT order_id#{' '}
-            FROM #{source_db}.orders#{' '}
-            WHERE order_id IN (#{source_order_ids.join(',')})#{' '}
-            AND encounter_id IN (#{HIV_ENCOUNTER_IDS.to_a.join(',')})
-          SQL
-          hiv_order_ids_set = Set.new(hiv_order_ids)
-          records.reject! { |r| !hiv_order_ids_set.include?(r[:order_id]) }
-        end
-      end
-    elsif target_model.to_s == 'Pharmacy'
+    # HIV Program Filtering: Filter pharmacy_obs records not related to HIV program.
+    # DrugOrder: already filtered at SQL level via build_hiv_filter_clause — no post-FK filter needed.
+    # LimsAcknowledgementStatus: filtered in the PRE-PASS above, before FK remapping.
+    # Both were removed from this post-FK filter because order_ids are remapped to destination IDs
+    # at this point, making source DB lookups incorrect (causing ~47% of valid records to be dropped).
+    if target_model.to_s == 'Pharmacy'
       # Keep only pharmacy_obs records linked to HIV observations
       if HIV_ENCOUNTER_IDS.empty?
         puts '⚠️  WARNING: HIV_ENCOUNTER_IDS is empty for Pharmacy filtering. Skipping all records.'
@@ -1603,12 +1606,9 @@ def backfill_orders_obs_ids(source_db)
   puts "✓ orders.obs_id backfill complete (#{updated} records updated)"
 end
 
-def update_group_obs_ids(source_db, foreign_keys = {})
+def update_group_obs_ids(source_db, _foreign_keys = {})
   puts 'Starting obs_group_id update...'
 
-  limit = DEFAULT_BATCH_SIZE
-  offset = 0
-  total_processed = 0
   total_records = ActiveRecord::Base.connection
                                     .select_one("SELECT COUNT(*) AS count
                                     FROM #{source_db}.obs WHERE obs_group_id IS NOT NULL")['count'].to_i
@@ -1616,81 +1616,34 @@ def update_group_obs_ids(source_db, foreign_keys = {})
   return if total_records == 0
 
   puts "Found #{total_records} observations with obs_group_id to update"
+  puts 'Resolving obs_group_id via single SQL JOIN (UUID-based, no Ruby batching)...'
 
-  # Drop existing temp table if exists and create fresh
-  ActiveRecord::Base.connection.execute('DROP TABLE IF EXISTS temp_obs_update')
-  ActiveRecord::Base.connection.execute(<<-SQL)
-    CREATE TABLE temp_obs_update (
-      uuid CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin PRIMARY KEY,
-      obs_group_id INT,
-      INDEX idx_obs_group_id (obs_group_id)
-    ) ENGINE=InnoDB;
+  # Both child obs and parent obs are already migrated into the target DB.
+  # We resolve obs_group_id entirely in SQL:
+  #   1. Match each target obs to its source row by UUID.
+  #   2. From the source row, get the source obs_group_id.
+  #   3. Look up that source obs_group_id's UUID in the source DB.
+  #   4. Find the corresponding target obs by that UUID to get the new obs_id.
+  ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS = 0')
+  ActiveRecord::Base.connection.execute(<<~SQL)
+    UPDATE obs o
+    JOIN #{source_db}.obs src
+      ON o.uuid = src.uuid
+    JOIN #{source_db}.obs src_parent
+      ON src_parent.obs_id = src.obs_group_id
+    JOIN obs tgt_parent
+      ON tgt_parent.uuid = src_parent.uuid
+    SET o.obs_group_id = tgt_parent.obs_id
+    WHERE src.obs_group_id IS NOT NULL
+      AND o.obs_group_id IS NULL
   SQL
+  ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS = 1')
 
-  batch_update_threshold = 1_000_000 # Apply updates every 10k records to keep transactions small
-  current_batch_size = 0
+  updated = ActiveRecord::Base.connection.select_value(
+    'SELECT COUNT(*) FROM obs WHERE obs_group_id IS NOT NULL'
+  ).to_i
 
-  loop do
-    source_obs_grouped = query_with_columns("#{source_db}.obs", 'obs_group_id IS NOT NULL', limit, offset)
-    break if source_obs_grouped.blank?
-
-    source_obs_grouped.each(&:symbolize_keys!)
-
-    # Fetch and map foreign keys in bulk - use caching
-    mapped_records = source_obs_grouped
-    foreign_keys.each do |foreign_key, mapping_method|
-      mapped_records = send(mapping_method, mapped_records, foreign_key, source_db)
-    end
-
-    # Prepare batch updates - filter out nil values
-    updates = mapped_records.map do |record|
-      {
-        uuid: record[:uuid],
-        obs_group_id: record[:obs_group_id]
-      }
-    end.reject { |r| r[:uuid].blank? || r[:obs_group_id].nil? }
-
-    if updates.any?
-      # Use INSERT IGNORE for better performance
-      values = updates.map { |r| "('#{r[:uuid]}', #{r[:obs_group_id]})" }.join(', ')
-      ActiveRecord::Base.connection.execute("INSERT IGNORE INTO temp_obs_update (uuid, obs_group_id) VALUES #{values}")
-
-      total_processed += updates.size
-      current_batch_size += updates.size
-
-      # Apply updates incrementally to avoid huge temp table
-      if current_batch_size >= batch_update_threshold
-        puts 'Applying batch obs_group_id updates...'
-        ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS = 0')
-        ActiveRecord::Base.connection.execute('UPDATE obs o
-            JOIN temp_obs_update t ON o.uuid = t.uuid
-            SET o.obs_group_id = t.obs_group_id
-            WHERE o.obs_group_id IS NULL')
-        ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS = 1')
-        ActiveRecord::Base.connection.execute('TRUNCATE TABLE temp_obs_update')
-        current_batch_size = 0
-      end
-    end
-
-    offset += limit
-    percentage = ((total_processed.to_f / total_records) * 100).round(2)
-    puts "Updating obs_group_id: #{percentage}% complete (#{total_processed}/#{total_records})"
-  end
-
-  # Perform final update for any remaining records
-  remaining_count = ActiveRecord::Base.connection.select_value('SELECT COUNT(*) FROM temp_obs_update').to_i
-  if remaining_count > 0
-    puts 'Applying final obs_group_id updates to obs table...'
-    ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS = 0')
-    ActiveRecord::Base.connection.execute('UPDATE obs o
-        JOIN temp_obs_update t ON o.uuid = t.uuid
-        SET o.obs_group_id = t.obs_group_id
-        WHERE o.obs_group_id IS NULL')
-    ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS = 1')
-  end
-  puts '✓ obs_group_id update complete'
-ensure
-  ActiveRecord::Base.connection.execute('DROP TABLE IF EXISTS temp_obs_update;')
+  puts "✓ obs_group_id update complete (#{updated} records now have obs_group_id set)"
 end
 
 # Main Execution
@@ -1937,15 +1890,7 @@ if __FILE__ == $0
   # Backfill orders.obs_id now that obs have been migrated in Group_5
   backfill_orders_obs_ids(source_db)
 
-  update_group_obs_ids(source_db, encounter_id: :get_encounter_ids,
-                                  order_id: :get_order_ids,
-                                  creator: :get_new_user_ids,
-                                  voided_by: :get_new_user_ids,
-                                  person_id: :get_person_ids,
-                                  obs_group_id: :get_obs_ids,
-                                  concept_id: :get_concept_ids,
-                                  value_coded: :get_concept_ids,
-                                  value_drug: :get_drug_ids)
+  update_group_obs_ids(source_db)
 
   # Report data quality issues
   report_data_quality_issues
