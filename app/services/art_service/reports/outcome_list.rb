@@ -5,6 +5,8 @@ module ArtService
     # Outcome List Report
     class OutcomeList < CachedReport
       include CommonSqlQueryUtils
+      include ArtTempTablesNaming
+      include ModelUtils
 
       REPORTS = Set.new(%i[transfer_out died stopped]).freeze
 
@@ -88,8 +90,8 @@ module ArtService
             ppo.date_enrolled, ppo.date_completed,
             s2.start_date outcome_date, s2.end_date, s2.state
             #{transfer_out_to_location_name_sql}
-          FROM temp_earliest_start_date e
-          INNER JOIN temp_patient_outcomes o ON e.patient_id = o.patient_id
+          FROM #{temp_earliest_start_date} e
+          INNER JOIN #{temp_patient_outcomes} o ON e.patient_id = o.patient_id
           #{dsd_query(dsd: @dsd, model: 'o') if @dsd}
           LEFT JOIN patient_identifier i ON i.patient_id = e.patient_id
             AND i.voided = 0 AND i.identifier_type = 4
