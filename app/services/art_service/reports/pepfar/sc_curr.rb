@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative '../../../../config/drugs'
+
 module ArtService
   module Reports
     module Pepfar
