@@ -6,6 +6,7 @@ class District < RetirableRecord
 
   has_one :location_tag_map, foreign_key: :location_id
   belongs_to :region, foreign_key: :parent_location, class_name: 'Region'
+  has_many :traditional_authorities, foreign_key: :parent_location
 
   def self.district_tag
     LocationTag.where(name: 'District').select(:location_tag_id)
