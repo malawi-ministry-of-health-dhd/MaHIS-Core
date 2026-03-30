@@ -10,6 +10,7 @@ module ArtService
         @end_date = end_date.to_date.end_of_day
         @occupation = kwargs[:occupation]
         @dsd = kwargs[:dsd]
+        @location_id = kwargs[:location_id]
       end
 
       def find_report
@@ -19,6 +20,16 @@ module ArtService
       private
 
       def data
+        test_type = ConceptName.find_by_name('Test Type')&.concept_id
+        viral_load = ConceptName.find_by_name('HIV Viral Load')&.concept_id
+        location_condition = if @location_id
+                               "AND o.location_id = #{ActiveRecord::Base.connection.quote(@location_id)}"
+                             elsif User.current&.location_id
+                               "AND o.location_id = #{ActiveRecord::Base.connection.quote(User.current.location_id)}"
+                             else
+                               ''
+                             end
+
         ActiveRecord::Base.connection.select_all <<~SQL
           SELECT
             o.person_id AS patient_id,
@@ -27,18 +38,25 @@ module ArtService
             p.gender,
             p.birthdate,
             i.identifier AS identifier,
-            DATE(ord.start_date) AS order_date
+            DATE(ord.start_date) AS order_date,
+            o.location_id AS collection_location_id,
+            loc.name AS collection_location_name
           FROM obs o
           INNER JOIN orders ord ON ord.order_id = o.order_id AND ord.voided = 0
           INNER JOIN person p ON p.person_id = o.person_id AND p.voided = 0
           INNER JOIN person_name pn ON pn.person_id = p.person_id AND pn.voided = 0
-          LEFT JOIN patient_identifier i ON i.patient_id = p.person_id AND i.voided = 0 AND i.identifier_type = #{indetifier_type}
+          LEFT JOIN location loc ON loc.location_id = o.location_id
+          LEFT JOIN patient_identifier i ON i.patient_id = p.person_id
+            AND i.voided = 0
+            AND i.identifier_type = #{indetifier_type}
           LEFT JOIN (#{current_occupation_query}) AS a ON a.person_id = p.person_id
           #{dsd_query(dsd: @dsd, model: 'ord') if @dsd}
-          WHERE o.concept_id = 9737 -- Test Type
-          AND o.value_coded = 856 -- Viral Load
+          WHERE o.concept_id = #{test_type}
+          AND o.value_coded = #{viral_load}
           AND o.obs_datetime BETWEEN '#{@start_date}' AND '#{@end_date}'
-          AND o.voided = 0 #{%w[Military Civilian].include?(@occupation) ? 'AND' : ''} #{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}
+          AND o.voided = 0
+          #{location_condition}
+          #{%w[Military Civilian].include?(@occupation) ? 'AND' : ''} #{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}
         SQL
       end
 

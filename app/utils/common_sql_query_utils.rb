@@ -57,6 +57,7 @@ module CommonSqlQueryUtils
   end
 
   def current_occupation_query
+    occupation_id = PersonAttributeType.find_by_name('Occupation')&.id
     <<~SQL
       SELECT a.person_id, a.value
       FROM person_attribute a
@@ -64,7 +65,7 @@ module CommonSqlQueryUtils
       ON a.person_attribute_id = b.person_attribute_id
       AND a.date_created < b.date_created
       AND b.voided = 0
-      WHERE b.person_attribute_id IS NULL AND a.person_attribute_type_id = 13 AND a.voided = 0
+      WHERE b.person_attribute_id IS NULL AND a.person_attribute_type_id = #{occupation_id} AND a.voided = 0
     SQL
   end
 end

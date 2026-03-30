@@ -9,6 +9,7 @@ module ArtService
         include ModelUtils
         include Pepfar::Utils
         include CommonSqlQueryUtils
+        include ArtTempTablesNaming
 
         attr_reader :start_date, :end_date, :rebuild, :occupation
 
@@ -161,7 +162,7 @@ module ArtService
               e.earliest_start_date,
               preg_or_breast.name AS maternal_status,
               DATE(MIN(pregnant_or_breastfeeding.obs_datetime)) AS maternal_status_date
-            FROM temp_earliest_start_date e
+            FROM #{temp_earliest_start_date} e
             #{dsd_query(dsd: @dsd, model: 'e') if @dsd}
             LEFT JOIN (
               SELECT max(o.obs_datetime) AS obs_datetime, o.person_id
