@@ -58,7 +58,7 @@ module ArtService
         transfer_out_to_location_sql = ''
         transfer_out_to_location_name_sql = ''
         if outcome_state.match(/Transfer/i)
-          concept_id =  ConceptName.find_by_name('Transfer out to location').concept_id
+          concept_id = concept_name_to_id('Transfer out to location')
           transfer_out_to_location_name_sql = ' ,to_location.value_text transferred_out_to'
           transfer_out_to_location_sql = ' LEFT JOIN obs to_location ON to_location.person_id = e.patient_id'
           transfer_out_to_location_sql += " AND to_location.concept_id = #{concept_id} AND to_location.voided = 0"
