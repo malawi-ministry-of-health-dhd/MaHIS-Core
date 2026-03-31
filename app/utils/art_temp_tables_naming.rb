@@ -123,6 +123,83 @@ module ArtTempTablesNaming
   def idx_lad_patient_id_and_start_date
     temp_index_name('idx_lad_patient_id_and_start_date')
   end
+  # Regimen dispensation report tables
+  def temp_current_dispensation
+    temp_table_name('temp_current_dispensation')
+  end
+
+  def temp_drug_dispensed
+    temp_table_name('temp_drug_dispensed')
+  end
+
+  def temp_current_regimen_names
+    temp_table_name('temp_current_regimen_names')
+  end
+
+  def temp_current_patient_regimen
+    temp_table_name('temp_current_patient_regimen')
+  end
+
+  def temp_reg_outcome
+    temp_table_name('temp_reg_outcome')
+  end
+
+  def temp_vl_results
+    temp_table_name('temp_vl_results')
+  end
+
+  def temp_current_vl_results
+    temp_table_name('temp_current_vl_results')
+  end
+
+  def temp_regimen_patient_weight
+    temp_table_name('temp_regimen_patient_weight')
+  end
+
+  def temp_regimen_data
+    temp_table_name('temp_regimen_data')
+  end
+
+  def temp_patient_start_date
+    temp_table_name('temp_patient_start_date')
+  end
+
+  # Regimen dispensation report indexes
+  def idx_current_disp
+    temp_index_name('idx_current_disp')
+  end
+
+  def idx_drug_disp
+    temp_index_name('idx_drug_disp')
+  end
+
+  def idx_regimen_names
+    temp_index_name('idx_regimen_names')
+  end
+
+  def idx_patient_regimen
+    temp_index_name('idx_patient_regimen')
+  end
+
+  def idx_reg_outcome
+    temp_index_name('idx_reg_outcome')
+  end
+
+  def idx_vl_result
+    temp_index_name('idx_vl_result')
+  end
+
+  def idx_current_vl
+    temp_index_name('idx_current_vl')
+  end
+
+  def idx_patient_weight
+    temp_index_name('idx_patient_weight')
+  end
+
+  def idx_start_date
+    temp_index_name('idx_start_date')
+  end
 
   # MySQL function names (location-specific)
   def died_in_function_name
