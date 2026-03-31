@@ -21,12 +21,12 @@ module BuildPatientRecordService
           current_traditional_authority: address&.township_division || '',
           current_village: address&.city_village || '',
           country: address&.country || '',
-          landmark: attribute_values['Landmark Or Plot Number'] || '',
-          cell_phone_number: attribute_values['Cell Phone Number'] || '',
+          landmark: attribute_values['Landmark or plot number'] || '',
+          cell_phone_number: attribute_values['Cell phone number'] || '',
           occupation: attribute_values['Occupation'] || '',
-          marital_status: attribute_values['Civil Status'] || '',
+          marital_status: attribute_values['Civil status'] || '',
           religion: attribute_values['Religion'] || '',
-          education_level: attribute_values['EDUCATION LEVEL'] || '',
+          education_level: attribute_values['Education level'] || '',
         }
       end
 
