@@ -3,6 +3,8 @@ module BuildPatientRecordService
 
   module PersonInformationBuilder
       def build(person, name, address, record)
+        attribute_values = person_attribute_values(record&.person)
+
         {
           given_name: name&.given_name || '',
           middle_name: name&.middle_name || '',
@@ -19,27 +21,35 @@ module BuildPatientRecordService
           current_traditional_authority: address&.township_division || '',
           current_village: address&.city_village || '',
           country: address&.country || '',
-          landmark: safe_get_attribute(record, 'Landmark Or Plot Number'),
-          cell_phone_number: safe_get_attribute(record, 'Cell Phone Number'),
-          occupation: safe_get_attribute(record, 'Occupation'),
-          marital_status: safe_get_attribute(record, 'Civil Status'),
-          religion: safe_get_attribute(record, 'Religion'),
-          education_level: safe_get_attribute(record, 'EDUCATION LEVEL'),
+          landmark: attribute_values['Landmark or plot number'] || '',
+          cell_phone_number: attribute_values['Cell phone number'] || '',
+          occupation: attribute_values['Occupation'] || '',
+          marital_status: attribute_values['Civil status'] || '',
+          religion: attribute_values['Religion'] || '',
+          education_level: attribute_values['Education level'] || '',
         }
       end
 
       private
 
-      def safe_get_attribute(item, name)
-        return '' unless item&.person
-        
-        begin
-          attribute = item.person.person_attributes.find { |attr| attr.type.name == name }
-          attribute&.value || ''
-        rescue StandardError => e
-          Rails.logger.error("Error getting attribute '#{name}': #{e.message}")
-          ''
+      def person_attribute_values(person)
+        return {} unless person
+
+        attributes = if person.association(:person_attributes).loaded?
+                       person.person_attributes
+                     else
+                       person.person_attributes.includes(:type)
+                     end
+
+        attributes.each_with_object({}) do |attribute, values|
+          type_name = attribute.type&.name
+          next if type_name.blank?
+
+          values[type_name] ||= attribute.value
         end
+      rescue StandardError => e
+        Rails.logger.error("Error loading person attributes for person #{person&.person_id}: #{e.message}")
+        {}
       end
     end
   end

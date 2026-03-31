@@ -5,9 +5,14 @@ require 'yaml'
 module CouchdbSync
   CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
   COUCHDB_URL = CONFIG['COUCHDB_URL']
+  MAX_RETRY_ATTEMPTS = 3
 
   def couchdb_configured?
     COUCHDB_URL.present?
+  end
+
+  def skip_couchdb_sync?
+    Thread.current['skip_couchdb_sync'] == true || Thread.current[:skip_couchdb_sync] == true
   end
 
   def ensure_db_exists(db_name)
@@ -17,22 +22,37 @@ module CouchdbSync
   end
 
   def sync_to_couchdb(doc_data, db_name, doc_id)
-    if couchdb_configured?
-      ensure_db_exists(db_name)
+    return unless couchdb_configured?
+    return if skip_couchdb_sync?
 
-      # If updating, fetch _rev
+    ensure_db_exists(db_name)
+    encoded_doc_id = URI.encode_www_form_component(doc_id.to_s)
+    doc_url = "#{COUCHDB_URL}/#{db_name}/#{encoded_doc_id}"
+
+    attempt = 1
+
+    begin
+      payload = doc_data.deep_dup
+
+      # If updating, fetch latest _rev.
       begin
-        existing_doc = RestClient.get("#{COUCHDB_URL}/#{db_name}/#{doc_id}")
-        doc_data["_rev"] = JSON.parse(existing_doc.body)["_rev"]
+        existing_doc = RestClient.get(doc_url)
+        payload["_rev"] = JSON.parse(existing_doc.body)["_rev"]
       rescue RestClient::NotFound
         # First insert
       end
 
       RestClient.put(
-        "#{COUCHDB_URL}/#{db_name}/#{doc_id}",
-        doc_data.to_json,
+        doc_url,
+        payload.to_json,
         { content_type: :json, accept: :json }
       )
+    rescue RestClient::Conflict, RestClient::PreconditionFailed
+      raise if attempt >= MAX_RETRY_ATTEMPTS
+
+      attempt += 1
+      sleep(0.1 * attempt)
+      retry
     end
   end
 end

@@ -15,15 +15,15 @@ class PersonService
 
   # Map of API person attributes to database names
   PERSON_ATTRIBUTES_FIELDS = {
-    cell_phone_number: 'Cell Phone Number',
-    landmark: 'Landmark Or Plot Number',
-    next_of_kin: 'NEXT OF KIN',
-    next_of_kin_contact_number: 'NEXT OF KIN CONTACT NUMBER',
-    marital_status: 'Civil Status',
+    cell_phone_number: 'Cell phone number',
+    landmark: 'Landmark or plot number',
+    next_of_kin: 'Next of kin',
+    next_of_kin_contact_number: 'Next of kin contact number',
+    marital_status: 'Civil status',
     religion: 'Religion',
     occupation: 'Occupation',
-    national_id: 'Guardian ID',
-    education_level:  'EDUCATION LEVEL',
+    national_id: 'Guardian id',
+    education_level:  'Education level',
   }.freeze
 
   def create_person(params)

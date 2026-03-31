@@ -58,7 +58,15 @@ class Location < RetirableRecord
   end
 
   def self.current_health_center
-    Location.current
+    return Location.current if Location.current
+
+    health_center_id = GlobalProperty.unscoped.find_by(property: 'current_health_center_id')&.property_value
+    return nil if health_center_id.blank?
+
+    Location.find_by(location_id: health_center_id)
+  rescue StandardError => e
+    Rails.logger.warn("Failed to resolve current health center: #{e.message}")
+    nil
   end
 
   def district

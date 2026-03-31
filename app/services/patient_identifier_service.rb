@@ -87,8 +87,13 @@ module PatientIdentifierService
 
     def create_new_identifier(params)
       identifier = PatientIdentifier.new(params)
-      identifier[:location_id] = Location.current.location_id
-      identifier.save
+      location_id = Location.current&.location_id ||
+                    User.current&.location_id ||
+                    Location.current_health_center&.location_id
+      raise InvalidParameterError, 'Unable to resolve current location for identifier creation' if location_id.blank?
+
+      identifier[:location_id] = location_id
+      identifier.save!
       identifier
     end
 
