@@ -91,15 +91,13 @@ module ArtService
       end
 
       def patients_on_art_for(age_group, gender)
-        db_gender = gender == 'M' ? 'M' : 'F'
         results = ActiveRecord::Base.connection.select_all <<~SQL
           SELECT e.patient_id,
                  disaggregated_age_group(DATE(e.birthdate), DATE('#{@end_date}')) AS age_group
           FROM #{temp_earliest_start_date} e
           INNER JOIN #{temp_patient_outcomes} o ON o.patient_id = e.patient_id
-          WHERE LEFT(e.gender, 1) = '#{db_gender}'
+          WHERE e.gender = '#{gender}'
             AND o.#{outcome_column} = 'On antiretrovirals'
-            AND DATE(e.date_enrolled) <= '#{@end_date}'
           GROUP BY e.patient_id
           HAVING age_group = '#{age_group}';
         SQL
@@ -136,18 +134,23 @@ module ArtService
       def populate_maternal_status
         initialize_disaggregated
 
-        females = ActiveRecord::Base.connection.select_all <<~SQL
-          SELECT e.patient_id
+        # temp_maternal_status is already populated by MaternalStatus#process_data
+        # (called inside CohortBuilder#update_cum_outcome). Use it directly.
+        ActiveRecord::Base.connection.execute <<~SQL
+          INSERT INTO temp_disaggregated (patient_id, maternal_status, initial_maternal_status, age_group)
+          SELECT e.patient_id,
+            COALESCE(m.maternal_status, 'FNP') AS maternal_status,
+            COALESCE(m.maternal_status, 'FNP') AS initial_maternal_status,
+            'All' AS age_group
           FROM #{temp_earliest_start_date} e
           INNER JOIN #{temp_patient_outcomes} o ON o.patient_id = e.patient_id
-          WHERE LEFT(e.gender, 1) = 'F'
+          LEFT JOIN #{temp_maternal_status} m ON m.patient_id = e.patient_id
+          WHERE e.gender = 'F'
             AND o.#{outcome_column} = 'On antiretrovirals'
-            AND DATE(e.date_enrolled) <= '#{@end_date}';
+          ON DUPLICATE KEY UPDATE
+            maternal_status = VALUES(maternal_status),
+            initial_maternal_status = VALUES(initial_maternal_status);
         SQL
-
-        females.each do |row|
-          insert_female_maternal_status(row['patient_id'].to_i, 'All', @end_date)
-        end
       end
 
       public
