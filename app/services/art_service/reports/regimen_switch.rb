@@ -5,6 +5,7 @@ module ArtService
     class RegimenSwitch
       include CommonSqlQueryUtils
       include ArtTempTablesNaming
+
       include ModelUtils
       def initialize(start_date:, end_date:, **kwargs)
         @start_date = start_date
@@ -74,6 +75,7 @@ module ArtService
           WHERE o.voided = 0
             AND o.start_date <= '#{@end_date.to_date.strftime('%Y-%m-%d 23:59:59')}'
             AND o.start_date >= '#{@start_date.to_date.strftime('%Y-%m-%d 00:00:00')}'
+            AND e.location_id = #{Location.current.location_id}
           ORDER BY o.patient_id
         SQL
 
