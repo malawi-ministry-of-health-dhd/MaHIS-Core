@@ -16,6 +16,7 @@ module ArtService
                                            &.casecmp?('true')
         @occupation = kwargs[:occupation]
         @dsd = kwargs[:dsd]
+        @location_id = Location.current&.id || User.current&.location_id
       end
 
       def clients_due
@@ -77,6 +78,12 @@ module ArtService
                             .select(:program_workflow_state_id).to_sql
       end
 
+      def location_filter
+        return '' unless @location_id
+
+        "AND encounter.location_id = #{ActiveRecord::Base.connection.quote(@location_id)}"
+      end
+
       def potential_get_clients
         observations = ActiveRecord::Base.connection.select_all <<~SQL
           SELECT obs.person_id,
@@ -99,6 +106,7 @@ module ArtService
               LIMIT 1
             )
             AND encounter.voided = 0
+            #{location_filter}
           LEFT JOIN person
             ON person.person_id = obs.person_id
             AND person.voided = 0
