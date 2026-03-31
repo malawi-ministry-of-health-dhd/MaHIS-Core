@@ -310,6 +310,10 @@ module ArtService
             INNER JOIN #{temp_earliest_start_date} e ON e.patient_id = cum.patient_id
             INNER JOIN #{temp_max_patient_state} st ON st.patient_id = cum.patient_id
             #{dsd_query(dsd: @dsd, model: 'st') if @dsd}
+            INNER JOIN patient_program pp ON pp.patient_id = e.patient_id 
+              AND pp.program_id = #{program('HIV PROGRAM').id}
+              AND pp.location_id = #{User.current.location_id}
+              AND pp.voided = 0
             INNER JOIN (
               SELECT prescriptions.patient_id, regimens.name AS regimen_category, prescriptions.drugs, prescriptions.prescription_date
               FROM (
