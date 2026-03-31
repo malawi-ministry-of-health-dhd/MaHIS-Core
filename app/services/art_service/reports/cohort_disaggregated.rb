@@ -96,7 +96,7 @@ module ArtService
                  disaggregated_age_group(DATE(e.birthdate), DATE('#{@end_date}')) AS age_group
           FROM #{temp_earliest_start_date} e
           INNER JOIN #{temp_patient_outcomes} o ON o.patient_id = e.patient_id
-          WHERE e.gender = '#{gender}'
+          WHERE LEFT(e.gender, 1) = '#{gender}'
             AND o.#{outcome_column} = 'On antiretrovirals'
           GROUP BY e.patient_id
           HAVING age_group = '#{age_group}';
@@ -145,7 +145,7 @@ module ArtService
           FROM #{temp_earliest_start_date} e
           INNER JOIN #{temp_patient_outcomes} o ON o.patient_id = e.patient_id
           LEFT JOIN #{temp_maternal_status} m ON m.patient_id = e.patient_id
-          WHERE e.gender = 'F'
+          WHERE LEFT(e.gender, 1) = 'F'
             AND o.#{outcome_column} = 'On antiretrovirals'
           ON DUPLICATE KEY UPDATE
             maternal_status = VALUES(maternal_status),
