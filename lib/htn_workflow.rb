@@ -42,8 +42,8 @@ class HtnWorkflow
       elsif task.name.match(/TREATMENT/i) || task.encounter_type_id.nil?
         # Alert and BP mgmt for patients on HTN or with two high BP readings
         bp = current_bp(patient, date)
-        bp_management_done = todays_encounters.map(&:name).include?('HYPERTENSION MANAGEMENT')
-        medical_history = todays_encounters.map(&:name).include?('MEDICAL HISTORY')
+        bp_management_done = todays_encounters.map(&:name).include?('Hypertension management')
+        medical_history = todays_encounters.map(&:name).include?('Medical history')
 
         # >>>>>>>>>>>>>>>>>BP INITIAL VISIT ENCOUNTER>>>>>>>>>>>>>>>>>>>>
         treatment_status_concept_id = Concept.find_by_name('TREATMENT STATUS').id
