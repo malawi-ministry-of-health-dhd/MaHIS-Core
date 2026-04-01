@@ -12,12 +12,17 @@ module ArtService
       include ArtTempTablesUtils
       include ArtTempTablesNaming
 
-      def initialize(outcomes_definition: 'moh')
+      def initialize(outcomes_definition: 'moh', keep_temp_tables: nil)
         unless %w[moh pepfar].include?(outcomes_definition.downcase)
           raise ArgumentError, "Invalid outcomes_definition `#{outcomes_definition}` expected moh or pepfar"
         end
 
         @outcomes_definition = outcomes_definition
+        @keep_temp_tables = if keep_temp_tables.nil?
+                              ENV['COHORT_KEEP_TEMP_TABLES'] == 'true' || ENV['KEEP_TEMP_TABLES'] == 'true'
+                            else
+                              keep_temp_tables.to_s.casecmp?('true') || keep_temp_tables == true
+                            end
         @concept_cache = {}
       end
 
@@ -2124,9 +2129,13 @@ module ArtService
         SQL
         ##########################################################
 
-        ActiveRecord::Base.connection.execute <<~SQL
-          DROP TABLE IF EXISTS `temp_earliest_start_date`;
-        SQL
+        unless @keep_temp_tables
+          ActiveRecord::Base.connection.execute <<~SQL
+            DROP TABLE IF EXISTS `temp_earliest_start_date`;
+          SQL
+        end
+
+        return if @keep_temp_tables && check_if_table_exists(temp_earliest_start_date)
 
         ActiveRecord::Base.connection.execute <<~SQL
           CREATE TABLE #{temp_earliest_start_date}

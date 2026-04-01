@@ -18,7 +18,7 @@ module ArtService
           @dsd = kwargs[:dsd]
           @report_type = kwargs[:report_type] || 'pepfar'
           @tx_curr = []
-          @location_id = Location.current.location_id
+          @location_id = User.current.location_id
         end
 
         def find_report
@@ -94,6 +94,10 @@ module ArtService
               GROUP BY o.person_id
             ) current_obs ON current_obs.person_id = o.person_id AND current_obs.obs_datetime = o.obs_datetime
             INNER JOIN concept_name cn ON cn.concept_id = o.value_coded AND cn.voided = 0
+            INNER JOIN patient_program pp ON pp.patient_id = o.person_id
+              AND pp.program_id = #{program('HIV PROGRAM').id}
+              AND pp.location_id = #{@location_id}
+              AND pp.voided = 0
             INNER JOIN obs patient_present ON patient_present.person_id = o.person_id
               AND patient_present.concept_id = #{ConceptName.find_by_name('Patient present').concept_id}
               AND patient_present.value_coded = #{ConceptName.find_by_name('Yes').concept_id}
@@ -132,12 +136,20 @@ module ArtService
             INNER JOIN #{temp_earliest_start_date} tesd ON tesd.patient_id = o.person_id #{@report_type == 'moh' ? '' : "AND tesd.patient_id IN (#{@tx_curr.join(',')})"}
             #{dsd_query(dsd: @dsd, model: 'tesd') if @dsd}
             INNER JOIN person p ON p.person_id = o.person_id AND p.voided = 0
+            INNER JOIN patient_program pp ON pp.patient_id = o.person_id
+              AND pp.program_id = #{program('HIV PROGRAM').id}
+              AND pp.location_id = #{@location_id}
+              AND pp.voided = 0
             LEFT JOIN obs tcd ON tcd.concept_id = #{ConceptName.find_by_name('TB treatment start date').concept_id} AND tcd.voided = 0 AND tcd.person_id = o.person_id
             LEFT JOIN (
               SELECT
                 o.person_id,
                 COALESCE(MAX(tcd.value_datetime),MAX(o.obs_datetime)) AS tb_confirmed_date
               FROM obs o
+              INNER JOIN patient_program pp ON pp.patient_id = o.person_id
+                AND pp.program_id = #{program('HIV PROGRAM').id}
+                AND pp.location_id = #{@location_id}
+                AND pp.voided = 0
               LEFT JOIN obs tcd ON tcd.concept_id = #{ConceptName.find_by_name('TB treatment start date').concept_id} AND tcd.voided = 0 AND tcd.person_id = o.person_id
               WHERE o.concept_id = #{ConceptName.find_by_name('TB status').concept_id}
               AND o.value_coded = #{ConceptName.find_by_name('Confirmed TB on treatment').concept_id}

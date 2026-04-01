@@ -47,7 +47,7 @@ class ApplicationController < ActionController::API
     end
 
     User.current = user
-    Location.current = user.location
+    Location.current ||= user.location
     true
   end
 

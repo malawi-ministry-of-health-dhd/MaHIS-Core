@@ -650,6 +650,8 @@ module ArtTempTablesUtils
   # Drop all location-specific temporary tables to free up database resources
   # Should be called after report generation completes
   def cleanup_temporary_tables
+    return Rails.logger.info('keep_temp_tables: true — skipping cleanup of temporary tables') if @keep_temp_tables
+
     cleanup_cohort_tables
     cleanup_outcome_tables
     cleanup_maternal_tables

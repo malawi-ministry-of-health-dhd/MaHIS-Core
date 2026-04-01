@@ -60,7 +60,7 @@ class DdeService
   end
 
   def remaining_npids
-    response, status = dde_client.get("/location_npid_status?location_id=#{Location.current.id}")
+    response, status = dde_client.get("/location_npid_status?location_id=#{DDE_LOCATION_ID || Location.current.id}")
     raise DdeError, "Failed to fetch remaining npids: #{status} - #{response}" unless status == 200
 
     response
