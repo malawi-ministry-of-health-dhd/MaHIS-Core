@@ -5,6 +5,9 @@ class DdeService
 
   class DdeError < StandardError; end
 
+  CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
+  DDE_LOCATION_ID = CONFIG['DDE_LOCATION_ID'] || ""
+  
   DDE_CONFIG_PATH = 'config/application.yml'
   LOGGER = Rails.logger
 
@@ -57,14 +60,14 @@ class DdeService
   end
 
   def remaining_npids
-    response, status = dde_client.get("/location_npid_status?location_id=#{Location.current.id}")
+    response, status = dde_client.get("/location_npid_status?location_id=#{DDE_LOCATION_ID || Location.current.id}")
     raise DdeError, "Failed to fetch remaining npids: #{status} - #{response}" unless status == 200
 
     response
   end
 
   def allocate_npids(count, location_id = nil)
-    response, status = dde_client.get("/allocate_npids?location_id=#{location_id || Location.current.id}&count=#{count}")
+    response, status = dde_client.get("/allocate_npids?location_id=#{DDE_LOCATION_ID || Location.current.id}&count=#{count}")
     raise DdeError, "Failed to fetch remaining npids: #{status} - #{response}" unless status == 200 
     
     response
@@ -109,11 +112,22 @@ class DdeService
       return
     end
 
+    location_id = current_footprint_location_id
+    unless location_id
+      LOGGER.warn("Skipping DDE footprint push for patient ##{patient.patient_id}: current location is unavailable")
+      return
+    end
+
+    unless creator_id
+      LOGGER.warn("Skipping DDE footprint push for patient ##{patient.patient_id}: creator_id is unavailable")
+      return
+    end
+
     response, status = dde_client.post('update_footprint', person_uuid: doc_id,
-                                                           location_id: Location.current_health_center.location_id,
+                                                           location_id: location_id,
                                                            program_id: program.program_id,
-                                                           encounter_datetime: date || Date.tody,
-                                                           user_id: creator_id || User.current.user_id)
+                                                           encounter_datetime: date || Date.today,
+                                                           user_id: creator_id)
 
     LOGGER.warn("Failed to push patient footprint to DDE: #{status} - #{response}") unless status == 200
   end
@@ -323,6 +337,10 @@ class DdeService
   end
 
   private
+
+  def current_footprint_location_id
+    Location.current_health_center&.location_id
+  end
 
   def find_remote_patients_by_npid(npid)
     response, _status = dde_client.post('search_by_npid', npid:)

@@ -5,50 +5,61 @@ module PatientRecordService
   class VaccineManager < BaseSaver
     def save_vaccines(patient_id, record)
       orders = record.dig(:vaccineAdministration, :orders)
-      return false unless orders&.any?
+      return ok unless orders&.any?
 
-      begin
-        ActiveRecord::Base.transaction do
-          orders.each do |order|
+      collected_errors = []
+
+      orders.each do |order|
+        begin
+          ActiveRecord::Base.transaction(requires_new: true) do
             encounter_id = create_encounter(patient_id, 25, record)
 
             obs = record.dig(:vaccineAdministration, :obs)&.find do |item|
               item[:value_text] == order[:drug_name]
             end
 
-            AdministerVaccineService.administer_vaccine(encounter_id, [order], record[:program_id], [obs],
-                                                        record[:provider_id], record[:location_id])
+            AdministerVaccineService.administer_vaccine(
+              encounter_id, [order], record[:program_id], [obs],
+              record[:provider_id], record[:location_id]
+            )
           end
-
-          record[:vaccineAdministration][:obs] = []
-          record[:vaccineAdministration][:orders] = []
-          true
+        rescue StandardError => e
+          log_error("Failed to save vaccine order #{order[:drug_name]}", e)
+          collected_errors << "Vaccine #{order[:drug_name]}: #{e.message}"
+          # continues to next order
         end
-      rescue StandardError => e
-        log_error("Failed to save vaccines", e)
       end
+
+      record[:vaccineAdministration][:obs]    = []
+      record[:vaccineAdministration][:orders] = []
+
+      OperationResult.new(success: true, errors: collected_errors)
     end
 
     def void_vaccine(_patient_id, record)
       data = record.dig(:vaccineAdministration, :voided)
-      return false unless data&.any?
+      return ok unless data&.any?
 
-      begin
-        ActiveRecord::Base.transaction do
-          data.each do |item|
+      collected_errors = []
+
+      data.each do |item|
+        begin
+          ActiveRecord::Base.transaction(requires_new: true) do
             order = Order.find(item[:order_id])
             order.void(item[:reason])
             Observation.where(order_id: order.id).each { |obs| obs.void(item[:reason]) }
           end
-          record[:vaccineAdministration][:voided] = []
-          true
         rescue ActiveRecord::RecordNotFound => e
-          log_error("Order not found", e)
-          record[:vaccineAdministration][:voided] = []
+          log_error("Order not found for void", e)
+          collected_errors << "Order #{item[:order_id]}: #{e.message}"
+        rescue StandardError => e
+          log_error("Error voiding vaccine", e)
+          collected_errors << "Order #{item[:order_id]}: #{e.message}"
         end
-      rescue StandardError => e
-        log_error("Error voiding vaccine", e)
       end
+
+      record[:vaccineAdministration][:voided] = []
+      OperationResult.new(success: true, errors: collected_errors)
     end
   end
 end

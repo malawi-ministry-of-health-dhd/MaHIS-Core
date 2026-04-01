@@ -2,79 +2,44 @@
 module BuildPatientRecordService
   module ObservationExtractor
     include ModelUtils
-    def safe_extract_observations(patient_id, encounter_type, value_filters = nil, has_children = nil)
-      begin
-        return [] unless patient_id && encounter_type
-        
-        encounters = Encounter.where(patient_id: patient_id, encounter_type: encounter_type)
-        return [] unless encounters.any?
 
-        encounters.flat_map do |encounter|
-          safe_process_observations(encounter, value_filters, has_children)
-        end.compact
-      rescue StandardError => e
-        Rails.logger.error("Error extracting observations for patient #{patient_id}, encounter type #{encounter_type}: #{e.message}")
-        []
-      end
-    end
-    
-    def safe_process_observations(encounter, value_filters, has_children)
-      begin
-        encounter.observations
-                .select do |observation|
-                  if value_filters
-                    safe_matches_filters?(observation, value_filters)
-                  else
-                    !has_children || observation.children.length.positive?
-                  end
-                end
-                .map do |observation|
-          safe_build_observation_hash(observation, encounter)
-        end.compact
-      rescue StandardError => e
-        Rails.logger.error("Error processing observations for encounter #{encounter.id}: #{e.message}")
-        []
-      end
-    end
-    def safe_matches_filters?(observation, filters)
-      begin
-        return true if filters.nil? || filters.empty?
-
-        filters.any? do |field, value|
-          observation.respond_to?(field) && observation.send(field) == value
-        end
-      rescue StandardError => e
-        Rails.logger.error("Error matching filters: #{e.message}")
-        false
-      end
-    end
     def build_all_observations(patient_id, allowed_encounter_types = nil, status = "saved")
       begin
         return [] unless patient_id
 
-        encounters_query = Encounter.where(patient_id: patient_id)
+        encounters_query = Encounter.unscoped.where(patient_id: patient_id)
 
         if allowed_encounter_types.is_a?(Array) && allowed_encounter_types.any?
           encounters_query = encounters_query.where(encounter_type: allowed_encounter_types)
         end
 
         encounters = encounters_query
-        return [] unless encounters.any?
+          .select(:encounter_id, :encounter_type, :visit_id, :provider_id, :location_id, :program_id, :encounter_datetime)
+          .to_a
+        return [] if encounters.empty?
+
+        encounter_type_names = EncounterType.where(encounter_type_id: encounters.map(&:encounter_type).uniq)
+          .pluck(:encounter_type_id, :name)
+          .to_h
 
         aggregated_observations = {}
+        observations_by_encounter, children_by_parent, concept_names_by_id = preload_observation_data(encounters.map(&:encounter_id))
 
         encounters.each do |encounter|
-          encounter_type_name = EncounterType.where(encounter_type_id: encounter.encounter_type).pick(:name)
+          encounter_type_name = encounter_type_names[encounter.encounter_type]
 
           unless aggregated_observations.key?(encounter_type_name)
             aggregated_observations[encounter_type_name] = {
               encounter_type: encounter.encounter_type,
+              visit_id: encounter.visit_id,
               status: status,
               obs: [], 
             }
           end
-          encounter.observations.each do |observation|
-            obs_hash = safe_build_observation_hash(observation, encounter)
+          parent_observations = observations_by_encounter[encounter.encounter_id] || []
+
+          parent_observations.each do |observation|
+            obs_hash = build_observation_hash(observation, encounter, children_by_parent, concept_names_by_id)
             aggregated_observations[encounter_type_name][:obs] << obs_hash if obs_hash
           end
         end
@@ -86,13 +51,54 @@ module BuildPatientRecordService
       end
     end
 
-    def safe_build_observation_hash(observation, encounter)
+    def preload_observation_data(encounter_ids)
+      observations = Observation.unscoped
+        .where(encounter_id: encounter_ids)
+        .where(voided: [false, 0])
+        .select(:obs_id, :obs_group_id, :encounter_id, :concept_id, :obs_datetime, :value_coded, :value_text, :value_numeric, :value_datetime)
+        .to_a
+
+      observations_by_encounter = Hash.new { |hash, key| hash[key] = [] }
+      children_by_parent = Hash.new { |hash, key| hash[key] = [] }
+
+      observations.each do |observation|
+        if observation.obs_group_id.present?
+          children_by_parent[observation.obs_group_id] << observation
+        else
+          observations_by_encounter[observation.encounter_id] << observation
+        end
+      end
+
+      concept_ids = observations.map(&:concept_id).compact.uniq
+      concept_names_by_id = build_concept_name_map(concept_ids)
+
+      [observations_by_encounter, children_by_parent, concept_names_by_id]
+    end
+
+    def build_concept_name_map(concept_ids)
+      return {} if concept_ids.empty?
+
+      concept_names = {}
+
+      ConceptName.where(concept_id: concept_ids, voided: [false, 0])
+                 .order(:concept_id, :concept_name_id)
+                 .pluck(:concept_id, :name)
+                 .each do |concept_id, concept_name|
+        concept_names[concept_id] ||= concept_name
+      end
+
+      concept_names
+    end
+
+    def build_observation_hash(observation, encounter, children_by_parent, concept_names_by_id)
       begin
-        children = observation.children.map { |child| safe_build_observation_hash(child, encounter) }.compact
+        children = (children_by_parent[observation.obs_id] || []).map do |child|
+          build_observation_hash(child, encounter, children_by_parent, concept_names_by_id)
+        end.compact
 
         {
           concept_id: observation.concept_id,
-          concept_name: safe_concept_id_to_name(observation.concept_id),
+          concept_name: concept_names_by_id[observation.concept_id] || '',
           obs_datetime: observation.obs_datetime&.to_s,
           obs_id: observation.obs_id,
           children: children,
@@ -108,7 +114,7 @@ module BuildPatientRecordService
         }
       rescue StandardError => e
         Rails.logger.error("Error building observation hash for obs #{observation.id}: #{e.message}")
-        nil 
+        nil
       end
     end
 

@@ -9,12 +9,12 @@ module EncounterCreation
     # or have the calling service pass in the encounter_id directly.
     # For now, let's keep them as instance methods.
     def create_encounter(patient_id, encounter_type_id, record)
-      encounter_service = EncounterService.new
+      encounter_service = EncounterService.new      
       encounter = encounter_service.create(
         type: EncounterType.find(encounter_type_id),
         patient: Patient.find(patient_id),
         program: Program.find(record[:program_id]),
-        provider: record[:provider_id] ? Person.find(record[:provider_id]) : User.current.person,
+        provider: record[:provider_id] ? User.find(record[:provider_id])&.person : User.current.person,
         encounter_datetime: TimeUtils.retro_timestamp(record[:encounter_datetime]&.to_time || Time.now),
         location_id: record[:location_id] || Location.current.id
       )

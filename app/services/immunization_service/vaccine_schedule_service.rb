@@ -13,6 +13,9 @@ module ImmunizationService
     }.freeze
     VACCINE_NAME_MAP = { 'Pfizer-BioNTech COVID-19 vaccine': 'Pfizer COVID-19' }.freeze
     CUSTOM_WINDOW_PERIODS = { 'OPV 0': '14 weeks' }.freeze
+    DRUGS_DISPENSED_CONCEPT = 'Drugs dispensed'.freeze
+    BATCH_NUMBER_CONCEPT = 'Batch Number'.freeze
+    FEMALE_ONLY_IMMUNIZATIONS_CONCEPT = 'Female only immunizations'.freeze
 
 
     def self.vaccine_schedule(patient)
@@ -21,25 +24,28 @@ module ImmunizationService
       # Immunization Drugs
       immunizations = immunization_drugs
 
-      if patient.gender.split.first.casecmp?('M')
+      if patient.gender&.split&.first&.casecmp?('M')
         immunizations = filter_female_specific_immunizations(immunizations)
-      else
-        immunizations
       end
+
+      vaccine_metadata = vaccine_metadata_for(immunizations.map(&:concept_id))
   
       # For each of these get the window period and schedule
       immunization_with_window = immunizations.flat_map do |immunization_drug|
+        concept_id = immunization_drug.concept_id
+        metadata = vaccine_metadata[concept_id] || {}
+        milestones = metadata[:milestones] || []
+        default_window_period = metadata[:window_period]
+
         vaccines = []
-        vaccine_attribute(immunization_drug.concept_id, 'Immunization milestones').each_with_index do |milestone, i|
+        milestones.each_with_index do |milestone, i|
           drug_name = vaccine_display_name(immunization_drug.name, i)
           vaccines << {
-            milestone_name: milestone.name,
-            sort_weight: milestone.sort_weight,
+            milestone_name: milestone[:name],
+            sort_weight: milestone[:sort_weight],
             drug_id: immunization_drug.drug_id,
             drug_name:,
-            window_period: CUSTOM_WINDOW_PERIODS[drug_name.to_sym] || vaccine_attribute(immunization_drug.concept_id,
-                                                                                        'Immunization window period')
-                      .first&.name
+            window_period: CUSTOM_WINDOW_PERIODS[drug_name.to_sym] || default_window_period
           }
         end
         vaccines
@@ -49,10 +55,7 @@ module ImmunizationService
       sorted_grouped_immunizations = grouped_immunizations.sort_by { |milestone| milestone[1][0][:sort_weight]}.to_h
       vaccines = format_schedule(make_unique(sorted_grouped_immunizations), vaccines_given, patient.birthdate)
   
-      return { vaccine_schedule: vaccines }
-      # rescue => e
-      { error: e.message }
-      #end
+      { vaccine_schedule: vaccines }
     end
   
   
@@ -93,11 +96,11 @@ module ImmunizationService
     end
   
     def self.filter_female_specific_immunizations(immunizations)
-      immunizations.reject do |immunization|
-        ConceptSet.where(concept_set: ConceptName
-                  .where(name: 'Female only immunizations').pluck(:concept_id))
-                  .pluck(:concept_id).include?(immunization.concept_id)
-      end
+      female_only_concept_ids = ConceptSet.where(
+        concept_set: ConceptName.where(name: FEMALE_ONLY_IMMUNIZATIONS_CONCEPT).select(:concept_id)
+      ).pluck(:concept_id)
+
+      immunizations.reject { |immunization| female_only_concept_ids.include?(immunization.concept_id) }
     end
   
   
@@ -160,6 +163,58 @@ module ImmunizationService
                 .select('concept_name.name, concept_set.sort_weight')
                 .order(:sort_weight)
     end
+
+    def self.vaccine_metadata_for(drug_concept_ids)
+      drug_concept_ids = Array(drug_concept_ids).compact.uniq
+      return {} if drug_concept_ids.empty?
+
+      member_concept_ids_by_drug = ConceptSet.where(concept_set: drug_concept_ids)
+                                             .pluck(:concept_set, :concept_id)
+                                             .each_with_object(Hash.new { |hash, key| hash[key] = [] }) do |(set_id, concept_id), hash|
+        hash[set_id] << concept_id
+      end
+
+      member_concept_ids = member_concept_ids_by_drug.values.flatten.uniq
+      return {} if member_concept_ids.empty?
+
+      milestone_details = attribute_details_for_members(member_concept_ids, 'Immunization milestones')
+      window_period_details = attribute_details_for_members(member_concept_ids, 'Immunization window period')
+
+      drug_concept_ids.each_with_object({}) do |drug_concept_id, metadata|
+        member_ids = member_concept_ids_by_drug[drug_concept_id]
+
+        milestones = member_ids.filter_map do |member_id|
+          milestone = milestone_details[member_id]
+          next unless milestone
+
+          { name: milestone[:name], sort_weight: milestone[:sort_weight] }
+        end.sort_by { |milestone| milestone[:sort_weight].to_i }
+
+        default_window_period = member_ids.filter_map do |member_id|
+          window_period_details[member_id]&.dig(:name)
+        end.first
+
+        metadata[drug_concept_id] = {
+          milestones: milestones,
+          window_period: default_window_period
+        }
+      end
+    end
+
+    def self.attribute_details_for_members(member_concept_ids, attribute_type)
+      return {} if member_concept_ids.blank?
+
+      attribute_concept_ids = ConceptName.where(name: attribute_type).pluck(:concept_id)
+      return {} if attribute_concept_ids.empty?
+
+      ConceptSet.joins(concept: :concept_names)
+                .where(concept_set: attribute_concept_ids, concept_id: member_concept_ids)
+                .order('concept_set.sort_weight ASC, concept_name.concept_name_id ASC')
+                .pluck('concept_set.concept_id', 'concept_set.sort_weight', 'concept_name.name')
+                .each_with_object({}) do |(concept_id, sort_weight, name), details|
+        details[concept_id] ||= { sort_weight: sort_weight, name: name }
+      end
+    end
   
     def self.format_schedule(schedule, vaccines_given, client_dob)
       schedule.map.with_index(1) do |(milestone_name, antigens), index|
@@ -190,27 +245,60 @@ module ImmunizationService
     end
 
     def self.administered_vaccines(patient_id, drugs)
-      drug_name_dispensed = ConceptName.where('name = ?', 'Drugs dispensed').pluck(:concept_id)
-      Observation.joins(person: :names)
-                 .joins(order: :drug_order)
-                 .where(drug_order: { drug_inventory_id: drugs }, person_id: patient_id)
-                 .where(order: { voided: 0 })
-                 .select(:obs_datetime, :drug_inventory_id, :order_id, :location_id,
-                         :creator, :given_name, :family_name, :encounter_id).map do |obs|
+      return [] if drugs.blank?
+
+      drug_name_dispensed = ConceptName.where(name: DRUGS_DISPENSED_CONCEPT).pluck(:concept_id)
+      batch_number_concept_ids = ConceptName.where(name: BATCH_NUMBER_CONCEPT).pluck(:concept_id)
+
+      observations = Observation.joins(person: :names)
+                                .joins(order: :drug_order)
+                                .where(drug_order: { drug_inventory_id: drugs }, person_id: patient_id)
+                                .where(order: { voided: 0 })
+                                .select(:obs_datetime, :drug_inventory_id, :order_id, :location_id,
+                                        :creator, :given_name, :family_name, :encounter_id)
+                                .to_a
+
+      return [] if observations.empty?
+
+      order_ids = observations.map(&:order_id).compact.uniq
+      encounter_ids = observations.map(&:encounter_id).compact.uniq
+      location_ids = observations.map(&:location_id).compact.uniq
+
+      batch_numbers_by_order = Observation.where(concept_id: batch_number_concept_ids, order_id: order_ids)
+                                          .where.not(value_text: nil)
+                                          .order(:obs_id)
+                                          .pluck(:order_id, :value_text)
+                                          .each_with_object({}) do |(order_id, value_text), map|
+        map[order_id] ||= value_text
+      end
+
+      drug_name_by_encounter = Observation.where(
+        person_id: patient_id,
+        encounter_id: encounter_ids,
+        concept_id: drug_name_dispensed
+      ).where.not(value_text: nil)
+       .order(:obs_id)
+       .pluck(:encounter_id, :value_text)
+       .each_with_object({}) do |(encounter_id, value_text), map|
+        map[encounter_id] ||= value_text
+      end
+
+      locations_by_id = Location.where(location_id: location_ids).index_by(&:location_id)
+
+      observations.map do |obs|
         {
           obs_datetime: obs.obs_datetime,
           drug_inventory_id: obs.drug_inventory_id,
-          batch_number: get_batch_id(obs.order_id),
+          batch_number: batch_numbers_by_order[obs.order_id],
           encounter_id: obs.encounter_id,
           order_id: obs.order_id,
-          drug_name: Observation.find_by(person_id: patient_id, encounter_id: obs.encounter_id,
-                                         concept_id: drug_name_dispensed)&.value_text,
+          drug_name: drug_name_by_encounter[obs.encounter_id],
           administered_by: {
             person_id: obs.creator,
             given_name: obs.given_name,
             family_name: obs.family_name
           },
-          location_administered: Location.find_by_location_id(obs.location_id)
+          location_administered: locations_by_id[obs.location_id]
         }
       end
     end

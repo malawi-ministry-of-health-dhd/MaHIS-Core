@@ -7,6 +7,7 @@ class ReportJob < ApplicationJob
     logger.debug("Running report job #{clazzname}(#{kwargs})")
 
     User.current = User.find(kwargs.delete(:user))
+    Location.current = Location.find(kwargs.delete(:location_id))
 
     clazz = clazzname.constantize
     report_engine = clazz.new

@@ -74,6 +74,10 @@ class ReportService
     engine(@program).with_nids(start_date, end_date)
   end
 
+  def nid_utilization_report(start_date:, end_date:)
+    NidUtilizationReport.new(start_date: start_date, end_date: end_date, program_id: @program.id).find_report
+  end
+
   def cohort_disaggregated(quarter, age_group, start_date, end_date, rebuild, init, **kwargs)
     engine(@program).cohort_disaggregated(quarter, age_group, start_date, end_date, rebuild, init, **kwargs)
   end
@@ -243,6 +247,7 @@ class ReportService
     kwargs[:start_date] = start_date.to_s
     kwargs[:end_date] = end_date.to_s
     kwargs[:user] = User.current.user_id
+    kwargs[:location_id] = Location.current.location_id
 
     LOGGER.debug("Queueing #{kwargs['type']} report: #{kwargs}")
     if @immediate_mode

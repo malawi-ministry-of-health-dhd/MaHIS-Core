@@ -3,7 +3,7 @@ module Sync
   class TestResultIndicatorsSyncJob < BaseSyncJob
     # Sync all test result indicators to CouchDB
     def perform(batch_size = 50)
-      # Get test result indicators using the LabTestService
+      # Get test result indicators using the per-test indicator lookup
       test_indicators = LabTestService.all_test_result_indicators
       
       sync_array_to_couchdb(
@@ -20,16 +20,21 @@ module Sync
 
     def prepare_document(indicator)
       {
-        "type" => "test_result_indicator",
-        "concept_id" => indicator[:concept_id],
-        "name" => indicator[:name],
-        "concept_set" => indicator[:concept_set],
-        "synced_at" => Time.current.iso8601
-      }
+        "concept_id" => fetch_value(indicator, :concept_id),
+        "name" => fetch_value(indicator, :name),
+        "concept_set" => fetch_value(indicator, :concept_set),
+        "nlims_code" => fetch_value(indicator, :nlims_code),
+        "uuid" => fetch_value(indicator, :uuid)
+      }.compact
     end
 
+
     def generate_document_id(indicator)
-      "test_indicator_#{indicator[:concept_id]}_#{indicator[:concept_set]}"
+      "test_indicator_#{fetch_value(indicator, :concept_id)}_#{fetch_value(indicator, :concept_set)}"
+    end
+
+    def fetch_value(record, key)
+      record[key] || record[key.to_s] || record[key.to_sym]
     end
   end
 end

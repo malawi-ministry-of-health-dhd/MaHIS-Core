@@ -10,8 +10,11 @@ module ArtService
     class ArtCohort
       include ConcurrencyUtils
       include ModelUtils
+      include ArtTempTablesNaming
 
-      LOCK_FILE = 'art_service/reports/cohort.lock'
+      def lock_file
+        "art_service/reports/cohort_#{Location.current.location_id}.lock"
+      end
 
       def initialize(name:, type:, start_date:, end_date:, **kwargs)
         @name = name
@@ -24,20 +27,41 @@ module ArtService
       end
 
       def build_report
-        with_lock(LOCK_FILE, blocking: false) do
+        with_lock(lock_file, blocking: false) do
           @cohort_builder.build(@cohort_struct, @start_date, @end_date, @occupation)
           clear_drill_down
           save_report
+        ensure
+          # Always cleanup temporary tables after report generation
+          cleanup_tables
         end
       rescue FailedToAcquireLock => e
         Rails.logger.warn("ART#Cohort report is locked by another process: #{e}")
       end
 
       def find_report
-        Report.where(type: @type, name: "#{@name} #{@occupation}",
+        # Find or create ReportType if @type is an OpenStruct
+        report_type = if @type.is_a?(OpenStruct)
+                        ReportType.find_or_create_by(name: @type.name) do |rt|
+                          rt.creator = User.current.id
+                        end
+                      else
+                        @type
+                      end
+
+        Report.where(type: report_type, name: "#{@name} #{@occupation}",
                      start_date: @start_date, end_date: @end_date)\
               .order(date_created: :desc)\
               .first
+      end
+
+      private
+
+      def cleanup_tables
+        Rails.logger.info("Cleaning up temporary tables for location #{Location.current&.location_id}")
+        @cohort_builder.cleanup_temporary_tables
+      rescue StandardError => e
+        Rails.logger.error("Failed to cleanup temporary tables: #{e.message}")
       end
 
       def defaulter_list(pepfar)
@@ -52,70 +76,140 @@ module ArtService
             art_reason.name art_reason, a.value cell_number, landmark.value landmark,
             s.state_province district, s.county_district ta,
             s.city_village village, TIMESTAMPDIFF(year, DATE(e.birthdate), DATE('#{@end_date}')) age,
-            o.#{report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_' }outcome_date AS defaulter_date,
+            o.#{report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}outcome_date AS defaulter_date,
             DATE(appointment.appointment_date) AS appointment_date
-          FROM temp_earliest_start_date e
-          INNER JOIN temp_patient_outcomes o ON e.patient_id = o.patient_id
+          FROM #{temp_earliest_start_date} e
+          INNER JOIN #{temp_patient_outcomes} o ON e.patient_id = o.patient_id
           INNER JOIN (
             SELECT e.patient_id, MAX(o.value_datetime) appointment_date
             FROM encounter e
             INNER JOIN obs o ON o.encounter_id = e.encounter_id AND o.voided = 0 AND o.concept_id = 5096 -- appointment date
             WHERE e.encounter_type = 7 -- appointment encounter type
-            AND e.program_id = 1 -- hiv program
-            AND e.patient_id IN (SELECT patient_id FROM temp_patient_outcomes WHERE #{report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_' }cum_outcome = 'Defaulted')
+            AND e.program_id = (SELECT program_id FROM program WHERE name = 'HIV PROGRAM' LIMIT 1)
+            AND e.patient_id IN (SELECT patient_id FROM #{temp_patient_outcomes} WHERE #{report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}cum_outcome = 'Defaulted')
             AND e.encounter_datetime < DATE('#{@end_date}') + INTERVAL 1 DAY
             GROUP BY e.patient_id
           ) appointment ON appointment.patient_id = e.patient_id
-          LEFT JOIN patient_identifier i ON i.patient_id = e.patient_id AND i.voided = 0 AND i.identifier_type = 4
+          LEFT JOIN patient_identifier i ON i.patient_id = e.patient_id#{' '}
+            AND i.voided = 0#{' '}
+            AND i.identifier_type = (
+              SELECT patient_identifier_type_id#{' '}
+              FROM patient_identifier_type#{' '}
+              WHERE name = 'ARV Number'#{' '}
+              LIMIT 1
+            )
           INNER JOIN person_name n ON n.person_id = e.patient_id AND n.voided = 0
           LEFT JOIN person_attribute a ON a.person_id = e.patient_id AND a.voided = 0 AND a.person_attribute_type_id = 12
           LEFT JOIN person_attribute landmark ON landmark.person_id = e.patient_id AND landmark.voided = 0 AND landmark.person_attribute_type_id = 19
           LEFT JOIN person_address s ON s.person_id = e.patient_id AND s.voided = 0
           LEFT JOIN concept_name art_reason ON art_reason.concept_id = e.reason_for_starting_art AND art_reason.voided = 0
-          WHERE o.#{report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_' }cum_outcome = 'Defaulted'
+          WHERE o.#{report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}cum_outcome = 'Defaulted'
           GROUP BY e.patient_id
           HAVING (defaulter_date >= DATE('#{@start_date}') AND defaulter_date <= DATE('#{@end_date}')) OR (defaulter_date IS NULL)
           ORDER BY e.patient_id, n.date_created DESC;
         SQL
       end
 
+      public
+
       def cohort_report_drill_down(id)
         id = ActiveRecord::Base.connection.quote(id)
 
+        # Query permanent tables directly since temp tables are cleaned up after report generation
+        # The cohort_drill_down table already has the correct patient IDs from report generation
         ActiveRecord::Base.connection.select_all <<~SQL
           SELECT i.identifier arv_number, p.birthdate,
                  p.gender, n.given_name, n.family_name, p.person_id person_id,
-                 outcomes.moh_cum_outcome AS outcome, tesd.earliest_start_date art_start_date
-          FROM person p
-          INNER JOIN cohort_drill_down c ON c.patient_id = p.person_id
-          INNER JOIN temp_patient_outcomes AS outcomes
-            ON outcomes.patient_id = c.patient_id
-          INNER JOIN temp_earliest_start_date tesd ON tesd.patient_id = p.person_id
+                 ps.name AS outcome,
+                 DATE(MIN(COALESCE(art_start.value_datetime, orders.start_date))) AS art_start_date,
+                 DATE(MAX(tb_start.obs_datetime)) tb_observation_date
+          FROM cohort_drill_down c
+          INNER JOIN person p ON p.person_id = c.patient_id AND p.voided = 0
           LEFT JOIN patient_identifier i ON i.patient_id = p.person_id
-          AND i.voided = 0 AND i.identifier_type = 4
+            AND i.voided = 0#{' '}
+            AND i.identifier_type = (
+              SELECT patient_identifier_type_id#{' '}
+              FROM patient_identifier_type#{' '}
+              WHERE name = 'ARV Number'#{' '}
+              LIMIT 1
+            )
           LEFT JOIN person_name n ON n.person_id = p.person_id AND n.voided = 0
+          LEFT JOIN patient_program pp ON pp.patient_id = p.person_id
+            AND pp.program_id = (
+              SELECT program_id#{' '}
+              FROM program#{' '}
+              WHERE name = 'HIV PROGRAM'#{' '}
+              LIMIT 1
+            )
+            AND pp.voided = 0
+          LEFT JOIN patient_state pst ON pst.patient_program_id = pp.patient_program_id
+            AND pst.voided = 0
+            AND pst.start_date = (
+              SELECT MAX(ps2.start_date)
+              FROM patient_state ps2
+              WHERE ps2.patient_program_id = pp.patient_program_id
+              AND ps2.voided = 0
+            )
+          LEFT JOIN program_workflow_state pws ON pws.program_workflow_state_id = pst.state
+          LEFT JOIN concept_name ps ON ps.concept_id = pws.concept_id
+            AND ps.voided = 0
+          LEFT JOIN obs art_start ON art_start.person_id = p.person_id
+            AND art_start.concept_id = (
+              SELECT concept_id FROM concept_name WHERE name = 'ART start date' AND voided = 0 LIMIT 1
+            )
+            AND art_start.voided = 0
+          LEFT JOIN orders ON orders.patient_id = p.person_id
+            AND orders.concept_id IN (
+              SELECT concept_id FROM concept_set WHERE concept_set = (
+                SELECT concept_id FROM concept_name WHERE name = 'Antiretroviral drugs' LIMIT 1
+              )
+            )
+            AND orders.voided = 0
+          LEFT JOIN obs tb_start ON tb_start.person_id = p.person_id AND tb_start.voided = 0
+            AND tb_start.concept_id = (
+              SELECT concept_id#{' '}
+              FROM concept_name#{' '}
+              WHERE name = 'TB status'#{' '}
+              LIMIT 1
+            )
           WHERE c.reporting_report_design_resource_id = #{id}
           GROUP BY p.person_id ORDER BY p.person_id, p.date_created;
         SQL
       end
 
-      private
-
       LOGGER = Rails.logger
 
       def find_saved_report
-        @report = Report.where(type: @type, name: "#{@name} #{@occupation}",
-                              start_date: @start_date, end_date: @end_date)
+        # Find or create ReportType if @type is an OpenStruct
+        report_type = if @type.is_a?(OpenStruct)
+                        ReportType.find_or_create_by(name: @type.name) do |rt|
+                          rt.creator = User.current.id
+                        end
+                      else
+                        @type
+                      end
+
+        @report = Report.where(type: report_type, name: "#{@name} #{@occupation}",
+                               start_date: @start_date, end_date: @end_date)
         @report&.map { |r| r['id'] } || []
       end
 
       # Writes the report to database
       def save_report
         Report.transaction do
+          # Find or create ReportType if @type is an OpenStruct
+          report_type = if @type.is_a?(OpenStruct)
+                          ReportType.find_or_create_by(name: @type.name) do |rt|
+                            rt.creator = User.current.id
+                          end
+                        else
+                          @type
+                        end
+
           report = Report.create(name: "#{@name} #{@occupation}",
                                  start_date: @start_date,
                                  end_date: @end_date,
-                                 type: @type,
+                                 type: report_type,
                                  creator: User.current.id,
                                  renderer_type: 'PDF')
 
@@ -139,25 +233,51 @@ module ArtService
 
           raise "Failed to save report value: #{report_value.errors.as_json}" unless report_value.errors.empty?
 
-          save_patients(report_value, value_contents_to_json(value).contents)
+          save_patients(report_value, value.contents)
 
           report_value
         end
       end
 
       def clear_drill_down
-        saved_reports = find_saved_report
-        return if saved_reports.blank?
+        # Find existing reporting_report_design records for this cohort/date range
+        # Match on start_date and end_date (name is unreliable as it gets stored inconsistently)
+        existing_designs = ActiveRecord::Base.connection.select_all <<~SQL
+          SELECT id FROM reporting_report_design
+          WHERE start_date = '#{@start_date}'
+            AND end_date = '#{@end_date}'
+        SQL
+
+        design_ids = existing_designs.map { |d| d['id'] }
+        return if design_ids.blank?
+
+        LOGGER.info("Clear drill-down: Found #{design_ids.count} existing designs with date range #{@start_date} to #{@end_date}")
+
+        # Find all resource IDs for these designs
+        resource_ids = ActiveRecord::Base.connection.select_all <<~SQL
+          SELECT id FROM reporting_report_design_resource
+          WHERE report_design_id IN (#{design_ids.join(',')})
+        SQL
+
+        resource_id_list = resource_ids.map { |r| r['id'] }
+
+        # Delete in proper order: child records first
+        unless resource_id_list.blank?
+          ActiveRecord::Base.connection.execute <<~SQL
+            DELETE FROM cohort_drill_down WHERE reporting_report_design_resource_id IN (#{resource_id_list.join(',')})
+          SQL
+          LOGGER.info("Clear drill-down: Deleted drill-down records for #{resource_id_list.count} resources")
+        end
 
         ActiveRecord::Base.connection.execute <<~SQL
-          DELETE FROM cohort_drill_down WHERE reporting_report_design_resource_id IN (#{saved_reports.join(',')})
+          DELETE FROM reporting_report_design_resource WHERE report_design_id IN (#{design_ids.join(',')})
         SQL
+
         ActiveRecord::Base.connection.execute <<~SQL
-          DELETE FROM reporting_report_design_resource WHERE report_design_id IN (#{saved_reports.join(',')})
+          DELETE FROM reporting_report_design WHERE id IN (#{design_ids.join(',')})
         SQL
-        ActiveRecord::Base.connection.execute <<~SQL
-          DELETE FROM reporting_report_design WHERE id IN (#{saved_reports.join(',')})
-        SQL
+
+        LOGGER.info("Clear drill-down: Deleted #{design_ids.count} report designs and their resources")
       end
 
       def value_contents_to_json(value_contents)
@@ -196,7 +316,9 @@ module ArtService
         end
 
         sql_insert_statement = nil
-        patient_ids.select do |patient_id|
+        patient_ids.each do |patient_id|
+          next if patient_id.blank? || patient_id.to_i.zero?
+
           if sql_insert_statement.blank?
             sql_insert_statement = "(#{r.id}, #{patient_id})"
           else

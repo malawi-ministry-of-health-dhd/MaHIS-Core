@@ -233,7 +233,7 @@ module ArtService
             AND art_order.start_date >= DATE('1901-01-01')
             AND art_order.voided = 0
           LEFT JOIN obs AS art_start_date_obs
-            ON art_start_date_obs.concept_id = 2516
+            ON art_start_date_obs.concept_id = (SELECT concept_id FROM concept_name WHERE name = 'Date antiretrovirals started' AND voided = 0 LIMIT 1)
             AND art_start_date_obs.person_id = pp.patient_id
             AND art_start_date_obs.voided = 0
             AND art_start_date_obs.obs_datetime < (DATE('#{@end_date}') + INTERVAL 1 DAY)

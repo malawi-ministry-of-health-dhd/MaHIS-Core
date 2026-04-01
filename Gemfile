@@ -6,13 +6,14 @@ git_source(:github) { |repo| "https://github.com/#{repo}.git" }
 ruby '~> 3.2.0'
 
 # Gems for managing background jobs
-gem 'activejob-uniqueness'
+# gem 'activejob-uniqueness' # Not compatible with Rails 8.1 - removed temporarily
 gem 'redis'
-gem 'sidekiq'
+gem 'sidekiq', '~> 8.1', '>= 8.1.1'
 gem 'sidekiq-cron'
+gem 'sidekiq-unique-jobs'
 
 # Bundle edge Rails instead: gem 'rails', github: 'rails/rails'
-gem 'rails', '~> 7.0.6'
+gem 'rails', '~> 8.1', '>= 8.1.2'
 # Use sqlite3 as the database for Active Record
 gem 'mysql2'
 # Use Puma as the app server
@@ -43,7 +44,10 @@ gem 'bootsnap', '>= 1.1.0', require: false
 # Use Rack CORS for handling Cross-Origin Resource Sharing (CORS), making cross-origin AJAX possible
 gem 'rack-cors'
 
-gem 'composite_primary_keys'
+# Ruby 3.x standard library gems (moved out of stdlib)
+gem 'net-ftp'
+
+# composite_primary_keys gem removed - Rails 7.1+ has native composite primary key support
 gem 'rest-client'
 
 gem 'test-unit'
@@ -51,9 +55,10 @@ gem 'test-unit'
 gem 'rswag-api'
 gem 'rswag-ui'
 
-gem 'emr_ohsp_interface', '~> 2.2.5'
-
-gem 'his_emr_api_lab', '~> 2.0.9'
+gem 'emr_ohsp_interface', '~> 3.0.1'
+gem 'his_emr_api_lab', '= 2.3.1'
+# gem 'his_emr_api_lab', path: '../his_emr_api_lab'
+gem 'his_emr_api_radiology', '~> 2.0.0'
 
 # gem 'emr_ohsp_interface', '~> 2.2.3'
 # gem 'his_emr_api_lab', '~> 2.0.5'
@@ -92,8 +97,6 @@ gem 'roo', '~> 2.8'
 
 # gem for object matching
 gem 'whitesimilarity'
-
-gem 'mongoid', '~> 9.0', '>= 9.0.6'
 
 # gems for centralized migration
 gem 'sys-cpu'

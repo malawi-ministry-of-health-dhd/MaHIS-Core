@@ -1,21 +1,27 @@
 # frozen_string_literal: true
 
 class DiagnosisService
-  def find_diagnosis(filters)
-    filters = filters.dup # May be modified
+  def find_diagnosis(query)
+    q = query.to_s.strip
 
-    id = filters.delete(:id)
-    name = filters.delete(:name)
-    count = filters.delete(:count)
-    query = ConceptName.where("s.concept_set = ?
-      AND concept_name.name LIKE (?)", id,
-                              "%#{name}%").joins("INNER JOIN concept_set s ON
-      s.concept_id = concept_name.concept_id")
-
-    if count
-      query.select('DISTINCT concept_name.concept_id').count
-    else
-      query.group('concept_name.concept_id')
-    end
+    ConceptName
+      .joins(concept_maps: :concept_source)
+      .where(
+        concept_source: { name: 'ICD-11' },
+        locale_preferred: 1,
+        voided: 0
+      )
+      .where(
+        'concept_name.name LIKE :q OR concept_map.concept_code LIKE :q',
+        q: "#{q}%"
+      )
+      .select(
+        'concept_name.concept_id',
+        'concept_name.name AS name',
+        'concept_source.name AS code_system',
+        'concept_map.concept_code AS code',
+      )
+      .distinct
+      .order('concept_name.name')
   end
 end

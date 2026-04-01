@@ -79,18 +79,26 @@ module Api
       #   provider_id: user_id of surrogate doing the data entry defaults to current user
       def create
         type_id, patient_id, program_id = params.require(%i[encounter_type_id patient_id program_id])
+        visit = params[:visit_id] ? Visit.find(params[:visit_id]) : (params[:visit] ? Visit.find(params[:visit]) : nil)
+        encounter_datetime = TimeUtils.retro_timestamp(params[:encounter_datetime]&.to_time || Time.now)
 
-        encounter = encounter_service.create(
-          type: EncounterType.find(type_id),
-          patient: Patient.find(patient_id),
-          program: Program.find(program_id),
-          provider: params[:provider_id] ? Person.find(params[:provider_id]) : User.current.person,
-          encounter_datetime: TimeUtils.retro_timestamp(params[:encounter_datetime]&.to_time || Time.now)
-        )
+        encounter = nil
+        ActiveRecord::Base.transaction do
+          encounter = encounter_service.create(
+            type: EncounterType.find(type_id),
+            patient: Patient.find(patient_id),
+            program: Program.find(program_id),
+            visit:,
+            provider: params[:provider_id] ? Person.find(params[:provider_id]) : User.current.person,
+            encounter_datetime: encounter_datetime
+          )
+
+          save_observations(encounter, params[:obs]) if encounter.errors.empty? && params[:obs].present?
+        end
 
         if encounter.errors.empty?
           Sync::BatchPatientSyncJob.perform_async
-          render json: encounter, status: :created
+          render json: encounter.reload, status: :created
         else
           render json: encounter.errors, status: :bad_request
         end
@@ -156,6 +164,110 @@ module Api
 
       def encounter_service
         EncounterService.new
+      end
+
+      def observation_service
+        ObservationService.new
+      end
+
+      def save_observations(encounter, obs_payload)
+        obs_payload.each do |obs|
+          observation_service.create_observation(encounter, normalize_observation(obs))
+        end
+      end
+
+      def normalize_observation(obs)
+        raw = obs.respond_to?(:to_unsafe_h) ? obs.to_unsafe_h : obs.deep_dup
+        concept_id = resolve_concept_id(raw['concept'] || raw[:concept] || raw['concept_id'] || raw[:concept_id])
+        normalized = {
+          concept_id:,
+          obs_datetime: nil
+        }
+
+        normalized.merge!(extract_typed_value(raw))
+
+        if normalized.slice(:value_boolean, :value_numeric, :value_drug,
+                            :value_coded, :value_datetime, :value_text).values.all?(&:blank?)
+          normalized.merge!(build_value_for_concept(concept_id, raw['value'] || raw[:value]))
+        end
+
+        group_members = raw['groupMembers'] || raw[:groupMembers] || raw['group_members'] || raw[:group_members]
+        if group_members.present?
+          normalized[:child] = group_members.map { |child| normalize_observation(child) }
+        end
+
+        normalized
+      end
+
+      def extract_typed_value(raw)
+        {
+          value_boolean: cast_boolean(raw['value_boolean'] || raw[:value_boolean] || raw['valueBoolean'] || raw[:valueBoolean]),
+          value_numeric: raw['value_numeric'] || raw[:value_numeric] || raw['valueNumeric'] || raw[:valueNumeric],
+          value_drug: raw['value_drug'] || raw[:value_drug] || raw['valueDrug'] || raw[:valueDrug],
+          value_coded: resolve_coded_value(raw['value_coded'] || raw[:value_coded] || raw['valueCoded'] || raw[:valueCoded]),
+          value_datetime: parse_client_datetime(raw['value_datetime'] || raw[:value_datetime] || raw['valueDatetime'] || raw[:valueDatetime]),
+          value_text: raw['value_text'] || raw[:value_text] || raw['valueText'] || raw[:valueText]
+        }.compact
+      end
+
+      def build_value_for_concept(concept_id, raw_value)
+        return {} if raw_value.blank?
+
+        concept = Concept.find(concept_id)
+        datatype = concept.concept_datatype&.name&.downcase
+
+        case datatype
+        when 'boolean'
+          { value_boolean: cast_boolean(raw_value) }
+        when 'numeric'
+          { value_numeric: raw_value }
+        when 'date', 'datetime'
+          { value_datetime: parse_client_datetime(raw_value) }
+        when 'coded'
+          { value_coded: resolve_coded_value(raw_value) }
+        else
+          { value_text: raw_value.to_s }
+        end
+      end
+
+      def resolve_coded_value(value)
+        return nil if value.blank?
+
+        resolve_concept_id(value)
+      rescue InvalidParameterError
+        value
+      end
+
+      def resolve_concept_id(value)
+        raise InvalidParameterError, 'Observation concept is required' if value.blank?
+
+        return value.to_i if value.to_s.match?(/^\d+$/)
+
+        concept = Concept.find_by(uuid: value.to_s)
+        raise InvalidParameterError, "Invalid concept: #{value}" unless concept
+
+        concept.concept_id
+      end
+
+      def parse_client_datetime(value)
+        return nil if value.blank?
+
+        if value.is_a?(Numeric) || value.to_s.match?(/^\d+$/)
+          numeric = value.to_i
+          # Frontend commonly sends milliseconds since epoch.
+          return Time.at(numeric > 9_999_999_999 ? numeric / 1000.0 : numeric)
+        end
+
+        value.to_time
+      rescue StandardError
+        raise InvalidParameterError, "Invalid datetime: #{value}"
+      end
+
+      def cast_boolean(value)
+        return nil if value.nil?
+        return value if value == true || value == false
+
+        %w[1 true yes y].include?(value.to_s.strip.downcase)
       end
 
     end

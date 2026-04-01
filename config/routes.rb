@@ -6,7 +6,7 @@ require 'sidekiq/cron/web'
 Rails.application.routes.draw do
   mount Lab::Engine => '/'
   # mount Radiology::Engine => '/'
-  mount EmrOhspInterface::Engine => '/'
+  # mount EmrOhspInterface::Engine => '/'
   mount Rswag::Ui::Engine => '/api-docs'
   mount Rswag::Api::Engine => '/api-docs'
   mount ActionCable.server => '/cable'
@@ -35,6 +35,7 @@ Rails.application.routes.draw do
       # Routes down here ... Best we move everything above into own modules
       resources :internal_sections, only: %i[index show create update destroy]
       resources :data_cleaning_supervisions, only: %i[index show create update destroy]
+      resources :data_verification, only: %i[index]
       resources :appointments
       resources :dispensations, only: %i[index create destroy]
       get '/check_username', to: 'users#check_username_exist'
@@ -81,6 +82,10 @@ Rails.application.routes.draw do
       resources :roles
       resources :printer_configurations, only: [:index, :create, :destroy, :update]
 
+      # Generate visit number 
+      get '/generate_visit_number' => 'visits#generate_visit_number'
+      
+      get '/find_relationships_with_details', to: 'person_relationships#find_relationships_with_details'
       # Patients
       get '/get_patient_record' => 'patients#get_patient_record'
       get '/get_patient_list' => 'patients#get_patient_list'
@@ -153,9 +158,12 @@ Rails.application.routes.draw do
         end)
 
         collection do
+          get :districts
           get :current_facility
         end
       end
+
+      get '/location/legacy/:id', to: 'locations#show_legacy_location'
 
       resources :regions, only: %i[index] do
         get('/districts', to: redirect do |params, request|
@@ -413,12 +421,14 @@ Rails.application.routes.draw do
   get '/api/v1/art_data_cleaning_tools' => 'api/v1/cleaning#art_tools'
   get '/api/v1/anc_data_cleaning_tools' => 'api/v1/cleaning#anc_tools'
   get '/api/v1/its_data_cleaning_tools' => 'api/v1/cleaning#its_tools'
+  get '/api/v1/tb_data_cleaning_tools' => 'api/v1/cleaning#tb_tools'
   post '/api/v1/sync/patients_ids' => 'api/v1/sync_patient_records#get_not_sync_ids'
 
   # OPD reports
   get '/api/v1/registration' => 'api/v1/reports#registration'
   get '/api/v1/diagnosis_by_address' => 'api/v1/reports#diagnosis_by_address'
   get '/api/v1/with_nids' => 'api/v1/reports#with_nids'
+  get '/api/v1/nid_utilization_report' => 'api/v1/reports#nid_utilization_report'
   get '/api/v1/dispensation' => 'api/v1/reports#dispensation'
 
   get '/api/v1/cohort_report_raw_data' => 'api/v1/reports#cohort_report_raw_data'
@@ -467,7 +477,6 @@ Rails.application.routes.draw do
   get '/api/v1/orders_made', to: 'api/v1/reports#orders_made'
   get '/api/v1/:program_id/external_consultation_clients', to: 'api/v1/reports#external_consultation_clients'
   get '/api/v1/ncd_active_patients', to: 'api/v1/ncd_reports#ncd_active_patients'
-  get '/api/v1/ncd_active_patients_from_mongo', to: 'api/v1/ncd_reports#ncd_active_patients_from_mongo'
 
   get '/api/v1/screened_for_cxca', to: 'api/v1/reports#cxca_reports'
   get '/api/v1/pepfar_cxca', to: 'api/v1/reports#cxca_reports'
@@ -486,6 +495,10 @@ Rails.application.routes.draw do
 
   post 'api/v1/sync_to_ait', to: 'api/v1/patients#sync_to_ait'
 
+  get '/api/v1/neonatal/statistics', to: 'api/v1/neonatal#statistics'
+  get '/api/v1/neonatal/visit_summary', to: 'api/v1/neonatal#visit_summary'
+  get '/api/v1/neonatal/saved_encounters/:patient_id', to: 'api/v1/neonatal#saved_encounters'
+  
   # EIR
   get '/api/v1/eir/schedule', to: 'api/v1/vaccine_schedule#vaccine_schedule'
   get '/api/v1/eir/schedule/generic', to: 'api/v1/vaccine_schedule#generic_schedule'
@@ -505,9 +518,10 @@ Rails.application.routes.draw do
 
   namespace :api do
     namespace :v1 do
-      resources :stages, only: %i[index show create] do
+      resources :stages, only: %i[index show create update] do
         collection do
           get :active_stages
+          put "visit/:visit_id", action: :update_by_visit
         end
       end
     end

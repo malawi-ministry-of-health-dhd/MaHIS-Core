@@ -51,8 +51,8 @@ RSpec.describe 'api/v1/reports', type: :request do
       description TAG_DESCRIPTION
       consumes 'application/json'
       produces 'application/json'
-      parameter name: :date, in: :query, type: :string, format: :date, example: '2022-10-1', required: true,
-      parameter name: :program_id, in: :query, type: :integer, example: 1, required: true,
+      parameter name: :date, in: :query, type: :string, format: :date, example: '2022-10-1', required: true
+      parameter name: :program_id, in: :query, type: :integer, example: 1, required: true
       security [api_key: []]
       response(200, 'successful') do
         schema type: :object, properties: {
@@ -73,8 +73,8 @@ RSpec.describe 'api/v1/reports', type: :request do
       consumes 'application/json'
       produces 'application/json'
       parameter name: :date, in: :query, type: :string, format: :date, example: '2022-12-25', required: true
-      parameter name: :program_id, in: :query, type: :integer, example: 1, required: true,
-      parameter name: :options, in: :query, type: :string, example: 'REGISTRATION,VITALS,CONSULTATION', required: false,
+      parameter name: :program_id, in: :query, type: :integer, example: 1, required: true
+      parameter name: :options, in: :query, type: :string, example: 'REGISTRATION,VITALS,CONSULTATION', required: false
       security [api_key: []]
       response(200, 'successful') do
         schema type: :array, items: {

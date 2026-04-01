@@ -225,7 +225,7 @@ module ArtService
             FROM orders
             INNER JOIN order_type
               ON order_type.order_type_id = orders.order_type_id
-              AND order_type.name = 'Lab'
+              AND order_type.name = 'Laboratory order'
               AND order_type.retired = 0
             INNER JOIN concept_name
               ON concept_name.concept_id = orders.concept_id
@@ -237,7 +237,7 @@ module ArtService
               FROM orders
               INNER JOIN order_type
                 ON order_type.order_type_id = orders.order_type_id
-                AND order_type.name = 'Lab'
+                AND order_type.name = 'Laboratory order'
                 AND order_type.retired = 0
               INNER JOIN concept_name
                 ON concept_name.concept_id = orders.concept_id
@@ -282,7 +282,7 @@ module ArtService
               AND patient_identifier.voided = 0
             WHERE patient.patient_id NOT IN (
               SELECT DISTINCT orders.patient_id FROM orders
-              INNER JOIN order_type ON order_type.order_type_id = orders.order_type_id AND order_type.name = 'Lab'
+              INNER JOIN order_type ON order_type.order_type_id = orders.order_type_id AND order_type.name = 'Laboratory order'
               INNER JOIN obs ON orders.order_id = obs.order_id AND obs.voided = 0
               INNER JOIN concept_name ON concept_name.concept_id = obs.concept_id AND concept_name.name = 'Test type' AND concept_name.voided = 0
               INNER JOIN concept_name AS test_name ON test_name.concept_id = obs.value_coded AND test_name.name = 'HIV Viral Load' AND test_name.voided = 0
@@ -312,7 +312,7 @@ module ArtService
             FROM orders
             INNER JOIN order_type
               ON order_type.order_type_id = orders.order_type_id
-              AND order_type.name = 'Lab'
+              AND order_type.name = 'Laboratory Order'
               AND order_type.retired = 0
             INNER JOIN concept_name
               ON concept_name.concept_id = orders.concept_id
@@ -336,7 +336,7 @@ module ArtService
               FROM orders
               INNER JOIN order_type
                 ON order_type.order_type_id = orders.order_type_id
-                AND order_type.name = 'Lab'
+                AND order_type.name = 'Laboratory order'
                 AND order_type.retired = 0
               INNER JOIN concept_name
                 ON concept_name.concept_id = orders.concept_id

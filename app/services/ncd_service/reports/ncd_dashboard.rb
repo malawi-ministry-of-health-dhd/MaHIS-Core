@@ -8,97 +8,118 @@ module NcdService
       def dashboard
         @current_date = Date.current
         @location_id = User.current.location_id
-        @registrations = fetch_registrations
-        @diagnosis = fetch_diagnosis
+        @patient_ids = get_patients
         data
       end
 
       def data
         gender_quarterly_data = gender_quarterly_breakdown
         diagnosis_quarterly_data = diagnosis_quarterly_breakdown
+        
         {
-          total_client_registered: total_client_registered || 0,
-          total_male_registered: total_male_registered || 0,
-          total_female_registered: total_female_registered || 0,
-          total_complications: fetch_complications.count(:person_id),
-          total_defaulters: count_defaulters || 0,
-          total_pending_dispensations: count_pending_dispensations || 0,
+          total_client_registered: @patient_ids.count,
+          total_male_registered: total_male_registered,
+          total_female_registered: total_female_registered,
+          total_complications: total_complications,
+          total_defaulters: count_defaulters,
+          total_pending_dispensations: count_pending_dispensations,
           gender_data: {
-            categories: gender_quarterly_data.keys,
-            femaleSeries: gender_quarterly_data.values.map { |q| q[:female] || 0 },
-            maleSeries: gender_quarterly_data.values.map { |q| q[:male] || 0 }
+            categories: gender_quarterly_data[:categories],
+            series: [
+              {
+                name: 'Male',
+                data: gender_quarterly_data[:male],
+                group: 'apexcharts-axis-0'
+              },
+              {
+                name: 'Female',
+                data: gender_quarterly_data[:female],
+                group: 'apexcharts-axis-0'
+              }
+            ]
           },
           diagnosis_data: {
-            categories: diagnosis_quarterly_data.keys,
-            typeOneSeries: diagnosis_quarterly_data.values.map { |q| q[:type_one] || 0 },
-            typeTwoSeries: diagnosis_quarterly_data.values.map { |q| q[:type_two] || 0 },
-            hypertentionSeries: diagnosis_quarterly_data.values.map { |q| q[:hypertention] || 0 }
+            categories: diagnosis_quarterly_data[:categories],
+            series: [
+              {
+                name: 'Type 1 Diabetes',
+                data: diagnosis_quarterly_data[:type_one],
+                group: 'apexcharts-axis-0'
+              },
+              {
+                name: 'Type 2 Diabetes',
+                data: diagnosis_quarterly_data[:type_two],
+                group: 'apexcharts-axis-0'
+              },
+              {
+                name: 'Hypertension',
+                data: diagnosis_quarterly_data[:hypertension],
+                group: 'apexcharts-axis-0'
+              }
+            ]
           }
         }
       end
 
       private
 
-      def fetch_registrations
-        registration_types = ['PATIENT REGISTRATION', 'REGISTRATION']
-        base_query
-          .where(
-            encounter_type: { name: registration_types }
-          )
-          .distinct
+      # Base query: Get all NCD patients for current location
+      def get_patients
+        sql = <<-SQL
+          SELECT DISTINCT e.patient_id
+          FROM (
+            SELECT patient_id, location_id,
+                  ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY encounter_datetime DESC) as rn
+            FROM encounter WHERE voided = 0
+          ) e
+          INNER JOIN patient_program pp 
+            ON e.patient_id = pp.patient_id 
+            AND pp.program_id = 32 
+            AND pp.voided = 0
+          WHERE e.rn = 1 AND e.location_id = ?
+        SQL
+        
+        Encounter.connection.select_values(
+          ActiveRecord::Base.sanitize_sql([sql, @location_id])
+        )
       end
 
-      def fetch_diagnosis
-        base_query
-          .where(
-            encounter_type: { name: 'DIAGNOSIS' }
-          )
-          .distinct
-      end
-
-      def fetch_complications
-        base_query
-          .where(
-            encounter_type: { name: 'COMPLICATIONS' }
-          )
-          .distinct
-      end
-
-      def base_query
-        Observation.joins(concept: :concept_names,
-                        encounter: %i[program type], person: [])
-                  .where(program: { program_id: 32 }, location_id: @location_id)
-      end
-
-      def total_client_registered
-        @registrations.count(:person_id)
-      end
-
+      # Gender counts based on base patient cohort
       def total_male_registered
-        @registrations.where(person: { gender: 'M' }).count(:person_id)
+        return 0 if @patient_ids.empty?
+        
+        Person.where(person_id: @patient_ids, gender: 'M').count
       end
 
       def total_female_registered
-        @registrations.where(person: { gender: 'F' }).count(:person_id)
+        return 0 if @patient_ids.empty?
+        
+        Person.where(person_id: @patient_ids, gender: 'F').count
       end
 
+      # Complications count for base patient cohort
+      def total_complications
+        return 0 if @patient_ids.empty?
+        
+        Observation.joins(encounter: :type)
+                   .where(person_id: @patient_ids)
+                   .where(encounter_type: { name: 'COMPLICATIONS' })
+                   .where(location_id: @location_id)
+                   .distinct
+                   .count(:person_id)
+      end
+
+      # Defaulters: patients from base cohort with last dispensation 60-120 days ago
       def count_defaulters
+        return 0 if @patient_ids.empty?
+        
         cutoff_date = Date.current - 60.days
         
-        # Get all NCD program patients at this location
-        base_patients = Patient.joins(encounters: [:program, :type])
-                              .where(program: { program_id: 32 })
-                              .where(encounters: { location_id: @location_id })
-                              .where(encounter_type: { name: ['PATIENT REGISTRATION', 'REGISTRATION'] })
-                              .distinct
-
-        all_patients = base_patients.pluck(:patient_id)
-        
-        # Get patients who had their last dispensation between 60-120 days ago
+        # Find patients whose last dispensation was between 60-120 days ago
         defaulting_patients = Patient.joins(orders: :drug_order)
                            .joins('INNER JOIN obs ON obs.order_id = orders.order_id')
                            .joins('INNER JOIN concept_name ON concept_name.concept_id = obs.concept_id')
-                           .where(patient_id: all_patients)
+                           .where(patient_id: @patient_ids)
                            .where('drug_order.quantity IS NOT NULL')
                            .where('orders.start_date BETWEEN ? AND ?', cutoff_date - 60.days, cutoff_date)
                            .where(
@@ -112,37 +133,26 @@ module NcdService
                              AND o.start_date > ?
                            )', cutoff_date)
                            .distinct
-                           .pluck(:patient_id)
-
-        defaulting_patients.count
+                           .count(:patient_id)
+        
+        defaulting_patients
       end
 
+      # Pending dispensations for base patient cohort
       def count_pending_dispensations
-        cutoff_date = Date.current
-        
-        DrugOrder
-          .joins(order: :encounter)
-          .where(encounter: { program_id: 32, location_id: @location_id })  # NCD program
-          .where(
-            'orders.start_date <= ? AND drug_order.quantity IS NOT NULL',
-            TimeUtils.day_bounds(cutoff_date)[1]
-          )
-          .where(
-            'NOT EXISTS (
-              SELECT 1 
-              FROM obs 
-              JOIN concept_name ON concept_name.concept_id = obs.concept_id
-              WHERE obs.order_id = orders.order_id
-              AND concept_name.name = ? 
-              AND obs.value_numeric IS NOT NULL
-            )',
-            'AMOUNT DISPENSED'
-          )
-          .distinct
-          .count('orders.patient_id')  # Count unique patients with pending dispensations
+        return 0 if @patient_ids.empty?
+                
+        DrugOrder.joins(order: :encounter)
+                 .where('orders.patient_id IN (?)', @patient_ids)
+                 .where('drug_order.quantity <= 0')
+                 .distinct
+                 .count('orders.patient_id')
       end
 
+      # Quarterly breakdown by diagnosis for base patient cohort
       def diagnosis_quarterly_breakdown
+        return default_quarterly_structure if @patient_ids.empty?
+        
         quarters = {}
         end_date = @current_date
         
@@ -150,25 +160,61 @@ module NcdService
           start_date = end_date.beginning_of_quarter
           quarter_label = format_quarter_label(start_date)
           
-          base_registrations = @diagnosis.where(
-            encounter: { encounter_datetime: start_date.beginning_of_day..end_date.end_of_day }
-          )
+          # Initialize sets to track unique patients per diagnosis
+          type_one_patients = Set.new
+          type_two_patients = Set.new
+          hypertension_patients = Set.new
+          
+          # Get all diagnosis observations for base patient cohort
+          diagnosis_observations = Observation.joins(encounter: :type)
+                                              .where(person_id: @patient_ids)
+                                              .where(encounter_type: { name: 'DIAGNOSIS' })
+                                              .where(location_id: @location_id)
+                                              .where('obs.obs_datetime BETWEEN ? AND ?', 
+                                                     start_date.beginning_of_day, 
+                                                     end_date.end_of_day)
+                                              .where(concept_id: 6542) # Primary diagnosis concept
+                                              .select('obs.person_id, obs.value_coded, obs.obs_datetime')
+          
+          # Group by patient and get their diagnosis in this quarter
+          diagnosis_observations.group_by(&:person_id).each do |patient_id, observations|
+            # Get the last diagnosis for this patient in this quarter (based on obs_datetime)
+            last_diagnosis = observations.max_by(&:obs_datetime)
+            
+            case last_diagnosis.value_coded
+            when 6409
+              type_one_patients.add(patient_id)
+            when 6410
+              type_two_patients.add(patient_id)
+            when 8809, 903
+              hypertension_patients.add(patient_id)
+            end
+          end
 
           quarters[quarter_label] = {
-            type_one: base_registrations.where(obs: { value_coded: 6409 }).count(:person_id) || 0,
-            type_two: base_registrations.where(obs: { value_coded: 6410 }).count(:person_id) || 0,
-            hypertention: base_registrations.where(obs: { value_coded: [8809, 903] }).count(:person_id) || 0,
-            date_range: {
-              start: start_date.strftime('%Y-%m-%d'),
-              end: end_date.strftime('%Y-%m-%d')
-            }
+            type_one: type_one_patients.size,
+            type_two: type_two_patients.size,
+            hypertension: hypertension_patients.size
           }
+          
           end_date = start_date - 1.day
         end
-        quarters.to_a.reverse.to_h
+        
+        # Reverse to get chronological order and format for frontend
+        reversed_quarters = quarters.to_a.reverse.to_h
+        
+        {
+          categories: reversed_quarters.keys,
+          type_one: reversed_quarters.values.map { |q| q[:type_one] },
+          type_two: reversed_quarters.values.map { |q| q[:type_two] },
+          hypertension: reversed_quarters.values.map { |q| q[:hypertension] }
+        }
       end
 
+      # Quarterly breakdown by gender for base patient cohort
       def gender_quarterly_breakdown
+        return default_quarterly_structure if @patient_ids.empty?
+        
         quarters = {}
         end_date = @current_date
         
@@ -176,17 +222,43 @@ module NcdService
           start_date = end_date.beginning_of_quarter
           quarter_label = format_quarter_label(start_date)
           
-          base_registrations = @registrations.where(
-            encounter: { encounter_datetime: start_date.beginning_of_day..end_date.end_of_day }
-          )
+          # Get patients from base cohort who had ANY observation in this quarter
+          # Using obs_datetime to match the diagnosis logic
+          patients_in_quarter = Observation.where(person_id: @patient_ids)
+                                          .where('obs.voided = 0')
+                                          .where('obs.obs_datetime BETWEEN ? AND ?', 
+                                                 start_date.beginning_of_day, 
+                                                 end_date.end_of_day)
+                                          .distinct
+                                          .pluck(:person_id)
 
           quarters[quarter_label] = {
-            male: base_registrations.where(person: { gender: 'M' }).count(:person_id) || 0,
-            female: base_registrations.where(person: { gender: 'F' }).count(:person_id) || 0
+            male: Person.where(person_id: patients_in_quarter, gender: 'M').count,
+            female: Person.where(person_id: patients_in_quarter, gender: 'F').count
           }
+          
           end_date = start_date - 1.day
         end
-        quarters.to_a.reverse.to_h
+        
+        # Reverse to get chronological order and format for frontend
+        reversed_quarters = quarters.to_a.reverse.to_h
+        
+        {
+          categories: reversed_quarters.keys,
+          male: reversed_quarters.values.map { |q| q[:male] },
+          female: reversed_quarters.values.map { |q| q[:female] }
+        }
+      end
+
+      def default_quarterly_structure
+        {
+          categories: [],
+          male: [],
+          female: [],
+          type_one: [],
+          type_two: [],
+          hypertension: []
+        }
       end
 
       def format_quarter_label(date)

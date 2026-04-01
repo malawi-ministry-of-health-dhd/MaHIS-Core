@@ -6,26 +6,145 @@ module Sync
     
     sidekiq_options queue: 'sync_offline_data', retry: 3
     
+    # Configuration - can be overridden in subclasses
+    BULK_SYNC_ENABLED = true
+    DEFAULT_BULK_BATCH_SIZE = 5000
+    
     # Abstract method - must be implemented by subclasses
-    def perform(batch_size = 100)
+    def perform(batch_size = DEFAULT_BULK_BATCH_SIZE)
       raise NotImplementedError, "Subclasses must implement the perform method"
     end
     
     protected
     
-  # Generic sync method that handles the common sync logic for model-based records
-    def sync_records_to_couchdb(model_class, db_name, batch_size = 100, &record_filter)
+    # Enhanced sync method with automatic bulk operations
+    def sync_records_to_couchdb(model_class, db_name, batch_size = DEFAULT_BULK_BATCH_SIZE, &record_filter)
       # Use the provided filter or default to non-retired records
       query = record_filter ? record_filter.call(model_class) : default_filter(model_class)
       
-      # Check record counts and clean CouchDB if they don't match
+      # Optimize query by selecting only needed columns
+      query = optimize_query_select(query, model_class)
+      
+      # Check record counts and clean CouchDB if needed
       return if check_and_clean_couchdb_if_needed_for_model(model_class, db_name, query) == :skip_sync
       
       total_count = query.count
       model_name = model_class.name.downcase
       
-      Sidekiq.logger.info "Starting sync of #{total_count} #{model_name.pluralize} to CouchDB at #{COUCHDB_URL}"
+      Sidekiq.logger.info "Starting #{use_bulk_sync? ? 'BULK' : 'STANDARD'} sync of #{total_count} #{model_name.pluralize} to CouchDB"
       
+      if use_bulk_sync?
+        sync_records_bulk(query, db_name, batch_size, total_count, model_name)
+      else
+        sync_records_individual(query, db_name, batch_size, total_count, model_name)
+      end
+    end
+    
+    # Bulk sync implementation for model-based records
+    def sync_records_bulk(query, db_name, batch_size, total_count, model_name)
+      ensure_database_exists(db_name)
+
+      processed = 0
+      errors = []
+      batch_number = 0
+
+      query.find_in_batches(batch_size: batch_size) do |batch|
+        batch_number += 1
+
+        success = sync_batch_with_retry(batch, db_name, model_name, batch_number, errors, max_retries: 5)
+
+        if success
+          processed += batch.size
+          Sidekiq.logger.info "Synced #{processed}/#{total_count} #{model_name.pluralize}"
+        else
+          # Batch ultimately failed after all retries - log and continue
+          Sidekiq.logger.error "Batch #{batch_number} failed permanently, skipping #{batch.size} records"
+          batch.size.times { errors << "Batch #{batch_number} failed permanently" }
+        end
+
+        sleep(0.5) # Give CouchDB breathing room between batches
+      end
+
+      handle_sync_completion(processed, errors, total_count, model_name)
+    end
+
+    # Retry a single batch with exponential backoff and CouchDB recovery waiting
+    def sync_batch_with_retry(batch, db_name, model_name, batch_number, errors, max_retries: 5)
+      retries = 0
+
+      begin
+        documents = batch.map { |record| prepare_bulk_document(record) }
+        bulk_result = bulk_sync_to_couchdb(documents, db_name)
+
+        if bulk_result[:success]
+          if bulk_result[:errors].any?
+            errors.concat(bulk_result[:errors])
+            Sidekiq.logger.warn "Batch #{batch_number} had #{bulk_result[:errors].length} document-level errors"
+          end
+          return true
+        else
+          raise "Bulk sync returned failure: #{bulk_result[:errors].join(', ')}"
+        end
+
+      rescue Errno::ECONNREFUSED, SocketError, RestClient::ServerBrokeConnection => e
+        retries += 1
+
+        if retries <= max_retries
+          wait_time = [2 ** retries, 30].min # 2, 4, 8, 16, 30 seconds
+          Sidekiq.logger.warn "Batch #{batch_number} connection error (attempt #{retries}/#{max_retries}): #{e.message}. Waiting #{wait_time}s for CouchDB to recover..."
+
+          sleep(wait_time)
+
+          # Verify CouchDB is back up before retrying
+          if wait_for_couchdb(timeout: wait_time * 2)
+            Sidekiq.logger.info "CouchDB recovered, retrying batch #{batch_number}..."
+            retry
+          else
+            Sidekiq.logger.error "CouchDB did not recover in time, skipping batch #{batch_number}"
+            errors << "Batch #{batch_number} failed: CouchDB unavailable after #{max_retries} retries"
+            return false
+          end
+        else
+          Sidekiq.logger.error "Batch #{batch_number} failed after #{max_retries} retries: #{e.message}"
+          errors << "Batch #{batch_number} permanently failed: #{e.message}"
+          return false
+        end
+
+      rescue => e
+        retries += 1
+        if retries <= max_retries
+          sleep(1 * retries)
+          retry
+        else
+          Sidekiq.logger.error "Batch #{batch_number} failed after #{max_retries} retries: #{e.message}"
+          errors << "Batch #{batch_number} failed: #{e.message}"
+          return false
+        end
+      end
+    end
+
+    # Poll CouchDB until it responds or timeout is reached
+    def wait_for_couchdb(timeout: 60)  # increase from 30 to 60
+      deadline = Time.now + timeout
+      interval = 3  # poll every 3 seconds
+
+      while Time.now < deadline
+        begin
+          RestClient.get("#{COUCHDB_URL}/_up")
+          Sidekiq.logger.info "CouchDB is back up!"
+          return true
+        rescue Errno::ECONNREFUSED, SocketError
+          Sidekiq.logger.info "Waiting for CouchDB to come back up..."
+          sleep(interval)
+        rescue => e
+          return true # any HTTP response means it's running
+        end
+      end
+
+      false
+    end
+    # Original individual sync (kept for backwards compatibility and fallback)
+    def sync_records_individual(query, db_name, batch_size, total_count, model_name)
       processed = 0
       skipped = 0
       errors = []
@@ -40,12 +159,9 @@ module Sync
             else
               processed += 1
             end
-            consecutive_errors = 0 # Reset consecutive error counter on success
+            consecutive_errors = 0
             
-            # Rate limiting: Add a small delay every 10 records
             add_rate_limiting_delay(index)
-            
-            # Log progress every 100 records
             log_progress(processed, total_count, model_name.pluralize, skipped)
             
           rescue RestClient::Exception, SocketError, Errno::ECONNREFUSED => e
@@ -56,24 +172,70 @@ module Sync
           end
         end
         
-        # Longer pause between batches
         sleep(0.1)
         Sidekiq.logger.info "Completed batch. Processed #{processed}/#{total_count} #{model_name.pluralize} so far. Skipped: #{skipped}"
       end
       
-      # Final summary and error handling
       handle_sync_completion(processed, errors, total_count, model_name, skipped)
     end
     
-    # Generic sync method for custom queries (like complex joins)
-    def sync_custom_query_to_couchdb(query, count_query, db_name, data_type_name, batch_size = 50, progress_interval: 25, rate_limit_interval: 10)
-      # Check record counts and clean CouchDB if they don't match
+    # Enhanced sync method for custom queries with bulk support
+    def sync_custom_query_to_couchdb(query, count_query, db_name, data_type_name, batch_size = DEFAULT_BULK_BATCH_SIZE, progress_interval: 25, rate_limit_interval: 10)
       return if check_and_clean_couchdb_if_needed_for_custom(count_query, db_name, data_type_name) == :skip_sync
       
       total_count = count_query.count
       
-      Sidekiq.logger.info "Starting sync of #{total_count} #{data_type_name.pluralize} to CouchDB at #{COUCHDB_URL}"
+      Sidekiq.logger.info "Starting #{use_bulk_sync? ? 'BULK' : 'STANDARD'} sync of #{total_count} #{data_type_name.pluralize}"
       
+      if use_bulk_sync?
+        sync_custom_bulk(query, db_name, batch_size, total_count, data_type_name)
+      else
+        sync_custom_individual(query, db_name, batch_size, total_count, data_type_name, progress_interval, rate_limit_interval)
+      end
+    end
+    
+    # Bulk sync for custom queries
+    def sync_custom_bulk(query, db_name, batch_size, total_count, data_type_name)
+      ensure_database_exists(db_name)
+  
+      processed = 0
+      errors = []
+      
+      cursor_options = { batch_size: batch_size }
+      cursor_options[:cursor] = get_batch_cursor if respond_to?(:get_batch_cursor, true) && get_batch_cursor
+
+      query.find_in_batches(**cursor_options) do |batch|
+        begin
+          documents = batch.map { |record| prepare_bulk_document(record) }
+          bulk_result = bulk_sync_to_couchdb(documents, db_name)
+          
+          processed += batch.size
+          errors.concat(bulk_result[:errors]) if bulk_result[:errors].any?
+          
+          Sidekiq.logger.info "Synced #{processed}/#{total_count} #{data_type_name.pluralize}"
+          
+        rescue => e
+          Sidekiq.logger.error "Batch failed: #{e.message}"
+          errors << e.message
+          
+          # Fallback to individual sync
+          batch.each do |record|
+            begin
+              sync_record_to_couchdb(record, db_name)
+            rescue => individual_error
+              errors << individual_error.message
+            end
+          end
+        end
+        
+        sleep(0.05)
+      end
+      
+      handle_sync_completion(processed, errors, total_count, data_type_name)
+    end
+    
+    # Original custom query individual sync
+    def sync_custom_individual(query, db_name, batch_size, total_count, data_type_name, progress_interval, rate_limit_interval)
       processed = 0
       errors = []
       consecutive_errors = 0
@@ -83,14 +245,12 @@ module Sync
           begin
             sync_record_to_couchdb(record, db_name)
             processed += 1
-            consecutive_errors = 0 # Reset consecutive error counter on success
+            consecutive_errors = 0
             
-            # Rate limiting with configurable interval
             if (index + 1) % rate_limit_interval == 0
-              sleep(0.01) # 10ms delay
+              sleep(0.01)
             end
             
-            # Log progress with configurable interval
             if processed % progress_interval == 0
               Sidekiq.logger.info "Synced #{processed}/#{total_count} #{data_type_name.pluralize}"
             end
@@ -103,41 +263,83 @@ module Sync
           end
         end
         
-        # Longer pause between batches
         sleep(0.1)
         Sidekiq.logger.info "Completed batch. Processed #{processed}/#{total_count} #{data_type_name.pluralize} so far."
       end
       
-      # Final summary and error handling
       handle_sync_completion(processed, errors, total_count, data_type_name)
     end
-    # Generic sync method for array-based data (like service results)
-    def sync_array_to_couchdb(data_array, db_name, data_type_name, batch_size = 50, progress_interval: 25, rate_limit_interval: 5)
-      # Check record counts and clean CouchDB if they don't match
+    
+    # Enhanced sync method for array-based data with bulk support
+    def sync_array_to_couchdb(data_array, db_name, data_type_name, batch_size = DEFAULT_BULK_BATCH_SIZE, progress_interval: 25, rate_limit_interval: 5)
+    
       return if check_and_clean_couchdb_if_needed_for_array(data_array, db_name, data_type_name) == :skip_sync
       
       total_count = data_array.length
       
-      Sidekiq.logger.info "Starting sync of #{total_count} #{data_type_name.pluralize} to CouchDB at #{COUCHDB_URL}"
+      Sidekiq.logger.info "Starting #{use_bulk_sync? ? 'BULK' : 'STANDARD'} sync of #{total_count} #{data_type_name.pluralize}"
       
+      if use_bulk_sync?
+        sync_array_bulk(data_array, db_name, batch_size, total_count, data_type_name)
+      else
+        sync_array_individual(data_array, db_name, batch_size, total_count, data_type_name, progress_interval, rate_limit_interval)
+      end
+    end
+    
+    # Bulk sync for arrays
+    def sync_array_bulk(data_array, db_name, batch_size, total_count, data_type_name)
+      ensure_database_exists(db_name)
+      
+      processed = 0
+      errors = []
+      
+      data_array.each_slice(batch_size).with_index do |batch, batch_index|
+        begin
+          documents = batch.map { |record| prepare_bulk_document(record) }
+          bulk_result = bulk_sync_to_couchdb(documents, db_name)
+          
+          processed += batch.size
+          errors.concat(bulk_result[:errors]) if bulk_result[:errors].any?
+          
+          Sidekiq.logger.info "Synced #{processed}/#{total_count} #{data_type_name.pluralize}"
+          
+        rescue => e
+          Sidekiq.logger.error "Batch #{batch_index} failed: #{e.message}"
+          errors << e.message
+          
+          # Fallback to individual sync
+          batch.each do |record|
+            begin
+              sync_record_to_couchdb(record, db_name)
+            rescue => individual_error
+              errors << individual_error.message
+            end
+          end
+        end
+        
+        sleep(0.05)
+      end
+      
+      handle_sync_completion(processed, errors, total_count, data_type_name)
+    end
+    
+    # Original array individual sync
+    def sync_array_individual(data_array, db_name, batch_size, total_count, data_type_name, progress_interval, rate_limit_interval)
       processed = 0
       errors = []
       consecutive_errors = 0
       
-      # Process in batches using each_slice
       data_array.each_slice(batch_size).with_index do |batch, batch_index|
         batch.each_with_index do |record, index|
           begin
             sync_record_to_couchdb(record, db_name)
             processed += 1
-            consecutive_errors = 0 # Reset consecutive error counter on success
+            consecutive_errors = 0
             
-            # Rate limiting with configurable interval
             if (index + 1) % rate_limit_interval == 0
-              sleep(0.01) # 10ms delay
+              sleep(0.01)
             end
             
-            # Log progress with configurable interval
             if processed % progress_interval == 0
               Sidekiq.logger.info "Synced #{processed}/#{total_count} #{data_type_name.pluralize}"
             end
@@ -150,16 +352,102 @@ module Sync
           end
         end
         
-        # Longer pause between batches
         sleep(0.1)
         Sidekiq.logger.info "Completed batch #{batch_index + 1}. Processed #{processed}/#{total_count} #{data_type_name.pluralize} so far."
       end
       
-      # Final summary and error handling
       handle_sync_completion(processed, errors, total_count, data_type_name)
     end
     
-    # Generic count check and cleanup method for model-based sync
+    # NEW: Bulk sync to CouchDB using _bulk_docs endpoint
+    def bulk_sync_to_couchdb(documents, db_name)
+      db_url = "#{CouchdbSync::COUCHDB_URL}/#{db_name}"
+      bulk_url = "#{db_url}/_bulk_docs"
+
+      # Fetch existing _revs to avoid conflicts
+      existing_revs = fetch_existing_revs(documents, db_url)
+
+      # Merge _rev into documents that already exist
+      documents = documents.map do |doc|
+        rev = existing_revs[doc['_id']]
+        rev ? doc.merge('_rev' => rev) : doc
+      end
+
+      bulk_data = { 'docs' => documents }
+
+      retries = 0
+      begin
+        response = RestClient.post(
+          bulk_url,
+          bulk_data.to_json,
+          { content_type: :json, accept: :json }
+        )
+        result = JSON.parse(response.body)
+        errors = result.select { |r| r.key?('error') }.map do |err|
+          "Doc #{err['id']}: #{err['error']} - #{err['reason']}"
+        end
+        { success: true, errors: errors }
+      rescue RestClient::Exception, SocketError => e
+        retries += 1
+        retries <= 2 ? (sleep(0.1 * retries); retry) : { success: false, errors: ["Bulk sync failed: #{e.message}"] }
+      end
+    end
+
+    def fetch_existing_revs(documents, db_url)
+      ids = documents.map { |d| d['_id'] }
+      response = RestClient.post(
+        "#{db_url}/_all_docs",
+        { keys: ids }.to_json,
+        { content_type: :json, accept: :json }
+      )
+      result = JSON.parse(response.body)
+      result['rows'].each_with_object({}) do |row, hash|
+        hash[row['id']] = row['value']['rev'] if row['value'] && !row['value']['deleted']
+      end
+    rescue => e
+      Sidekiq.logger.warn "Could not fetch existing revs: #{e.message}"
+      {}
+    end
+    
+    # NEW: Prepare document with _id for bulk operations
+    def prepare_bulk_document(record)
+      record_for_doc = record.is_a?(Hash) ? record.with_indifferent_access : record
+      doc = prepare_document(record_for_doc)
+      doc_id = generate_document_id(record_for_doc)
+      doc.merge("_id" => doc_id)
+    end
+    
+    # NEW: Ensure database exists
+    def ensure_database_exists(db_name)
+      db_url = "#{COUCHDB_URL}/#{db_name}"
+      begin
+        RestClient.get(db_url)
+      rescue RestClient::NotFound
+        RestClient.put(db_url, {}.to_json, { content_type: :json })
+        Sidekiq.logger.info "Created CouchDB database: #{db_name}"
+      end
+    end
+    
+    # NEW: Optimize query by selecting only needed columns
+    def optimize_query_select(query, model_class)
+      # Get columns needed for document preparation
+      # Subclasses can override get_required_columns to specify which columns they need
+      if respond_to?(:get_required_columns, true)
+        required_columns = get_required_columns
+        query.select(*required_columns) if required_columns.present?
+      end
+      query
+    end
+    
+    # NEW: Check if bulk sync should be used
+    def use_bulk_sync?
+      # Can be overridden in subclasses to disable bulk sync
+      defined?(self.class::BULK_SYNC_ENABLED) ? self.class::BULK_SYNC_ENABLED : BULK_SYNC_ENABLED
+    end
+    
+    # All other existing methods remain unchanged...
+    # (check_and_clean_couchdb_if_needed_for_model, get_couchdb_record_count, etc.)
+    
     def check_and_clean_couchdb_if_needed_for_model(model_class, db_name, query)
       begin
         mysql_count = query.count
@@ -189,7 +477,6 @@ module Sync
       end
     end
     
-    # Generic count check and cleanup method for custom query sync
     def check_and_clean_couchdb_if_needed_for_custom(count_query, db_name, data_type_name)
       begin
         source_count = count_query.count
@@ -216,7 +503,7 @@ module Sync
         return :continue_sync
       end
     end
-    # Generic count check and cleanup method for array-based sync
+    
     def check_and_clean_couchdb_if_needed_for_array(data_array, db_name, data_type_name)
       begin
         source_count = data_array.length
@@ -245,14 +532,12 @@ module Sync
       end
     end
     
-    # Generic CouchDB record count method
     def get_couchdb_record_count(db_name, document_prefix)
       begin
         db_url = "#{COUCHDB_URL}/#{db_name}"
         response = RestClient.get(db_url)
         db_info = JSON.parse(response.body)
         
-        # Get count of specific documents using URL encoding
         require 'uri'
         start_key = URI.encode_www_form_component("\"#{document_prefix}\"")
         end_key = URI.encode_www_form_component("\"#{document_prefix}\\ufff0\"")
@@ -272,30 +557,25 @@ module Sync
       end
     end
     
-    # Get count of documents by type (for documents that don't use prefix-based IDs)
     def get_couchdb_type_count(db_name, document_type)
       begin
         db_url = "#{COUCHDB_URL}/#{db_name}"
         response = RestClient.get(db_url)
         db_info = JSON.parse(response.body)
         
-        # Get all documents and count by type
         view_url = "#{db_url}/_all_docs"
         response = RestClient.get(view_url)
         result = JSON.parse(response.body)
         
-        # Count documents by checking their type
         type_count = 0
         result['rows'].each do |row|
           next if row['id'].start_with?('_design')
           
-          # Get the document to check its type
           begin
             doc_response = RestClient.get("#{db_url}/#{row['id']}")
             doc = JSON.parse(doc_response.body)
             type_count += 1 if doc['type'] == document_type
           rescue => e
-            # Skip if we can't read the document
             Sidekiq.logger.warn "Couldn't read document #{row['id']}: #{e.message}"
           end
         end
@@ -311,12 +591,10 @@ module Sync
       end
     end
     
-    # Delete documents by type (for documents that don't use prefix-based IDs)
     def delete_all_records_by_type_from_couchdb(db_name, document_type, model_name)
       begin
         db_url = "#{COUCHDB_URL}/#{db_name}"
         
-        # Check if database exists
         begin
           RestClient.get(db_url)
         rescue RestClient::NotFound
@@ -324,12 +602,10 @@ module Sync
           return
         end
         
-        # Get all documents and filter by type
         view_url = "#{db_url}/_all_docs?include_docs=true"
         response = RestClient.get(view_url)
         result = JSON.parse(response.body)
         
-        # Filter for documents of the specified type
         type_docs = result['rows'].select do |row|
           !row['id'].start_with?('_design') && row['doc'] && row['doc']['type'] == document_type
         end
@@ -341,7 +617,6 @@ module Sync
         
         Sidekiq.logger.info "Found #{type_docs.length} #{model_name} documents to delete"
         
-        # Prepare bulk delete
         docs_to_delete = type_docs.map do |row|
           {
             "_id" => row['id'],
@@ -350,7 +625,6 @@ module Sync
           }
         end
         
-        # Perform bulk delete
         perform_bulk_delete(db_url, docs_to_delete, model_name)
         
       rescue => e
@@ -358,12 +632,11 @@ module Sync
         raise e
       end
     end
-    # Generic bulk delete method for prefix-based documents
+    
     def delete_all_records_from_couchdb(db_name, document_prefix, model_name)
       begin
         db_url = "#{COUCHDB_URL}/#{db_name}"
         
-        # Check if database exists
         begin
           RestClient.get(db_url)
         rescue RestClient::NotFound
@@ -371,7 +644,6 @@ module Sync
           return
         end
         
-        # Get all documents with the specific prefix
         require 'uri'
         start_key = URI.encode_www_form_component("\"#{document_prefix}\"")
         end_key = URI.encode_www_form_component("\"#{document_prefix}\\ufff0\"")
@@ -387,7 +659,6 @@ module Sync
         
         Sidekiq.logger.info "Found #{result['rows'].length} #{model_name} documents to delete"
         
-        # Prepare bulk delete
         docs_to_delete = result['rows'].map do |row|
           {
             "_id" => row['id'],
@@ -396,7 +667,6 @@ module Sync
           }
         end
         
-        # Perform bulk delete
         perform_bulk_delete(db_url, docs_to_delete, model_name)
         
       rescue => e
@@ -405,18 +675,18 @@ module Sync
       end
     end
     
-    # Generic sync individual record method
     def sync_record_to_couchdb(record, db_name)
-      doc_data = prepare_document(record)
-      doc_id = generate_document_id(record)
-      
+      record_for_doc = record.is_a?(Hash) ? record.with_indifferent_access : record
+      doc_data = prepare_document(record_for_doc)
+      doc_id = generate_document_id(record_for_doc)
+
       retries = 0
       begin
         sync_to_couchdb(doc_data, db_name, doc_id)
       rescue RestClient::Exception, SocketError => e
         retries += 1
         if retries <= 2
-          sleep(0.1 * retries) # Progressive delay
+          sleep(0.1 * retries)
           retry
         else
           raise e
@@ -426,7 +696,6 @@ module Sync
     
     private
     
-    # Default filter for non-retired records (works for most models)
     def default_filter(model_class)
       if model_class.column_names.include?('retired')
         model_class.where(retired: [0, false])
@@ -435,30 +704,26 @@ module Sync
       end
     end
     
-    # Get document prefix based on model class
     def get_document_prefix(model_class)
       "#{model_class.name.downcase}_"
     end
     
-    # Rate limiting delay
     def add_rate_limiting_delay(index)
       if (index + 1) % 10 == 0
-        sleep(0.01) # 10ms delay
+        sleep(0.01)
       end
     end
     
-    # Progress logging
-   def log_progress(processed, total_count, model_name, skipped = 0)
-    if processed % 100 == 0
-      if skipped > 0
-        Sidekiq.logger.info "Synced #{processed}/#{total_count} #{model_name} (skipped: #{skipped})"
-      else
-        Sidekiq.logger.info "Synced #{processed}/#{total_count} #{model_name}"
+    def log_progress(processed, total_count, model_name, skipped = 0)
+      if processed % 100 == 0
+        if skipped > 0
+          Sidekiq.logger.info "Synced #{processed}/#{total_count} #{model_name} (skipped: #{skipped})"
+        else
+          Sidekiq.logger.info "Synced #{processed}/#{total_count} #{model_name}"
+        end
       end
     end
-  end
     
-    # Handle connection errors with progressive backoff
     def handle_connection_error(record, error, consecutive_errors, errors)
       consecutive_errors += 1
       record_id = get_record_identifier(record)
@@ -466,11 +731,9 @@ module Sync
       Sidekiq.logger.error error_msg
       errors << error_msg
       
-      # Progressive backoff
       sleep_time = [0.1 * (2 ** [consecutive_errors - 1, 5].min), 5.0].min
       sleep(sleep_time)
       
-      # Fail fast on too many consecutive errors
       if consecutive_errors >= 5
         raise "Too many consecutive connection errors (#{consecutive_errors}). Stopping sync. Last error: #{error.message}"
       end
@@ -478,7 +741,6 @@ module Sync
       consecutive_errors
     end
     
-    # Handle general errors
     def handle_general_error(record, error, errors)
       record_id = get_record_identifier(record)
       record_type = record.respond_to?(:class) ? record.class.name.downcase : 'record'
@@ -488,26 +750,26 @@ module Sync
       sleep(0.05)
     end
     
-    # Final sync completion handling
     def handle_sync_completion(processed, errors, total_count, model_name, skipped = 0)
-      success_count = processed - errors.length
-      
+      # processed already counts only successful batches, errors are logged separately
+      success_count = processed
+
       if skipped > 0
         Sidekiq.logger.info "Sync completed: #{success_count} successful, #{errors.length} errors, #{skipped} skipped"
       else
         Sidekiq.logger.info "Sync completed: #{success_count} successful, #{errors.length} errors"
       end
-      
+
       if errors.any?
         Sidekiq.logger.error "Total errors: #{errors.length}"
-        if errors.length > total_count * 0.05 # Fail if >5% error rate
-          error_rate = (errors.length.to_f/total_count*100).round(2)
+        Sidekiq.logger.error "Show all errors: #{errors}"
+        if errors.length > total_count * 0.05
+          error_rate = (errors.length.to_f / total_count * 100).round(2)
           raise "#{model_name.capitalize} sync completed with unacceptable error rate: #{errors.length}/#{total_count} (#{error_rate}%)"
         end
       end
     end
     
-    # Bulk delete operation
     def perform_bulk_delete(db_url, docs_to_delete, model_name)
       bulk_url = "#{db_url}/_bulk_docs"
       bulk_data = { "docs" => docs_to_delete }
@@ -523,7 +785,6 @@ module Sync
       
       Sidekiq.logger.info "Successfully deleted #{successful_deletes} #{model_name} documents from CouchDB"
       
-      # Log any errors
       errors = delete_result.select { |result| result.key?('error') }
       if errors.any?
         Sidekiq.logger.error "Failed to delete #{errors.length} documents:"
@@ -531,7 +792,6 @@ module Sync
       end
     end
     
-    # Get record identifier (tries common ID fields)
     def get_record_identifier(record)
       %w[drug_id village_id id].each do |field|
         return record.send(field) if record.respond_to?(field)
@@ -539,7 +799,6 @@ module Sync
       record.id
     end
     
-    # Abstract methods that must be implemented by subclasses
     def prepare_document(record)
       raise NotImplementedError, "Subclasses must implement prepare_document method"
     end

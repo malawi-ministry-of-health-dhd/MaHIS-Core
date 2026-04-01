@@ -15,6 +15,7 @@ module ArtService
 
         include Utils
         include CommonSqlQueryUtils
+        include ArtTempTablesNaming
 
         def initialize(start_date:, end_date:, **kwargs)
           super(start_date:, end_date:, **kwargs)
@@ -89,7 +90,7 @@ module ArtService
             INNER JOIN person patient ON patient.person_id = orders.patient_id AND patient.voided = 0
             INNER JOIN order_type
               ON order_type.order_type_id = orders.order_type_id
-              AND order_type.name = 'Lab'
+              AND order_type.name = 'Laboratory Order'
               AND order_type.retired = 0
             INNER JOIN concept_name
               ON concept_name.concept_id = orders.concept_id
@@ -113,7 +114,7 @@ module ArtService
               FROM orders
               INNER JOIN order_type
                 ON order_type.order_type_id = orders.order_type_id
-                AND order_type.name = 'Lab'
+                AND order_type.name = 'Laboratory order'
                 AND order_type.retired = 0
               INNER JOIN concept_name
                 ON concept_name.concept_id = orders.concept_id
@@ -305,15 +306,19 @@ module ArtService
               current_order.start_date vl_order_date,
               st.start_date recorded_state_start_date,
               TIMESTAMPDIFF(month, e.earliest_start_date, '2024-03-31') diff_in_months
-            FROM temp_patient_outcomes cum
-            INNER JOIN temp_earliest_start_date e ON e.patient_id = cum.patient_id
-            INNER JOIN temp_max_patient_state st ON st.patient_id = cum.patient_id
+            FROM #{temp_patient_outcomes} cum
+            INNER JOIN #{temp_earliest_start_date} e ON e.patient_id = cum.patient_id
+            INNER JOIN #{temp_max_patient_state} st ON st.patient_id = cum.patient_id
             #{dsd_query(dsd: @dsd, model: 'st') if @dsd}
+            INNER JOIN patient_program pp ON pp.patient_id = e.patient_id 
+              AND pp.program_id = #{program('HIV PROGRAM').id}
+              AND pp.location_id = #{User.current.location_id}
+              AND pp.voided = 0
             INNER JOIN (
               SELECT prescriptions.patient_id, regimens.name AS regimen_category, prescriptions.drugs, prescriptions.prescription_date
               FROM (
                 SELECT tcm.patient_id, GROUP_CONCAT(DISTINCT(tcm.drug_id) ORDER BY tcm.drug_id ASC) AS drugs, DATE(tcm.start_date) prescription_date
-                FROM temp_current_medication tcm
+                FROM #{temp_current_medication} tcm
                 GROUP BY tcm.patient_id
               ) AS prescriptions
               LEFT JOIN (
@@ -337,7 +342,9 @@ module ArtService
                 AND ab.order_id = b.order_id
                 AND ab.start_date < b.start_date
                 AND b.voided = 0
-              WHERE b.patient_id IS NULL AND ab.voided = 0 AND ab.order_type_id = 4 AND ab.start_date < DATE(#{ActiveRecord::Base.connection.quote(end_date)}) + INTERVAL 1 DAY
+              WHERE b.patient_id IS NULL AND ab.voided = 0 
+                AND ab.order_type_id = 2 -- Laboratory order
+                AND ab.start_date < DATE(#{ActiveRecord::Base.connection.quote(end_date)}) + INTERVAL 1 DAY
               GROUP BY ab.patient_id
             ) current_order ON current_order.patient_id = cum.patient_id
             WHERE cum.step > 0 AND e.date_enrolled < DATE(#{ActiveRecord::Base.connection.quote(end_date)}) + INTERVAL 1 DAY

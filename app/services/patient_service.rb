@@ -4,6 +4,8 @@ class PatientService
   include ModelUtils
   include TimeUtils
 
+  CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
+  DDE_LOCATION_ID = CONFIG['DDE_LOCATION_ID'] || ""
   def create_patient(program, person, malawi_national_id = nil, npid = nil)
     ActiveRecord::Base.transaction do
       patient = Patient.create(patient_id: person.id)
@@ -163,7 +165,7 @@ class PatientService
   def find_los_visit_dates(patient, date = nil)
     rows = ActiveRecord::Base.connection.select_all <<~SQL
       SELECT DISTINCT DATE(o.start_date) AS visit_date FROM orders o
-      INNER JOIN order_type ot ON ot.order_type_id = o.order_type_id AND ot.name = 'Lab' AND ot.retired = 0
+      INNER JOIN order_type ot ON ot.order_type_id = o.order_type_id AND ot.name = 'Laboratory order' AND ot.retired = 0
       WHERE o.patient_id = #{patient} AND o.voided = 0 AND o.start_date < DATE('#{date}') + INTERVAL 1 DAY
       ORDER BY visit_date DESC
     SQL
@@ -696,7 +698,7 @@ class PatientService
   end
 
   def use_dde_service?
-    global_property('dde_enabled').property_value&.strip == 'true'
+    global_property('dde_enabled', DDE_LOCATION_ID).property_value&.strip == 'true'
   rescue StandardError
     false
   end

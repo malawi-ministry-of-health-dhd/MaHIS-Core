@@ -6,11 +6,9 @@ module BuildPatientRecordService
     include BuildPatientRecordService::ObservationExtractor
     include BuildPatientRecordService::LabOrderService
     include BuildPatientRecordService::DrugService
-    include BuildPatientRecordService::EncounterService
     include BuildPatientRecordService::GuardianService
     include BuildPatientRecordService::PatientIdentifierService
     include BuildPatientRecordService::PersonInformationBuilder
-    include BuildPatientRecordService::ScreeningService
     include BuildPatientRecordService::VaccineService
     include BuildPatientRecordService::VisitService
 
@@ -32,7 +30,12 @@ module BuildPatientRecordService
     end
 
     def find_patient(patient_id)
-      Patient.find_by(patient_id: patient_id)
+      Patient
+        .includes(
+          :patient_identifiers,
+          person: [:names, :addresses, { person_attributes: :type }]
+        )
+        .find_by(patient_id: patient_id)
     end
 
     def handle_patient_not_found(patient_id)
@@ -63,6 +66,7 @@ module BuildPatientRecordService
       {
         patientID: patient.patient_id,
         ID: patient_identifier(patient, 3),
+        nationalID: patient_identifier(patient, 28),
         NcdID: patient_identifier(patient, 31),
         program_id: '',
         provider_id: '',
@@ -70,7 +74,8 @@ module BuildPatientRecordService
         location_id: latest_encounter&.location_id,
         encounter_datetime: latest_encounter&.encounter_datetime,
         encounter_date_changed: latest_encounter&.date_changed,
-        sync_status: ''
+        sync_status: '',
+        relationships: []
       }
     end
 
@@ -82,24 +87,15 @@ module BuildPatientRecordService
         personInformation: build(person, name, address, patient),
         guardianInformation: build_guardian_data(patient.patient_id),
         otherPersonInformation: build_other_person_info,
-        vaccineSchedule: safe_get_vaccine_schedule(person)
+        vaccineSchedule: []
       }
     end
 
     def build_clinical_data(patient_id)
       {
-        birthRegistration: build_observation_data(patient_id, 'REGISTRATION'),
-        vitals: build_observation_data(patient_id, 'VITALS'),
         vaccineAdministration: build_vaccine_administration_data(patient_id),
-        appointments: build_observation_data(patient_id, 'APPOINTMENT'),
-        diagnosis: build_observation_data(patient_id, 'DIAGNOSIS'),
-        screening: build_observation_data(patient_id, 'SCREENING'),
-        substanceAbuse: build_observation_data(patient_id, 'ASSESSMENT'),
         labOrders: build_lab_orders_data(patient_id),
         MedicationOrder: build_medication_data(patient_id),
-        outCome: build_empty_data_structure,
-        notes: build_observation_data(patient_id, 'NOTES'),
-        allergies: build_observation_data(patient_id, 'MEDICAL HISTORY'),
         observations: build_all_observations(patient_id, allowed_encounter_types = nil, status = "saved")
       }
     end
@@ -117,14 +113,6 @@ module BuildPatientRecordService
         saveStatusPersonInformation: '',
         saveStatusGuardianInformation: '',
         saveStatusBirthRegistration: ''
-      }
-    end
-
-    # Helper methods for building specific data structures
-    def build_observation_data(patient_id, encounter_type)
-      {
-        saved: safe_extract_observations(patient_id, safe_find_encounter_type(encounter_type)),
-        unsaved: []
       }
     end
 
@@ -151,12 +139,6 @@ module BuildPatientRecordService
       }
     end
 
-    def build_screening_data(patient_id)
-      {
-        saved: safe_get_screening_data(patient_id),
-        unsaved: []
-      }
-    end
 
     def build_lab_orders_data(patient_id)
       {
@@ -173,13 +155,6 @@ module BuildPatientRecordService
       }
     end
 
-    def build_empty_data_structure
-      {
-        saved: [],
-        unsaved: []
-      }
-    end
-
     def build_dispensations_data(patient)
       {
         saved: PatientService.new.find_program_drug_orders_awaiting_dispensation(patient, Date.today).as_json,
@@ -189,7 +164,10 @@ module BuildPatientRecordService
 
 
     def fetch_active_programs(patient_id)
-      PatientProgram.where(patient_id: patient_id).to_a.map(&:as_json)
+      PatientProgram
+        .where(patient_id: patient_id)
+        .includes(:patient_states, program: { concept: :concept_names })
+        .map(&:as_json)
     end
 
     def handle_error(error, patient_id)

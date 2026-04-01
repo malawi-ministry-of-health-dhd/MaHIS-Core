@@ -10,12 +10,13 @@ module ArtService
 
         include ModelUtils
         include ArtService::Reports::Pepfar::Utils
+        include ArtTempTablesNaming
 
         def initialize(start_date:, end_date:, **kwargs)
           @type = kwargs[:definition]
           @start_date = start_date
           @end_date = end_date
-          @rebuild = kwargs[:rebuild]&.casecmp?('true')
+          @rebuild = kwargs[:rebuild].is_a?(String) ? kwargs[:rebuild]&.casecmp?('true') : kwargs[:rebuild]
           @occupation = kwargs[:occupation]
           @maternal = {}
         end
@@ -25,9 +26,20 @@ module ArtService
           process_initialization
           process_data
           flatten_and_sort_data
+        ensure
+          # Cleanup temporary tables if we rebuilt them
+          cleanup_tables if rebuild
         end
 
         private
+
+        def cleanup_tables
+          Rails.logger.info("Cleaning up temporary tables for location #{Location.current&.location_id}")
+          builder = ArtService::Reports::CohortBuilder.new(outcomes_definition: type)
+          builder.cleanup_temporary_tables
+        rescue StandardError => e
+          Rails.logger.error("Failed to cleanup temporary tables: #{e.message}")
+        end
 
         GENDER = %w[M F].freeze
         AGGREGATE_GENDER_ROWS = %w[M FP FNP FBf].freeze
@@ -163,9 +175,9 @@ module ArtService
                     GROUP_CONCAT(DISTINCT(tcm.drug_id) ORDER BY tcm.drug_id ASC) AS drugs,
                     disaggregated_age_group(date(earliest_start_date.birthdate), date('#{end_date}')) AS age_group,
                     earliest_start_date.gender
-                FROM temp_current_medication tcm
-                INNER JOIN temp_patient_outcomes AS outcomes ON outcomes.patient_id = tcm.patient_id AND outcomes.#{type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_' }cum_outcome = 'On antiretrovirals'
-                INNER JOIN temp_earliest_start_date AS earliest_start_date ON earliest_start_date.patient_id = tcm.patient_id AND earliest_start_date.gender IN ('M','F')
+                FROM #{temp_current_medication} tcm
+                INNER JOIN #{temp_patient_outcomes} AS outcomes ON outcomes.patient_id = tcm.patient_id AND outcomes.#{type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_' }cum_outcome = 'On antiretrovirals'
+                INNER JOIN #{temp_earliest_start_date} AS earliest_start_date ON earliest_start_date.patient_id = tcm.patient_id AND earliest_start_date.gender IN ('M','F')
                 GROUP BY tcm.patient_id
             ) AS prescriptions
             LEFT JOIN (

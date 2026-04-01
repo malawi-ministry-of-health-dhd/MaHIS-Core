@@ -6,7 +6,7 @@ module ArtService
     class RegimensAndFormulations
       include CommonSqlQueryUtils
 
-      attr_reader :start_date, :end_date, :regimen, :formulation
+      attr_reader :start_date, :end_date, :regimen, :formulation, :location_id
 
       def initialize(start_date:, end_date:, regimen: nil, formulation: 'tablets', **kwargs)
         raise InvalidParameterError, 'regimen is required' unless regimen
@@ -21,6 +21,7 @@ module ArtService
         @regimen = regimen
         @occupation = kwargs[:occupation]
         @dsd = kwargs[:dsd]
+        @location_id = Location.current.location_id
       end
 
       def find_report
@@ -42,7 +43,7 @@ module ArtService
             birthdate: demographics.birthdate,
             gender: demographics.gender,
             weight: demographics.weight,
-            drugs: regimen_drugs,
+            drugs: regimen_drugs(prescribed_drugs),
             regimen:
           }
         end
@@ -51,41 +52,41 @@ module ArtService
       private
 
       TABLET_REGIMENS = {
-        '0A' => [969, 22],
-        '0P' => [1044, 968],
-        '2A' => [731],
-        '2P' => [732],
-        '4A' => [39, 11],
-        '4P' => [736, 30],
-        '5A' => [735],
-        '6A' => [734, 22],
-        '7A' => [734, 932],
-        '8A' => [39, 932],
-        '9A' => [969, 73],
-        '9P' => [1044, 74],
-        '10A' => [734, 73],
-        '11A' => [39, 73],
-        '11P' => [736, 74],
-        '12A' => [982, 977, 976],
-        '13A' => [983],
-        '14A' => [984, 982],
-        '14P' => [736, 982],
-        '15A' => [969, 982],
-        '15P' => [1044, 982],
-        '16A' => [969, 954],
-        '16P' => [1044, 1043],
-        '17A' => [969, 11],
-        '17P' => [1044, 30]
+        '0A' => [809, 16],
+        '0P' => [882, 808],
+        '2A' => [573],
+        '2P' => [574],
+        '4A' => [33, 7],
+        '4P' => [578, 24],
+        '5A' => [577],
+        '6A' => [576, 16],
+        '7A' => [576, 772],
+        '8A' => [33, 772],
+        '9A' => [809, 66],
+        '9P' => [882, 66],
+        '10A' => [576, 66],
+        '11A' => [33, 66],
+        '11P' => [578, 66],
+        '12A' => [822, 817, 816],
+        '13A' => [823],
+        '14A' => [824, 822],
+        '14P' => [578, 822],
+        '15A' => [809, 822],
+        '15P' => [1170],
+        '16A' => [809, 794],
+        '16P' => [882, 881],
+        '17A' => [809, 7],
+        '17P' => [882, 24]
       }.freeze
 
       GRANULES_REGIMENS = {
-        '9P' => [1044, 1045],
-        '11P' => [736, 1045]
+        '9P' => [882, 883],
+        '11P' => [578, 883]
       }.freeze
 
       PELLETS_REGIMENS = {
-        '9P' => [1044, 979],
-        '11P' => [736, 979]
+        '9P' => [882, 819],
+        '11P' => [578, 819]
       }.freeze
 
       REGIMENS_BY_FORMULATION = {
@@ -116,8 +117,8 @@ module ArtService
 
       # Returns all orders in treatment encounter of HIV program
       def treatment_orders
-        o = Order.joins(:encounter)
-             .where(start_date: start_date..end_date)
+        Order.joins(:encounter)
+             .where(start_date: (start_date - 1.day)..(end_date + 1.day))
              .merge(treatment_encounter)
              .or(Order.joins(:encounter)
                       .where(auto_expire_date: start_date..end_date)
@@ -129,7 +130,8 @@ module ArtService
 
       def treatment_encounter
         Encounter.where(encounter_type: EncounterType.find_by_name('Treatment'),
-                        program_id: Constants::PROGRAM_ID)
+                        program_id: Constants::PROGRAM_ID,
+                        location_id:)
       end
 
       # Returns drugs prescribed to patient on given day
@@ -153,10 +155,12 @@ module ArtService
                                          AND patient_identifier.voided = 0
             LEFT JOIN obs ON obs.person_id = person.person_id
                           AND obs.concept_id = #{weight_concept_id}
+                          AND obs.location_id = #{location_id}
                           AND obs.obs_datetime = (
                             SELECT MAX(obs_datetime) FROM obs
                             WHERE person_id = #{patient_id}
                               AND concept_id = #{weight_concept_id}
+                              AND location_id = #{location_id}
                               AND obs_datetime <= '#{prescription_date}'
                               AND voided = 0
                           ) AND obs.voided = 0
@@ -168,15 +172,16 @@ module ArtService
       def patient_recent_weight(patient_id, as_of)
         Observation.select(:value_numeric)
                    .where(concept_id: ConceptName.find_by_name('Weight (kg)').concept_id,
-                          person_id: patient_id)
+                          person_id: patient_id,
+                          location_id:)
                    .where('obs_datetime < ? AND value_numeric IS NOT NULL', as_of)
                    .order(obs_datetime: :desc)
                    .first
                    &.value_numeric
       end
 
-      def regimen_drugs
-        @regimen_drugs ||= Drug.where(drug_id: [736, 982]).map do |drug|
+      def regimen_drugs(drug_ids = [578, 822])
+        @regimen_drugs ||= Drug.where(drug_id: drug_ids).map do |drug|
           drug.alternative_names.first&.short_name || drug.name
         end.join(' + ')
       end

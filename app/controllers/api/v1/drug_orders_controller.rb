@@ -22,7 +22,7 @@ module Api
         encounter_id, drug_orders = params.require(%i[encounter_id drug_orders])
 
         encounter = Encounter.find(encounter_id)
-        unless encounter.type.name == 'TREATMENT'
+        unless encounter.type&.name&.upcase == 'TREATMENT'
           return render json: { errors: "Not a treatment encounter ##{encounter.encounter_id}" },
                         status: :bad_request
         end

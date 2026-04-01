@@ -5,12 +5,15 @@ module ArtService
     # Outcome List Report
     class OutcomeList < CachedReport
       include CommonSqlQueryUtils
+      include ArtTempTablesNaming
+      include ModelUtils
 
       REPORTS = Set.new(%i[transfer_out died stopped]).freeze
 
       def initialize(start_date:, end_date:, outcome:, **kwargs)
         super(start_date:, end_date:, definition: 'moh', **kwargs)
         @dsd = kwargs[:dsd]
+        @location_id = kwargs[:location_id] || Location.current&.location_id || User.current&.location&.location_id
         @report = load_report outcome.downcase.split(' ').join('_')
       end
 
@@ -49,31 +52,13 @@ module ArtService
       end
 
       def outcome_query(outcome_state)
-        #         data = ActiveRecord::Base.connection.select_all <<~SQL
-        #         SELECT
-        #           pp.patient_id, i.identifier, pp.date_enrolled, pp.date_completed,
-        #           s.start_date, s.end_date, s.state, n.name,
-        #           fn.given_name, fn.family_name, p.gender, p.birthdate
-        #         FROM  program
-        #         INNER JOIN patient_program pp ON program.program_id = pp.program_id AND program.program_id = 1
-        #         INNER JOIN patient_state s ON s.patient_program_id = pp.patient_program_id
-        #         INNER JOIN program_workflow_state ws ON ws.program_workflow_state_id = s.state
-        #         INNER JOIN program_workflow w ON w.program_workflow_id = ws.program_workflow_id
-        #         INNER JOIN concept_name n ON n.concept_id = ws.concept_id
-        #         LEFT JOIN person_name fn ON fn.person_id = pp.patient_id AND fn.voided = 0
-        #         INNER JOIN person p ON p.person_id = pp.patient_id AND p.voided = 0
-        #         LEFT JOIN patient_identifier i ON i.patient_id = pp.patient_id AND i.voided = 0 AND i.identifier_type = 4
-        #         WHERE pp.voided = 0 AND s.voided = 0 AND s.start_date BETWEEN '#{@start_date}' AND '#{@end_date}'
-        #         AND s.state NOT IN(7,1, 12) AND s.state = #{outcome_state}
-        #         GROUP BY pp.patient_id ORDER BY s.start_date DESC, fn.date_created DESC;
-        #         SQL
 
         report_type = 'moh'
 
         transfer_out_to_location_sql = ''
         transfer_out_to_location_name_sql = ''
         if outcome_state.match(/Transfer/i)
-          concept_id = ConceptName.find_by_name('Transfer out to location').concept_id
+          concept_id = concept_name_to_id('Transfer out to location')
           transfer_out_to_location_name_sql = ' ,to_location.value_text transferred_out_to'
           transfer_out_to_location_sql = ' LEFT JOIN obs to_location ON to_location.person_id = e.patient_id'
           transfer_out_to_location_sql += " AND to_location.concept_id = #{concept_id} AND to_location.voided = 0"
@@ -88,8 +73,8 @@ module ArtService
             ppo.date_enrolled, ppo.date_completed,
             s2.start_date outcome_date, s2.end_date, s2.state
             #{transfer_out_to_location_name_sql}
-          FROM temp_earliest_start_date e
-          INNER JOIN temp_patient_outcomes o ON e.patient_id = o.patient_id
+          FROM #{temp_earliest_start_date} e
+          INNER JOIN #{temp_patient_outcomes} o ON e.patient_id = o.patient_id
           #{dsd_query(dsd: @dsd, model: 'o') if @dsd}
           LEFT JOIN patient_identifier i ON i.patient_id = e.patient_id
             AND i.voided = 0 AND i.identifier_type = 4
@@ -99,7 +84,7 @@ module ArtService
           LEFT JOIN person_address s3 ON s3.person_id = e.patient_id
           LEFT JOIN concept_name art_reason ON art_reason.concept_id = e.reason_for_starting_art
           #{transfer_out_to_location_sql}
-          INNER JOIN patient_program ppo ON ppo.patient_id = e.patient_id AND ppo.program_id = 1
+          INNER JOIN patient_program ppo ON ppo.patient_id = e.patient_id AND ppo.program_id = 1 AND ppo.location_id = #{@location_id}
           INNER JOIN patient_state s2 ON s2.patient_program_id = ppo.patient_program_id
           INNER JOIN program_workflow_state ws ON ws.program_workflow_state_id = s2.state
           INNER JOIN program_workflow w ON w.program_workflow_id = ws.program_workflow_id

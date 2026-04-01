@@ -3,24 +3,24 @@ namespace :sync do
   task all: :environment do
     jobs = [
       Sync::BatchPatientSyncJob,
+      Sync::FacilitySyncJob,
       Sync::SpecimenSyncJob,
+      Sync::VisitSyncJob,
       Sync::StageSyncJob,
       Sync::StockSyncJob,
       Sync::TestResultIndicatorsSyncJob,
       Sync::TestTypesSyncJob,
       Sync::ConceptNameSyncJob,
       Sync::ConceptSetSyncJob,
-      Sync::DdeIdsSyncJob,
       Sync::DistrictSyncJob,
       Sync::DrugSyncJob,
       Sync::ProgramSyncJob,
       Sync::RelationshipTypeSyncJob,
       Sync::TraditionalAuthoritySyncJob,
       Sync::VillageSyncJob,
-      Sync::VisitSyncJob,
-      Sync::WardSyncJob,
-      Sync::FacilitySyncJob,
-      Sync::TestTypesSyncJob
+      Sync::DdeIdsSyncJob,
+      Sync::DiagnosisSyncJob,
+      Sync::WardSyncJob
     ]
 
     jobs.each(&:perform_async)
@@ -43,3 +43,10 @@ namespace :sync do
     end
   end
 end
+
+
+# sync all records with couchDB
+# rails sync:all
+
+# Run only one job (e.g. StageSyncJob)
+# rails "sync:run[StageSyncJob]"
