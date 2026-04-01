@@ -21,11 +21,19 @@ class TraditionalAuthority < RetirableRecord
 
   def as_json(options = {})
     super(options.merge(
-      methods: %i[traditional_authority_id]
+      methods: %i[traditional_authority_id district_id district_name]
     ))
   end
 
   def traditional_authority_id
     self.location_id
+  end
+
+  def district_id
+    parent_location
+  end
+
+  def district_name
+    district&.county_district
   end
 end
