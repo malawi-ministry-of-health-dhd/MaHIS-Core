@@ -69,7 +69,6 @@ module PatientRecordService
               })
             end
 
-            enqueue_lab_push_order(order.fetch(:order_id), order_params[:offline_id])
           rescue StandardError => e
             log_error("Failed to save lab order for order_params=#{order_params[:offline_id]}", e)
             collected_errors << "Lab order #{order_params[:offline_id]}: #{e.message}"
