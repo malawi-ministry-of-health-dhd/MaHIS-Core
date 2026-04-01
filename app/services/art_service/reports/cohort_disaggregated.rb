@@ -42,6 +42,9 @@ module ArtService
           end
         end
 
+        # Male total (all ages)
+        rows << build_male_total_row
+
         # Female sub-groups (all ages)
         %w[FP FNP FBf].each do |gender|
           rows << build_maternal_row(gender)
@@ -73,6 +76,19 @@ module ArtService
         row
       end
 
+      def build_male_total_row
+        patients = all_male_patients_on_art
+        regimen_distribution = regimen_counts(patients, 'All', 'M')
+        unknown = regimen_distribution.delete('N/A') || []
+
+        row = { age_group: 'All', gender: 'M' }
+        row[:tx_curr] = patients
+        COHORT_REGIMENS.each { |r| row[r] = regimen_distribution[r] || [] }
+        row[:unknown] = unknown
+        row[:total] = patients
+        row
+      end
+
       def build_maternal_row(gender)
         patients = maternal_patients_on_art(gender)
         regimen_distribution = regimen_counts(patients, 'All', gender)
@@ -100,6 +116,18 @@ module ArtService
             AND o.#{outcome_column} = 'On antiretrovirals'
           GROUP BY e.patient_id
           HAVING age_group = '#{age_group}';
+        SQL
+        results.map { |r| r['patient_id'].to_i }
+      end
+
+      def all_male_patients_on_art
+        results = ActiveRecord::Base.connection.select_all <<~SQL
+          SELECT e.patient_id
+          FROM #{temp_earliest_start_date} e
+          INNER JOIN #{temp_patient_outcomes} o ON o.patient_id = e.patient_id
+          WHERE LEFT(e.gender, 1) = 'M'
+            AND o.#{outcome_column} = 'On antiretrovirals'
+          GROUP BY e.patient_id;
         SQL
         results.map { |r| r['patient_id'].to_i }
       end
