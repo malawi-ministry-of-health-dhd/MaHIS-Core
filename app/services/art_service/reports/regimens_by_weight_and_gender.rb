@@ -91,7 +91,7 @@ module ArtService
           GROUP BY regimen
         SQL
 
-        ActiveRecord::Base.connection.execute(sql).map do |row|
+        ActiveRecord::Base.connection.select_all(sql).map do |row|
           { row['regimen'] => row['count'] }
         end
       end
