@@ -39,8 +39,14 @@ class StagesService
       stage.arrival_time = Time.current
     end
 
-    stage.save! if stage.new_record? || stage.changed?
-    serialize(stage.reload)
+    was_new_record = stage.new_record?
+    has_changes = stage.new_record? || stage.changed?
+
+    stage.save! if has_changes
+    stage_data = serialize(stage.reload)
+
+    broadcast_stage_update(was_new_record ? 'stage_created' : 'stage_updated', stage_data) if has_changes
+    stage_data
   end
 
   def update_stage(stage_id, stage_params)
@@ -85,6 +91,9 @@ class StagesService
     latest_encounter = latest_visit_encounter(stage)
     {
       id: stage.id,
+      location_id: stage.location_id,
+      stage: stage.stage,
+      status: stage.status,
       identifier: BuildPatientRecordService::PatientIdentifierService.patient_identifier(patient,3),
       visit_id: stage.visit_id,
       uuid: patient_uuid(patient) || stage.patient_id.to_s,
@@ -123,8 +132,12 @@ class StagesService
       stage.visit_number = stage_params[:visit_number]
     end
 
-    stage.save! if stage.changed?
-    serialize(stage.reload)
+    has_changes = stage.changed?
+    stage.save! if has_changes
+    stage_data = serialize(stage.reload)
+
+    broadcast_stage_update('stage_updated', stage_data) if has_changes
+    stage_data
   end
 
   def resolve_patient_id(params)
@@ -174,5 +187,20 @@ class StagesService
     else
       User.find_by(user_id: patient.creator)&.name
     end
+  end
+
+  def broadcast_stage_update(event_name, data)
+    location_id = data[:location_id] || data['location_id']
+    return if location_id.blank?
+
+    payload = {
+      event: event_name,
+      data: data
+    }
+
+    # Primary OPD realtime stream
+    ActionCable.server.broadcast("stage_updates_channel_#{location_id}", payload)
+    # Fallback stream that already exists in deployed environments
+    ActionCable.server.broadcast("client_details_channel_#{location_id}", payload)
   end
 end

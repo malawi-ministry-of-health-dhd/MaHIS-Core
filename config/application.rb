@@ -24,6 +24,8 @@ module BHTEmrApi
     # Initialize configuration defaults for originally generated Rails version.
     config.load_defaults 6.1
     config.eager_load_paths << Rails.root.join('lib')
+    config.autoload_paths << Rails.root.join('app/channels')
+    config.eager_load_paths << Rails.root.join('app/channels')
     config.active_record.yaml_column_permitted_classes = [Date, Time]
     # Settings in config/environments/* take precedence over those specified here.
     # Application configuration can go into files in config/initializers
@@ -47,6 +49,17 @@ module BHTEmrApi
     # Action Cable
     config.action_cable.mount_path = '/cable'
     config.action_cable.disable_request_forgery_protection = true
+    # Fallback for environments where config/cable.yml is missing.
+    # Without this, ActionCable can raise NoMethodError in pubsub_adapter.
+    config.action_cable.cable ||= if Rails.env.test?
+                                    { 'adapter' => 'async' }
+                                  else
+                                    {
+                                      'adapter' => 'redis',
+                                      'url' => ENV.fetch('REDIS_URL', 'redis://127.0.0.1:6379/1'),
+                                      'channel_prefix' => "BHT-EMR-API_#{Rails.env}"
+                                    }
+                                  end
 
     # This also configures session_options for use below
     config.session_store :cookie_store, key: '_interslice_session'
