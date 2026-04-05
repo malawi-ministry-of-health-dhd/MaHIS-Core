@@ -4,14 +4,25 @@ module Api
   module V1
     class TraditionalAuthoritiesController < ApplicationController
       def create
-        params = params.require(%i[name district_id])
+        params.require(%i[name district_id])
+        
+        ActiveRecord::Base.transaction do
+          ta = TraditionalAuthority.create!(
+            name: params[:name],
+            parent_location: params[:district_id],
+            creator: User.current.id,
+            date_created: Time.current
+          )
 
-        trad_auth = TraditionalAuthority.create(params)
-        if trad_auth.errors.empty?
-          render json: trad_auth, status: :created
-        else
-          render json: trad_auth.errors, status: :bad_request
+          LocationTagMap.create!(
+            location_id: ta.location_id,
+            location_tag_id: LocationTag.find_by(name: 'Traditional Authority').id
+          )
+
+          render json: ta, status: :created
         end
+      rescue StandardError => e
+        render json: { error: e.message }, status: :bad_request
       end
 
       def index
@@ -36,26 +47,31 @@ module Api
       end
 
       def destroy
-        trad_auth = TraditionalAuthority.find(params[:id])
+        reason = params[:retired_reason] || "Retired by administrator"
+        ta = TraditionalAuthority.find(params[:id])
 
         ActiveRecord::Base.transaction do
-          trad_auth.villages.destroy_all
-          trad_auth.destroy!
+          # Retire all associated villages first
+          ta.villages.each { |village| village.void(reason) }
+          # Retire the TA itself
+          ta.void(reason)
         end
 
-        render json: { message: "Traditional Authority and associated villages successfully deleted" }, status: :ok
-        rescue ActiveRecord::RecordNotDestroyed => e
-          render json: { error: e.message }, status: :unprocessable_entity
+        render json: { message: "Traditional Authority and associated villages successfully retired" }, status: :ok
+      rescue StandardError => e
+        render json: { error: e.message }, status: :unprocessable_entity
       end
-      def update()
+      def update
         ta = TraditionalAuthority.find(params[:id])
         ta.update!(
           name: params[:name] || ta.name,
-          district_id: params[:district_id] || ta.district_id,
-          date_created: Time.current,
-          creator: User.current.id
+          parent_location: params[:district_id] || ta.parent_location,
+          creator: User.current.id,
+          date_created: Time.current
         )
-        render json: { data:ta.reload}
+        render json: ta.reload
+      rescue StandardError => e
+        render json: { error: e.message }, status: :bad_request
       end
     end
   end
