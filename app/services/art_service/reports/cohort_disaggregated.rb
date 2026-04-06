@@ -400,6 +400,8 @@ module ArtService
 
 
           SET @reason_for_starting = (SELECT concept_id FROM concept_name WHERE name = 'Reason for ART eligibility' LIMIT 1);
+          SET @yes_concept := (SELECT concept_id FROM concept_name WHERE name = 'Yes' AND locale_preferred = 1 AND voided = 0 LIMIT 1);
+          SET @no_concept := (SELECT concept_id FROM concept_name WHERE name = 'No' AND locale_preferred = 1 AND voided = 0 LIMIT 1);
 
           SET @pregnant_concepts := (SELECT GROUP_CONCAT(concept_id) FROM concept_name WHERE name IN('Is patient pregnant?','Patient pregnant'));
           SET @breastfeeding_concept := (SELECT GROUP_CONCAT(concept_id) FROM concept_name WHERE name = 'Breastfeeding');
@@ -425,22 +427,22 @@ module ArtService
 
             IF breastfeeding_date <= pregnant_date THEN
               SET obs_value_coded = (SELECT value_coded FROM obs WHERE concept_id IN(@pregnant_concepts) AND voided = 0 AND person_id = my_patient_id AND obs_datetime = pregnant_date LIMIT 1);
-              IF obs_value_coded = 1065 THEN SET maternal_status = 'FP';
-              ELSEIF obs_value_coded = 1066 THEN SET maternal_status = 'FNP';
+              IF obs_value_coded = @yes_concept THEN SET maternal_status = 'FP';
+              ELSEIF obs_value_coded = @no_concept THEN SET maternal_status = 'FNP';
               END IF;
             END IF;
 
             IF breastfeeding_date > pregnant_date THEN
               SET obs_value_coded = (SELECT value_coded FROM obs WHERE concept_id IN(@breastfeeding_concept) AND voided = 0 AND person_id = my_patient_id AND obs_datetime = breastfeeding_date LIMIT 1);
-              IF obs_value_coded = 1065 THEN SET maternal_status = 'FBf';
-              ELSEIF obs_value_coded = 1066 THEN SET maternal_status = 'FNP';
+              IF obs_value_coded = @yes_concept THEN SET maternal_status = 'FBf';
+              ELSEIF obs_value_coded = @no_concept THEN SET maternal_status = 'FNP';
               END IF;
             END IF;
 
             IF DATE(breastfeeding_date) = DATE(pregnant_date) AND maternal_status = 'FNP' THEN
               SET obs_value_coded = (SELECT value_coded FROM obs WHERE concept_id IN(@breastfeeding_concept) AND voided = 0 AND person_id = my_patient_id AND obs_datetime = breastfeeding_date LIMIT 1);
-              IF obs_value_coded = 1065 THEN SET maternal_status = 'FBf';
-              ELSEIF obs_value_coded = 1066 THEN SET maternal_status = 'FNP';
+              IF obs_value_coded = @yes_concept THEN SET maternal_status = 'FBf';
+              ELSEIF obs_value_coded = @no_concept THEN SET maternal_status = 'FNP';
               END IF;
             END IF;
           END IF;
@@ -448,8 +450,8 @@ module ArtService
           IF maternal_status = 'Check FP' THEN
 
             SET obs_value_coded = (SELECT value_coded FROM obs WHERE concept_id IN(@pregnant_concepts) AND voided = 0 AND person_id = my_patient_id AND obs_datetime = pregnant_date LIMIT 1);
-            IF obs_value_coded = 1065 THEN SET maternal_status = 'FP';
-            ELSEIF obs_value_coded = 1066 THEN SET maternal_status = 'FNP';
+            IF obs_value_coded = @yes_concept THEN SET maternal_status = 'FP';
+            ELSEIF obs_value_coded = @no_concept THEN SET maternal_status = 'FNP';
             END IF;
 
             IF obs_value_coded IS NULL THEN
@@ -465,8 +467,8 @@ module ArtService
           IF maternal_status = 'Check BF' THEN
 
             SET obs_value_coded = (SELECT value_coded FROM obs WHERE concept_id IN(@breastfeeding_concept) AND voided = 0 AND person_id = my_patient_id AND obs_datetime = breastfeeding_date LIMIT 1);
-            IF obs_value_coded = 1065 THEN SET maternal_status = 'FBf';
-            ELSEIF obs_value_coded = 1066 THEN SET maternal_status = 'FNP';
+            IF obs_value_coded = @yes_concept THEN SET maternal_status = 'FBf';
+            ELSEIF obs_value_coded = @no_concept THEN SET maternal_status = 'FNP';
             END IF;
 
             IF obs_value_coded IS NULL THEN
@@ -500,6 +502,8 @@ module ArtService
         pregnant_concepts << ConceptName.find_by_name('Is patient pregnant?').concept_id
         pregnant_concepts << ConceptName.find_by_name('patient pregnant').concept_id
 
+        yes_concept_id = ConceptName.find_by(name: 'Yes')&.concept_id
+
         results = ActiveRecord::Base.connection.select_all(
           "SELECT person_id, obs.value_coded value_coded FROM obs obs
             INNER JOIN encounter enc ON enc.encounter_id = obs.encounter_id
@@ -514,7 +518,7 @@ module ArtService
                         WHERE o.concept_id IN(#{pregnant_concepts.join(',')})
                         AND o.voided = 0 AND o.person_id = obs.person_id
                         AND o.obs_datetime <= '#{end_date.to_date.strftime('%Y-%m-%d 23:59:59')}')
-          GROUP BY obs.person_id HAVING value_coded = 1065
+          GROUP BY obs.person_id HAVING value_coded = #{yes_concept_id}
           ORDER BY obs.obs_datetime DESC;"
         )
 
@@ -541,7 +545,7 @@ module ArtService
                         WHERE o.concept_id IN(#{breastfeeding_concepts.join(',')}) AND o.voided = 0
                         AND o.person_id = obs.person_id
                         AND o.obs_datetime <='#{end_date.to_date.strftime('%Y-%m-%d 23:59:59')}')
-          GROUP BY obs.person_id HAVING value_coded = 1065
+          GROUP BY obs.person_id HAVING value_coded = #{yes_concept_id}
           ORDER BY obs.obs_datetime DESC;"
           )
 
@@ -558,7 +562,7 @@ module ArtService
           AND obs.voided = 0 AND enc.encounter_type IN(#{encounter_types.join(',')})
           AND DATE(obs.obs_datetime) = (SELECT DATE(es.earliest_start_date) FROM temp_earliest_start_date es
                                         WHERE es.patient_id = obs.person_id)
-          GROUP BY obs.person_id HAVING value_coded = 1065
+          GROUP BY obs.person_id HAVING value_coded = #{yes_concept_id}
           ORDER BY obs.obs_datetime DESC;"
         )
 
@@ -581,7 +585,7 @@ module ArtService
           AND obs.voided = 0 AND enc.encounter_type IN(#{encounter_types.join(',')})
           AND DATE(obs.obs_datetime) = (SELECT DATE(es.earliest_start_date) FROM temp_earliest_start_date es
                                         WHERE es.patient_id = obs.person_id)
-          GROUP BY obs.person_id HAVING value_coded = 1065
+          GROUP BY obs.person_id HAVING value_coded = #{yes_concept_id}
           ORDER BY obs.obs_datetime DESC;"
           )
 
