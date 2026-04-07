@@ -68,8 +68,6 @@ module NameSearchService
       end
     end
 
-    private
-
     def search_full_soundex_person_name(given_name: nil, family_name: nil, middle_name: nil)
       name_codes = PersonNameCode.all
       unless given_name.blank?
@@ -91,22 +89,24 @@ module NameSearchService
       end
 
       PersonName.joins(:person_name_code).merge(name_codes)
-      
     end
 
+    # Performs a raw LIKE search on person_name columns. Conditions are built
+    # dynamically so blank params never produce a full-table LIKE '%' scan.
+    # Only joins person when gender filtering is required.
     def search_full_raw_person_name(given_name: nil, family_name: nil, middle_name: nil, gender: nil)
-      PersonName.joins(person: { patient: :encounters })
-        .where(
-          '(given_name LIKE ? OR given_name IS NULL) AND
-           (family_name LIKE ? OR family_name IS NULL) AND
-           (middle_name LIKE ? OR middle_name IS NULL) AND
-           (gender LIKE ? OR gender IS NULL)',
-          "#{given_name}%", "#{family_name}%", "#{middle_name}%", "#{gender}%"
-        ).order(
-          Arel.sql("CASE WHEN encounter.location_id = '#{User.current.location_id}' THEN 0 ELSE 1 END"),
-          given_name: :asc, 
-          family_name: :asc
-        )
+      scope = PersonName.all
+      scope = scope.joins(:person) unless gender.blank?
+
+      scope = scope.where('given_name LIKE ?', "#{given_name}%") unless given_name.blank?
+      scope = scope.where('family_name LIKE ?', "#{family_name}%") unless family_name.blank?
+      scope = scope.where('middle_name LIKE ?', "#{middle_name}%") unless middle_name.blank?
+      scope = scope.where('person.gender LIKE ?', "#{gender}%") unless gender.blank?
+
+      scope.order(given_name: :asc, family_name: :asc)
     end
+
+    private
+
   end
 end

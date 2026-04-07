@@ -96,7 +96,11 @@ class PatientService
   def find_patients_by_name_and_gender(given_name, middle_name = nil, family_name, gender)
     person_service = PersonService.new
     people = person_service.find_people_by_name_and_gender(given_name, middle_name, family_name, gender)
-    Patient.joins(:person).merge(people)
+    Patient.joins(:person)
+           .includes(:merge_audits,
+                     person: [:names, :addresses, { person_attributes: :type }],
+                     patient_identifiers: :type)
+           .merge(people)
   end
 
   def find_patient_median_weight_and_height(patient)
