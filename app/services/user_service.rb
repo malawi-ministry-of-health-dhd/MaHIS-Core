@@ -20,12 +20,15 @@ module UserService
   class UserUpdateError < InvalidParameterError; end
 
   def self.find_users(role: nil, search_string: nil, username: nil, include_deactivated: false)
-    # Check if the current user is a "Global Superuser"
+    # Check current user permissions
     is_global_superuser = User.current.global_superuser?
+    is_district_superuser = User.current.district_superuser?
   
-    # Base query: all users for super-super-users, otherwise users in the current location
+    # Base query: Handle scoping roles
     query = if is_global_superuser
               User.unscope(where: :location_id).all
+            elsif is_district_superuser
+              User.unscope(where: :location_id).where(location_id: User.current.managed_location_ids)
             else
               User.where(location_id: User.current.location_id)
             end
