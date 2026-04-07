@@ -29,7 +29,7 @@ class BootstrapOpenmrsSystem < ActiveRecord::Migration[7.0]
 
       # Password: daemon
       system_salt = SecureRandom.base64
-      system_password_hash = Digest::SHA1.hexdigest("#{system_salt}daemon")
+      system_password_hash = Digest::SHA1.hexdigest("daemon#{system_salt}")
 
       conn.execute('TRUNCATE TABLE users;')
 

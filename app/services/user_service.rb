@@ -247,7 +247,15 @@ module UserService
 
   def self.login(username, password)
     user = User.unscoped.where(username:).first
-    Location.current = Location.find(user.location_id)
+    return nil unless user
+
+    begin
+      Location.current = Location.find(user.location_id) if user.location_id.present?
+    rescue ActiveRecord::RecordNotFound
+      Rails.logger.warn "Location #{user.location_id} not found for user #{username}"
+      # Fallback to some global property or skip? 
+      # For now, we skip setting it if not found to avoid crash
+    end
     unless user&.active? && \
            (bart_authenticate(user, password) || \
             new_arch_authenticate(user, password))
@@ -363,7 +371,8 @@ module UserService
 
   # Tries to authenticate user using the classical BART mode
   def self.bart_authenticate(user, password)
-    Digest::SHA1.hexdigest("#{password}#{user.salt}") == user.password
+    Digest::SHA1.hexdigest("#{password}#{user.salt}") == user.password || \
+      Digest::SHA1.hexdigest("#{user.salt}#{password}") == user.password
   end
 
   # Tries to authenticate user using the new architecture mode
@@ -372,7 +381,8 @@ module UserService
   # currently SHA512 is being used it seems, so we going with
   # that.
   def self.new_arch_authenticate(user, password)
-    Digest::SHA512.hexdigest("#{password}#{user.salt}") == user.password
+    Digest::SHA512.hexdigest("#{password}#{user.salt}") == user.password || \
+      Digest::SHA512.hexdigest("#{user.salt}#{password}") == user.password
   end
 
   def self.check_user(username)
