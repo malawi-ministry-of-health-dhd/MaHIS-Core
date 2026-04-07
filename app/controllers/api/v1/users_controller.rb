@@ -11,7 +11,7 @@ module Api
       skip_before_action :authenticate, only: %i[login reset_password]
 
       def index
-        filters = params.permit(:role, :search_string).to_hash.transform_keys(&:to_sym)
+        filters = params.permit(:role, :search_string, :include_deactivated).to_hash.transform_keys(&:to_sym)
         query = service.find_users(**filters) 
 
         render json: {
@@ -21,7 +21,7 @@ module Api
       end
 
       def show
-        render json: User.find(params[:id]), status: :ok
+        render json: find_user(params[:id]), status: :ok
       end
 
       def update_username
@@ -243,7 +243,15 @@ module Api
       end
 
       def user
-        User.find(params[:id] || params[:user_id])
+        find_user(params[:id] || params[:user_id])
+      end
+
+      private
+
+      def find_user(id)
+        return User.unscope(where: :location_id).find(id) if User.current.global_superuser?
+
+        User.find(id)
       end
 
       # validate user programs here

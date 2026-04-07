@@ -19,29 +19,20 @@ module UserService
   class UserCreateError < StandardError; end
   class UserUpdateError < InvalidParameterError; end
 
-  def self.find_users(filters = {})
-    include_deactivated = (filters&.keys || []).include?(:include_deactivated)
-
-    query = include_deactivated ? User.unscope(where: :deactivated_on) : User.all
-    
-    role = filters&.dig(:role)
-
-    query = query.joins(:roles).where(user_role: { role: }) if role
-  end
-
-  def self.find_users(role: nil, search_string: nil, username: nil)
+  def self.find_users(role: nil, search_string: nil, username: nil, include_deactivated: false)
     # Check if the current user is a "Global Superuser"
-    is__global_uperuser = User.current.user_roles.any? do |user_role|
-      user_role.role.role == "Global Superuser"
-    end
+    is_global_superuser = User.current.global_superuser?
   
     # Base query: all users for super-super-users, otherwise users in the current location
-    query = if is__global_uperuser
-             User.all
-           else
-             User.where(location_id: User.current.location_id)
-           end
+    query = if is_global_superuser
+              User.unscope(where: :location_id).all
+            else
+              User.where(location_id: User.current.location_id)
+            end
   
+    # Unscope deactivated_on if requested
+    query = query.unscope(where: :deactivated_on) if include_deactivated
+
     # Filter by role if provided
     if role
       query = query.joins(:roles).where(user_roles: { role: role })
