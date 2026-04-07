@@ -4,6 +4,7 @@ class Patient < VoidableRecord
   include ModelUtils
   
   attr_accessor :npid
+  attr_writer :preloaded_art_start_date
   after_void :void_related_models
   
   NPID_NAME = 'National id'
@@ -19,6 +20,7 @@ class Patient < VoidableRecord
   has_many :programs, through: :patient_programs
   has_many :relationships, foreign_key: :person_a, dependent: :destroy
   has_many :orders
+  has_many :merge_audits, -> { order(:created_at) }, class_name: 'MergeAudit', foreign_key: :primary_id
   has_many :encounters do
     def find_by_date(encounter_date)
       encounter_date ||= Date.today
@@ -153,16 +155,27 @@ class Patient < VoidableRecord
   end
 
   def merge_history
-    MergeAudit.where(primary_id: patient_id).order(:created_at).as_json
+    merge_audits.as_json
   end
 
   def art_start_date
+    return @preloaded_art_start_date if defined?(@preloaded_art_start_date)
     return nil if id.blank?
 
     result = ActiveRecord::Base.connection.select_one <<~SQL
       SELECT patient_start_date(#{id}) AS art_start_date
     SQL
     result['art_start_date'] || nil
+  end
+
+  def self.preload_art_start_dates(patients)
+    return if patients.empty?
+
+    ids = patients.map { |p| p.patient_id.to_i }.join(',')
+    results = connection.select_all(
+      "SELECT patient_id, patient_start_date(patient_id) AS art_start_date FROM patient WHERE patient_id IN (#{ids})"
+    ).each_with_object({}) { |row, hash| hash[row['patient_id'].to_i] = row['art_start_date'] }
+    patients.each { |p| p.preloaded_art_start_date = results[p.patient_id.to_i] }
   end
 
   def last_arv_drug_expire_date
