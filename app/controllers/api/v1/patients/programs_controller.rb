@@ -31,6 +31,9 @@ module Api
 
           new_patient_program = PatientProgram.create(create_params)
 
+          # Track if this is an immunization program enrollment
+          @immunization_program_created = (create_params[:program_id] == immunization_program_id)
+
           if new_patient_program.errors.empty?
             render json: new_patient_program, status: :created
           else
@@ -69,7 +72,14 @@ module Api
           PatientProgram.find_by!(patient_id: params[:patient_id], program_id: params[:id])
         end
 
+        def immunization_program_id
+          @immunization_program_id ||= Program.find_by(name: 'IMMUNIZATION PROGRAM')&.program_id
+        end
+
         def immunization_cache_update
+          # Only update cache if enrolling in immunization program
+          return unless @immunization_program_created
+
           # Update Immunization Data Cache
           start_date = 1.year.ago.to_date.to_s
           end_date = Date.today.to_s

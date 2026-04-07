@@ -1,6 +1,6 @@
 # app/jobs/immunization_report_job.rb
 class ImmunizationReportJob < ApplicationJob
-  queue_as :default
+  queue_as :long_running
 
   def perform(start_date, end_date, location_id)
     dashboard_stats = dashboard_service(start_date, end_date, location_id)
