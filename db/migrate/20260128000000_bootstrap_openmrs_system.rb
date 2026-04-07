@@ -147,10 +147,13 @@ class BootstrapOpenmrsSystem < ActiveRecord::Migration[7.0]
       # 4. Assign Superuser role
       # ================================================================
 
-      conn.execute <<~SQL
-        INSERT INTO user_role (user_id, role)
-        VALUES (#{admin_user_id}, 'Superuser');
-      SQL
+      exists = conn.select_value("SELECT COUNT(*) FROM user_role WHERE user_id = #{admin_user_id} AND role = 'Superuser'")
+      if exists.to_i.zero?
+        conn.execute <<~SQL
+          INSERT INTO user_role (user_id, role)
+          VALUES (#{admin_user_id}, 'Superuser');
+        SQL
+      end
 
       # ================================================================
       # 5. Create UserProperty records for password management
@@ -177,6 +180,12 @@ class BootstrapOpenmrsSystem < ActiveRecord::Migration[7.0]
   end
 
   def down
-    # Don't drop users on rollback
+    conn = connection
+    conn.execute 'SET FOREIGN_KEY_CHECKS = 0;'
+    # Clean up what we created to allow for a clean redo
+    conn.execute "DELETE FROM user_role WHERE role = 'Superuser' AND user_id IN (SELECT user_id FROM users WHERE username IN ('admin', 'daemon'));"
+    conn.execute "DELETE FROM user_property WHERE property = 'last_password_updated' AND user_id IN (SELECT user_id FROM users WHERE username IN ('admin', 'daemon'));"
+    conn.execute "DELETE FROM users WHERE username IN ('daemon', 'admin');"
+    conn.execute 'SET FOREIGN_KEY_CHECKS = 1;'
   end
 end
