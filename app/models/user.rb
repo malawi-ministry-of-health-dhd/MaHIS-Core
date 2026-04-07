@@ -41,6 +41,10 @@ class User < RetirableRecord
     Location.current
   end
 
+  def global_superuser?
+    user_roles.exists?(role: 'Global Superuser')
+  end
+
   def as_json(options = {})
     super(options.merge(
       except: %i[password salt secret_question secret_answer
