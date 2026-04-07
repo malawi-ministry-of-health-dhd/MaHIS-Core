@@ -1005,6 +1005,8 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
                     records.map { |r| [r[:role], r[:user_id]] }
                   when 'UserProperty'
                     records.map { |r| [r[:user_id], r[:property]] }
+                  when 'UserProgram'
+                    records.map { |r| [r[:user_id], r[:program_id]] }
                   when 'DrugIngredient'
                     records.map { |r| [r[:concept_id], r[:ingredient_id]] }
                   when 'PharmacyStockBalance', 'PharmacyStockVerification', 'Pharmacies'
@@ -1031,6 +1033,9 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
                     when 'UserProperty'
                       target_model.unscoped.where(user_id: record_keys.map(&:first), property: record_keys.map(&:last))
                                   .pluck(:user_id, :property).map { |u, p| [u, p] }.to_set
+                    when 'UserProgram'
+                      target_model.unscoped.where(user_id: record_keys.map(&:first), program_id: record_keys.map(&:last))
+                                  .pluck(:user_id, :program_id).map { |u, p| [u, p] }.to_set
                     when 'DrugIngredient'
                       target_model.unscoped.where(concept_id: record_keys.map(&:first), ingredient_id: record_keys.map(&:last))
                                   .pluck(:concept_id, :ingredient_id).map do |c, i|
@@ -1134,6 +1139,8 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
         existing_keys.include?([record[:role], record[:user_id]])
       when 'UserProperty'
         existing_keys.include?([record[:user_id], record[:property]])
+      when 'UserProgram'
+        existing_keys.include?([record[:user_id], record[:program_id]])
       when 'DrugIngredient'
         existing_keys.include?([record[:concept_id], record[:ingredient_id]])
       when 'PharmacyStockBalance', 'PharmacyStockVerification', 'Pharmacies'
@@ -1727,6 +1734,10 @@ if __FILE__ == $0
     }],
     user_property: [UserProperty, {
       user_id: :get_new_user_ids
+    }],
+    user_programs: [UserProgram, {
+      user_id: :get_new_user_ids,
+      program_id: :get_program_workflow_ids
     }],
     global_property: [GlobalProperty, {}],
     person: [Person, {

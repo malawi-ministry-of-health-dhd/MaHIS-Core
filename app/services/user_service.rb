@@ -19,29 +19,20 @@ module UserService
   class UserCreateError < StandardError; end
   class UserUpdateError < InvalidParameterError; end
 
-  def self.find_users(filters = {})
-    include_deactivated = (filters&.keys || []).include?(:include_deactivated)
-
-    query = include_deactivated ? User.unscope(where: :deactivated_on) : User.all
-    
-    role = filters&.dig(:role)
-
-    query = query.joins(:roles).where(user_role: { role: }) if role
-  end
-
-  def self.find_users(role: nil, search_string: nil, username: nil)
+  def self.find_users(role: nil, search_string: nil, username: nil, include_deactivated: false)
     # Check if the current user is a "Global Superuser"
-    is__global_uperuser = User.current.user_roles.any? do |user_role|
-      user_role.role.role == "Global Superuser"
-    end
+    is_global_superuser = User.current.global_superuser?
   
     # Base query: all users for super-super-users, otherwise users in the current location
-    query = if is__global_uperuser
-             User.all
-           else
-             User.where(location_id: User.current.location_id)
-           end
+    query = if is_global_superuser
+              User.unscope(where: :location_id).all
+            else
+              User.where(location_id: User.current.location_id)
+            end
   
+    # Unscope deactivated_on if requested
+    query = query.unscope(where: :deactivated_on) if include_deactivated
+
     # Filter by role if provided
     if role
       query = query.joins(:roles).where(user_roles: { role: role })
@@ -247,7 +238,15 @@ module UserService
 
   def self.login(username, password)
     user = User.unscoped.where(username:).first
-    Location.current = Location.find(user.location_id)
+    return nil unless user
+
+    begin
+      Location.current = Location.find(user.location_id) if user.location_id.present?
+    rescue ActiveRecord::RecordNotFound
+      Rails.logger.warn "Location #{user.location_id} not found for user #{username}"
+      # Fallback to some global property or skip? 
+      # For now, we skip setting it if not found to avoid crash
+    end
     unless user&.active? && \
            (bart_authenticate(user, password) || \
             new_arch_authenticate(user, password))
@@ -363,7 +362,8 @@ module UserService
 
   # Tries to authenticate user using the classical BART mode
   def self.bart_authenticate(user, password)
-    Digest::SHA1.hexdigest("#{password}#{user.salt}") == user.password
+    Digest::SHA1.hexdigest("#{password}#{user.salt}") == user.password || \
+      Digest::SHA1.hexdigest("#{user.salt}#{password}") == user.password
   end
 
   # Tries to authenticate user using the new architecture mode
@@ -372,7 +372,8 @@ module UserService
   # currently SHA512 is being used it seems, so we going with
   # that.
   def self.new_arch_authenticate(user, password)
-    Digest::SHA512.hexdigest("#{password}#{user.salt}") == user.password
+    Digest::SHA512.hexdigest("#{password}#{user.salt}") == user.password || \
+      Digest::SHA512.hexdigest("#{user.salt}#{password}") == user.password
   end
 
   def self.check_user(username)

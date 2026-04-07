@@ -4,6 +4,7 @@
 module PatientRecordService
   class GuardianManager < BaseSaver
     def manage_guardian(patient_id, record)
+      initial_guardian_status = record[:saveStatusGuardianInformation]
       collected_errors = []
 
       updated_result = update_guardian_information(patient_id, record)
@@ -12,7 +13,10 @@ module PatientRecordService
       created_result = create_guardian(patient_id, record)
       collected_errors.concat(created_result.errors) if created_result.errors.any?
 
-      overall_success = updated_result.success? || created_result.success?
+      next_of_kin_result = create_next_of_kin(patient_id, record, initial_guardian_status)
+      collected_errors.concat(next_of_kin_result.errors) if next_of_kin_result.errors.any?
+
+      overall_success = updated_result.success? || created_result.success? || next_of_kin_result.success?
       OperationResult.new(success: overall_success, errors: collected_errors)
     end
 
@@ -99,6 +103,29 @@ module PatientRecordService
       OperationResult.new(success: true, errors: collected_errors)
     end
 
+    def create_next_of_kin(patient_id, record, initial_guardian_status = nil)
+      return ok unless (initial_guardian_status || record[:saveStatusGuardianInformation]) == 'pending'
+      return ok unless record[:nextOfKinInformation].present?
+
+      next_of_kin    = record.dig(:nextOfKinInformation, :unsaved, 0)
+      relationship_id = record.dig(:nextOfKinInformation, :relationshipID)
+      return ok unless next_of_kin_complete?(next_of_kin, relationship_id)
+
+      identity_manager = PatientRecordService::PatientIdentityManager.new
+      next_of_kin_data = identity_manager.create_person(next_of_kin)
+      next_of_kin_id   = next_of_kin_data.person_id
+
+      create_relation(
+        guardian_id:          next_of_kin_id,
+        relationship_type_id: relationship_id,
+        person_id:            patient_id
+      )
+
+      ok
+    rescue StandardError => e
+      log_and_fail("Failed to save next of kin information", e)
+    end
+
     private
 
     def guardian_info_complete?(record)
@@ -107,6 +134,12 @@ module PatientRecordService
 
       guardian&.dig(:given_name).present? &&
         guardian&.dig(:family_name).present? &&
+        relationship_id.present?
+    end
+
+    def next_of_kin_complete?(next_of_kin, relationship_id)
+      next_of_kin&.dig(:given_name).present? &&
+        next_of_kin&.dig(:family_name).present? &&
         relationship_id.present?
     end
 
