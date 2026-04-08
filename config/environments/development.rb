@@ -1,4 +1,5 @@
 # frozen_string_literal: true
+
 require 'yaml'
 
 Rails.application.configure do
@@ -40,7 +41,7 @@ Rails.application.configure do
 
   # Default content for the YAML file if it doesn't exist
   default_content = {
-    'host1' => '',
+    'host1' => ''
   }
 
   # Check if the YAML file exists
@@ -68,11 +69,11 @@ Rails.application.configure do
   config.action_mailer.perform_caching = false
 
   # Use inline adapter for development (runs jobs immediately, raises errors for debugging)
-  config.active_job.queue_adapter = :inline
-  
+  config.active_job.queue_adapter = :async
+
   # Disable retries - fail immediately on error
   config.active_job.retry_jitter = 0.0
-  
+
   # Log failed jobs
   config.active_job.logger = ActiveSupport::Logger.new($stdout)
 
