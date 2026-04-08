@@ -1035,7 +1035,9 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
                                   .pluck(:user_id, :property).map { |u, p| [u, p] }.to_set
                     when 'UserProgram'
                       target_model.unscoped.where(user_id: record_keys.map(&:first), program_id: record_keys.map(&:last))
-                                  .pluck(:user_id, :program_id).map { |u, p| [u, p] }.to_set
+                                  .pluck(:user_id, :program_id).map do |u, p|
+                        [u, p]
+                      end.to_set
                     when 'DrugIngredient'
                       target_model.unscoped.where(concept_id: record_keys.map(&:first), ingredient_id: record_keys.map(&:last))
                                   .pluck(:concept_id, :ingredient_id).map do |c, i|
@@ -1597,9 +1599,9 @@ def backfill_orders_obs_ids(source_db)
 
   ActiveRecord::Base.connection.execute(<<~SQL)
     UPDATE orders o
-    JOIN #{source_db}.orders src ON o.uuid = src.uuid
-    JOIN obs tgt ON tgt.uuid = (
-      SELECT uuid FROM #{source_db}.obs WHERE obs_id = src.obs_id LIMIT 1
+    JOIN #{source_db}.orders src ON o.uuid COLLATE utf8mb3_unicode_ci = src.uuid COLLATE utf8mb3_unicode_ci
+    JOIN obs tgt ON tgt.uuid COLLATE utf8mb3_unicode_ci = (
+      SELECT uuid COLLATE utf8mb3_unicode_ci FROM #{source_db}.obs WHERE obs_id = src.obs_id LIMIT 1
     )
     SET o.obs_id = tgt.obs_id
     WHERE src.obs_id IS NOT NULL
@@ -1635,11 +1637,11 @@ def update_group_obs_ids(source_db, _foreign_keys = {})
   ActiveRecord::Base.connection.execute(<<~SQL)
     UPDATE obs o
     JOIN #{source_db}.obs src
-      ON o.uuid = src.uuid
+      ON o.uuid COLLATE utf8mb3_unicode_ci = src.uuid COLLATE utf8mb3_unicode_ci
     JOIN #{source_db}.obs src_parent
       ON src_parent.obs_id = src.obs_group_id
     JOIN obs tgt_parent
-      ON tgt_parent.uuid = src_parent.uuid
+      ON tgt_parent.uuid COLLATE utf8mb3_unicode_ci = src_parent.uuid COLLATE utf8mb3_unicode_ci
     SET o.obs_group_id = tgt_parent.obs_id
     WHERE src.obs_group_id IS NOT NULL
       AND o.obs_group_id IS NULL
