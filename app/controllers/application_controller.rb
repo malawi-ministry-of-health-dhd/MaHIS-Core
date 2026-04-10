@@ -9,7 +9,7 @@ class ApplicationController < ActionController::API
   # before_action :check_client_version
   after_action  :refresh_dashboard, if: :refresh_dashboard_needed?
   after_action  :refresh_client_details, if: :refresh_client_details_needed?
-      
+
   protected
 
   include RequireParams
@@ -85,15 +85,16 @@ class ApplicationController < ActionController::API
 
     unless raw && raw == 'true'
       render json: data
-      
+
       return
     end
 
-    send_data data[:zpl], type: "application/label; charset=utf-8",
-                   stream: false,
-                   filename: "barcode-#{rand(10_000)}.lbl",
-                   disposition: "inline"
+    send_data data[:zpl], type: 'application/label; charset=utf-8',
+                          stream: false,
+                          filename: "barcode-#{rand(10_000)}.lbl",
+                          disposition: 'inline'
   end
+
   # Takes search filters and converts them to an expression containing
   # inexact glob matchers that can be passed to `where` expressins.
   def make_inexact_filters(filters, fields = nil)
@@ -134,13 +135,12 @@ class ApplicationController < ActionController::API
 
     if CLIENT_VERSION_CONFIGURATION.key?(client)
       required_version = CLIENT_VERSION_CONFIGURATION[client]
-    
-      unless required_version
-        return true
-      end
-    
+
+      return true unless required_version
+
       unless validate_frontend_versions(client_version, required_version)
-        render json: { errors: ["Minimum version required is #{required_version}"], required_version: required_version }, status: :upgrade_required
+        render json: { errors: ["Minimum version required is #{required_version}"], required_version: required_version },
+               status: :upgrade_required
         return false
       end
     end
@@ -190,7 +190,7 @@ class ApplicationController < ActionController::API
 
   def refresh_client_details
     ClientDetailsJob.perform_later(User.current.location_id)
-  end 
+  end
 
   def refresh_client_details_needed?
     patient_create_action?
@@ -198,6 +198,5 @@ class ApplicationController < ActionController::API
 
   def patient_create_action?
     controller_name == 'patients' && action_name == 'create'
-  end 
-
+  end
 end

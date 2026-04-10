@@ -25,6 +25,7 @@ module Api
 
 
         if address_type == 'TA'
+          name = params[:addresses_name]
           ta_data = create_ta(name, parent_location)
         end
 
@@ -43,7 +44,7 @@ module Api
         ActiveRecord::Base.transaction do
           ta = TraditionalAuthority.create!(
             name: name,
-            district_id: district_id,
+            parent_location: district_id,
             creator: User.current.id,
             date_created: Time.current
           )

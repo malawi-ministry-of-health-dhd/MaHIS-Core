@@ -48,7 +48,7 @@ module Locatable
     end
 
     def current_location_id
-      User.current&.location&.id || Location.current&.id
+      Location.current&.id || User.current&.location&.id
     end
   end
 end

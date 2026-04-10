@@ -29,10 +29,6 @@ module ArtTempTablesNaming
     temp_table_name('temp_initiated_on_tpt')
   end
 
-  def temp_initiated_on_tpt
-    temp_table_name('temp_initiated_on_tpt')
-  end
-
   def temp_initiated_on_art
     temp_table_name('temp_initiated_on_art')
   end
@@ -119,6 +115,14 @@ module ArtTempTablesNaming
     temp_table_name('temp_tb_screened', start: start)
   end
 
+  # Regimen switch report tables
+  def tmp_latest_arv_dispensation
+    temp_table_name('tmp_latest_arv_dispensation')
+  end
+
+  def idx_lad_patient_id_and_start_date
+    temp_index_name('idx_lad_patient_id_and_start_date')
+  end
   # Regimen dispensation report tables
   def temp_current_dispensation
     temp_table_name('temp_current_dispensation')

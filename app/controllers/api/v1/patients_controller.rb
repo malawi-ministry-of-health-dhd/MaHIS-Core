@@ -87,6 +87,7 @@ module Api
       def save_patient_record
         patient_record = SavePatientRecordService.new.create_patient_record(params[:record])
         Sync::BatchPatientSyncJob.perform_async
+        broadcast_patient_record_saved(patient_record)
         render json: patient_record
       end
 
@@ -518,6 +519,27 @@ module Api
 
       def tb_prevention_service
         @tb_prevention_service ||= ArtService::Reports::Pepfar::TptStatus
+      end
+
+      def broadcast_patient_record_saved(patient_record)
+        record = patient_record.respond_to?(:with_indifferent_access) ? patient_record.with_indifferent_access : {}
+
+        location_id = record[:location_id] || params.dig(:record, :location_id) || User.current&.location_id
+        return if location_id.blank?
+
+        payload = {
+          event: 'patient_record_saved',
+          data: {
+            location_id: location_id.to_s,
+            patient_id: record[:patientID] || record[:patient_id],
+            identifier: record[:ID] || record[:identifier],
+            timestamp: Time.current.iso8601
+          }
+        }
+
+        ActionCable.server.broadcast("client_details_channel_#{location_id}", payload)
+      rescue StandardError => e
+        Rails.logger.error("Failed to broadcast patient_record_saved: #{e.message}")
       end
 
       def tb_lab_order_params

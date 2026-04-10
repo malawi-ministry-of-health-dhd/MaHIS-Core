@@ -30,7 +30,12 @@ module BuildPatientRecordService
     end
 
     def find_patient(patient_id)
-      Patient.find_by(patient_id: patient_id)
+      Patient
+        .includes(
+          :patient_identifiers,
+          person: [:names, :addresses, { person_attributes: :type }]
+        )
+        .find_by(patient_id: patient_id)
     end
 
     def handle_patient_not_found(patient_id)
@@ -82,7 +87,7 @@ module BuildPatientRecordService
         personInformation: build(person, name, address, patient),
         guardianInformation: build_guardian_data(patient.patient_id),
         otherPersonInformation: build_other_person_info,
-        vaccineSchedule: safe_get_vaccine_schedule(person)
+        vaccineSchedule: []
       }
     end
 
@@ -159,7 +164,10 @@ module BuildPatientRecordService
 
 
     def fetch_active_programs(patient_id)
-      PatientProgram.where(patient_id: patient_id).to_a.map(&:as_json)
+      PatientProgram
+        .where(patient_id: patient_id)
+        .includes(:patient_states, program: { concept: :concept_names })
+        .map(&:as_json)
     end
 
     def handle_error(error, patient_id)

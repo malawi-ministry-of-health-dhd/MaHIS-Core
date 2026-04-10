@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'set'
+
 class ProgramAppointmentService
   extend ModelUtils
   extend CommonSqlQueryUtils
@@ -65,12 +67,10 @@ class ProgramAppointmentService
     )
   
     clients_formatted = []
-    already_counted = []
+    already_counted = Set.new
   
     (clients || []).each do |c|
-      next if already_counted.include? c['person_id']
-      
-      already_counted << c['person_id']
+      next unless already_counted.add?(c['person_id'])
       
       clients_formatted << {
         given_name: c['given_name'], family_name: c['family_name'],

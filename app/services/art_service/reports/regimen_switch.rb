@@ -4,11 +4,18 @@ module ArtService
   module Reports
     class RegimenSwitch
       include CommonSqlQueryUtils
+      include ArtTempTablesNaming
+
+      include ModelUtils
       def initialize(start_date:, end_date:, **kwargs)
         @start_date = start_date
         @end_date = end_date
         @occupation = kwargs[:occupation]
         @dsd = kwargs[:dsd]
+        @location_id = kwargs[:location_id] || Location.current&.location_id || User.current&.location&.location_id
+        @arv_number_identifier_type_id = patient_identifier_type('ARV Number')&.id || 4
+        @hiv_program_id = program('HIV Program')&.program_id || 1
+        @on_arv_state_id = program('HIV Program').state('On antiretrovirals').program_workflow_state_id
       end
 
       def regimen_switch(pepfar)
@@ -33,8 +40,8 @@ module ArtService
       private
 
       def latest_regimens
-        pills_dispensed = ConceptName.find_by_name('Amount of drug dispensed').concept_id
-        patient_identifier_type = PatientIdentifierType.find_by_name('ARV Number').id
+        pills_dispensed = concept_name_to_id('Amount of drug dispensed')
+        patient_identifier_type = patient_identifier_type('ARV Number').id
 
         arv_dispensentions = ActiveRecord::Base.connection.select_all <<~SQL
           SELECT
@@ -42,15 +49,19 @@ module ArtService
             drug.name, d.quantity, o.start_date, obs.value_numeric,
             person.birthdate, person.gender
           FROM orders o
+          INNER JOIN encounter e ON e.encounter_id = o.encounter_id AND e.voided = 0
+            #{@location_id ? "AND e.location_id = #{@location_id}" : ''}
           INNER JOIN drug_order d ON d.order_id = o.order_id AND d.quantity > 0
           INNER JOIN drug ON drug.drug_id = d.drug_inventory_id
           INNER JOIN arv_drug On arv_drug.drug_id = drug.drug_id
-          INNER JOIN temp_patient_outcomes t ON o.patient_id = t.patient_id AND t.moh_cum_outcome = 'On antiretrovirals'
+          INNER JOIN #{temp_patient_outcomes} t ON o.patient_id = t.patient_id AND t.moh_cum_outcome = 'On antiretrovirals'
           INNER JOIN person ON person.person_id = o.patient_id AND person.voided = 0
           #{dsd_query(dsd: @dsd, model: 'o') if @dsd}
           INNER JOIN (
             SELECT MAX(o.start_date) start_date, o.patient_id
             FROM orders o
+            INNER JOIN encounter e ON e.encounter_id = o.encounter_id AND e.voided = 0
+              #{@location_id ? "AND e.location_id = #{@location_id}" : ''}
             INNER JOIN drug_order dor ON dor.order_id = o.order_id AND dor.quantity > 0
               AND dor.drug_inventory_id IN (SELECT drug_id FROM arv_drug)
             WHERE o.voided = 0
@@ -64,6 +75,7 @@ module ArtService
           WHERE o.voided = 0
             AND o.start_date <= '#{@end_date.to_date.strftime('%Y-%m-%d 23:59:59')}'
             AND o.start_date >= '#{@start_date.to_date.strftime('%Y-%m-%d 00:00:00')}'
+            AND e.location_id = #{Location.current.location_id}
           ORDER BY o.patient_id
         SQL
 
@@ -112,34 +124,39 @@ module ArtService
 
       def regimen_data
         EncounterType.find_by_name('DISPENSING').id
-        arv_concept_id = ConceptName.find_by_name('Antiretroviral drugs').concept_id
+        arv_concept_id = concept_name_to_id('Antiretroviral drugs')
 
         drug_ids = Drug.joins('INNER JOIN concept_set s ON s.concept_id = drug.concept_id')\
                        .where('s.concept_set = ?', arv_concept_id).map(&:drug_id)
 
-        ActiveRecord::Base.connection.execute('drop table if exists tmp_latest_arv_dispensation ;')
+        execute_query("DROP TABLE IF EXISTS #{tmp_latest_arv_dispensation}")
 
-        ActiveRecord::Base.connection.execute("
-          create table tmp_latest_arv_dispensation
-          SELECT patient_id,DATE(MAX(start_date)) as start_date
-          FROM orders INNER JOIN drug_order t USING (order_id)
+        execute_query("
+          CREATE TABLE #{tmp_latest_arv_dispensation}
+          SELECT orders.patient_id,DATE(MAX(start_date)) as start_date
+          FROM orders
+          INNER JOIN encounter e ON e.encounter_id = orders.encounter_id AND e.voided = 0
+            #{@location_id ? "AND e.location_id = #{@location_id}" : ''}
+          INNER JOIN drug_order t USING (order_id)
           WHERE
           (
             start_date BETWEEN '#{@start_date.to_date.strftime('%Y-%m-%d 00:00:00')}' AND '#{@end_date.to_date.strftime('%Y-%m-%d 23:59:59')}'
             AND t.drug_inventory_id IN (#{drug_ids.join(',')}) AND t.quantity > 0
           )
-          group by patient_id")
+          group by orders.patient_id")
 
-        ActiveRecord::Base.connection.execute('create index lad_patient_id_and_start_date on tmp_latest_arv_dispensation (start_date, patient_id);')
+        execute_query("CREATE INDEX #{idx_lad_patient_id_and_start_date} ON #{tmp_latest_arv_dispensation} (start_date, patient_id)")
 
         arv_dispensentions = ActiveRecord::Base.connection.select_all <<~SQL
           SELECT
             o.patient_id patient_id, o.start_date,  o.order_id,
             d.quantity, drug.name
           FROM orders o
+          INNER JOIN encounter e ON e.encounter_id = o.encounter_id AND e.voided = 0
+            #{@location_id ? "AND e.location_id = #{@location_id}" : ''}
           INNER JOIN drug_order d ON o.order_id = d.order_id
           INNER JOIN drug ON d.drug_inventory_id = drug.drug_id
-          INNER JOIN tmp_latest_arv_dispensation k on (o.patient_id = k.patient_id and DATE(o.start_date) =  k.start_date)
+          INNER JOIN #{tmp_latest_arv_dispensation} k on (o.patient_id = k.patient_id and DATE(o.start_date) =  k.start_date)
           WHERE d.drug_inventory_id IN(#{drug_ids.join(',')})
           AND d.quantity > 0 AND o.voided = 0 AND o.start_date BETWEEN '#{@start_date.to_date.strftime('%Y-%m-%d 00:00:00')}'
           AND '#{@end_date.to_date.strftime('%Y-%m-%d 23:59:59')}' GROUP BY o.order_id;
@@ -164,8 +181,8 @@ module ArtService
            WHERE
             ((`p`.`voided` = 0)
             AND (`s`.`voided` = 0)
-            AND (`p`.`program_id` = 1)
-            AND (`s`.`state` = 7))
+            AND (`p`.`program_id` = #{@hiv_program_id})
+            AND (`s`.`state` = #{@on_arv_state_id}))
             AND (`s`.`start_date` <= '#{@end_date.to_date.strftime('%Y-%m-%d 23:59:59')}'
             AND p.patient_id IN(#{patient_ids.join(',')}))
           GROUP BY `p`.`patient_id`;
@@ -174,7 +191,7 @@ module ArtService
 
       def arv_dispensention_data(patient_id)
         EncounterType.find_by_name('DISPENSING').id
-        arv_concept_id = ConceptName.find_by_name('Antiretroviral drugs').concept_id
+        arv_concept_id = concept_name_to_id('Antiretroviral drugs')
 
         drug_ids = Drug.joins('INNER JOIN concept_set s ON s.concept_id = drug.concept_id')\
                        .where('s.concept_set = ?', arv_concept_id).map(&:drug_id)
@@ -183,14 +200,18 @@ module ArtService
           SELECT
             o.patient_id,  drug.name, d.quantity, o.start_date
           FROM orders o
+          INNER JOIN encounter e ON e.encounter_id = o.encounter_id AND e.voided = 0
+            #{@location_id ? "AND e.location_id = #{@location_id}" : ''}
           INNER JOIN drug_order d ON d.order_id = o.order_id
           INNER JOIN drug ON drug.drug_id = d.drug_inventory_id
           WHERE d.drug_inventory_id IN(#{drug_ids.join(',')})
           AND o.patient_id = #{patient_id} AND
           d.quantity > 0 AND o.voided = 0 AND DATE(o.start_date) = (
             SELECT DATE(MAX(start_date)) FROM orders
+            INNER JOIN encounter e2 ON e2.encounter_id = orders.encounter_id AND e2.voided = 0
+              #{@location_id ? "AND e2.location_id = #{@location_id}" : ''}
             INNER JOIN drug_order t USING(order_id)
-            WHERE patient_id = o.patient_id
+            WHERE orders.patient_id = o.patient_id
             AND (
               start_date BETWEEN '#{@start_date.to_date.strftime('%Y-%m-%d 00:00:00')}'
               AND '#{@end_date.to_date.strftime('%Y-%m-%d 23:59:59')}'
@@ -242,7 +263,7 @@ module ArtService
               FROM person p
               LEFT JOIN person_name n ON n.person_id = p.person_id AND n.voided = 0
               LEFT JOIN patient_identifier i ON i.patient_id = p.person_id
-              AND i.identifier_type = 4 AND i.voided = 0
+              AND i.identifier_type = #{@arv_number_identifier_type_id} AND i.voided = 0
               WHERE p.person_id = #{patient_id} GROUP BY p.person_id
               ORDER BY n.date_created DESC, i.date_created DESC;
             SQL
@@ -286,7 +307,7 @@ module ArtService
           medications = arv_dispensention_data(patient_id)
 
           outcome_status = ActiveRecord::Base.connection.select_one <<~SQL
-            SELECT #{type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_' }cum_outcome cum_outcome FROM temp_patient_outcomes WHERE patient_id = #{patient_id};
+            SELECT #{type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}cum_outcome cum_outcome FROM #{temp_patient_outcomes} WHERE patient_id = #{patient_id};
           SQL
 
           next if outcome_status.blank?
@@ -317,7 +338,7 @@ module ArtService
               FROM person p
               LEFT JOIN person_name n ON n.person_id = p.person_id AND n.voided = 0
               LEFT JOIN patient_identifier i ON i.patient_id = p.person_id
-              AND i.identifier_type = 4 AND i.voided = 0
+              AND i.identifier_type = #{@arv_number_identifier_type_id} AND i.voided = 0
               WHERE p.person_id = #{patient_id} GROUP BY p.person_id
               ORDER BY n.date_created DESC, i.date_created DESC
             SQL
@@ -351,8 +372,8 @@ module ArtService
       def get_patient_type(patient_id, pepfar)
         return nil unless pepfar
 
-        concept_id = ConceptName.find_by_name('Type of patient').concept_id
-        ext_id = ConceptName.find_by_name('External consultation').concept_id
+        concept_id = concept_name_to_id('Type of patient')
+        ext_id = concept_name_to_id('External consultation')
         obs = Observation.where(concept_id:, value_coded: ext_id, person_id: patient_id)
         (obs.blank? ? 'Resident' : 'External')
       end
@@ -366,7 +387,7 @@ module ArtService
       end
 
       def current_weight(patient_id)
-        weight_concept = ConceptName.find_by_name('Weight (kg)').concept_id
+        weight_concept = concept_name_to_id('Weight (kg)')
         obs = Observation.where("person_id = ? AND concept_id = ?
           AND obs_datetime <= ? AND (value_numeric IS NOT NULL OR value_text IS NOT NULL)",
                                 patient_id, weight_concept, @end_date.to_date.strftime('%Y-%m-%d 23:59:59'))\
@@ -411,8 +432,8 @@ module ArtService
           SELECT odr.patient_id, MAX(start_date) AS order_date
           FROM obs o
           INNER JOIN orders odr ON odr.order_id = o.order_id AND odr.voided = 0 AND DATE(odr.start_date) <= '#{@end_date}'
-          WHERE o.concept_id = #{ConceptName.find_by_name('Test Type').concept_id}
-          AND o.value_coded = #{ConceptName.find_by_name('HIV viral load').concept_id}
+          WHERE o.concept_id = #{concept_name_to_id('Test Type')}
+          AND o.value_coded = #{concept_name_to_id('HIV viral load')}
           AND o.voided = 0
           AND o.person_id IN (#{patient_list.join(',')})
           GROUP BY odr.patient_id
@@ -429,7 +450,7 @@ module ArtService
             SELECT MAX(obs_datetime) AS obs_datetime, person_id
             FROM obs co
             INNER JOIN orders odr ON odr.order_id = co.order_id AND odr.voided = 0
-            WHERE co.concept_id = #{ConceptName.find_by_name('HIV viral load').concept_id}
+            WHERE co.concept_id = #{concept_name_to_id('HIV viral load')}
             AND co.voided = 0
             AND DATE(co.obs_datetime) <= '#{@end_date}'
             AND (co.value_numeric IS NOT NULL || co.value_text IS NOT NULL)
@@ -437,7 +458,7 @@ module ArtService
             GROUP BY co.person_id
           ) AS latest_vl ON latest_vl.obs_datetime = o.obs_datetime AND latest_vl.person_id = o.person_id
           INNER JOIN orders odr ON odr.order_id = o.order_id AND odr.voided = 0
-          WHERE o.concept_id = #{ConceptName.find_by_name('HIV viral load').concept_id}
+          WHERE o.concept_id = #{concept_name_to_id('HIV viral load')}
           AND o.voided = 0 AND DATE(o.obs_datetime) <= '#{@end_date}'
           AND (o.value_numeric IS NOT NULL || o.value_text IS NOT NULL)
           AND o.person_id IN (#{patient_list.join(',')})
@@ -454,6 +475,10 @@ module ArtService
         gender = 'FP' unless result[:FP].blank?
         gender = 'FBf' unless result[:FBf].blank?
         gender
+      end
+
+      def execute_query(query)
+        ActiveRecord::Base.connection.execute(query)
       end
     end
   end

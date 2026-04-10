@@ -7,7 +7,7 @@ module HtsService
     attr_accessor :patient, :date
 
     HTS_PROGRAM = Program.find_by_name('HTC Program')
-    CURRENT_FACILITY = Location.current.name
+    CURRENT_FACILITY = Location.current&.name
      
     def initialize(patient, date)
       @patient = patient

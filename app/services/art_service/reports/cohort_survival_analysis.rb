@@ -3,6 +3,8 @@
 module ArtService
   module Reports
     class CohortSurvivalAnalysis
+      include ArtTempTablesNaming
+
       def initialize(name:, type:, start_date:, end_date:, regenerate:, occupation:, dsd: nil)
         @name = name
         @type = type
@@ -26,7 +28,7 @@ module ArtService
 
         qtr = quarter.split(' ')[0]
         results = {}
-        years = 1
+        years = 0
 
         years_to_backto = ActiveRecord::Base.connection.select_one <<~SQL
           SELECT
@@ -41,8 +43,8 @@ module ArtService
         end
         clinic_start_years = 10 if clinic_start_years.blank?
 
-        while years < clinic_start_years
-          yr = ((quarter.split(' ')[1]).to_i - years)
+        while years <= clinic_start_years
+          yr = (quarter.split(' ')[1].to_i - years)
           set_qtr = "#{qtr} #{yr}"
           qstart_date, qend_date = art_service.generate_start_date_and_end_date(set_qtr)
           results[set_qtr] = {}
@@ -70,9 +72,9 @@ module ArtService
                 moh_cum_outcome cum_outcome, timestampdiff(month, DATE('#{qend_date}'), DATE('#{end_date}')) qinterval,
                 timestampdiff(year, DATE(e.birthdate), DATE('#{end_date}')) AS patient_age,
                 e.gender
-              FROM temp_earliest_start_date e
+              FROM #{temp_earliest_start_date} e
               #{dsd_query(dsd: @dsd, model: 'e') if @dsd}
-              INNER JOIN temp_patient_outcomes o ON o.patient_id = e.patient_id
+              INNER JOIN #{temp_patient_outcomes} o ON o.patient_id = e.patient_id
               WHERE date_enrolled BETWEEN '#{qstart_date.strftime('%Y-%m-%d')}'
               AND '#{qend_date.strftime('%Y-%m-%d')}'
               #{additional_sql};
@@ -106,7 +108,7 @@ module ArtService
         patients = ActiveRecord::Base.connection.select_all <<~SQL
           SELECT
             e.*, patient_reason_for_starting_art_text(e.patient_id) reason
-          FROM temp_earliest_start_date e
+          FROM #{temp_earliest_start_date} e
           WHERE date_enrolled BETWEEN '#{start_date.to_date}' AND '#{end_date.to_date}'
           AND gender IN('F','Female') GROUP BY e.patient_id
           HAVING reason LIKE '%pregnant%' OR reason LIKE '%breast%';
@@ -128,7 +130,7 @@ module ArtService
         patients = ActiveRecord::Base.connection.select_all <<~SQL
           SELECT
             e.*, patient_reason_for_starting_art_text(e.patient_id) reason
-          FROM temp_earliest_start_date e
+          FROM #{temp_earliest_start_date} e
           INNER JOIN obs ON obs.person_id = e.patient_id
           WHERE date_enrolled BETWEEN '#{start_date.to_date}' AND '#{end_date.to_date}'
           AND gender IN('F','Female') AND obs.voided = 0
@@ -172,8 +174,8 @@ module ArtService
             moh_cum_outcome cum_outcome, timestampdiff(month, DATE('#{qend_date}'), DATE('#{end_date}')) qinterval,
             timestampdiff(year, DATE(e.birthdate), DATE('#{end_date}')) AS patient_age,
             e.gender
-          FROM temp_earliest_start_date e
-          INNER JOIN temp_patient_outcomes o ON o.patient_id = e.patient_id
+          FROM #{temp_earliest_start_date} e
+          INNER JOIN #{temp_patient_outcomes} o ON o.patient_id = e.patient_id
           WHERE date_enrolled BETWEEN '#{qstart_date.strftime('%Y-%m-%d')}'
           AND '#{qend_date.strftime('%Y-%m-%d')}' AND gender = 'F' AND e.patient_id IN (#{option_Bplus_women_ids.join(', ')});
         SQL
