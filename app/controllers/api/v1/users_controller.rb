@@ -25,12 +25,11 @@ module Api
       end
 
       def update_username
-        update_params = params.require(%i[new_username])
-        new_username,  = update_params
-        id = user.user_id
+        new_username, = params.require(%i[new_username])
+        target_user = find_user(params[:id] || params[:user_id])  # uses find_user which unscopes
         return unless validate_username(new_username)
-        user =  UserService.update_username User.find(id), new_username
-        render json: { message: ['username updated successfully'], user: }
+        updated = UserService.update_username(target_user, new_username)
+        render json: { message: ['username updated successfully'], user: updated }
       end
 
       def create
@@ -66,16 +65,17 @@ module Api
         update_params = params.permit :password, :given_name, :family_name, :must_append_roles, :location_id,
                                       roles: [], programs: []
 
-        # Makes sure roles are an array if provided
+        # Force programs through since permit can silently drop integer arrays
+        update_params[:programs] = params[:programs].map(&:to_i) if params.key?(:programs)
+
         return unless validate_roles(update_params[:roles])
 
-        # Validate location if provided
         if update_params[:location_id] && !validate_location(update_params[:location_id])
           return
         end
 
         user = UserService.update_user find_user(params[:id]), update_params
-        
+
         if user.errors.empty?
           update_last_password_property(user.id, update_params[:password])
           render json: user, status: :ok
