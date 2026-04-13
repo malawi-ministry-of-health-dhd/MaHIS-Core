@@ -19,8 +19,7 @@ class StagesService
         patient_id: patient_id,
         visit_id: active_visit.visit_id,
         location_id: location_id,
-        status: true,
-        arrival_time: Time.current
+        status: true
       )
     end
 
@@ -33,10 +32,10 @@ class StagesService
     stage.visit_id = active_visit.visit_id
     stage.location_id = location_id
     stage.status = true
+    assign_arrival_time(stage, stage_params)
 
     if stage.stage != stage_name
       stage.stage = stage_name
-      stage.arrival_time = Time.current
     end
 
     was_new_record = stage.new_record?
@@ -122,10 +121,10 @@ class StagesService
 
   def apply_stage_updates(stage, stage_params)
     stage_name = normalize_stage(stage_params[:stage])
+    assign_arrival_time(stage, stage_params)
 
     if stage.stage != stage_name
       stage.stage = stage_name
-      stage.arrival_time = Time.current
     end
 
     if stage_params[:visit_number].present? && stage.visit_number != stage_params[:visit_number]
@@ -147,6 +146,15 @@ class StagesService
     patient_identifier = PatientIdentifier.find_by(identifier: params[:identifier], identifier_type: 3) ||
                          PatientIdentifier.unscoped.find_by(identifier: params[:identifier], identifier_type: 3, voided: 0)
     patient_identifier&.patient_id
+  end
+
+  def payload_arrival_time(params)
+    params[:arrival_time].presence || params['arrival_time'].presence
+  end
+
+  def assign_arrival_time(stage, params)
+    arrival_time = payload_arrival_time(params)
+    stage.arrival_time = arrival_time if arrival_time.present?
   end
 
   def normalize_stage(stage)
