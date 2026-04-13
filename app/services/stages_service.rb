@@ -42,7 +42,7 @@ class StagesService
     has_changes = stage.new_record? || stage.changed?
 
     stage.save! if has_changes
-    stage_data = serialize(stage.reload)
+    stage_data = serialize(stage.reload, latest_encounter_time: Time.current)
 
     broadcast_stage_update(was_new_record ? 'stage_created' : 'stage_updated', stage_data) if has_changes
     stage_data
@@ -85,7 +85,7 @@ class StagesService
     Stage.find(id)
   end
 
-  def serialize(stage)
+  def serialize(stage, latest_encounter_time: nil)
     patient = stage.patient
     latest_encounter = latest_visit_encounter(stage)
     {
@@ -100,7 +100,7 @@ class StagesService
       visit_uuid: stage.visit&.uuid,
       arrival_time: stage.arrival_time,
       program_id: stage.program_id,
-      latest_encounter_time: latest_encounter&.encounter_datetime || stage.created_at,
+      latest_encounter_time: latest_encounter_time || latest_encounter&.encounter_datetime || stage.created_at,
       last_encounter_creator: encounter_creator_name(latest_encounter,patient),
       disposition_type: stage.disposition_type,
       triage_result: stage.triage_result,
@@ -133,7 +133,7 @@ class StagesService
 
     has_changes = stage.changed?
     stage.save! if has_changes
-    stage_data = serialize(stage.reload)
+    stage_data = serialize(stage.reload, latest_encounter_time: Time.current)
 
     broadcast_stage_update('stage_updated', stage_data) if has_changes
     stage_data
