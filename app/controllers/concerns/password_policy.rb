@@ -16,8 +16,9 @@ module PasswordPolicy
   end
 
   def passwords_match?(saved_password:, password_input:)
-    Digest::SHA1.hexdigest("#{password_input}#{user.salt}") == saved_password \
-      || Digest::SHA512.hexdigest("#{password_input}#{user.salt}") == saved_password
+    UserService.hash_password(password_input, user.salt) == saved_password ||
+      Digest::SHA1.hexdigest("#{password_input}#{user.salt}") == saved_password ||
+      Digest::SHA1.hexdigest("#{user.salt}#{password_input}") == saved_password
   end
 
   def password_valid?(user:, password_input:)
@@ -56,7 +57,7 @@ module PasswordPolicy
           .create(
             user_id: user.id,
             property: "last_used_password_#{pass_count}",
-            property_value: Digest::SHA512.hexdigest("#{params[:password]}#{user.salt}"),
+            property_value: UserService.hash_password(params[:password], user.salt),
           )
         break
       else
@@ -68,9 +69,7 @@ module PasswordPolicy
   def validate_password
     ActiveRecord::Base.transaction do
       return true unless params[:password]
-
-      user = User.find(params[:id])
-
+      user = User.unscoped.find(params[:id])   # ← unscoped, finds any user
       add_password_to_user_props(user:) if password_valid?(user:, password_input: params[:password])
     end
   end

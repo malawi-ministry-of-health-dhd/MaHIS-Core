@@ -75,7 +75,7 @@ module UserService
     user = User.create(
       username:,
       # WARNING: Consider using bcrypt (not SHA1 or SHA512) for better security
-      password: Digest::SHA1.hexdigest("#{password}#{salt}"),
+      password: self.hash_password(password, salt),
       salt:,
       person:,
       creator: User.current.id,
@@ -173,7 +173,7 @@ module UserService
 
     # Update password if any
     if params[:password]
-      user.password = Digest::SHA1.hexdigest "#{params[:password]}#{user.salt}"
+      user.password = self.hash_password(params[:password], user.salt)
       user.save
     end
 
@@ -187,10 +187,10 @@ module UserService
     end
 
     # Update programs if any
-    if params.include?(:programs)
-      user.user_programs.destroy_all
-      params[:programs].each do |program|
-        UserProgram.create user_id: user.user_id, program_id: program
+    if params.key?(:programs)
+      UserProgram.where(user_id: user.user_id).delete_all
+      Array(params[:programs]).map(&:to_i).each do |program_id|
+        UserProgram.insert({ user_id: user.user_id, program_id: program_id })
       end
     end
     user
@@ -365,7 +365,8 @@ module UserService
 
   # Tries to authenticate user using the classical BART mode
   def self.bart_authenticate(user, password)
-    Digest::SHA1.hexdigest("#{password}#{user.salt}") == user.password || \
+    Digest::SHA512.hexdigest("#{password}#{user.salt}") == user.password ||
+      Digest::SHA1.hexdigest("#{password}#{user.salt}") == user.password ||
       Digest::SHA1.hexdigest("#{user.salt}#{password}") == user.password
   end
 
@@ -374,10 +375,9 @@ module UserService
   # NOTE: It's not been established what this model will be but
   # currently SHA512 is being used it seems, so we going with
   # that.
-  def self.new_arch_authenticate(user, password)
-    Digest::SHA512.hexdigest("#{password}#{user.salt}") == user.password || \
-      Digest::SHA512.hexdigest("#{user.salt}#{password}") == user.password
-  end
+def self.new_arch_authenticate(user, password)
+  self.hash_password(password, user.salt) == user.password
+end
 
   def self.check_user(username)
     !User.where(username:).empty?
@@ -404,5 +404,9 @@ module UserService
   # check if user is already assigned to a project
   def self.find_user_program(user_id, program_id)
     UserProgram.where(user_id:, program_id:).first
+  end
+
+  def self.hash_password(password, salt)
+    Digest::SHA512.hexdigest("#{password}#{salt}")
   end
 end
