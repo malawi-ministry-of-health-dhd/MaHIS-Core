@@ -41,6 +41,8 @@ module CreateConcepts
       { name: 'STIs', datatype: 'N/A', class: 'Misc' },
       { name: 'Fetus number', datatype: 'N/A', class: 'Misc' },
       { name: 'Treated', datatype: 'N/A', class: 'Misc' },
+      { name: 'Blood loss ≥300ml + one abnormal observation', datatype: 'N/A', class: 'Misc' },
+      { name: 'Blood loss ≥500ml', datatype: 'N/A', class: 'Misc' },
     ].freeze
 
     def load!
