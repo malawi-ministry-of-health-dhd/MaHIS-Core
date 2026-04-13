@@ -5,7 +5,7 @@ module ArtService
     class VisitsReport
       include ModelUtils
 
-      def initialize(name:, type:, start_date:, end_date:)
+      def initialize(name:, type:, start_date:, end_date:, **)
         @name = name
         @type = type
         @start_date = start_date.to_date
