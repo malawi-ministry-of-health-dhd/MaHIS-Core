@@ -76,9 +76,9 @@ module BuildPatientRecordService
           current_traditional_authority: address&.township_division || '',
           current_village: address&.city_village || '',
 
-          landmark: attribute_values['Landmark Or Plot Number'] || '',
-          cell_phone_number: attribute_values['Cell Phone Number'] || '',
-          national_id: attribute_values['Guardian ID'] || '',
+          landmark: attribute_values['Landmark or plot number'] || '',
+          cell_phone_number: attribute_values['Cell phone number'] || '',
+          national_id: attribute_values['Guardian id'] || '',
 
           relationship_id: relationship.id.to_s || '',
           relationship_type: {

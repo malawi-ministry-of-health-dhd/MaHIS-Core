@@ -15,15 +15,16 @@ class PersonService
 
   # Map of API person attributes to database names
   PERSON_ATTRIBUTES_FIELDS = {
-    cell_phone_number: 'Cell Phone Number',
-    landmark: 'Landmark Or Plot Number',
-    next_of_kin: 'NEXT OF KIN',
-    next_of_kin_contact_number: 'NEXT OF KIN CONTACT NUMBER',
-    marital_status: 'Civil Status',
+    cell_phone_number: 'Cell phone number',
+    landmark: 'Landmark or plot number',
+    next_of_kin: 'Next of kin',
+    next_of_kin_contact_number: 'Next of kin contact number',
+    marital_status: 'Civil status',
     religion: 'Religion',
     occupation: 'Occupation',
-    national_id: 'Guardian ID',
-    education_level:  'EDUCATION LEVEL',
+    transportation: ['Transportation', 'Mode of transport'],
+    national_id: 'Guardian id',
+    education_level:  'Education level',
   }.freeze
 
   def create_person(params)
@@ -134,7 +135,9 @@ class PersonService
 
       LOGGER.debug "Creating attr #{field} = #{value}"
 
-      type = PersonAttributeType.find_by name: PERSON_ATTRIBUTES_FIELDS[field]
+      type = resolve_person_attribute_type(field)
+      next unless type
+
       handle_model_errors do
         PersonAttribute.create(
           person_id: person.id,
@@ -155,17 +158,39 @@ class PersonService
 
       LOGGER.debug "Updating attr #{field} = #{value}"
 
-      type = PersonAttributeType.find_by name: PERSON_ATTRIBUTES_FIELDS[field]
-      attr = PersonAttribute.find_by person_attribute_type_id: type.id,
+      type = resolve_person_attribute_type(field)
+      next unless type
+
+      attr = PersonAttribute.find_by person_attribute_type_id: type.person_attribute_type_id,
                                      person_id: person.id
 
-      return PersonAttribute.create(type:, person:, value:) unless attr
+      unless attr
+        handle_model_errors do
+          PersonAttribute.create(
+            person_id: person.id,
+            person_attribute_type_id: type.person_attribute_type_id,
+            value:
+          )
+        end
+        next
+      end
 
       handle_model_errors do
         attr.update(value:)
         attr
       end
     end
+  end
+
+  def resolve_person_attribute_type(field)
+    names = Array(PERSON_ATTRIBUTES_FIELDS[field]).compact
+    names.each do |name|
+      type = PersonAttributeType.find_by name: name
+      return type if type.present?
+    end
+
+    LOGGER.warn "Person attribute type missing for #{field}: #{names.join(', ')}"
+    nil
   end
 
   def handle_model_errors
