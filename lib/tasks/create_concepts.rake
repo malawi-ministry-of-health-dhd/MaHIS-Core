@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 namespace :concepts do
-  desc 'Load Neonatal Triage concepts'
+  desc 'Load custom application concepts'
   task create_concepts: :environment do
     loader = CreateConcepts::ConceptLoader.new
     loader.load!
@@ -11,10 +11,38 @@ end
 module CreateConcepts
   class ConceptLoader
     CONCEPTS = [
-  { name: 'Patient admission outcome', datatype: 'Text', class: 'Misc' },
-  { name: 'Insecticide treated net given', datatype: 'Coded', class: 'Misc' },
-  { name: 'Admit to high risk', datatype: 'Coded', class: 'Procedure' },
- 
+      { name: 'Patient admission outcome', datatype: 'Text', class: 'Misc' },
+      { name: 'Insecticide treated net given', datatype: 'Coded', class: 'Misc' },
+      { name: 'Admit to high risk', datatype: 'Coded', class: 'Procedure' },
+
+      # ANC profile concepts
+      { name: 'Behaviour finding', datatype: 'N/A', class: 'Misc' },
+      { name: 'Current pregnancy finding', datatype: 'N/A', class: 'Misc' },
+      { name: 'Date of ANC visit 1', datatype: 'N/A', class: 'Misc' },
+      { name: 'Date of ANC visit 2', datatype: 'N/A', class: 'Misc' },
+      { name: 'Date of ANC visit 3', datatype: 'N/A', class: 'Misc' },
+      { name: 'Date of ANC visit 4', datatype: 'N/A', class: 'Misc' },
+      { name: 'Date of ANC visit 5', datatype: 'N/A', class: 'Misc' },
+      { name: 'Date of ANC visit 6', datatype: 'N/A', class: 'Misc' },
+      { name: 'Date of ANC visit 7', datatype: 'N/A', class: 'Misc' },
+      { name: 'Facility from which the client received ANC care 1', datatype: 'N/A', class: 'Misc' },
+      { name: 'Facility from which the client received ANC care 2', datatype: 'N/A', class: 'Misc' },
+      { name: 'Facility from which the client received ANC care 3', datatype: 'N/A', class: 'Misc' },
+      { name: 'Facility from which the client received ANC care 4', datatype: 'N/A', class: 'Misc' },
+      { name: 'Facility from which the client received ANC care 5', datatype: 'N/A', class: 'Misc' },
+      { name: 'Facility from which the client received ANC care 6', datatype: 'N/A', class: 'Misc' },
+      { name: 'Facility from which the client received ANC care 7', datatype: 'N/A', class: 'Misc' },
+      { name: 'Medical history finding', datatype: 'N/A', class: 'Misc' },
+      { name: 'Medication finding', datatype: 'N/A', class: 'Misc' },
+      { name: 'Mode of delivery details', datatype: 'N/A', class: 'Misc' },
+      { name: 'Not treated', datatype: 'N/A', class: 'Misc' },
+      { name: 'Other Gynaecological information', datatype: 'N/A', class: 'Misc' },
+      { name: 'Past obstetric finding', datatype: 'N/A', class: 'Misc' },
+      { name: 'STIs', datatype: 'N/A', class: 'Misc' },
+      { name: 'Fetus number', datatype: 'N/A', class: 'Misc' },
+      { name: 'Treated', datatype: 'N/A', class: 'Misc' },
+      { name: 'Blood loss ≥300ml + one abnormal observation', datatype: 'N/A', class: 'Misc' },
+      { name: 'Blood loss ≥500ml', datatype: 'N/A', class: 'Misc' },
     ].freeze
 
     def load!
@@ -23,7 +51,7 @@ module CreateConcepts
           find_or_create_concept!(concept_data)
         end
       end
-      puts "Successfully loaded #{CONCEPTS.size} neonatal triage concepts"
+      puts "Successfully loaded #{CONCEPTS.size} custom concepts"
     end
 
     private
