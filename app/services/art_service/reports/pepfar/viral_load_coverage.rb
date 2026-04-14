@@ -22,6 +22,7 @@ module ArtService
 
           @rebuild_outcomes = params.fetch(:rebuild_outcomes, 'true')&.casecmp?('true')
           @type = params.fetch(:application, 'poc')
+          @location_id = User.current.location_id
         end
 
         def find_report
@@ -276,6 +277,10 @@ module ArtService
             INNER JOIN temp_patient_outcomes AS outcomes
               ON outcomes.patient_id = patient.patient_id
               AND outcomes.cum_outcome = 'On antiretrovirals'
+            INNER JOIN patient_program pp ON pp.patient_id = patient.patient_id
+              AND pp.program_id = 1
+              AND pp.voided = 0
+              AND pp.location_id = #{@location_id}
             INNER JOIN patient_identifier
               ON patient_identifier.patient_id = patient.patient_id
               AND patient_identifier.identifier_type IN (#{pepfar_patient_identifier_type.to_sql})
@@ -352,6 +357,10 @@ module ArtService
             INNER JOIN temp_patient_outcomes AS outcomes
               ON outcomes.patient_id = patient.patient_id
               AND outcomes.cum_outcome = 'On antiretrovirals'
+            INNER JOIN patient_program pp ON pp.patient_id = patient.patient_id
+              AND pp.program_id = 1
+              AND pp.voided = 0
+              AND pp.location_id = #{@location_id}
             LEFT JOIN patient_identifier
               ON patient_identifier.patient_id = orders.patient_id
               AND patient_identifier.identifier_type IN (#{pepfar_patient_identifier_type.to_sql})
@@ -383,6 +392,10 @@ module ArtService
             INNER JOIN temp_patient_outcomes
               ON temp_patient_outcomes.patient_id = obs.person_id
               AND temp_patient_outcomes.cum_outcome = 'On antiretrovirals'
+            INNER JOIN patient_program pp ON pp.patient_id = patient.patient_id
+              AND pp.program_id = 1
+              AND pp.voided = 0
+              AND pp.location_id = #{@location_id}
             LEFT JOIN patient_identifier
               ON patient_identifier.patient_id = obs.person_id
               AND patient_identifier.voided = 0
