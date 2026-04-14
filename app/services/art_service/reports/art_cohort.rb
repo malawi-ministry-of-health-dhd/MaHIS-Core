@@ -21,6 +21,7 @@ module ArtService
         @start_date = start_date
         @end_date = end_date
         @type = type
+        @rebuild = kwargs[:rebuild].to_s.casecmp?('true') || kwargs[:rebuild] == true
         @cohort_builder = CohortBuilder.new
         @cohort_struct = CohortStruct.new
         @occupation = kwargs[:occupation]
@@ -28,12 +29,9 @@ module ArtService
 
       def build_report
         with_lock(lock_file, blocking: false) do
-          @cohort_builder.build(@cohort_struct, @start_date, @end_date, @occupation)
+          @cohort_builder.build(@cohort_struct, @start_date, @end_date, @occupation, force_rebuild: @rebuild)
           clear_drill_down
           save_report
-        ensure
-          # Always cleanup temporary tables after report generation
-          cleanup_tables
         end
       rescue FailedToAcquireLock => e
         Rails.logger.warn("ART#Cohort report is locked by another process: #{e}")
