@@ -118,6 +118,12 @@ class StagesService
     }
   end
 
+  def broadcast_stage_deletion(stage)
+    stage_data = serialize(stage)
+    stage_data[:status] = false
+    broadcast_stage_update('stage_deleted', stage_data)
+  end
+
   private
 
   def apply_stage_updates(stage, stage_params)

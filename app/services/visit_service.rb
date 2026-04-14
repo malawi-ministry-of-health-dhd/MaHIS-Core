@@ -103,7 +103,10 @@ class VisitService
       patient_id: visit.patient_id,
       location_id: visit_params[:location_id] || (User.current&.location_id)
     )
-    existing_stage.destroy if existing_stage.present?
+    if existing_stage.present?
+      StagesService.new.broadcast_stage_deletion(existing_stage)
+      existing_stage.destroy
+    end
 
     closed_datetime = visit_params[:date_stopped] || Time.now
 
