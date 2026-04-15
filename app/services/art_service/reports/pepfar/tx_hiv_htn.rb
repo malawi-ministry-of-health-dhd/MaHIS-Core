@@ -15,6 +15,7 @@ module ArtService
 
         def initialize(start_date:, end_date:, **kwargs)
           super(start_date:, end_date:, **kwargs)
+          @location_id = User.current.location_id
           ArtService::Reports::MaternalStatus.new(start_date:, end_date:, **kwargs).process_data
         end
 
@@ -124,6 +125,10 @@ module ArtService
             INNER JOIN temp_patient_outcomes tpo
               ON tpo.patient_id = tesd.patient_id
               AND tpo.pepfar_cum_outcome = 'On antiretrovirals'
+            INNER JOIN patient_program pp ON pp.patient_id = tesd.patient_id
+              AND pp.program_id = 1
+              AND pp.voided = 0
+              AND pp.location_id = #{@location_id}
             LEFT JOIN (
               SELECT
                 vitals.patient_id,

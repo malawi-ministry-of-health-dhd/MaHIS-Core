@@ -7,6 +7,7 @@ module ArtService
       include CommonSqlQueryUtils
       include ModelUtils
       include ArtTempTablesNaming
+      include ArtTempTablesUtils
       attr_reader :start_date, :end_date, :location
 
       def initialize(start_date:, end_date:, **kwargs)
@@ -32,6 +33,7 @@ module ArtService
 
       def process_data
         clear_maternal_status
+        create_temp_maternal_status unless check_if_table_exists(temp_maternal_status)
         load_pregnant_women
         load_breast_feeding
       end
@@ -56,6 +58,8 @@ module ArtService
 
       def vl_maternal_status
         return { FP: [], FBf: [] } if @patient_ids.blank?
+
+        process_data
 
         pregnant = pregnant_women(@patient_ids).map { |woman| woman['patient_id'].to_i }
         return { FP: pregnant, FBf: [] } if (@patient_ids - pregnant).blank?
@@ -106,6 +110,8 @@ module ArtService
       end
 
       def clear_maternal_status
+        return unless check_if_table_exists(temp_maternal_status)
+
         ActiveRecord::Base.connection.execute <<~SQL
           DELETE FROM #{temp_maternal_status}
         SQL
