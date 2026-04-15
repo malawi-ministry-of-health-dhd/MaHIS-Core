@@ -117,9 +117,7 @@ module ArtService
         batch_load_patient_types(cohort_struct, start_date, end_date, cum_start_date, quarter_start_date)
 
         # Pregnant females (all ages)
-        unless skip_preparation
-          load_temp_pregnant_obs(cum_start_date, end_date)
-        end
+        load_temp_pregnant_obs(cum_start_date, end_date) unless skip_preparation
         cohort_struct.pregnant_females_all_ages = pregnant_females_all_ages(start_date, end_date)
         cohort_struct.cum_pregnant_females_all_ages = pregnant_females_all_ages(cum_start_date, end_date)
         cohort_struct.quarterly_pregnant_females_all_ages = pregnant_females_all_ages(quarter_start_date, end_date)

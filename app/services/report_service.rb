@@ -111,6 +111,10 @@ class ReportService
     engine(@program).cohort_report_drill_down(id)
   end
 
+  def cohort_report_raw_data(start_date, end_date, **kwargs)
+    engine(@program).cohort_report_raw_data(start_date, end_date, **kwargs)
+  end
+
   def regimen_switch(start_date, end_date, pepfar, **kwargs)
     engine(@program).regimen_switch(start_date, end_date, pepfar, **kwargs)
   end
