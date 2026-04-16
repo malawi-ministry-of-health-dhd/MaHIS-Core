@@ -89,7 +89,12 @@ def ensure_facility_level_data!
         level_attr.date_changed = NOW()
     WHERE level_attr.attribute_type_id = #{facility_level_type_id.to_i}
       AND facility_type_attr.attribute_type_id = #{facility_type_type_id.to_i}
+      AND COALESCE(level_attr.voided, 0) = 0
       AND COALESCE(facility_type_attr.voided, 0) = 0
+      AND (
+        level_attr.value_reference IS NULL
+        OR TRIM(level_attr.value_reference) = ''
+      )
       AND LOWER(TRIM(facility_type_attr.value_reference)) IN (
         'health centre',
         'health center',
