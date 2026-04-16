@@ -19,8 +19,7 @@ class StagesService
         patient_id: patient_id,
         visit_id: active_visit.visit_id,
         location_id: location_id,
-        status: true,
-        arrival_time: Time.current
+        status: true
       )
     end
 
@@ -33,17 +32,17 @@ class StagesService
     stage.visit_id = active_visit.visit_id
     stage.location_id = location_id
     stage.status = true
+    assign_arrival_time(stage, stage_params)
 
     if stage.stage != stage_name
       stage.stage = stage_name
-      stage.arrival_time = Time.current
     end
 
     was_new_record = stage.new_record?
     has_changes = stage.new_record? || stage.changed?
 
     stage.save! if has_changes
-    stage_data = serialize(stage.reload)
+    stage_data = serialize(stage.reload, latest_encounter_time: Time.current)
 
     broadcast_stage_update(was_new_record ? 'stage_created' : 'stage_updated', stage_data) if has_changes
     stage_data
@@ -86,7 +85,7 @@ class StagesService
     Stage.find(id)
   end
 
-  def serialize(stage)
+  def serialize(stage, latest_encounter_time: nil)
     patient = stage.patient
     latest_encounter = latest_visit_encounter(stage)
     {
@@ -101,7 +100,7 @@ class StagesService
       visit_uuid: stage.visit&.uuid,
       arrival_time: stage.arrival_time,
       program_id: stage.program_id,
-      latest_encounter_time: latest_encounter&.encounter_datetime || stage.created_at,
+      latest_encounter_time: latest_encounter_time || latest_encounter&.encounter_datetime || stage.created_at,
       last_encounter_creator: encounter_creator_name(latest_encounter,patient),
       disposition_type: stage.disposition_type,
       triage_result: stage.triage_result,
@@ -128,10 +127,10 @@ class StagesService
 
   def apply_stage_updates(stage, stage_params)
     stage_name = normalize_stage(stage_params[:stage])
+    assign_arrival_time(stage, stage_params)
 
     if stage.stage != stage_name
       stage.stage = stage_name
-      stage.arrival_time = Time.current
     end
 
     if stage_params[:visit_number].present? && stage.visit_number != stage_params[:visit_number]
@@ -140,7 +139,7 @@ class StagesService
 
     has_changes = stage.changed?
     stage.save! if has_changes
-    stage_data = serialize(stage.reload)
+    stage_data = serialize(stage.reload, latest_encounter_time: Time.current)
 
     broadcast_stage_update('stage_updated', stage_data) if has_changes
     stage_data
@@ -153,6 +152,15 @@ class StagesService
     patient_identifier = PatientIdentifier.find_by(identifier: params[:identifier], identifier_type: 3) ||
                          PatientIdentifier.unscoped.find_by(identifier: params[:identifier], identifier_type: 3, voided: 0)
     patient_identifier&.patient_id
+  end
+
+  def payload_arrival_time(params)
+    params[:arrival_time].presence || params['arrival_time'].presence
+  end
+
+  def assign_arrival_time(stage, params)
+    arrival_time = payload_arrival_time(params)
+    stage.arrival_time = arrival_time if arrival_time.present?
   end
 
   def normalize_stage(stage)
