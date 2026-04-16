@@ -225,7 +225,7 @@ module NeonatalService
         return STAT_STATUSES[:critical] if has_emergency
       end
 
-      admission_encounter_names = [
+      clinical_review_encounter_names = [
         'NEONATAL SIGNS & SYMPTOMS',
         'NEONATAL REVIEW OF SYSTEMS',
         'PHYSICAL EXAMINATION BABY',
@@ -235,15 +235,15 @@ module NeonatalService
         'NEONATAL SYSTEMIC EXAMINATION'
       ]
 
-      encounter_types = EncounterType.where(name: admission_encounter_names)
+      encounter_types = EncounterType.where(name: clinical_review_encounter_names)
       if encounter_types.any?
-        has_admission_encounter_today = Encounter
+        has_clinical_review_encounter_today = Encounter
           .where(patient_id: patient.patient_id, program_id: @program.program_id)
           .where(encounter_type: encounter_types.pluck(:encounter_type_id), voided: 0)
           .where('DATE(encounter_datetime) = ?', date)
           .exists?
 
-        return STAT_STATUSES[:admitted] if has_admission_encounter_today
+        return STAT_STATUSES[:admitted] if has_clinical_review_encounter_today
       end
 
       # Default to enrolled/in patient
@@ -400,15 +400,15 @@ module NeonatalService
     end
 
     ##
-    # Fetches neonates who went through at least one encounter of the admission workflow on a date
-    # Admission workflow encounters: NEONATAL SIGNS & SYMPTOMS, NEONATAL REVIEW OF SYSTEMS,
+    # Fetches neonates who went through at least one encounter of the clinical review workflow on a date
+    # Clinical review workflow encounters: NEONATAL SIGNS & SYMPTOMS, NEONATAL REVIEW OF SYSTEMS,
     # PHYSICAL EXAMINATION BABY, NEONATAL GENERAL EXAMINATION, VITALS, NEONATAL VITALS,
     # NEONATAL SYSTEMIC EXAMINATION
     #
     # @param date [Date]
     # @return [Array<Patient>]
     def patients_admitted_on(date)
-      admission_encounter_names = [
+      clinical_review_encounter_names = [
         'NEONATAL SIGNS & SYMPTOMS',
         'NEONATAL REVIEW OF SYSTEMS',
         'PHYSICAL EXAMINATION BABY',
@@ -418,7 +418,7 @@ module NeonatalService
         'NEONATAL SYSTEMIC EXAMINATION'
       ]
 
-      encounter_types = EncounterType.where(name: admission_encounter_names)
+      encounter_types = EncounterType.where(name: clinical_review_encounter_names)
       return [] if encounter_types.empty?
 
       Encounter.where(program_id: @program.program_id, encounter_type: encounter_types.pluck(:encounter_type_id), voided: 0)
@@ -487,13 +487,18 @@ module NeonatalService
         # Check if patient ONLY has NEONATAL_TRIAGE encounter (no other neonatal encounters)
         # Exclude patients who also have enrollment or other encounters
         other_encounter_types = [
+          'NEONATAL ENROLMENT',
           'NEONATAL ENROLLMENT',
           'NEONATAL SIGNS & SYMPTOMS',
           'NEONATAL REVIEW OF SYSTEMS',
           'PHYSICAL EXAMINATION BABY',
           'NEONATAL GENERAL EXAMINATION',
           'NEONATAL VITALS',
-          'NEONATAL SYSTEMIC EXAMINATION'
+          'NEONATAL SYSTEMIC EXAMINATION',
+          'NEONATAL CLINICAL REVIEW OUTCOMES',
+          'NEONATAL ADMISSION OUTCOMES',
+          'CLINICAL REVIEW OUTCOMES',
+          'ADMISSION OUTCOMES'
         ]
 
         encounter_types = EncounterType.where(name: other_encounter_types)
