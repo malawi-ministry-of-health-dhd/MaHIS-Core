@@ -31,6 +31,8 @@ class ObservationService
 
       validate_presence_of_obs_value(obs_parameters)
 
+      NeonatalAdmissionDiagnoses.validate_observation!(encounter, obs_parameters)
+
       obs_parameters[:obs_datetime] = (
         TimeUtils.retro_timestamp(obs_parameters[:obs_datetime]) || encounter.encounter_datetime
       )

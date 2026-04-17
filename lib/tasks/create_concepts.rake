@@ -13,6 +13,7 @@ module CreateConcepts
     CONCEPTS = [
       { name: 'Patient admission outcome', datatype: 'Text', class: 'Misc' },
       { name: 'Insecticide treated net given', datatype: 'Coded', class: 'Misc' },
+      { name: 'Reason ITN not provided', datatype: 'Text', class: 'Misc' },
       { name: 'Admit to high risk', datatype: 'Coded', class: 'Procedure' },
 
       # ANC profile concepts

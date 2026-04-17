@@ -86,6 +86,12 @@ module Api
                                       :value_numeric, :value_modifier, :value_text, :value_complex, :value_drug, :order_id)
 
         observation = Observation.find(params.require(:id))
+        if observation.encounter
+          merged = observation.attributes.symbolize_keys.slice(
+            :concept_id, :value_coded, :obs_group_id, :encounter_id, :person_id
+          ).merge(update_params.to_h.symbolize_keys)
+          NeonatalAdmissionDiagnoses.validate_observation!(observation.encounter, merged)
+        end
         if observation.update(update_params)
           render json: observation, status: :created
         else

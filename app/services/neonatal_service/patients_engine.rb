@@ -487,7 +487,6 @@ module NeonatalService
         # Check if patient ONLY has NEONATAL_TRIAGE encounter (no other neonatal encounters)
         # Exclude patients who also have enrollment or other encounters
         other_encounter_types = [
-          'NEONATAL ENROLMENT',
           'NEONATAL ENROLLMENT',
           'NEONATAL SIGNS & SYMPTOMS',
           'NEONATAL REVIEW OF SYSTEMS',
