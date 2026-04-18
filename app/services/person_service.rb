@@ -210,16 +210,16 @@ class PersonService
     people = people.where('gender like ?', "#{gender}%") unless gender.blank?
 
     if given_name || family_name || middle_name
-      # We may get names that match with an exact match but don't match with
-      # soundex, vice-versa is also true, thus we capture both then combine them.
       filters = { given_name:, middle_name:, family_name: }
-      raw_matches = NameSearchService.search_full_person_name(filters, use_soundex: false)
-      soundex_matches = NameSearchService.search_full_person_name(filters, use_soundex: false)
+      raw_name_ids     = NameSearchService.search_full_raw_person_name(**filters).select(:person_id).unscope(:order)
+      soundex_name_ids = NameSearchService.search_full_soundex_person_name(**filters).select(:person_id).unscope(:order)
 
-      # Extract unique person_ids from the names matched above.
-      person_ids = Set.new | raw_matches.collect(&:person_id) | soundex_matches.collect(&:person_id)
-
-      people = people.where(person_id: person_ids)
+      # UNION lets MySQL plan each branch with its own index rather than
+      # evaluating two IN subqueries under a single OR, which forces a full scan.
+      # ORDER BY is stripped from each branch — it is illegal inside a UNION
+      # member in MySQL and meaningless when only selecting person_ids.
+      union_sql = "(#{raw_name_ids.to_sql} UNION #{soundex_name_ids.to_sql}) AS union_person_names"
+      people = people.where(person_id: PersonName.unscoped.from(union_sql).select(:person_id))
     end
 
     people

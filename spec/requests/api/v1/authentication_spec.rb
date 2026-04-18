@@ -15,7 +15,7 @@ RSpec.describe 'User Authentication', type: :request do
       # Create daemon user if not exists
       daemon_person = Person.create!(gender: 'U', creator: 1, voided: false, uuid: SecureRandom.uuid)
       daemon_salt = 'daemon'
-      daemon_password = Digest::SHA1.hexdigest("#{daemon_salt}daemon")
+      daemon_password = Digest::SHA1.hexdigest("daemon#{daemon_salt}")
 
       User.create!(
         user_id: 1,

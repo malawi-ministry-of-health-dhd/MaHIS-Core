@@ -145,13 +145,17 @@ source_db = database_config['centralized_source_db']['database']
 
 # Optimize connection pool for parallel processing
 optimal_thread_count = [Parallel.physical_processor_count * 2, 10].min
+# Increase pool size to handle nested queries in parallel processing
+# Each thread may need multiple connections for nested lookups
+pool_size = optimal_thread_count * 3 + 10 # More generous pool for nested queries
 ActiveRecord::Base.establish_connection(
   database_config[Rails.env].merge(
-    'pool' => optimal_thread_count + 5,
-    'reaping_frequency' => 10,
-    'checkout_timeout' => 10
+    'pool' => pool_size,
+    'reaping_frequency' => 5,          # More frequent reaping
+    'checkout_timeout' => 30           # Longer timeout for complex queries
   )
 )
+puts "✓ Connection pool configured: #{pool_size} connections, #{optimal_thread_count} threads"
 SITE_ID = get_validated_location_id(source_db)
 SITE_USER_MAPPING = Rails.root.join('log', "users_mapping_#{SITE_ID}.json")
 File.write(SITE_USER_MAPPING, '{}') unless File.exist?(SITE_USER_MAPPING)
@@ -183,11 +187,61 @@ ORDER_ID_CACHE = {}
 PROGRAM_ID_CACHE = {}
 OBS_ID_CACHE = {}
 
+# HIV Program filtering caches
+HIV_PATIENT_IDS = Set.new
+HIV_ENCOUNTER_IDS = Set.new
+HIV_PROGRAM_ID = 1 # HIV PROGRAM program_id
+
+# Track orphaned references for data quality reporting
+ORPHANED_REFERENCES = Hash.new { |h, k| h[k] = [] }
+
+# Track performance metrics for bottleneck identification
+PERFORMANCE_METRICS = {
+  table_timings: {},
+  group_timings: {},
+  query_counts: Hash.new(0),
+  memory_snapshots: [],
+  start_time: Time.now
+}
+
+# Real-time performance tracking and adaptive tuning
+REALTIME_MONITOR = {
+  current_table: nil,
+  table_start_time: nil,
+  slow_threshold_seconds: 60,
+  recent_batch_times: [],
+  adaptive_tuning_enabled: ENV['ADAPTIVE_TUNING'] != 'false',
+  auto_apply_fixes: ENV['AUTO_APPLY_FIXES'] != 'false',
+  current_thread_count: nil,
+  current_batch_size: nil,
+  adjustments_applied: []
+}
+
+# Performance thresholds for auto-tuning
+PERFORMANCE_THRESHOLDS = {
+  records_per_second_min: 100,
+  memory_usage_max: 85,
+  cpu_usage_max: 90,
+  critical_memory: 95,
+  critical_cpu: 95
+}
+
 # Mutex for thread-safe cache updates
 CACHE_MUTEX = Mutex.new
 
 def prepare_centralized_db
   puts 'Preparing Centralized database for migration...'
+
+  # Extend MySQL session timeouts on the main connection to handle large tables.
+  # Per-thread connections also set these, but the main connection needs it too.
+  begin
+    ActiveRecord::Base.connection.execute(
+      'SET SESSION net_read_timeout=3600, net_write_timeout=3600, wait_timeout=28800, interactive_timeout=28800'
+    )
+    puts '✓ Extended MySQL session timeouts (net_read/write=3600s, wait=28800s)'
+  rescue StandardError => e
+    puts "⚠ Could not set MySQL session timeouts: #{e.message}"
+  end
 
   begin
     if ActiveRecord::Base.connection.index_name_exists?(:global_property, :global_property_uuid_index)
@@ -241,6 +295,495 @@ def prepare_centralized_db
   puts 'Database preparation complete!'
 end
 
+# Ensure all critical indexes exist for optimal migration performance
+def ensure_migration_indexes(source_db)
+  target_db = ActiveRecord::Base.connection.current_database
+  conn = ActiveRecord::Base.connection
+
+  indexes = [
+    # [database,   table,                          index_name,                     column]
+    [source_db, 'encounter',                    'idx_enc_program_id',           'program_id'],
+    [source_db, 'encounter',                    'idx_enc_voided',               'voided'],
+    [source_db, 'obs',                          'idx_obs_obs_id',               'obs_id'],
+    [source_db, 'obs',                          'idx_obs_voided',               'voided'],
+    [source_db, 'drug_order',                   'idx_drug_order_order_id',      'order_id'],
+    [source_db, 'orders',                       'idx_orders_voided',            'voided'],
+    [source_db, 'lims_acknowledgement_statuses', 'idx_lims_src_order_id', 'order_id'],
+    [source_db, 'patient',                      'idx_patient_patient_id',       'patient_id'],
+    [source_db, 'patient',                      'idx_patient_voided',           'voided'],
+    [source_db, 'person',                       'idx_person_voided',            'voided'],
+    [source_db, 'patient_program',              'idx_patient_program_voided',   'voided'],
+    [source_db, 'patient_state',                'idx_patient_state_voided',     'voided'],
+    [source_db, 'relationship',                 'idx_relationship_voided',      'voided'],
+    [source_db, 'person_name',                  'idx_person_name_voided',       'voided'],
+    [source_db, 'person_address',               'idx_person_address_voided',    'voided'],
+    [source_db, 'person_attribute',             'idx_person_attr_voided',       'voided'],
+    [target_db, 'person',                       'idx_person_person_id',         'person_id'],
+    [target_db, 'patient',                      'idx_patient_patient_id',       'patient_id'],
+    [target_db, 'encounter',                    'idx_encounter_encounter_id',   'encounter_id'],
+    [target_db, 'obs',                          'idx_obs_obs_id',               'obs_id'],
+    [target_db, 'obs',                          'idx_obs_uuid',                 'uuid'],
+    [target_db, 'orders',                       'idx_orders_uuid',              'uuid'],
+    [target_db, 'drug_order',                   'idx_drug_order_order_id',      'order_id'],
+    [target_db, 'lims_acknowledgement_statuses', 'idx_lims_tgt_order_id', 'order_id'],
+    [target_db, 'users',                        'idx_users_user_id',            'user_id'],
+    [target_db, 'users',                        'idx_users_uuid',               'uuid'],
+    [source_db, 'obs',                          'idx_obs_uuid_src',             'uuid'],
+    [source_db, 'orders',                       'idx_orders_uuid_src',          'uuid']
+  ]
+
+  puts "\n" + '=' * 80
+  puts 'INDEX OPTIMIZATION CHECK'
+  puts '=' * 80
+  created = skipped = failed = 0
+
+  indexes.each do |db, tbl, idx_name, col|
+    # Skip if table doesn't exist in that DB
+    tbl_exists = conn.select_value(
+      "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+       WHERE TABLE_SCHEMA='#{db}' AND TABLE_NAME='#{tbl}'"
+    ).to_i > 0
+    next unless tbl_exists
+
+    idx_exists = conn.select_value(
+      "SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS
+       WHERE TABLE_SCHEMA='#{db}' AND TABLE_NAME='#{tbl}' AND INDEX_NAME='#{idx_name}'"
+    ).to_i > 0
+
+    if idx_exists
+      puts "  ⏭️  Skipped  (exists): #{db}.#{tbl}(#{col})"
+      skipped += 1
+    else
+      begin
+        print "  ⏳ Creating index: #{db}.#{tbl}(#{col}) ..."
+        $stdout.flush
+        start = Time.now
+        conn.execute("CREATE INDEX `#{idx_name}` ON `#{db}`.`#{tbl}` (`#{col}`)")
+        duration = (Time.now - start).round(1)
+        puts " done (#{duration}s)"
+        created += 1
+      rescue StandardError => e
+        puts ' FAILED'
+        puts "  ⚠️  #{db}.#{tbl}(#{col}): #{e.message.split('.').first}"
+        failed += 1
+      end
+    end
+  end
+
+  puts "  ✅ Created #{created} new index(es)" if created > 0
+  puts "  ✓ #{skipped} index(es) already existed | #{failed} failed"
+  puts '=' * 80
+end
+
+# Load HIV patient IDs from source database for filtering
+def load_hiv_patient_ids(source_db)
+  puts "\n🔍 Loading HIV program patient IDs from source..."
+
+  # Get all patient_ids enrolled in HIV program (program_id = 1)
+  result = ActiveRecord::Base.connection.execute(<<~SQL)
+    SELECT DISTINCT patient_id#{' '}
+    FROM #{source_db}.patient_program#{' '}
+    WHERE program_id = #{HIV_PROGRAM_ID}
+  SQL
+
+  result.each do |row|
+    HIV_PATIENT_IDS.add(row[0])
+  end
+
+  puts "✓ Loaded #{HIV_PATIENT_IDS.size} HIV patient IDs"
+end
+
+# Load HIV encounter IDs from source database for filtering
+def load_hiv_encounter_ids(source_db)
+  puts '🔍 Loading HIV encounter IDs from source...'
+
+  # Get all encounters linked to HIV program
+  result = ActiveRecord::Base.connection.execute(<<~SQL)
+    SELECT DISTINCT encounter_id#{' '}
+    FROM #{source_db}.encounter#{' '}
+    WHERE program_id = #{HIV_PROGRAM_ID}
+  SQL
+
+  result.each do |row|
+    HIV_ENCOUNTER_IDS.add(row[0])
+  end
+
+  puts "✓ Loaded #{HIV_ENCOUNTER_IDS.size} HIV encounter IDs"
+end
+
+# Check if a table should be filtered for HIV program only
+def hiv_filter_required?(table_name)
+  %w[patient_program patient_identifier encounter patient_state orders obs drug_order
+     pharmacy_obs].include?(table_name.to_s)
+end
+
+# Build HIV filter WHERE clause for specific tables
+def build_hiv_filter_clause(table_name, source_db)
+  case table_name.to_s
+  when 'patient_program'
+    "program_id = #{HIV_PROGRAM_ID}"
+  when 'patient_identifier'
+    "patient_id IN (SELECT DISTINCT patient_id FROM #{source_db}.patient_program WHERE program_id = #{HIV_PROGRAM_ID})"
+  when 'encounter'
+    "program_id = #{HIV_PROGRAM_ID}"
+  when 'patient_state'
+    # patient_state references patient_program_id, so we need to get HIV patient_program IDs
+    # This is trickier - we'll filter this in populate_records instead
+    nil
+  when 'orders', 'obs'
+    "encounter_id IN (SELECT DISTINCT encounter_id FROM #{source_db}.encounter WHERE program_id = #{HIV_PROGRAM_ID})"
+  when 'drug_order'
+    "order_id IN (SELECT o.order_id FROM #{source_db}.orders o JOIN #{source_db}.encounter e ON e.encounter_id = o.encounter_id WHERE e.program_id = #{HIV_PROGRAM_ID})"
+  end
+end
+
+# Report data quality issues found during migration
+def report_data_quality_issues
+  return if ORPHANED_REFERENCES.empty?
+
+  puts "\n" + '=' * 80
+  puts 'DATA QUALITY REPORT - Orphaned References Found'
+  puts '=' * 80
+
+  ORPHANED_REFERENCES.each do |table, ids|
+    puts "\n⚠ #{table.to_s.upcase}: #{ids.size} orphaned reference(s)"
+    puts "  Missing IDs: #{ids.sort.join(', ')}"
+    puts '  → These references were mapped to admin user as fallback'
+  end
+
+  # Save detailed report to log file
+  report_file = Rails.root.join('log', "data_quality_report_#{SITE_ID}_#{Time.now.strftime('%Y%m%d_%H%M%S')}.json")
+  File.write(report_file, JSON.pretty_generate({
+                                                 site_id: SITE_ID,
+                                                 timestamp: Time.now.iso8601,
+                                                 orphaned_references: ORPHANED_REFERENCES
+                                               }))
+
+  puts "\n✓ Detailed report saved to: #{report_file}"
+  puts '=' * 80
+end
+
+# Start monitoring a table
+def start_table_monitoring(table_name, record_count)
+  CACHE_MUTEX.synchronize do
+    REALTIME_MONITOR[:current_table] = table_name
+    REALTIME_MONITOR[:table_start_time] = Time.now
+    REALTIME_MONITOR[:recent_batch_times] = []
+  end
+  puts "\n🔍 [MONITOR] Starting #{table_name} (#{record_count} records)"
+end
+
+# Track batch performance and detect issues
+def track_batch_performance(table_name, batch_size, duration)
+  records_per_sec = (batch_size / duration).round(2)
+
+  CACHE_MUTEX.synchronize do
+    REALTIME_MONITOR[:recent_batch_times] << {
+      timestamp: Time.now,
+      duration: duration,
+      records_per_sec: records_per_sec,
+      batch_size: batch_size
+    }
+    REALTIME_MONITOR[:recent_batch_times] = REALTIME_MONITOR[:recent_batch_times].last(10)
+  end
+
+  detect_and_alert_bottlenecks(table_name, records_per_sec, duration)
+  records_per_sec
+end
+
+# Detect bottlenecks in real-time and auto-apply fixes
+def detect_and_alert_bottlenecks(table_name, records_per_sec, batch_duration)
+  alerts = []
+  actions = []
+
+  if records_per_sec < PERFORMANCE_THRESHOLDS[:records_per_second_min]
+    alerts << "⚠️  SLOW: #{records_per_sec} rec/s (threshold: #{PERFORMANCE_THRESHOLDS[:records_per_second_min]})"
+  end
+
+  if batch_duration > REALTIME_MONITOR[:slow_threshold_seconds]
+    alerts << "⚠️  BATCH TIMEOUT: #{batch_duration.round(2)}s (threshold: #{REALTIME_MONITOR[:slow_threshold_seconds]}s)"
+  end
+
+  memory_stats = Sys::Memory
+  memory_usage = (memory_stats.used.to_f / memory_stats.total * 100).round(2)
+  cpu_usage = Sys::CPU.load_avg[0] / Parallel.processor_count * 100
+
+  # Critical thresholds - immediate action required
+  critical_situation = false
+  if memory_usage > PERFORMANCE_THRESHOLDS[:critical_memory]
+    alerts << "🚨 CRITICAL MEMORY: #{memory_usage}%"
+    critical_situation = true
+  elsif memory_usage > PERFORMANCE_THRESHOLDS[:memory_usage_max]
+    alerts << "⚠️  HIGH MEMORY: #{memory_usage}% (threshold: #{PERFORMANCE_THRESHOLDS[:memory_usage_max]}%)"
+  end
+
+  if cpu_usage > PERFORMANCE_THRESHOLDS[:critical_cpu]
+    alerts << "🚨 CRITICAL CPU: #{cpu_usage.round(2)}%"
+    critical_situation = true
+  elsif cpu_usage > PERFORMANCE_THRESHOLDS[:cpu_usage_max]
+    alerts << "⚠️  HIGH CPU: #{cpu_usage.round(2)}% (threshold: #{PERFORMANCE_THRESHOLDS[:cpu_usage_max]}%)"
+  end
+
+  # Auto-apply fixes if enabled
+  if alerts.any? && REALTIME_MONITOR[:auto_apply_fixes]
+    if critical_situation
+      puts "\n" + '=' * 80
+      puts '🚨 CRITICAL PERFORMANCE ISSUE - APPLYING EMERGENCY FIXES'
+      alerts.each { |alert| puts "   #{alert}" }
+      actions = apply_emergency_tuning(memory_usage, cpu_usage)
+    else
+      puts "\n" + '=' * 80
+      puts "⚠️  BOTTLENECK DETECTED in #{table_name} - Applying optimizations"
+      alerts.each { |alert| puts "   #{alert}" }
+      actions = apply_adaptive_tuning(records_per_sec, memory_usage, cpu_usage)
+    end
+
+    if actions.any?
+      puts "\n✅ Actions applied:"
+      actions.each { |action| puts "   ✓ #{action}" }
+
+      CACHE_MUTEX.synchronize do
+        REALTIME_MONITOR[:adjustments_applied] << {
+          timestamp: Time.now,
+          table: table_name,
+          actions: actions,
+          metrics: { records_per_sec: records_per_sec, memory: memory_usage, cpu: cpu_usage }
+        }
+      end
+    end
+    puts '=' * 80 + "\n"
+  elsif alerts.any?
+    puts "\n" + '=' * 80
+    puts "🚨 BOTTLENECK DETECTED in #{table_name}"
+    alerts.each { |alert| puts "   #{alert}" }
+
+    if REALTIME_MONITOR[:adaptive_tuning_enabled]
+      suggestions = generate_tuning_suggestions(records_per_sec, memory_usage, cpu_usage)
+      puts "\n💡 Suggestions (set AUTO_APPLY_FIXES=true to auto-apply):"
+      suggestions.each { |suggestion| puts "   → #{suggestion}" }
+    end
+    puts '=' * 80 + "\n"
+  end
+end
+
+# Apply emergency tuning for critical situations
+def apply_emergency_tuning(memory_usage, cpu_usage)
+  actions = []
+
+  # Pause processing briefly to let system recover
+  sleep 2
+  actions << 'Paused for 2s to allow system recovery'
+
+  # Reduce batch size aggressively
+  if REALTIME_MONITOR[:current_batch_size] && REALTIME_MONITOR[:current_batch_size] > 1000
+    new_size = [REALTIME_MONITOR[:current_batch_size] / 2, 1000].max
+    CACHE_MUTEX.synchronize do
+      REALTIME_MONITOR[:current_batch_size] = new_size
+    end
+    actions << "Reduced batch size to #{new_size} (emergency)"
+  end
+
+  # Reduce threads if high CPU
+  if cpu_usage > PERFORMANCE_THRESHOLDS[:critical_cpu] && REALTIME_MONITOR[:current_thread_count] && REALTIME_MONITOR[:current_thread_count] > 1
+    new_threads = [REALTIME_MONITOR[:current_thread_count] / 2, 1].max
+    CACHE_MUTEX.synchronize do
+      REALTIME_MONITOR[:current_thread_count] = new_threads
+    end
+    actions << "Reduced thread count to #{new_threads} (emergency)"
+  end
+
+  # Trigger garbage collection if high memory
+  if memory_usage > PERFORMANCE_THRESHOLDS[:critical_memory]
+    GC.start(full_mark: true, immediate_sweep: true)
+    actions << 'Triggered full garbage collection'
+  end
+
+  actions
+end
+
+# Apply adaptive tuning based on performance metrics
+def apply_adaptive_tuning(records_per_sec, memory_usage, cpu_usage)
+  actions = []
+
+  # Slow processing - reduce overhead
+  if (records_per_sec < 50) && REALTIME_MONITOR[:current_thread_count] && REALTIME_MONITOR[:current_thread_count] > 2
+    new_threads = [REALTIME_MONITOR[:current_thread_count] - 1, 2].max
+    CACHE_MUTEX.synchronize do
+      REALTIME_MONITOR[:current_thread_count] = new_threads
+    end
+    actions << "Reduced threads to #{new_threads} (reducing overhead)"
+  end
+
+  # High memory - reduce batch size
+  if (memory_usage > 85) && REALTIME_MONITOR[:current_batch_size] && REALTIME_MONITOR[:current_batch_size] > 2000
+    new_size = [REALTIME_MONITOR[:current_batch_size] * 0.7, 2000].max.to_i
+    CACHE_MUTEX.synchronize do
+      REALTIME_MONITOR[:current_batch_size] = new_size
+    end
+    actions << "Reduced batch size to #{new_size} (high memory)"
+
+    # Also trigger GC
+    GC.start
+    actions << 'Triggered garbage collection'
+  end
+
+  # High CPU - reduce threads
+  if (cpu_usage > 90) && REALTIME_MONITOR[:current_thread_count] && REALTIME_MONITOR[:current_thread_count] > 2
+    new_threads = [REALTIME_MONITOR[:current_thread_count] - 1, 2].max
+    CACHE_MUTEX.synchronize do
+      REALTIME_MONITOR[:current_thread_count] = new_threads
+    end
+    actions << "Reduced threads to #{new_threads} (high CPU)"
+  end
+
+  # Good performance with headroom - increase capacity
+  if records_per_sec > 200 && memory_usage < 60 && cpu_usage < 60 && REALTIME_MONITOR[:current_batch_size] && REALTIME_MONITOR[:current_batch_size] < 50_000
+    new_size = [REALTIME_MONITOR[:current_batch_size] * 1.3, 50_000].min.to_i
+    CACHE_MUTEX.synchronize do
+      REALTIME_MONITOR[:current_batch_size] = new_size
+    end
+    actions << "Increased batch size to #{new_size} (system has headroom)"
+  end
+
+  actions
+end
+
+# Generate tuning suggestions based on current metrics
+def generate_tuning_suggestions(records_per_sec, memory_usage, cpu_usage)
+  suggestions = []
+
+  if records_per_sec < 50
+    suggestions << 'Consider reducing parallel threads (high overhead suspected)'
+    suggestions << 'Check for slow foreign key lookups - review cache hit rates'
+    suggestions << 'Verify database indexes on join columns'
+  end
+
+  if memory_usage > 85
+    suggestions << 'Reduce batch size to lower memory footprint'
+    suggestions << 'Consider processing fewer tables in parallel'
+  end
+
+  if cpu_usage > 90
+    suggestions << 'Reduce thread count to prevent CPU thrashing'
+    suggestions << 'Check if too many parallel operations are competing'
+  end
+
+  if records_per_sec > 100 && memory_usage < 60 && cpu_usage < 70
+    suggestions << 'System has headroom - could increase batch size or threads'
+  end
+
+  suggestions
+end
+
+# End table monitoring and report
+def end_table_monitoring(table_name, total_records)
+  return unless REALTIME_MONITOR[:table_start_time]
+
+  duration = Time.now - REALTIME_MONITOR[:table_start_time]
+  avg_speed = total_records > 0 ? (total_records / duration).round(2) : 0
+
+  puts "✅ [MONITOR] Completed #{table_name}: #{format_duration(duration)} @ #{avg_speed} rec/s"
+end
+
+# Helper to format duration in human-readable format
+def format_duration(seconds)
+  return "#{seconds.round(2)}s" if seconds < 60
+
+  minutes = (seconds / 60).floor
+  remaining_seconds = (seconds % 60).round(2)
+
+  return "#{minutes}m #{remaining_seconds}s" if minutes < 60
+
+  hours = (minutes / 60).floor
+  remaining_minutes = minutes % 60
+
+  "#{hours}h #{remaining_minutes}m #{remaining_seconds.round(0)}s"
+end
+
+# Capture memory snapshot for performance tracking
+def capture_memory_snapshot(label)
+  memory_stats = Sys::Memory
+  used_memory_gb = (memory_stats.used.to_f / (1024**3)).round(2)
+  free_memory_gb = ((memory_stats.total - memory_stats.used).to_f / (1024**3)).round(2)
+
+  CACHE_MUTEX.synchronize do
+    PERFORMANCE_METRICS[:memory_snapshots] << {
+      timestamp: Time.now.iso8601,
+      label: label,
+      used_gb: used_memory_gb,
+      free_gb: free_memory_gb,
+      total_gb: (memory_stats.total.to_f / (1024**3)).round(2)
+    }
+  end
+end
+
+# Report performance metrics and identify bottlenecks
+def report_performance_metrics
+  total_duration = Time.now - PERFORMANCE_METRICS[:start_time]
+
+  puts "\n" + '=' * 80
+  puts 'PERFORMANCE REPORT - Migration Bottleneck Analysis'
+  puts '=' * 80
+  puts "\n📊 Overall Statistics:"
+  puts "  Total Duration: #{format_duration(total_duration)}"
+  puts "  Total Memory Snapshots: #{PERFORMANCE_METRICS[:memory_snapshots].size}"
+
+  if PERFORMANCE_METRICS[:group_timings].any?
+    puts "\n⏱️  Group Processing Times:"
+    PERFORMANCE_METRICS[:group_timings].sort_by { |_, v| -v }.each_with_index do |(group, duration), idx|
+      percentage = (duration / total_duration * 100).round(2)
+      puts "  #{idx + 1}. #{group}: #{format_duration(duration)} (#{percentage}%)"
+    end
+  end
+
+  if PERFORMANCE_METRICS[:table_timings].any?
+    puts "\n🐌 Slowest Tables (Top 10):"
+    PERFORMANCE_METRICS[:table_timings].sort_by do |_, v|
+      -v[:duration]
+    end.first(10).each_with_index do |(table, metrics), idx|
+      percentage = (metrics[:duration] / total_duration * 100).round(2)
+      records_per_sec = metrics[:records] > 0 ? (metrics[:records] / metrics[:duration]).round(2) : 0
+      puts "  #{idx + 1}. #{table}:"
+      puts "      Duration: #{format_duration(metrics[:duration])} (#{percentage}%)"
+      puts "      Records: #{metrics[:records]}"
+      puts "      Speed: #{records_per_sec} records/sec"
+    end
+  end
+
+  if PERFORMANCE_METRICS[:memory_snapshots].any?
+    memory_stats = PERFORMANCE_METRICS[:memory_snapshots]
+    max_memory = memory_stats.map { |s| s[:used_gb] }.max
+    avg_memory = (memory_stats.map { |s| s[:used_gb] }.sum / memory_stats.size).round(2)
+
+    puts "\n💾 Memory Usage:"
+    puts "  Peak Memory: #{max_memory} GB"
+    puts "  Average Memory: #{avg_memory} GB"
+    puts "  Snapshots Taken: #{memory_stats.size}"
+  end
+
+  report_file = Rails.root.join('log', "performance_report_#{SITE_ID}_#{Time.now.strftime('%Y%m%d_%H%M%S')}.json")
+  File.write(report_file, JSON.pretty_generate({
+                                                 site_id: SITE_ID,
+                                                 total_duration_seconds: total_duration.round(2),
+                                                 started_at: PERFORMANCE_METRICS[:start_time].iso8601,
+                                                 completed_at: Time.now.iso8601,
+                                                 group_timings: PERFORMANCE_METRICS[:group_timings].transform_values do |v|
+                                                   v.round(2)
+                                                 end,
+                                                 table_timings: PERFORMANCE_METRICS[:table_timings].transform_values do |v|
+                                                   {
+                                                     duration_seconds: v[:duration].round(2),
+                                                     records: v[:records],
+                                                     records_per_second: v[:records] > 0 ? (v[:records] / v[:duration]).round(2) : 0
+                                                   }
+                                                 end,
+                                                 memory_snapshots: PERFORMANCE_METRICS[:memory_snapshots]
+                                               }))
+
+  puts "\n✓ Detailed performance report saved to: #{report_file}"
+  puts '=' * 80
+end
+
 # Query Helper
 def query_with_columns(table_name, where_clause = nil, limit = nil, offset = nil, target_model = nil)
   # If target_model provided, only select columns that exist in target schema
@@ -269,7 +812,7 @@ def optimal_threads
   memory_usage = (memory_stats.used.to_f / memory_stats.total) * 100
 
   num_cores = Parallel.physical_processor_count
-  max_threads = num_cores - 1
+  max_threads = (num_cores * 0.8).to_i
 
   # Use load_avg as a fallback
   cpu_usage = Sys::CPU.load_avg[0] / num_cores * 100
@@ -293,65 +836,16 @@ def optimal_threads
   thread_count
 end
 
-# Determine optimal batch size based on table size and available memory
-def determine_optimal_batch_size(source_db, table_name)
-  # Convert table_name to string and extract just the table name without schema prefix
-  table_name_str = table_name.to_s
-  bare_table_name = table_name_str.include?('.') ? table_name_str.split('.').last : table_name_str
-
-  # Get table row count
-  row_count = ActiveRecord::Base.connection.select_one(
-    "SELECT COUNT(*) AS count FROM #{source_db}.#{bare_table_name}"
-  )['count'].to_i
-
-  # Get approximate row size in bytes
-  table_stats = ActiveRecord::Base.connection.select_one(
-    "SELECT
-      ROUND(((data_length + index_length)), 2) AS size_bytes,
-      table_rows
-    FROM information_schema.TABLES
-    WHERE table_schema = '#{source_db}'
-    AND table_name = '#{bare_table_name}'"
-  )
-
-  avg_row_size = if table_stats && table_stats['table_rows'].to_i > 0
-                   table_stats['size_bytes'].to_f / table_stats['table_rows'].to_f
-                 else
-                   1000 # Default 1KB per row if stats unavailable
-                 end
-
-  # Calculate optimal batch size based on available memory (aim for ~100MB per batch)
-  memory_stats = Sys::Memory
-  memory_stats.total
-  memory_stats.used
-  target_batch_memory = 100 * 1024 * 1024 # 100MB
-
-  optimal_batch = (target_batch_memory / avg_row_size).to_i
-
-  # Adaptive sizing based on table size
-  batch_size = case row_count
-               when 0..1000
-                 [row_count, optimal_batch].min # Small tables: process all at once
-               when 1001..10_000
-                 [5_000, optimal_batch].min
-               when 10_001..100_000
-                 [25_000, optimal_batch].min
-               when 100_001..1_000_000
-                 [50_000, optimal_batch].min
-               else
-                 [100_000, optimal_batch].min # Very large tables
-               end
-
-  [batch_size, 1000].max # Minimum 1000 rows per batch
-end
+# Constant batch size used across all tables.
+# Override with BATCH_SIZE env var, e.g. BATCH_SIZE=20000.
+DEFAULT_BATCH_SIZE = (ENV['BATCH_SIZE'] || 20_000).to_i
 
 # Process in Batches with Dynamic Threads and Percentage Tracking
 def process_in_batches(source_db, table_name, batch_size = nil, target_model = nil)
   # Convert table_name to string
   table_name_str = table_name.to_s
 
-  # Adaptive batch sizing based on table characteristics
-  batch_size ||= determine_optimal_batch_size(source_db, table_name_str)
+  batch_size ||= DEFAULT_BATCH_SIZE
   # Test mode: only process 10 records per table
   test_limit = ENV['TEST_MODE'] == 'true' ? 10 : nil
 
@@ -371,52 +865,102 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
     batch_ranges = (min_id..max_id).each_slice(batch_size).to_a
   end
 
+  # Build HIV filter for counting records
+  hiv_filter = build_hiv_filter_clause(table_name_str, source_db) if hiv_filter_required?(table_name_str)
+  count_where = hiv_filter ? " WHERE #{hiv_filter}" : ''
+
   processed_records = 0
   total_records = if test_limit
                     [ActiveRecord::Base.connection.select_one("SELECT COUNT(*) AS count
-                                                            FROM #{source_db}.#{table_name_str}")['count'].to_i, test_limit].min
+                                                            FROM #{source_db}.#{table_name_str}#{count_where}")['count'].to_i, test_limit].min
                   else
                     ActiveRecord::Base.connection.select_one("SELECT COUNT(*) AS count
-                                                            FROM #{source_db}.#{table_name_str}")['count'].to_i
+                                                            FROM #{source_db}.#{table_name_str}#{count_where}")['count'].to_i
                   end
 
   puts "🧪 TEST MODE: Limiting to #{test_limit} records per table" if test_limit
+  puts "🔍 HIV FILTER: Processing #{total_records} HIV-related records from #{table_name_str}" if hiv_filter
   num_threads = test_limit ? 1 : optimal_threads
   puts "Using #{num_threads} threads for processing #{table_name_str}..."
 
+  start_table_monitoring(table_name_str, total_records)
+
   Parallel.each(batch_ranges, in_threads: num_threads) do |batch_range|
-    # Use connection pool to manage connections properly in threads
-    ActiveRecord::Base.connection_pool.with_connection do
-      records = if test_limit
-                  # In test mode, just get first N records without ID range filtering
-                  query_with_columns("#{source_db}.#{table_name_str}", nil, test_limit, nil, target_model)
-                elsif %w[global_property user_role user_property].include?(table_name_str)
-                  query_with_columns("#{source_db}.#{table_name_str}", nil, nil, nil, target_model)
-                else
-                  full_table_name = "#{source_db}.#{table_name_str}"
-                  column_name = ActiveRecord::Base.connection.columns(full_table_name).first.name
-                  query_with_columns(full_table_name, "#{column_name} >= #{batch_range.first}
-                                                AND #{column_name} <= #{batch_range.last}", nil, nil, target_model)
-                end
+    batch_start_time = Time.now
+    retry_count = 0
+    max_retries = 3
 
-      next if records.blank?
+    begin
+      # Use connection pool to manage connections properly in threads
+      ActiveRecord::Base.connection_pool.with_connection do
+        # Extend MySQL session timeouts to prevent disconnection on large/slow batches.
+        # net_read_timeout: max seconds to wait for data from server (default 30s — too short for 11M obs)
+        # wait_timeout: max idle seconds before server closes the connection
+        begin
+          ActiveRecord::Base.connection.execute(
+            'SET SESSION net_read_timeout=3600, net_write_timeout=3600, wait_timeout=28800, interactive_timeout=28800'
+          )
+        rescue StandardError
+          nil # Non-fatal: worst case the default (short) timeout still applies
+        end
 
-      yield(records)
+        # Reuse the HIV filter built earlier
 
-      processed_records += records.size
-      percentage = ((processed_records.to_f / total_records) * 100).round(2)
-      puts "Processing #{table_name_str}: #{percentage}% complete (#{processed_records}/#{total_records})"
-    end
-  ensure
-    # Explicitly close and release this thread's connection when done
-    if ActiveRecord::Base.connection_pool.active_connection?
-      ActiveRecord::Base.connection.close
-      ActiveRecord::Base.connection_pool.release_connection
+        records = if test_limit
+                    # In test mode, just get first N records without ID range filtering
+                    where_clause = hiv_filter
+                    query_with_columns("#{source_db}.#{table_name_str}", where_clause, test_limit, nil, target_model)
+                  elsif %w[global_property user_role user_property].include?(table_name_str)
+                    where_clause = table_name_str == 'global_property' ? "property = 'site_prefix'" : nil
+                    query_with_columns("#{source_db}.#{table_name_str}", where_clause, nil, nil, target_model)
+                  else
+                    full_table_name = "#{source_db}.#{table_name_str}"
+                    column_name = ActiveRecord::Base.connection.columns(full_table_name).first.name
+
+                    # Combine batch range with HIV filter
+                    where_parts = ["#{column_name} >= #{batch_range.first} AND #{column_name} <= #{batch_range.last}"]
+                    where_parts << hiv_filter if hiv_filter
+                    where_clause = where_parts.join(' AND ')
+
+                    query_with_columns(full_table_name, where_clause, nil, nil, target_model)
+                  end
+
+        next if records.blank?
+
+        yield(records)
+
+        batch_duration = Time.now - batch_start_time
+        records_per_sec = track_batch_performance(table_name_str, records.size, batch_duration)
+
+        processed_records += records.size
+        percentage = ((processed_records.to_f / total_records) * 100).round(2)
+        puts "Processing #{table_name_str}: #{percentage}% (#{processed_records}/#{total_records}) @ #{records_per_sec} rec/s"
+      end
+    rescue Mysql2::Error::ConnectionError, Mysql2::Error, ActiveRecord::StatementInvalid => e
+      conn_error = e.message.match?(/Lost connection|gone away|hostname|connecting with/i)
+      if conn_error && retry_count < max_retries
+        retry_count += 1
+        wait = retry_count * 5
+        puts "⚠️  Connection error on #{table_name_str} [#{batch_range.first}-#{batch_range.last}]," \
+             " retry #{retry_count}/#{max_retries} in #{wait}s: #{e.message.lines.first.strip}"
+        begin
+          ActiveRecord::Base.connection_pool.release_connection
+        rescue StandardError
+          nil
+        end
+        sleep(wait)
+        retry
+      else
+        puts "❌ Batch failed (#{table_name_str} #{batch_range.first}-#{batch_range.last}):" \
+             " #{e.message.lines.first.strip}"
+      end
     end
   end
+
+  end_table_monitoring(table_name_str, processed_records)
 ensure
-  # Clear any lingering connections after processing
-  ActiveRecord::Base.connection_pool.release_connection
+  # Clear any lingering connections after all parallel processing completes
+  ActiveRecord::Base.connection_pool.release_connection if ActiveRecord::Base.connection_pool.active_connection?
 end
 
 # Populate Person
@@ -438,6 +982,8 @@ end
 
 # Generic Populate Function with Percentage Tracking
 def populate_records(source_table, target_model, source_db, foreign_keys = {})
+  Time.now
+
   process_in_batches(source_db, source_table, nil, target_model) do |records|
     records.each(&:symbolize_keys!)
     # Fetch only the records that exist in the current batch
@@ -460,11 +1006,15 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
                     records.map { |r| [r[:role], r[:user_id]] }
                   when 'UserProperty'
                     records.map { |r| [r[:user_id], r[:property]] }
+                  when 'UserProgram'
+                    records.map { |r| [r[:user_id], r[:program_id]] }
                   when 'DrugIngredient'
                     records.map { |r| [r[:concept_id], r[:ingredient_id]] }
                   when 'PharmacyStockBalance', 'PharmacyStockVerification', 'Pharmacies'
                     # These tables skip duplicate checking - always insert
                     []
+                  when 'Pharmacy'
+                    records.map { |r| r[:pharmacy_module_id] }
                   else
                     records.map { |r| r[:uuid] }
                   end
@@ -484,6 +1034,11 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
                     when 'UserProperty'
                       target_model.unscoped.where(user_id: record_keys.map(&:first), property: record_keys.map(&:last))
                                   .pluck(:user_id, :property).map { |u, p| [u, p] }.to_set
+                    when 'UserProgram'
+                      target_model.unscoped.where(user_id: record_keys.map(&:first), program_id: record_keys.map(&:last))
+                                  .pluck(:user_id, :program_id).map do |u, p|
+                        [u, p]
+                      end.to_set
                     when 'DrugIngredient'
                       target_model.unscoped.where(concept_id: record_keys.map(&:first), ingredient_id: record_keys.map(&:last))
                                   .pluck(:concept_id, :ingredient_id).map do |c, i|
@@ -491,20 +1046,86 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
                       end.to_set
                     when 'PharmacyStockBalance', 'PharmacyStockVerification', 'Pharmacies'
                       Set.new
+                    when 'Pharmacy'
+                      target_model.unscoped.where(pharmacy_module_id: record_keys).pluck(:pharmacy_module_id).to_set
                     else
                       target_model.unscoped.where(uuid: record_keys).pluck(:uuid).to_set
                     end
 
+    # HIV Program Filtering PRE-PASS: Remove non-HIV PatientState records BEFORE FK remapping.
+    # PatientState has patient_program_id as a FK. Non-HIV patient_programs are never migrated
+    # to the target DB, so their patient_program_ids would not be found during FK mapping.
+    # We must filter using source patient_program_ids (still unmapped at this point).
+    if target_model.to_s == 'PatientState' && records.any? && records.first.key?(:patient_program_id)
+      source_pp_ids = records.map { |r| r[:patient_program_id] }.compact.uniq
+      if source_pp_ids.any?
+        hiv_pp_ids = ActiveRecord::Base.connection.select_values(<<~SQL)
+          SELECT patient_program_id
+          FROM #{source_db}.patient_program
+          WHERE patient_program_id IN (#{source_pp_ids.join(',')})
+          AND program_id = #{HIV_PROGRAM_ID}
+        SQL
+        hiv_pp_ids_set = Set.new(hiv_pp_ids)
+        records.reject! { |r| !hiv_pp_ids_set.include?(r[:patient_program_id]) }
+      end
+    end
+
+    # HIV Program Filtering PRE-PASS: Remove non-HIV LimsAcknowledgementStatus records BEFORE FK remapping.
+    # lims_acknowledgement_statuses has no SQL-level HIV filter, so we filter here using source order_ids
+    # (before they are remapped to destination IDs by get_order_ids).
+    if target_model.to_s == 'LimsAcknowledgementStatus' && records.any? && records.first.key?(:order_id)
+      source_lims_order_ids = records.map { |r| r[:order_id] }.compact.uniq
+      if source_lims_order_ids.any?
+        hiv_lims_order_ids = ActiveRecord::Base.connection.select_values(<<~SQL)
+          SELECT o.order_id
+          FROM #{source_db}.orders o
+          JOIN #{source_db}.encounter e ON e.encounter_id = o.encounter_id
+          WHERE o.order_id IN (#{source_lims_order_ids.join(',')})
+          AND e.program_id = #{HIV_PROGRAM_ID}
+        SQL
+        hiv_lims_order_ids_set = Set.new(hiv_lims_order_ids)
+        records.reject! { |r| !hiv_lims_order_ids_set.include?(r[:order_id]) }
+      end
+    end
+
     # Update foreign key mappings
     # Skip obs_group_id for Observations - will be updated in separate batch later
+    # Skip obs_id for Orders - obs don't exist yet, will be backfilled after obs migration
     keys_to_process = if target_model.to_s == 'Observation'
                         foreign_keys.reject { |key, _| key == :obs_group_id }
+                      elsif target_model.to_s == 'Order'
+                        foreign_keys.reject { |key, _| key == :obs_id }
                       else
                         foreign_keys
                       end
 
     keys_to_process.each do |foreign_key, mapping_method|
       records = send(mapping_method, records, foreign_key, source_db)
+    end
+
+    # HIV Program Filtering: Filter pharmacy_obs records not related to HIV program.
+    # DrugOrder: already filtered at SQL level via build_hiv_filter_clause — no post-FK filter needed.
+    # LimsAcknowledgementStatus: filtered in the PRE-PASS above, before FK remapping.
+    # Both were removed from this post-FK filter because order_ids are remapped to destination IDs
+    # at this point, making source DB lookups incorrect (causing ~47% of valid records to be dropped).
+    if target_model.to_s == 'Pharmacy'
+      # Keep only pharmacy_obs records linked to HIV observations
+      if HIV_ENCOUNTER_IDS.empty?
+        puts '⚠️  WARNING: HIV_ENCOUNTER_IDS is empty for Pharmacy filtering. Skipping all records.'
+        records.clear
+      elsif records.any? && records.first.key?(:dispensation_obs_id)
+        source_obs_ids = records.map { |r| r[:dispensation_obs_id] }.compact.uniq
+        if source_obs_ids.any?
+          hiv_obs_ids = ActiveRecord::Base.connection.select_values(<<~SQL)
+            SELECT obs_id#{' '}
+            FROM #{source_db}.obs#{' '}
+            WHERE obs_id IN (#{source_obs_ids.join(',')})#{' '}
+            AND encounter_id IN (#{HIV_ENCOUNTER_IDS.to_a.join(',')})
+          SQL
+          hiv_obs_ids_set = Set.new(hiv_obs_ids)
+          records.reject! { |r| !hiv_obs_ids_set.include?(r[:dispensation_obs_id]) }
+        end
+      end
     end
 
     insertable_records = records.reject do |record|
@@ -521,10 +1142,14 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
         existing_keys.include?([record[:role], record[:user_id]])
       when 'UserProperty'
         existing_keys.include?([record[:user_id], record[:property]])
+      when 'UserProgram'
+        existing_keys.include?([record[:user_id], record[:program_id]])
       when 'DrugIngredient'
         existing_keys.include?([record[:concept_id], record[:ingredient_id]])
       when 'PharmacyStockBalance', 'PharmacyStockVerification', 'Pharmacies'
         false # Never reject - always insert
+      when 'Pharmacy'
+        existing_keys.include?(record[:pharmacy_module_id])
       else
         existing_keys.include?(record[:uuid])
       end
@@ -533,11 +1158,17 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
     next if insertable_records.blank?
 
     # Set location_id for tables that have this column
-    if %w[GlobalProperty PharmacyBatch PatientIdentifier PatientProgram Encounter
+    if %w[PharmacyBatch PatientIdentifier PatientProgram Encounter
           Observation].include?(target_model.to_s)
-      location_id_value = target_model.to_s == 'GlobalProperty' ? SITE_ID.to_s : SITE_ID
       insertable_records.each do |record|
-        record[:location_id] = location_id_value if record.key?(:location_id)
+        record[:location_id] = SITE_ID if record.key?(:location_id)
+      end
+    end
+
+    # Force-set location_id for GlobalProperty (source table may not have this column)
+    if target_model.to_s == 'GlobalProperty'
+      insertable_records.each do |record|
+        record[:location_id] = SITE_ID.to_s
       end
     end
 
@@ -545,6 +1176,13 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
     if target_model.to_s == 'Observation'
       insertable_records.each do |record|
         record[:obs_group_id] = nil if record.key?(:obs_group_id)
+      end
+    end
+
+    # For Orders, temporarily set obs_id to NULL - will be backfilled by backfill_orders_obs_ids after obs migration
+    if target_model.to_s == 'Order'
+      insertable_records.each do |record|
+        record[:obs_id] = nil if record.key?(:obs_id)
       end
     end
 
@@ -606,6 +1244,11 @@ end
 # User Migration with Percentage Tracking
 def populate_users(source_db)
   admin_user = query_with_columns("#{source_db}.users", 'user_id = 1').first
+  unless admin_user
+    puts '✗ Error: Admin user (user_id = 1) not found in source database'
+    return
+  end
+
   if User.unscoped.exists?(uuid: admin_user['uuid'])
     admin_user = User.unscoped.find_by(uuid: admin_user['uuid'])
   else
@@ -615,7 +1258,7 @@ def populate_users(source_db)
     admin_user['changed_by'] = next_user_id
     admin_user['person_id'] = create_user_person(admin_user.symbolize_keys, source_db)
     admin_user['location_id'] = SITE_ID
-    
+
     # Check for duplicate username and append site code if needed
     if admin_user['username'].present?
       existing_user = User.unscoped.find_by(username: admin_user['username'])
@@ -623,7 +1266,7 @@ def populate_users(source_db)
         admin_user['username'] = "#{admin_user['username']}_#{SITE_ID}"
       end
     end
-    
+
     admin_user = User.new(admin_user)
     admin_user.save!(validate: false)
   end
@@ -648,9 +1291,7 @@ def populate_users(source_db)
       # Check for duplicate username and append site code if needed
       if user[:username].present?
         existing_user = User.unscoped.find_by(username: user[:username])
-        if existing_user && existing_user.uuid != user[:uuid]
-          user[:username] = "#{user[:username]}_#{SITE_ID}"
-        end
+        user[:username] = "#{user[:username]}_#{SITE_ID}" if existing_user && existing_user.uuid != user[:uuid]
       end
 
       user
@@ -812,12 +1453,29 @@ end
 def get_new_user_id(old_user_id, source_db)
   return unless old_user_id
 
-  user_uuid = query_with_columns("#{source_db}.users", "user_id = #{old_user_id}").first['uuid']
+  user_record = query_with_columns("#{source_db}.users", "user_id = #{old_user_id}").first
+  unless user_record
+    # Log orphaned user reference for data quality reporting
+    CACHE_MUTEX.synchronize do
+      ORPHANED_REFERENCES[:users] << old_user_id unless ORPHANED_REFERENCES[:users].include?(old_user_id)
+    end
+    return nil
+  end
+
+  user_uuid = user_record['uuid']
   User.unscoped.find_by(uuid: user_uuid)&.id
 end
 
 def create_user_person(user, source_db)
   person_data = query_with_columns("#{source_db}.person", "person_id = #{user[:person_id]}").first
+  unless person_data
+    # Log orphaned person reference for data quality reporting
+    CACHE_MUTEX.synchronize do
+      ORPHANED_REFERENCES[:person] << user[:person_id] unless ORPHANED_REFERENCES[:person].include?(user[:person_id])
+    end
+    return nil
+  end
+
   populate_person(person_data, source_db)
 end
 
@@ -850,7 +1508,8 @@ def get_encounter_type_ids(records, key, source_db)
 end
 
 def get_relationship_type_ids(records, key, source_db)
-  fetch_new_ids_by_name(records, source_db, 'relationship_type', :relationship_type_id, :a_is_to_b, RelationshipType, key)
+  fetch_new_ids_by_name(records, source_db, 'relationship_type', :relationship_type_id, :a_is_to_b, RelationshipType,
+                        key)
 end
 
 def get_concept_ids(records, key, _source_db)
@@ -930,13 +1589,73 @@ def create_users_persons(records, source_db)
   records
 end
 
-def update_group_obs_ids(source_db, foreign_keys = {})
+# Align uuid column collation across source and target tables to allow index usage in JOINs.
+# Checks each table's current collation and alters only if they differ.
+def align_uuid_collations(source_db, tables)
+  conn = ActiveRecord::Base.connection
+  target_db = conn.current_database
+
+  tables.each do |table|
+    rows = conn.select_all(<<~SQL)
+      SELECT TABLE_SCHEMA, COLLATION_NAME
+      FROM information_schema.COLUMNS
+      WHERE TABLE_NAME = '#{table}'
+        AND COLUMN_NAME = 'uuid'
+        AND TABLE_SCHEMA IN ('#{source_db}', '#{target_db}')
+    SQL
+
+    collations = rows.each_with_object({}) { |r, h| h[r['TABLE_SCHEMA']] = r['COLLATION_NAME'] }
+    src_col = collations[source_db]
+    tgt_col = collations[target_db]
+
+    next unless src_col && tgt_col
+    next if src_col == tgt_col
+
+    puts "  ⚠ uuid collation mismatch on #{table}: #{source_db}=#{src_col}, #{target_db}=#{tgt_col}"
+    puts "    Altering #{target_db}.#{table}.uuid to #{src_col}..."
+    conn.execute("ALTER TABLE #{table} MODIFY uuid char(38) CHARACTER SET utf8mb3 COLLATE #{src_col}")
+    puts "    ✓ #{target_db}.#{table}.uuid now #{src_col}"
+  end
+end
+
+# Backfill orders.obs_id after obs migration (Group_5) is complete
+def backfill_orders_obs_ids(source_db)
+  puts "\n🔄 Backfilling orders.obs_id after obs migration..."
+
+  total = ActiveRecord::Base.connection.select_value(
+    "SELECT COUNT(*) FROM #{source_db}.orders WHERE obs_id IS NOT NULL"
+  ).to_i
+
+  if total.zero?
+    puts '✓ No orders.obs_id records to backfill'
+    return
+  end
+
+  puts "  Found #{total} orders records with obs_id to backfill"
+
+  align_uuid_collations(source_db, %w[orders obs])
+
+  ActiveRecord::Base.connection.execute(<<~SQL)
+    UPDATE orders o
+    JOIN #{source_db}.orders src ON o.uuid = src.uuid
+    JOIN obs tgt ON tgt.uuid = (
+      SELECT uuid FROM #{source_db}.obs WHERE obs_id = src.obs_id LIMIT 1
+    )
+    SET o.obs_id = tgt.obs_id
+    WHERE src.obs_id IS NOT NULL
+      AND o.obs_id IS NULL
+  SQL
+
+  updated = ActiveRecord::Base.connection.select_value(
+    'SELECT COUNT(*) FROM orders WHERE obs_id IS NOT NULL'
+  ).to_i
+
+  puts "✓ orders.obs_id backfill complete (#{updated} records updated)"
+end
+
+def update_group_obs_ids(source_db, _foreign_keys = {})
   puts 'Starting obs_group_id update...'
 
-  # Use adaptive batch size for better performance
-  limit = determine_optimal_batch_size(source_db, 'obs')
-  offset = 0
-  total_processed = 0
   total_records = ActiveRecord::Base.connection
                                     .select_one("SELECT COUNT(*) AS count
                                     FROM #{source_db}.obs WHERE obs_group_id IS NOT NULL")['count'].to_i
@@ -944,98 +1663,109 @@ def update_group_obs_ids(source_db, foreign_keys = {})
   return if total_records == 0
 
   puts "Found #{total_records} observations with obs_group_id to update"
+  puts 'Resolving obs_group_id via single SQL JOIN (UUID-based, no Ruby batching)...'
 
-  # Drop existing temp table if exists and create fresh
-  ActiveRecord::Base.connection.execute('DROP TABLE IF EXISTS temp_obs_update')
-  ActiveRecord::Base.connection.execute(<<-SQL)
-    CREATE TABLE temp_obs_update (
-      uuid CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin PRIMARY KEY,
-      obs_group_id INT,
-      INDEX idx_obs_group_id (obs_group_id)
-    ) ENGINE=InnoDB;
+  # Both child obs and parent obs are already migrated into the target DB.
+  # We resolve obs_group_id entirely in SQL:
+  #   1. Match each target obs to its source row by UUID.
+  #   2. From the source row, get the source obs_group_id.
+  #   3. Look up that source obs_group_id's UUID in the source DB.
+  #   4. Find the corresponding target obs by that UUID to get the new obs_id.
+  align_uuid_collations(source_db, %w[obs])
+  ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS = 0')
+  ActiveRecord::Base.connection.execute(<<~SQL)
+    UPDATE obs o
+    JOIN #{source_db}.obs src
+      ON o.uuid = src.uuid
+    JOIN #{source_db}.obs src_parent
+      ON src_parent.obs_id = src.obs_group_id
+    JOIN obs tgt_parent
+      ON tgt_parent.uuid = src_parent.uuid
+    SET o.obs_group_id = tgt_parent.obs_id
+    WHERE src.obs_group_id IS NOT NULL
+      AND o.obs_group_id IS NULL
   SQL
+  ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS = 1')
 
-  batch_update_threshold = 50_000 # Apply updates every 50k records to avoid huge temp table
-  current_batch_size = 0
+  updated = ActiveRecord::Base.connection.select_value(
+    'SELECT COUNT(*) FROM obs WHERE obs_group_id IS NOT NULL'
+  ).to_i
 
-  loop do
-    source_obs_grouped = query_with_columns("#{source_db}.obs", 'obs_group_id IS NOT NULL', limit, offset)
-    break if source_obs_grouped.blank?
-
-    source_obs_grouped.each(&:symbolize_keys!)
-
-    # Fetch and map foreign keys in bulk - use caching
-    mapped_records = source_obs_grouped
-    foreign_keys.each do |foreign_key, mapping_method|
-      mapped_records = send(mapping_method, mapped_records, foreign_key, source_db)
-    end
-
-    # Prepare batch updates - filter out nil values
-    updates = mapped_records.map do |record|
-      {
-        uuid: record[:uuid],
-        obs_group_id: record[:obs_group_id]
-      }
-    end.reject { |r| r[:uuid].blank? || r[:obs_group_id].nil? }
-
-    if updates.any?
-      # Use INSERT IGNORE for better performance
-      values = updates.map { |r| "('#{r[:uuid]}', #{r[:obs_group_id]})" }.join(', ')
-      ActiveRecord::Base.connection.execute("INSERT IGNORE INTO temp_obs_update (uuid, obs_group_id) VALUES #{values}")
-
-      total_processed += updates.size
-      current_batch_size += updates.size
-
-      # Apply updates incrementally to avoid huge temp table
-      if current_batch_size >= batch_update_threshold
-        puts 'Applying batch obs_group_id updates...'
-        ActiveRecord::Base.connection.execute('UPDATE obs o
-            JOIN temp_obs_update t ON o.uuid = t.uuid
-            SET o.obs_group_id = t.obs_group_id')
-        ActiveRecord::Base.connection.execute('TRUNCATE TABLE temp_obs_update')
-        current_batch_size = 0
-      end
-    end
-
-    offset += limit
-    percentage = ((total_processed.to_f / total_records) * 100).round(2)
-    puts "Updating obs_group_id: #{percentage}% complete (#{total_processed}/#{total_records})"
-  end
-
-  # Perform final update for any remaining records
-  remaining_count = ActiveRecord::Base.connection.select_value('SELECT COUNT(*) FROM temp_obs_update').to_i
-  if remaining_count > 0
-    puts 'Applying final obs_group_id updates to obs table...'
-    ActiveRecord::Base.connection.execute('UPDATE obs o
-        JOIN temp_obs_update t ON o.uuid = t.uuid
-        SET o.obs_group_id = t.obs_group_id;')
-  end
-  puts '✓ obs_group_id update complete'
-ensure
-  ActiveRecord::Base.connection.execute('DROP TABLE IF EXISTS temp_obs_update;')
+  puts "✓ obs_group_id update complete (#{updated} records now have obs_group_id set)"
 end
 
 # Main Execution
 prepare_centralized_db
+ensure_migration_indexes(source_db)
 populate_users(source_db)
-def populate_group(group)
-  Parallel.each(group, in_threads: optimal_threads) do |(table, model, source_db, dependencies)|
+
+# Load HIV program IDs for filtering clinical data
+puts "\n" + '=' * 80
+puts 'HIV PROGRAM FILTERING ENABLED'
+puts '=' * 80
+puts '📋 Migration Scope:'
+puts '   ✓ ALL person and patient records will be migrated'
+puts '   ✓ ONLY HIV program clinical data will be migrated'
+puts '=' * 80 + "\n"
+
+load_hiv_patient_ids(source_db)
+load_hiv_encounter_ids(source_db)
+
+# Clear caches that are no longer needed after a group completes to free memory.
+# Caches are cumulative — without clearing, they balloon across all groups.
+def clear_migrated_caches(completed_group_name)
+  case completed_group_name
+  when 'Group_4'
+    # orders + patient_state done; order and program ID mappings no longer needed
+    # Keep ENCOUNTER, PERSON, USER caches — still needed by obs/drug_order
+    CACHE_MUTEX.synchronize do
+      ORDER_ID_CACHE.clear
+      PROGRAM_ID_CACHE.clear
+    end
+    puts "🧹 Cleared ORDER_ID_CACHE and PROGRAM_ID_CACHE after #{completed_group_name}"
+  when 'Group_5'
+    # obs done; obs IDs still needed for backfill and update_group_obs_ids — keep OBS_ID_CACHE
+    # Encounter IDs no longer needed for SQL filtering after obs and orders are done
+    CACHE_MUTEX.synchronize do
+      ENCOUNTER_ID_CACHE.clear
+    end
+    puts "🧹 Cleared ENCOUNTER_ID_CACHE after #{completed_group_name}"
+  when 'Group_6'
+    # All clinical tables done — clear everything
+    CACHE_MUTEX.synchronize do
+      USER_ID_CACHE.clear
+      PERSON_ID_CACHE.clear
+      OBS_ID_CACHE.clear
+    end
+    puts "🧹 Cleared remaining caches after #{completed_group_name}"
+  end
+  GC.start(full_mark: true, immediate_sweep: true)
+end
+
+def populate_group(group, group_name, source_db)
+  start_time = Time.now
+  capture_memory_snapshot("Before #{group_name}")
+
+  tasks = group.map { |table, (model, dependencies)| [table, model, source_db, dependencies] }
+
+  Parallel.each(tasks, in_threads: optimal_threads) do |(table, model, src_db, dependencies)|
     ActiveRecord::Base.connection_pool.with_connection do
-      populate_records(table, model, source_db, dependencies)
+      populate_records(table, model, src_db, dependencies)
     end
   rescue StandardError => e
     puts "❌ Error processing #{table}: #{e.message}"
     puts e.backtrace.first(10).join("\n")
-  ensure
-    # Explicitly close and release this thread's connection after table completes
-    if ActiveRecord::Base.connection_pool.active_connection?
-      ActiveRecord::Base.connection.close
-      ActiveRecord::Base.connection_pool.release_connection
-    end
+  end
+
+  duration = Time.now - start_time
+  capture_memory_snapshot("After #{group_name}")
+
+  CACHE_MUTEX.synchronize do
+    PERFORMANCE_METRICS[:group_timings][group_name] = duration
   end
 ensure
-  # Disconnect all remaining connections from pool after group completes
-  ActiveRecord::Base.connection_pool.disconnect!
+  # Release connections but don't disconnect the pool between groups
+  ActiveRecord::Base.connection_pool.release_connection if ActiveRecord::Base.connection_pool.active_connection?
 end
 
 if __FILE__ == $0
@@ -1045,6 +1775,10 @@ if __FILE__ == $0
     }],
     user_property: [UserProperty, {
       user_id: :get_new_user_ids
+    }],
+    user_programs: [UserProgram, {
+      user_id: :get_new_user_ids,
+      program_id: :get_program_workflow_ids
     }],
     global_property: [GlobalProperty, {}],
     person: [Person, {
@@ -1150,7 +1884,7 @@ if __FILE__ == $0
       creator: :get_new_user_ids,
       orderer: :get_new_user_ids,
       voided_by: :get_new_user_ids,
-      obs_id: :get_obs_ids,
+      obs_id: :get_obs_ids, # deferred - obs_id set to nil, backfilled after Group_5
       order_type_id: :get_order_type_ids,
       concept_id: :get_concept_ids,
       discontinued_by: :get_new_user_ids,
@@ -1191,21 +1925,30 @@ if __FILE__ == $0
     }]
   }
 
-  groups = [group1_models, group2_models, group3_models, group4_models, group5_models, group6_models]
+  groups = [
+    [group1_models, 'Group_1'],
+    [group2_models, 'Group_2'],
+    [group3_models, 'Group_3'],
+    [group4_models, 'Group_4'],
+    [group5_models, 'Group_5'],
+    [group6_models, 'Group_6']
+  ]
 
-  groups.each do |group|
-    populate_group(group.map { |table, (model, dependencies)| [table, model, source_db, dependencies] })
+  groups.each do |group, group_name|
+    populate_group(group, group_name, source_db)
+    clear_migrated_caches(group_name)
   end
-  update_group_obs_ids(source_db, obs_id: :get_obs_ids,
-                                  encounter_id: :get_encounter_ids,
-                                  order_id: :get_order_ids,
-                                  creator: :get_new_user_ids,
-                                  voided_by: :get_new_user_ids,
-                                  person_id: :get_person_ids,
-                                  obs_group_id: :get_obs_ids,
-                                  concept_id: :get_concept_ids,
-                                  value_coded: :get_concept_ids,
-                                  value_drug: :get_drug_ids)
+
+  # Backfill orders.obs_id now that obs have been migrated in Group_5
+  backfill_orders_obs_ids(source_db)
+
+  update_group_obs_ids(source_db)
+
+  # Report data quality issues
+  report_data_quality_issues
+
+  # Report performance metrics
+  report_performance_metrics
 
   # Final cleanup: Clear all active connections
   puts "\n✓ Migration complete! Cleaning up connections..."

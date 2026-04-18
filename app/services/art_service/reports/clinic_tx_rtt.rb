@@ -10,6 +10,7 @@ module ArtService
         @start_date = ActiveRecord::Base.connection.quote(start_date)
         @end_date = ActiveRecord::Base.connection.quote(end_date)
         @occupation = kwargs[:occupation]
+        @location_id = User.current.location_id
       end
 
       def find_report
@@ -145,6 +146,7 @@ module ArtService
             ON patients_with_orders_at_end_of_quarter.patient_id = patient_program.patient_id
           LEFT JOIN (#{current_occupation_query}) AS a ON a.person_id = patient_program.patient_id
           WHERE patient_program.program_id = 1
+            AND patient_program.location_id = #{@location_id}
             /* Ensure that the patients retrieved, did not receive ART within 28 days
                before the start of the reporting period */
             AND patient_program.patient_id NOT IN (
@@ -160,8 +162,8 @@ module ArtService
                 AND orders.voided = 0
             ) #{%w[Military Civilian].include?(@occupation) ? 'AND' : ''} #{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}
           GROUP BY patient_program.patient_id
-          HAVING initial_outcome IN ('Defaulted', 'Treatment stopped')
-             AND final_outcome = 'On antiretrovirals';
+          HAVING initial_outcome COLLATE utf8mb3_general_ci IN ('Defaulted', 'Treatment stopped')
+             AND final_outcome COLLATE utf8mb3_general_ci = 'On antiretrovirals';
         SQL
       end
     end

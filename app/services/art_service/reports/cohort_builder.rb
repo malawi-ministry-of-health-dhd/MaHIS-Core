@@ -12,12 +12,17 @@ module ArtService
       include ArtTempTablesUtils
       include ArtTempTablesNaming
 
-      def initialize(outcomes_definition: 'moh')
+      def initialize(outcomes_definition: 'moh', keep_temp_tables: nil)
         unless %w[moh pepfar].include?(outcomes_definition.downcase)
           raise ArgumentError, "Invalid outcomes_definition `#{outcomes_definition}` expected moh or pepfar"
         end
 
         @outcomes_definition = outcomes_definition
+        @keep_temp_tables = if keep_temp_tables.nil?
+                              ENV['COHORT_KEEP_TEMP_TABLES'] == 'true' || ENV['KEEP_TEMP_TABLES'] == 'true'
+                            else
+                              keep_temp_tables.to_s.casecmp?('true') || keep_temp_tables == true
+                            end
         @concept_cache = {}
       end
 
@@ -1217,6 +1222,8 @@ module ArtService
         pregnant_concepts = ConceptName.where(name: ['Is patient pregnant?', 'patient pregnant'])
                                        .select(:concept_id)
 
+        yes_concepts = ConceptName.where(name: 'Yes').select(:concept_id)
+
         ActiveRecord::Base.connection.select_all <<~SQL
           SELECT obs.person_id, obs.value_coded
           FROM obs obs
@@ -1234,7 +1241,7 @@ module ArtService
           INNER JOIN #{temp_max_drug_orders} AS max_obs ON max_obs.patient_id = obs.person_id
             AND DATE(max_obs.start_date) = DATE(obs.obs_datetime)
           GROUP BY obs.person_id
-          HAVING value_coded = 1065
+          HAVING value_coded IN (#{yes_concepts.to_sql})
           ORDER BY obs.obs_datetime DESC;
         SQL
       end
@@ -2124,9 +2131,13 @@ module ArtService
         SQL
         ##########################################################
 
-        ActiveRecord::Base.connection.execute <<~SQL
-          DROP TABLE IF EXISTS `temp_earliest_start_date`;
-        SQL
+        unless @keep_temp_tables
+          ActiveRecord::Base.connection.execute <<~SQL
+            DROP TABLE IF EXISTS `temp_earliest_start_date`;
+          SQL
+        end
+
+        return if @keep_temp_tables && check_if_table_exists(temp_earliest_start_date)
 
         ActiveRecord::Base.connection.execute <<~SQL
           CREATE TABLE #{temp_earliest_start_date}

@@ -5,6 +5,7 @@ module ArtService
     class RegimensByWeightAndGender
       include ConcurrencyUtils
       include CommonSqlQueryUtils
+      include ArtTempTablesNaming
 
       attr_reader :start_date, :end_date, :rebuild
 
@@ -38,7 +39,8 @@ module ArtService
       ].freeze
 
       def regimen_counts
-        with_lock(ArtCohort::LOCK_FILE) do
+        lock_file = "art_service/reports/cohort_#{Location.current.location_id}.lock"
+        with_lock(lock_file) do
           rebuild_patient_outcomes if rebuild
           WEIGHT_BANDS.map do |start_weight, end_weight|
             {
@@ -71,20 +73,29 @@ module ArtService
       # issue - it probably will eventually).
 
       def regimen_counts_by_weight_and_gender(start_weight, end_weight, gender)
-        date = ActiveRecord::Base.connection.quote(end_date)
+         date = ActiveRecord::Base.connection.quote(end_date)
+        patient_ids = patients_in_weight_band(start_weight, end_weight).to_sql
 
-        query = TempPatientOutcome.joins('INNER JOIN temp_earliest_start_date USING (patient_id)')
-                                  .select("patient_current_regimen(temp_earliest_start_date.patient_id, #{date}) as regimen, count(*) AS count")
-                                  .where(patient_id: patients_in_weight_band(start_weight, end_weight))
-                                  .where(moh_cum_outcome: 'On Antiretrovirals')
-                                  .group(:regimen)
-        
-        query = query.joins(dsd_query(dsd: @dsd, model: 'temp_earliest_start_date'))  if @dsd
+        gender_condition = gender ? "AND gender LIKE '#{gender}%'" : 'AND gender IS NULL'
+        dsd_join = @dsd ? dsd_query(dsd: @dsd, model: temp_earliest_start_date) : ''
 
-        query = gender ? query.where('gender LIKE ?', "#{gender}%") : query.where('gender IS NULL')
+        sql = <<~SQL
+          SELECT patient_current_regimen(#{temp_earliest_start_date}.patient_id, #{date}) AS regimen,
+                 COUNT(*) AS count
+          FROM #{temp_patient_outcomes}
+          INNER JOIN #{temp_earliest_start_date} USING (patient_id)
+          #{dsd_join}
+          WHERE patient_id IN (#{patient_ids})
+            AND moh_cum_outcome = 'On Antiretrovirals'
+            #{gender_condition}
+          GROUP BY regimen
+        SQL
 
-        query.collect { |obs| { obs.regimen => obs.count } }
+        ActiveRecord::Base.connection.select_all(sql).map do |row|
+          { row['regimen'] => row['count'] }
+        end
       end
+      
 
       def patients_in_weight_band(start_weight, end_weight)
         if start_weight.nil? && end_weight.nil?
@@ -104,7 +115,7 @@ module ArtService
       end
 
       def patients_with_known_weight
-        Observation.joins('INNER JOIN temp_patient_outcomes AS outcomes ON outcomes.patient_id = obs.person_id')
+        Observation.joins("INNER JOIN #{temp_patient_outcomes} AS outcomes ON outcomes.patient_id = obs.person_id")
                    .where(concept_id: ConceptName.where(name: 'Weight (kg)').select(:concept_id),
                           outcomes: { moh_cum_outcome: 'On antiretrovirals' })
                    .where('DATE(obs.obs_datetime) <= ?', end_date)

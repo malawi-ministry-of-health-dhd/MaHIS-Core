@@ -41,6 +41,28 @@ class User < RetirableRecord
     Location.current
   end
 
+  def global_superuser?
+    user_roles.exists?(role: 'Global Superuser')
+  end
+
+  def district_superuser?
+    user_roles.exists?(role: 'District Superuser')
+  end
+
+  def facility_superuser?
+    user_roles.exists?(role: 'Facility Superuser')
+  end
+
+  def managed_location_ids
+    return nil if global_superuser?
+
+    ids = [location_id]
+    if district_superuser?
+      ids += Location.where(parent_location: location_id).pluck(:location_id)
+    end
+    ids.compact.uniq
+  end
+
   def as_json(options = {})
     super(options.merge(
       except: %i[password salt secret_question secret_answer
