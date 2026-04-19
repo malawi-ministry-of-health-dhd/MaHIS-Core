@@ -1,4 +1,5 @@
 # frozen_string_literal: true
+require 'securerandom'
 
 namespace :concepts do
   desc 'Load custom application concepts'
@@ -45,11 +46,33 @@ module CreateConcepts
       { name: 'Blood loss ≥500ml', datatype: 'N/A', class: 'Misc' },
     ].freeze
 
+    PRESENTING_COMPLAINTS_CONCEPTS = [
+      { name: 'Slow onset severe headache', datatype: 'N/A', class: 'Symptom/Finding' },
+      { name: 'Confusion', datatype: 'N/A', class: 'Symptom/Finding' },
+      { name: 'Fever', datatype: 'N/A', class: 'Symptom/Finding' },
+      { name: 'Neck stiffness', datatype: 'N/A', class: 'Symptom/Finding' },
+      { name: 'Persistent fever/drenching night sweats', datatype: 'N/A', class: 'Symptom/Finding' },
+      { name: 'Weight loss or failure to thrive', datatype: 'N/A', class: 'Symptom/Finding' },
+      { name: 'Anaemia<8gdl', datatype: 'N/A', class: 'Symptom/Finding' },
+      { name: 'Enlarged nodes', datatype: 'N/A', class: 'Symptom/Finding' },
+      { name: 'Meningits signs', datatype: 'N/A', class: 'Symptom/Finding' },
+      { name: 'Cough', datatype: 'N/A', class: 'Symptom/Finding' },
+    ].freeze
+
     def load!
       ActiveRecord::Base.transaction do
         CONCEPTS.each do |concept_data|
           find_or_create_concept!(concept_data)
         end
+
+        PRESENTING_COMPLAINTS_CONCEPTS.each do |concept_data|
+          find_or_create_concept!(concept_data)
+        end
+
+        ensure_concept_set_membership!(
+          set_name: 'Presenting Complaints',
+          member_concepts: PRESENTING_COMPLAINTS_CONCEPTS
+        )
       end
       puts "Successfully loaded #{CONCEPTS.size} custom concepts"
     end
@@ -118,6 +141,39 @@ module CreateConcepts
         )
       rescue StandardError => e
         puts "  Warning: Could not create numeric metadata: #{e.message}"
+      end
+    end
+
+    def ensure_concept_set_membership!(set_name:, member_concepts:)
+      set_concept = find_or_create_concept!(
+        name: set_name,
+        datatype: 'N/A',
+        class: 'ConvSet'
+      )
+
+      member_concepts.each_with_index do |member_data, index|
+        concept = find_or_create_concept!(member_data)
+
+        existing_link = ConceptSet.find_by(
+          concept_set: set_concept.concept_id,
+          concept_id: concept.concept_id
+        )
+
+        if existing_link
+          puts "Concept '#{member_data[:name]}' already linked to '#{set_name}'"
+          next
+        end
+
+        ConceptSet.create!(
+          concept_set: set_concept.concept_id,
+          concept_id: concept.concept_id,
+          sort_weight: index + 1,
+          creator: creator_id,
+          date_created: Time.now,
+          uuid: SecureRandom.uuid
+        )
+
+        puts "Linked '#{member_data[:name]}' to '#{set_name}'"
       end
     end
 

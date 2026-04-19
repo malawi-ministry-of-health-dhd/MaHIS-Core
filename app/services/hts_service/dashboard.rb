@@ -79,6 +79,7 @@ end
 
 def self.find_orders(filters)
   date = filters.delete(:date)
+  order_type_id = (filters.delete(:order_type_id) || 9).to_i
 
   # Use the new SQL query to get patients with orders without results
   query = <<-SQL
@@ -111,12 +112,12 @@ def self.find_orders(filters)
       HAVING COUNT(result_obs.obs_id) = 0
     ) AS orders_without_results ON orders_without_results.order_id = lo.order_id
     WHERE lo.voided = 0
-      AND lo.order_type_id = 9
+      AND lo.order_type_id = ?
   SQL
 
   # Add dynamic filters if provided
   where_conditions = []
-  bind_values = []
+  bind_values = [order_type_id]
 
   if filters[:patient_id]
     where_conditions << "p.person_id = ?"
