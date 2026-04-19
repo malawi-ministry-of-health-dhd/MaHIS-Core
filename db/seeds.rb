@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'yaml'
+require 'shellwords'
 
 # -------------------------------------------------------------------
 # Load database configuration
@@ -26,6 +27,21 @@ password = db_config['password']
 database = db_config['database']
 host     = db_config['host']
 port     = db_config['port']
+
+def import_sql_gz!(file_path:, username:, password:, host:, port:, database:)
+  source_cmd = "gunzip -c #{Shellwords.escape(file_path.to_s)}"
+
+  cmd = "#{source_cmd} | mysql -u #{Shellwords.escape(username.to_s)}"
+  cmd += " -p#{Shellwords.escape(password.to_s)}" if password.present?
+  cmd += " -h #{Shellwords.escape(host.to_s)}" if host.present?
+  cmd += " -P #{Shellwords.escape(port.to_s)}" if port.present?
+  cmd += " #{Shellwords.escape(database.to_s)}"
+
+  return if system(cmd)
+
+  exit_code = $?.respond_to?(:exitstatus) ? $?.exitstatus : 'unknown'
+  raise "Import failed for #{File.basename(file_path)} (exit code: #{exit_code})"
+end
 
 def ensure_facility_level_data!
   conn = ActiveRecord::Base.connection
@@ -145,13 +161,14 @@ end
 # Load OpenMRS skeleton database
 # -------------------------------------------------------------------
 if ENV['INITIAL_SETUP']
-  cmd = "gunzip -c db/mahis_skeleton.sql.gz | mysql -u #{username}"
-  cmd += " -p#{password}" if password.present?
-  cmd += " -h #{host}" if host.present?
-  cmd += " -P #{port}" if port.present?
-  cmd += " #{database}"
-
-  system(cmd)
+  import_sql_gz!(
+    file_path: Rails.root.join('db', 'mahis_skeleton.sql.gz'),
+    username: username,
+    password: password,
+    host: host,
+    port: port,
+    database: database
+  )
 
   puts 'Harmonized DB Initialization Complete 🎉'
 end
@@ -174,13 +191,14 @@ if total.positive?
       DOC
       next
     end
-    cmd = "gunzip -c #{file_path} | mysql -u #{username}"
-    cmd += " -p#{password}" if password.present?
-    cmd += " -h #{host}" if host.present?
-    cmd += " -P #{port}" if port.present?
-    cmd += " #{database}"
-
-    system(cmd)
+    import_sql_gz!(
+      file_path: file_path,
+      username: username,
+      password: password,
+      host: host,
+      port: port,
+      database: database
+    )
 
     puts "Imported data from #{File.basename(file_path)}"
   end
