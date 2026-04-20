@@ -29,7 +29,7 @@ module PatientRecordService
       return ok unless relationship_data.present?
 
       person = Person.find(relationship_data[0].person_b)
-      person_service.update_person(person, record[:guardianInformation][:unsaved][0].permit!)
+      person_service.update_person(person, to_permitted_params(record[:guardianInformation][:unsaved][0]))
 
       if relationship_data[0].relationship_id.present?
         relationship_type = RelationshipType.find(record[:otherPersonInformation][:relationshipID])

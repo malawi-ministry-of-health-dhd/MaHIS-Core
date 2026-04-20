@@ -99,7 +99,7 @@ module PatientRecordService
       return ok unless record[:personInformation] && record[:saveStatusPersonInformation] == 'edit'
 
       person = Person.find(patient_id)
-      person_service.update_person(person, record[:personInformation].permit!)
+      person_service.update_person(person, to_permitted_params(record[:personInformation]))
       ok
     rescue StandardError => e
       log_and_fail("Failed to update person information", e)
