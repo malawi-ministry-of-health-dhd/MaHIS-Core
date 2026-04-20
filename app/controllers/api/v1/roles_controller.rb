@@ -4,11 +4,66 @@ module Api
   module V1
     class RolesController < ApplicationController
       def index
-        render json: paginate(Role)
+        roles = paginate(Role.includes(:privileges, :role_privileges, :user_roles))
+        render json: roles.as_json(include: { privileges: {}, role_privileges: {}, user_roles: {} })
       end
 
       def show
-        render json: Role.find(params[:id])
+        role = Role.includes(:privileges, :role_privileges, :user_roles).find(params[:id])
+        render json: role.as_json(include: { privileges: {}, role_privileges: {}, user_roles: {} })
+      end
+
+      def create
+        role = Role.create!(role_params)
+        render json: role, status: :created
+      end
+
+      def update
+        role = Role.find(params[:id])
+        role.update!(role_params)
+        render json: role
+      end
+
+      def destroy
+        role = Role.find(params[:id])
+        role.destroy!
+        head :no_content
+      end
+
+      def add_privilege
+        role_name = params[:id]
+        privilege_name = params[:privilege]
+
+        # Verify role and privilege exist
+        Role.find(role_name)
+        Privilege.find(privilege_name)
+
+        # Check if the privilege is already assigned to the role
+        unless RolePrivilege.exists?(role: role_name, privilege: privilege_name)
+          # Use new + save to bypass association validation issues with composite keys
+          role_privilege = RolePrivilege.new
+          role_privilege.write_attribute(:role, role_name)
+          role_privilege.write_attribute(:privilege, privilege_name)
+          role_privilege.save!
+        end
+
+        render json: { message: 'Privilege added successfully' }, status: :ok
+      end
+
+      def remove_privilege
+        role_name = params[:id]
+        privilege_name = params[:privilege]
+
+        role_privilege = RolePrivilege.find_by(role: role_name, privilege: privilege_name)
+        role_privilege&.destroy!
+
+        render json: { message: 'Privilege removed successfully' }, status: :ok
+      end
+
+      private
+
+      def role_params
+        params.permit(:role, :description, :uuid)
       end
     end
   end

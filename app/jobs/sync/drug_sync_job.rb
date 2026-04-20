@@ -19,7 +19,8 @@ module Sync
         :maximum_daily_dose,
         :minimum_daily_dose,
         :route,
-        :units
+        :units,
+        :concept_set_id
       ]
     end
     
@@ -35,11 +36,18 @@ module Sync
         "minimum_daily_dose" => drug.minimum_daily_dose,
         "route" => drug.route,
         "units" => drug.units,
+        "concept_set_id" => get_concept_set_id(drug),
       }
     end
     
     def generate_document_id(drug)
       "drug_#{drug.drug_id}"
+    end
+
+    def get_concept_set_id(drug)
+      concept_set = ConceptSet.find_by(concept_id: drug.concept_id)
+      return nil unless concept_set
+      concept_set.concept_set_id
     end
   end
 end
