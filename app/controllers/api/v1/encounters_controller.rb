@@ -76,7 +76,7 @@ module Api
       #   patient_id: Patient involved in the encounter
       #
       # Optional parameters:
-      #   provider_id: user_id of surrogate doing the data entry defaults to current user
+      #   provider_id: user_id or person_id of surrogate doing the data entry defaults to current user
       def create
         type_id, patient_id, program_id = params.require(%i[encounter_type_id patient_id program_id])
         visit = params[:visit_id] ? Visit.find(params[:visit_id]) : (params[:visit] ? Visit.find(params[:visit]) : nil)
@@ -89,7 +89,7 @@ module Api
             patient: Patient.find(patient_id),
             program: Program.find(program_id),
             visit:,
-            provider: params[:provider_id] ? Person.find(params[:provider_id]) : User.current.person,
+            provider: params[:provider_id] ? User.find(params[:provider_id])&.person : User.current.person,
             encounter_datetime: encounter_datetime
           )
 
@@ -115,7 +115,7 @@ module Api
         encounter = Encounter.find(params[:id])
         type = params[:type_id] && EncounterType.find(params[:type_id])
         patient = params[:patient_id] && Patient.find(params[:patient_id])
-        provider = params[:provider_id] ? Person.find(params[:provider_id]) : User.current.person
+        provider = resolve_provider(params[:provider_id])
         encounter_datetime = TimeUtils.retro_timestamp(params[:encounter_datetime]&.to_time || Time.now)
 
         encounter_service.update(encounter, type:, patient:,
@@ -143,6 +143,16 @@ module Api
       # form of an id.
       def remap_encounter_type_id!(hash)
         hash.remap_field! :encounter_type_id, :encounter_type
+      end
+
+      # Backward compatibility: some clients send provider_id as user_id, others as person_id.
+      def resolve_provider(provider_id)
+        return User.current.person if provider_id.blank?
+
+        user = User.find_by(user_id: provider_id)
+        return user.person if user&.person
+
+        Person.find(provider_id)
       end
 
       def count_by_gender(type_id, gender, program_id, date = nil)
