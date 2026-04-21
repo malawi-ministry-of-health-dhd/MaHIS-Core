@@ -20,76 +20,74 @@ module Api
         offset = params[:offset].to_i || 0
         limit = params[:limit].to_i || 100
         location_id = params[:location_id]
-    
-        if location_id.blank?
-          render json: { error: 'Location ID is required' }, status: :bad_request and return
-        end
-  
+
+        render json: { error: 'Location ID is required' }, status: :bad_request and return if location_id.blank?
+
         patient_details = service.fetch_client_details(offset: offset, limit: limit, location_id:)
-    
+
         render json: { patients: patient_details, offset: offset, limit: limit }
       rescue StandardError => e
         render json: { error: e.message }, status: :internal_server_error
       end
- 
+
       def show
         current_patient = patient
         response = current_patient.as_json
 
         if params[:aetc]&.casecmp?('true')
-          active_visit = Visit.where(patient_id: current_patient.patient_id, date_stopped: nil).order(date_started: :desc).first
+          active_visit = Visit.where(patient_id: current_patient.patient_id,
+                                     date_stopped: nil).order(date_started: :desc).first
           response[:active_visit] = active_visit
         end
 
         render json: response
       end
-      
+
       def get_patient_list
         records = []
-        
+
         patient_ids = Patient.distinct
-        
+
         patient_ids.each do |patient|
           record = BuildPatientRecordService.build_patient_record(patient.patient_id)
           records << record
         end
-        
+
         render json: records
       end
 
       def get_patient_record
-        begin
-          if params[:patient_ids].present?
-            records = CouchdbPatientService.get_patient_record(
-              patient_ids: params[:patient_ids]
-            )
-          else
-            patient_id = params[:id] || params[:patient_id]
-            
-            if patient_id.blank?
-              render json: { error: 'Missing patient identifier' }, status: :bad_request
-              return
-            end
+        if params[:patient_ids].present?
+          records = CouchdbPatientService.get_patient_record(
+            patient_ids: params[:patient_ids]
+          )
+        else
+          patient_id = params[:id] || params[:patient_id]
 
-            records = CouchdbPatientService.get_patient_record(
-              patient_id: patient_id
-            )
+          if patient_id.blank?
+            render json: { error: 'Missing patient identifier' }, status: :bad_request
+            return
           end
 
-          render json: records
-        rescue ArgumentError => e
-          render json: { error: e.message }, status: :bad_request
-        rescue RestClient::Exception => e
-          render json: { error: 'Database connection error' }, status: :service_unavailable
-        rescue => e
-          Rails.logger.error "Patient record error: #{e.message}"
-          render json: { error: 'Internal server error' }, status: :internal_server_error
+          records = CouchdbPatientService.get_patient_record(
+            patient_id: patient_id
+          )
         end
+
+        render json: records
+      rescue ArgumentError => e
+        render json: { error: e.message }, status: :bad_request
+      rescue RestClient::Exception
+        render json: { error: 'Database connection error' }, status: :service_unavailable
+      rescue StandardError => e
+        Rails.logger.error "Patient record error: #{e.message}"
+        render json: { error: 'Internal server error' }, status: :internal_server_error
       end
 
       def save_patient_record
-        patient_record =SavePatientRecordService.new.create_patient_record(params[:record])
+        patient_record = SavePatientRecordService.new.create_patient_record(params[:record])
         Sync::BatchPatientSyncJob.perform_async
+        broadcast_patient_record_saved(patient_record)
         render json: patient_record
       end
 
@@ -114,15 +112,17 @@ module Api
       # GET /api/v1/search/patients
       def search_by_name_and_gender
         filters = params.permit(%i[given_name middle_name family_name birthdate gender per_page page])
-      
-        page = (filters[:page].presence).to_i.nonzero? || 1
-        per_page = (filters[:per_page].presence).to_i.nonzero? || 50
-      
+
+        page = filters[:page].presence.to_i.nonzero? || 1
+        per_page = filters[:per_page].presence.to_i.nonzero? || 10
+
         patients = service.find_patients_by_name_and_gender(filters[:given_name],
                                                             filters[:middle_name],
                                                             filters[:family_name],
-                                                            filters[:gender]).limit(per_page).offset((page.to_i - 1) * per_page)
-      
+                                                            filters[:gender])
+                          .limit(per_page).offset((page.to_i - 1) * per_page).to_a
+
+        Patient.preload_art_start_dates(patients)
         render json: patients
       end
 
@@ -130,7 +130,7 @@ module Api
         person = Person.find(params.require(:person_id))
         program = Program.find(params.require(:program_id))
         malawi_national_id = params[:malawi_national_ID]
-        npid  = params[:npid]
+        npid = params[:npid]
 
         render json: service.create_patient(program, person, malawi_national_id, npid), status: :created
       end
@@ -148,7 +148,7 @@ module Api
       def print_national_health_id_label
         patient = Patient.find(params[:patient_id])
         qr_code = if params[:qr_code]
-                    params[:qr_code].casecmp?('true') ? true : false
+                    params[:qr_code].casecmp?('true') || false
                   else
                     false
                   end
@@ -293,7 +293,8 @@ module Api
       def find_program_drug_orders_awaiting_dispensation
         cut_off_date = params[:date]&.to_date || Date.today
         program_id = params[:program_id]
-        drugs_orders = paginate(service.find_program_drug_orders_awaiting_dispensation(patient, cut_off_date, program_id:))
+        drugs_orders = paginate(service.find_program_drug_orders_awaiting_dispensation(patient, cut_off_date,
+                                                                                       program_id:))
         valid_orders = drugs_orders.select { |order| order.drug.present? }
         render json: valid_orders.as_json
       end
@@ -518,6 +519,27 @@ module Api
 
       def tb_prevention_service
         @tb_prevention_service ||= ArtService::Reports::Pepfar::TptStatus
+      end
+
+      def broadcast_patient_record_saved(patient_record)
+        record = patient_record.respond_to?(:with_indifferent_access) ? patient_record.with_indifferent_access : {}
+
+        location_id = record[:location_id] || params.dig(:record, :location_id) || User.current&.location_id
+        return if location_id.blank?
+
+        payload = {
+          event: 'patient_record_saved',
+          data: {
+            location_id: location_id.to_s,
+            patient_id: record[:patientID] || record[:patient_id],
+            identifier: record[:ID] || record[:identifier],
+            timestamp: Time.current.iso8601
+          }
+        }
+
+        ActionCable.server.broadcast("client_details_channel_#{location_id}", payload)
+      rescue StandardError => e
+        Rails.logger.error("Failed to broadcast patient_record_saved: #{e.message}")
       end
 
       def tb_lab_order_params

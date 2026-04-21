@@ -11,7 +11,7 @@ module Api
       skip_before_action :authenticate, only: %i[login reset_password]
 
       def index
-        filters = params.permit(:role, :search_string).to_hash.transform_keys(&:to_sym)
+        filters = params.permit(:role, :search_string, :include_deactivated).to_hash.transform_keys(&:to_sym)
         query = service.find_users(**filters) 
 
         render json: {
@@ -21,16 +21,15 @@ module Api
       end
 
       def show
-        render json: User.find(params[:id]), status: :ok
+        render json: find_user(params[:id]), status: :ok
       end
 
       def update_username
-        update_params = params.require(%i[new_username])
-        new_username,  = update_params
-        id = user.user_id
+        new_username, = params.require(%i[new_username])
+        target_user = find_user(params[:id] || params[:user_id])  # uses find_user which unscopes
         return unless validate_username(new_username)
-        user =  UserService.update_username User.find(id), new_username
-        render json: { message: ['username updated successfully'], user: }
+        updated = UserService.update_username(target_user, new_username)
+        render json: { message: ['username updated successfully'], user: updated }
       end
 
       def create
@@ -40,7 +39,7 @@ module Api
         villages = params[:villages]
         phone = params[:phone]
 
-        return unless validate_roles(roles) & validate_username(username)
+        return unless validate_roles(roles) & validate_username(username) & validate_location(location_id)
 
         # added this as a seperate return to prevent multiple redirects in case more than one validation fails
         return if programs && !validate_programs(programs)
@@ -66,11 +65,17 @@ module Api
         update_params = params.permit :password, :given_name, :family_name, :must_append_roles, :location_id,
                                       roles: [], programs: []
 
-        # Makes sure roles are an array if provided
+        # Force programs through since permit can silently drop integer arrays
+        update_params[:programs] = params[:programs].map(&:to_i) if params.key?(:programs)
+
         return unless validate_roles(update_params[:roles])
 
-        user = UserService.update_user User.find(params[:id]), update_params
-        
+        if update_params[:location_id] && !validate_location(update_params[:location_id])
+          return
+        end
+
+        user = UserService.update_user find_user(params[:id]), update_params
+
         if user.errors.empty?
           update_last_password_property(user.id, update_params[:password])
           render json: user, status: :ok
@@ -96,6 +101,7 @@ module Api
           render json: { errors: ['Invalid user or password'] }, status: :unauthorized
         else
           user = User.find_by(username: login_params[:username])
+          facility_level = user ? facility_level_for_location(user.location_id) : nil
           
           if user
             # Check if this is first time login BEFORE updating
@@ -118,11 +124,12 @@ module Api
             
             render json: { 
               authorization: api_key,
+              facility_level: facility_level,
               first_time_login: is_first_time,
               password_needs_update: password_needs_update?(user.user_id)
             }
           else
-            render json: { authorization: api_key }
+            render json: { authorization: api_key, facility_level: facility_level }
           end
         end
       end
@@ -243,13 +250,37 @@ module Api
       end
 
       def user
-        User.find(params[:id] || params[:user_id])
+        find_user(params[:id] || params[:user_id])
+      end
+
+      private
+
+      def find_user(id)
+        if User.current.global_superuser?
+          User.unscope(where: :location_id).find(id)
+        elsif User.current.district_superuser?
+          User.unscope(where: :location_id).where(location_id: User.current.managed_location_ids).find(id)
+        else
+          User.find(id)
+        end
       end
 
       # validate user programs here
       def validate_programs(programs)
         if programs && !programs.respond_to?(:each)
           render json: ['`programs` must be an array'], status: :bad_request
+          return false
+        end
+
+        true
+      end
+
+      # validate location here
+      def validate_location(location_id)
+        return true if User.current.global_superuser?
+
+        unless User.current.managed_location_ids.include?(location_id.to_i)
+          render json: ["Location ID #{location_id} is out of your authorized scope"], status: :forbidden
           return false
         end
 
@@ -294,6 +325,35 @@ module Api
       rescue ArgumentError
         # Return false if timestamp can't be parsed
         false
+      end
+
+      def facility_level_for_location(location_id)
+        return nil if location_id.blank?
+
+        facility_level = location_attribute_value(location_id, 'Facility Level')
+        return facility_level if facility_level.present?
+
+        facility_type = location_attribute_value(location_id, 'Facility Type')
+        return nil if facility_type.blank?
+
+        case facility_type.to_s.strip.downcase
+        when 'health centre', 'health center'
+          'Primary'
+        when 'district hospital'
+          'Secondary'
+        when 'central hospital'
+          'Tertiary'
+        end
+      end
+
+      def location_attribute_value(location_id, attribute_type_name)
+        attribute_type_id = LocationAttributeType.where(name: attribute_type_name).pick(:location_attribute_type_id)
+        return nil if attribute_type_id.blank?
+
+        LocationAttribute.where(location_id: location_id, attribute_type_id: attribute_type_id)
+                         .where(voided: [nil, false, 0])
+                         .order(location_attribute_id: :desc)
+                         .pick(:value_reference)
       end
 
       def service

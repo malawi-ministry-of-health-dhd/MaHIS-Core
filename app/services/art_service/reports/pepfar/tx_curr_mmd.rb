@@ -41,11 +41,11 @@ module ArtService
                 END gender,
                 disaggregated_age_group(tesd.birthdate, '#{@end_date}') age_group,
                 TIMESTAMPDIFF(DAY, tcm.start_date, tcm.expiry_date) prescribed_days
-            FROM temp_earliest_start_date tesd
-            INNER JOIN temp_patient_outcomes tpo ON tpo.patient_id = tesd.patient_id AND tpo.#{@report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_' }cum_outcome = 'On antiretrovirals'
+            FROM #{temp_earliest_start_date} tesd
+            INNER JOIN #{temp_patient_outcomes} tpo ON tpo.patient_id = tesd.patient_id AND tpo.#{@report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}cum_outcome = 'On antiretrovirals'
             #{dsd_query(dsd: @dsd, model: 'tpo') if @dsd}
-            INNER JOIN temp_current_medication tcm ON tcm.patient_id = tesd.patient_id
-            INNER JOIN patient_program pp ON pp.patient_id = tesd.patient_id 
+            INNER JOIN #{temp_current_medication} tcm ON tcm.patient_id = tesd.patient_id
+            INNER JOIN patient_program pp ON pp.patient_id = tesd.patient_id
               AND pp.program_id = #{program('HIV PROGRAM').id}
               AND pp.location_id = #{User.current.location_id}
               AND pp.voided = 0

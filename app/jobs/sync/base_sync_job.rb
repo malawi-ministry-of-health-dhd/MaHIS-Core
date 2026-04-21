@@ -364,16 +364,23 @@ module Sync
       db_url = "#{CouchdbSync::COUCHDB_URL}/#{db_name}"
       bulk_url = "#{db_url}/_bulk_docs"
 
+      # Defensive dedupe: joins can produce duplicate rows that map to the same _id.
+      unique_documents = documents.reverse.uniq { |doc| doc['_id'] }.reverse
+      duplicate_count = documents.length - unique_documents.length
+      if duplicate_count.positive?
+        Sidekiq.logger.warn "Bulk sync de-duplicated #{duplicate_count} duplicate documents for #{db_name}"
+      end
+
       # Fetch existing _revs to avoid conflicts
-      existing_revs = fetch_existing_revs(documents, db_url)
+      existing_revs = fetch_existing_revs(unique_documents, db_url)
 
       # Merge _rev into documents that already exist
-      documents = documents.map do |doc|
+      documents_with_revs = unique_documents.map do |doc|
         rev = existing_revs[doc['_id']]
         rev ? doc.merge('_rev' => rev) : doc
       end
 
-      bulk_data = { 'docs' => documents }
+      bulk_data = { 'docs' => documents_with_revs }
 
       retries = 0
       begin

@@ -171,6 +171,7 @@ module ArtService
               INNER JOIN patient_program pp ON pp.patient_id = o.person_id
                   AND pp.program_id = #{program('HIV PROGRAM').id}
                   AND pp.voided = 0
+                  AND pp.location_id = #{User.current.location_id}
               INNER JOIN patient_state ps ON ps.patient_program_id = pp.patient_program_id AND ps.voided = 0 AND ps.state = 7 AND ps.start_date <= DATE('#{end_date}')
               WHERE o.concept_id = #{concept_name('CD4 count').concept_id} AND o.voided = 0
               AND o.obs_datetime <= '#{end_date}' AND o.obs_datetime >= '#{start_date}'

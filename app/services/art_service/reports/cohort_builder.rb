@@ -1222,6 +1222,8 @@ module ArtService
         pregnant_concepts = ConceptName.where(name: ['Is patient pregnant?', 'patient pregnant'])
                                        .select(:concept_id)
 
+        yes_concepts = ConceptName.where(name: 'Yes').select(:concept_id)
+
         ActiveRecord::Base.connection.select_all <<~SQL
           SELECT obs.person_id, obs.value_coded
           FROM obs obs
@@ -1239,7 +1241,7 @@ module ArtService
           INNER JOIN #{temp_max_drug_orders} AS max_obs ON max_obs.patient_id = obs.person_id
             AND DATE(max_obs.start_date) = DATE(obs.obs_datetime)
           GROUP BY obs.person_id
-          HAVING value_coded = 1065
+          HAVING value_coded IN (#{yes_concepts.to_sql})
           ORDER BY obs.obs_datetime DESC;
         SQL
       end

@@ -911,7 +911,8 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
                     where_clause = hiv_filter
                     query_with_columns("#{source_db}.#{table_name_str}", where_clause, test_limit, nil, target_model)
                   elsif %w[global_property user_role user_property].include?(table_name_str)
-                    query_with_columns("#{source_db}.#{table_name_str}", nil, nil, nil, target_model)
+                    where_clause = table_name_str == 'global_property' ? "property = 'site_prefix'" : nil
+                    query_with_columns("#{source_db}.#{table_name_str}", where_clause, nil, nil, target_model)
                   else
                     full_table_name = "#{source_db}.#{table_name_str}"
                     column_name = ActiveRecord::Base.connection.columns(full_table_name).first.name
@@ -1005,6 +1006,8 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
                     records.map { |r| [r[:role], r[:user_id]] }
                   when 'UserProperty'
                     records.map { |r| [r[:user_id], r[:property]] }
+                  when 'UserProgram'
+                    records.map { |r| [r[:user_id], r[:program_id]] }
                   when 'DrugIngredient'
                     records.map { |r| [r[:concept_id], r[:ingredient_id]] }
                   when 'PharmacyStockBalance', 'PharmacyStockVerification', 'Pharmacies'
@@ -1031,6 +1034,11 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
                     when 'UserProperty'
                       target_model.unscoped.where(user_id: record_keys.map(&:first), property: record_keys.map(&:last))
                                   .pluck(:user_id, :property).map { |u, p| [u, p] }.to_set
+                    when 'UserProgram'
+                      target_model.unscoped.where(user_id: record_keys.map(&:first), program_id: record_keys.map(&:last))
+                                  .pluck(:user_id, :program_id).map do |u, p|
+                        [u, p]
+                      end.to_set
                     when 'DrugIngredient'
                       target_model.unscoped.where(concept_id: record_keys.map(&:first), ingredient_id: record_keys.map(&:last))
                                   .pluck(:concept_id, :ingredient_id).map do |c, i|
@@ -1134,6 +1142,8 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
         existing_keys.include?([record[:role], record[:user_id]])
       when 'UserProperty'
         existing_keys.include?([record[:user_id], record[:property]])
+      when 'UserProgram'
+        existing_keys.include?([record[:user_id], record[:program_id]])
       when 'DrugIngredient'
         existing_keys.include?([record[:concept_id], record[:ingredient_id]])
       when 'PharmacyStockBalance', 'PharmacyStockVerification', 'Pharmacies'
@@ -1148,11 +1158,17 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
     next if insertable_records.blank?
 
     # Set location_id for tables that have this column
-    if %w[GlobalProperty PharmacyBatch PatientIdentifier PatientProgram Encounter
+    if %w[PharmacyBatch PatientIdentifier PatientProgram Encounter
           Observation].include?(target_model.to_s)
-      location_id_value = target_model.to_s == 'GlobalProperty' ? SITE_ID.to_s : SITE_ID
       insertable_records.each do |record|
-        record[:location_id] = location_id_value if record.key?(:location_id)
+        record[:location_id] = SITE_ID if record.key?(:location_id)
+      end
+    end
+
+    # Force-set location_id for GlobalProperty (source table may not have this column)
+    if target_model.to_s == 'GlobalProperty'
+      insertable_records.each do |record|
+        record[:location_id] = SITE_ID.to_s
       end
     end
 
@@ -1573,6 +1589,35 @@ def create_users_persons(records, source_db)
   records
 end
 
+# Align uuid column collation across source and target tables to allow index usage in JOINs.
+# Checks each table's current collation and alters only if they differ.
+def align_uuid_collations(source_db, tables)
+  conn = ActiveRecord::Base.connection
+  target_db = conn.current_database
+
+  tables.each do |table|
+    rows = conn.select_all(<<~SQL)
+      SELECT TABLE_SCHEMA, COLLATION_NAME
+      FROM information_schema.COLUMNS
+      WHERE TABLE_NAME = '#{table}'
+        AND COLUMN_NAME = 'uuid'
+        AND TABLE_SCHEMA IN ('#{source_db}', '#{target_db}')
+    SQL
+
+    collations = rows.each_with_object({}) { |r, h| h[r['TABLE_SCHEMA']] = r['COLLATION_NAME'] }
+    src_col = collations[source_db]
+    tgt_col = collations[target_db]
+
+    next unless src_col && tgt_col
+    next if src_col == tgt_col
+
+    puts "  ⚠ uuid collation mismatch on #{table}: #{source_db}=#{src_col}, #{target_db}=#{tgt_col}"
+    puts "    Altering #{target_db}.#{table}.uuid to #{src_col}..."
+    conn.execute("ALTER TABLE #{table} MODIFY uuid char(38) CHARACTER SET utf8mb3 COLLATE #{src_col}")
+    puts "    ✓ #{target_db}.#{table}.uuid now #{src_col}"
+  end
+end
+
 # Backfill orders.obs_id after obs migration (Group_5) is complete
 def backfill_orders_obs_ids(source_db)
   puts "\n🔄 Backfilling orders.obs_id after obs migration..."
@@ -1587,6 +1632,8 @@ def backfill_orders_obs_ids(source_db)
   end
 
   puts "  Found #{total} orders records with obs_id to backfill"
+
+  align_uuid_collations(source_db, %w[orders obs])
 
   ActiveRecord::Base.connection.execute(<<~SQL)
     UPDATE orders o
@@ -1624,6 +1671,7 @@ def update_group_obs_ids(source_db, _foreign_keys = {})
   #   2. From the source row, get the source obs_group_id.
   #   3. Look up that source obs_group_id's UUID in the source DB.
   #   4. Find the corresponding target obs by that UUID to get the new obs_id.
+  align_uuid_collations(source_db, %w[obs])
   ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS = 0')
   ActiveRecord::Base.connection.execute(<<~SQL)
     UPDATE obs o
@@ -1727,6 +1775,10 @@ if __FILE__ == $0
     }],
     user_property: [UserProperty, {
       user_id: :get_new_user_ids
+    }],
+    user_programs: [UserProgram, {
+      user_id: :get_new_user_ids,
+      program_id: :get_program_workflow_ids
     }],
     global_property: [GlobalProperty, {}],
     person: [Person, {

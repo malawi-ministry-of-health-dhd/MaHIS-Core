@@ -22,6 +22,7 @@ class PersonService
     marital_status: 'Civil status',
     religion: 'Religion',
     occupation: 'Occupation',
+    transportation: ['Transportation', 'Mode of transport'],
     national_id: 'Guardian id',
     education_level:  'Education level',
   }.freeze
@@ -134,7 +135,9 @@ class PersonService
 
       LOGGER.debug "Creating attr #{field} = #{value}"
 
-      type = PersonAttributeType.find_by name: PERSON_ATTRIBUTES_FIELDS[field]
+      type = resolve_person_attribute_type(field)
+      next unless type
+
       handle_model_errors do
         PersonAttribute.create(
           person_id: person.id,
@@ -155,17 +158,39 @@ class PersonService
 
       LOGGER.debug "Updating attr #{field} = #{value}"
 
-      type = PersonAttributeType.find_by name: PERSON_ATTRIBUTES_FIELDS[field]
-      attr = PersonAttribute.find_by person_attribute_type_id: type.id,
+      type = resolve_person_attribute_type(field)
+      next unless type
+
+      attr = PersonAttribute.find_by person_attribute_type_id: type.person_attribute_type_id,
                                      person_id: person.id
 
-      return PersonAttribute.create(type:, person:, value:) unless attr
+      unless attr
+        handle_model_errors do
+          PersonAttribute.create(
+            person_id: person.id,
+            person_attribute_type_id: type.person_attribute_type_id,
+            value:
+          )
+        end
+        next
+      end
 
       handle_model_errors do
         attr.update(value:)
         attr
       end
     end
+  end
+
+  def resolve_person_attribute_type(field)
+    names = Array(PERSON_ATTRIBUTES_FIELDS[field]).compact
+    names.each do |name|
+      type = PersonAttributeType.find_by name: name
+      return type if type.present?
+    end
+
+    LOGGER.warn "Person attribute type missing for #{field}: #{names.join(', ')}"
+    nil
   end
 
   def handle_model_errors
@@ -185,16 +210,16 @@ class PersonService
     people = people.where('gender like ?', "#{gender}%") unless gender.blank?
 
     if given_name || family_name || middle_name
-      # We may get names that match with an exact match but don't match with
-      # soundex, vice-versa is also true, thus we capture both then combine them.
       filters = { given_name:, middle_name:, family_name: }
-      raw_matches = NameSearchService.search_full_person_name(filters, use_soundex: false)
-      soundex_matches = NameSearchService.search_full_person_name(filters, use_soundex: false)
+      raw_name_ids     = NameSearchService.search_full_raw_person_name(**filters).select(:person_id).unscope(:order)
+      soundex_name_ids = NameSearchService.search_full_soundex_person_name(**filters).select(:person_id).unscope(:order)
 
-      # Extract unique person_ids from the names matched above.
-      person_ids = Set.new | raw_matches.collect(&:person_id) | soundex_matches.collect(&:person_id)
-
-      people = people.where(person_id: person_ids)
+      # UNION lets MySQL plan each branch with its own index rather than
+      # evaluating two IN subqueries under a single OR, which forces a full scan.
+      # ORDER BY is stripped from each branch — it is illegal inside a UNION
+      # member in MySQL and meaningless when only selecting person_ids.
+      union_sql = "(#{raw_name_ids.to_sql} UNION #{soundex_name_ids.to_sql}) AS union_person_names"
+      people = people.where(person_id: PersonName.unscoped.from(union_sql).select(:person_id))
     end
 
     people

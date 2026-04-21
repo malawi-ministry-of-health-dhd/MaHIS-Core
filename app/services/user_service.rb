@@ -19,29 +19,23 @@ module UserService
   class UserCreateError < StandardError; end
   class UserUpdateError < InvalidParameterError; end
 
-  def self.find_users(filters = {})
-    include_deactivated = (filters&.keys || []).include?(:include_deactivated)
-
-    query = include_deactivated ? User.unscope(where: :deactivated_on) : User.all
-    
-    role = filters&.dig(:role)
-
-    query = query.joins(:roles).where(user_role: { role: }) if role
-  end
-
-  def self.find_users(role: nil, search_string: nil, username: nil)
-    # Check if the current user is a "Global Superuser"
-    is__global_uperuser = User.current.user_roles.any? do |user_role|
-      user_role.role.role == "Global Superuser"
-    end
+  def self.find_users(role: nil, search_string: nil, username: nil, include_deactivated: false)
+    # Check current user permissions
+    is_global_superuser = User.current.global_superuser?
+    is_district_superuser = User.current.district_superuser?
   
-    # Base query: all users for super-super-users, otherwise users in the current location
-    query = if is__global_uperuser
-             User.all
-           else
-             User.where(location_id: User.current.location_id)
-           end
+    # Base query: Handle scoping roles
+    query = if is_global_superuser
+              User.unscope(where: :location_id).all
+            elsif is_district_superuser
+              User.unscope(where: :location_id).where(location_id: User.current.managed_location_ids)
+            else
+              User.where(location_id: User.current.location_id)
+            end
   
+    # Unscope deactivated_on if requested
+    query = query.unscope(where: :deactivated_on) if include_deactivated
+
     # Filter by role if provided
     if role
       query = query.joins(:roles).where(user_roles: { role: role })
@@ -81,7 +75,7 @@ module UserService
     user = User.create(
       username:,
       # WARNING: Consider using bcrypt (not SHA1 or SHA512) for better security
-      password: Digest::SHA1.hexdigest("#{password}#{salt}"),
+      password: self.hash_password(password, salt),
       salt:,
       person:,
       creator: User.current.id,
@@ -179,7 +173,7 @@ module UserService
 
     # Update password if any
     if params[:password]
-      user.password = Digest::SHA1.hexdigest "#{params[:password]}#{user.salt}"
+      user.password = self.hash_password(params[:password], user.salt)
       user.save
     end
 
@@ -193,10 +187,10 @@ module UserService
     end
 
     # Update programs if any
-    if params.include?(:programs)
-      user.user_programs.destroy_all
-      params[:programs].each do |program|
-        UserProgram.create user_id: user.user_id, program_id: program
+    if params.key?(:programs)
+      UserProgram.where(user_id: user.user_id).delete_all
+      Array(params[:programs]).map(&:to_i).each do |program_id|
+        UserProgram.insert({ user_id: user.user_id, program_id: program_id })
       end
     end
     user
@@ -247,7 +241,15 @@ module UserService
 
   def self.login(username, password)
     user = User.unscoped.where(username:).first
-    Location.current = Location.find(user.location_id)
+    return nil unless user
+
+    begin
+      Location.current = Location.find(user.location_id) if user.location_id.present?
+    rescue ActiveRecord::RecordNotFound
+      Rails.logger.warn "Location #{user.location_id} not found for user #{username}"
+      # Fallback to some global property or skip? 
+      # For now, we skip setting it if not found to avoid crash
+    end
     unless user&.active? && \
            (bart_authenticate(user, password) || \
             new_arch_authenticate(user, password))
@@ -363,7 +365,9 @@ module UserService
 
   # Tries to authenticate user using the classical BART mode
   def self.bart_authenticate(user, password)
-    Digest::SHA1.hexdigest("#{password}#{user.salt}") == user.password
+    Digest::SHA512.hexdigest("#{password}#{user.salt}") == user.password ||
+      Digest::SHA1.hexdigest("#{password}#{user.salt}") == user.password ||
+      Digest::SHA1.hexdigest("#{user.salt}#{password}") == user.password
   end
 
   # Tries to authenticate user using the new architecture mode
@@ -371,9 +375,9 @@ module UserService
   # NOTE: It's not been established what this model will be but
   # currently SHA512 is being used it seems, so we going with
   # that.
-  def self.new_arch_authenticate(user, password)
-    Digest::SHA512.hexdigest("#{password}#{user.salt}") == user.password
-  end
+def self.new_arch_authenticate(user, password)
+  self.hash_password(password, user.salt) == user.password
+end
 
   def self.check_user(username)
     !User.where(username:).empty?
@@ -400,5 +404,9 @@ module UserService
   # check if user is already assigned to a project
   def self.find_user_program(user_id, program_id)
     UserProgram.where(user_id:, program_id:).first
+  end
+
+  def self.hash_password(password, salt)
+    Digest::SHA512.hexdigest("#{password}#{salt}")
   end
 end

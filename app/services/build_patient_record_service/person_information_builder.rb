@@ -24,6 +24,7 @@ module BuildPatientRecordService
           landmark: attribute_values['Landmark or plot number'] || '',
           cell_phone_number: attribute_values['Cell phone number'] || '',
           occupation: attribute_values['Occupation'] || '',
+          transportation: attribute_values['Transportation'] || attribute_values['Mode of transport'] || '',
           marital_status: attribute_values['Civil status'] || '',
           religion: attribute_values['Religion'] || '',
           education_level: attribute_values['Education level'] || '',

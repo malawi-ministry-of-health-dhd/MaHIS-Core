@@ -7,6 +7,7 @@ module Sync
                    .joins(:visit)
                    .joins('INNER JOIN patient ON patient.patient_id = visit.patient_id')
                    .joins('INNER JOIN patient_identifier ON patient_identifier.patient_id = visit.patient_id AND patient_identifier.identifier_type = 3')
+                   .distinct
 
       sync_custom_query_to_couchdb(
         query,

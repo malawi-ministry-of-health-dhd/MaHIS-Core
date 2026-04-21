@@ -8,6 +8,13 @@ namespace :import do
     require 'fileutils'
 
     class FacilityImporter
+      FACILITY_LEVEL_BY_TYPE = {
+        'health centre' => 'Primary',
+        'health center' => 'Primary',
+        'district hospital' => 'Secondary',
+        'central hospital' => 'Tertiary'
+      }.freeze
+
       def initialize
         @json_file_path = Rails.root.join('db', 'data', 'facilities', 'facilities.json')
         @backup_dir = Rails.root.join('db', 'data', 'facilities', 'backups')
@@ -107,6 +114,8 @@ namespace :import do
       end
 
       def transform_facility_data(data)
+        facility_type = clean_string(data['type'])
+
         # Data for the location table
         location_data = {
           name: clean_string(data['name']),
@@ -122,7 +131,8 @@ namespace :import do
           code: clean_string(data['code']),
           common: clean_string(data['common']),
           ownership: clean_string(data['ownership']),
-          facility_type: clean_string(data['type']),
+          facility_type: facility_type,
+          facility_level: facility_level_for_type(facility_type),
           status: clean_string(data['status']),
           regulatory_status: clean_string(data['regulatoryStatus']),
           date_opened: parse_date(data['dateOpened'])
@@ -133,6 +143,10 @@ namespace :import do
 
       def clean_string(value)
         value.to_s.strip # Trim leading and trailing spaces
+      end
+
+      def facility_level_for_type(facility_type)
+        FACILITY_LEVEL_BY_TYPE[facility_type.to_s.strip.downcase]
       end
 
       def get_attribute_type_id(name)
@@ -155,6 +169,7 @@ namespace :import do
         save_or_update_attribute(location_id, 'Facility Common Name', attributes_data[:common]) if attributes_data[:common].present?
         save_or_update_attribute(location_id, 'Facility Ownership', attributes_data[:ownership]) if attributes_data[:ownership].present?
         save_or_update_attribute(location_id, 'Facility Type', attributes_data[:facility_type]) if attributes_data[:facility_type].present?
+        save_or_update_attribute(location_id, 'Facility Level', attributes_data[:facility_level]) if attributes_data[:facility_level].present?
         save_or_update_attribute(location_id, 'Facility Status', attributes_data[:status]) if attributes_data[:status].present?
         save_or_update_attribute(location_id, 'Facility Regulatory Status', attributes_data[:regulatory_status]) if attributes_data[:regulatory_status].present?
         save_or_update_attribute(location_id, 'Facility Date Opened', attributes_data[:date_opened]) if attributes_data[:date_opened].present?
@@ -276,7 +291,7 @@ namespace :import do
         # Get attribute type IDs by name
         attribute_type_ids = [
           'Facility Code', 'Facility Common Name', 'Facility Ownership', 'Facility Type',
-          'Facility Status', 'Facility Regulatory Status', 'Facility Date Opened'
+          'Facility Level', 'Facility Status', 'Facility Regulatory Status', 'Facility Date Opened'
         ].map { |name| ActiveRecord::Base.connection.execute(
           "SELECT location_attribute_type_id FROM location_attribute_type WHERE name = '#{name}' LIMIT 1"
         ).first&.first }.compact

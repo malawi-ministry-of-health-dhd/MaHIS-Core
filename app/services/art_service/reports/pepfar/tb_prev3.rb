@@ -19,6 +19,7 @@ module ArtService
           @end_date = ActiveRecord::Base.connection.quote(end_date)
           @occupation = kwargs[:occupation]
           @dsd = kwargs[:dsd]
+          @location_id = User.current.location_id
         end
 
         def find_report
@@ -141,6 +142,7 @@ module ArtService
                   ON patient_program.patient_id = person.person_id
                   AND patient_program.program_id IN (SELECT program_id FROM program WHERE name = 'HIV Program')
                   AND patient_program.voided = 0
+                  AND patient_program.location_id = #{@location_id}
                 INNER JOIN patient_state
                   ON patient_state.patient_program_id = patient_program.patient_program_id
                   AND patient_state.state = 7 /* State: 7 == On antiretrovirals */
@@ -181,6 +183,8 @@ module ArtService
               SELECT DISTINCT registration_encounter.patient_id
               FROM patient_program pp
               INNER JOIN program p ON p.program_id = pp.program_id AND p.name = 'HIV Program' AND p.retired = 0
+              AND pp.voided = 0
+              AND pp.location_id = #{@location_id}
               INNER JOIN encounter AS registration_encounter
                 ON registration_encounter.patient_id = pp.patient_id
                 AND registration_encounter.program_id = pp.program_id
