@@ -25,6 +25,7 @@ module Sync
     end
     
     def prepare_document(drug)
+      concept_set_ids = get_concept_set_ids(drug)
       {
         "drug_id" => drug.drug_id,
         "concept_id" => drug.concept_id,
@@ -36,7 +37,8 @@ module Sync
         "minimum_daily_dose" => drug.minimum_daily_dose,
         "route" => drug.route,
         "units" => drug.units,
-        "concept_set_id" => get_concept_set_id(drug),
+        "concept_set_id" => concept_set_ids.first,    # For backward compatibility
+        "concept_set_ids" => concept_set_ids,         # Complete list of all concept sets
       }
     end
     
@@ -47,7 +49,14 @@ module Sync
     def get_concept_set_id(drug)
       concept_set = ConceptSet.find_by(concept_id: drug.concept_id)
       return nil unless concept_set
-      concept_set.concept_set_id
+      concept_set.concept_set
+    end
+
+    def get_concept_set_ids(drug)
+      ConceptSet.where(concept_id: drug.concept_id)
+                .pluck(:concept_set)
+                .uniq
+                .compact
     end
   end
 end
