@@ -17,7 +17,7 @@ namespace :db do
     puts "💾 Dumping full database skeleton for #{db_name} into #{file} (gzipped)..."
 
     # mysqldump with --no-data, --routines, --triggers, piped to gzip
-    system("mysqldump -h #{db_host} -u#{db_user} -p#{db_pass} --no-data --routines --triggers #{db_name} | gzip > #{file}")
+    system("mysqldump -h #{db_host} -u#{db_user} -p#{db_pass} --no-data --routines --triggers --set-gtid-purged=OFF #{db_name} | gzip > #{file}")
 
     puts "\n✅ Database skeleton dumped and gzipped to #{file}"
   end
