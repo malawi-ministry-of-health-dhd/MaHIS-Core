@@ -89,7 +89,7 @@ module Api
             patient: Patient.find(patient_id),
             program: Program.find(program_id),
             visit:,
-            provider: params[:provider_id] ? Person.find(params[:provider_id]) : User.current.person,
+            provider: encounter_provider_from_param(params[:provider_id]),
             encounter_datetime: encounter_datetime
           )
 
@@ -115,7 +115,7 @@ module Api
         encounter = Encounter.find(params[:id])
         type = params[:type_id] && EncounterType.find(params[:type_id])
         patient = params[:patient_id] && Patient.find(params[:patient_id])
-        provider = params[:provider_id] ? Person.find(params[:provider_id]) : User.current.person
+        provider = encounter_provider_from_param(params[:provider_id])
         encounter_datetime = TimeUtils.retro_timestamp(params[:encounter_datetime]&.to_time || Time.now)
 
         encounter_service.update(encounter, type:, patient:,
@@ -133,6 +133,14 @@ module Api
       end
 
       private
+
+      # Clients sometimes send provider_id -1 or 0 when unknown; those are truthy in Ruby and broke Person.find.
+      def encounter_provider_from_param(raw)
+        pid = raw.to_i
+        return User.current.person if pid <= 0
+
+        Person.find(pid)
+      end
 
       # HACK: Have to rename encounter_type_id because in the model
       # underneath it is unfortunately named encounter_type not
