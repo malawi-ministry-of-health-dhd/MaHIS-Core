@@ -4,27 +4,29 @@
 module HtsService
   # Dashbiard Class
   class Dashboard
+    HTS_PROGRAM_ID = 38
+
     def self.daily_statistics(start_date, _end_date)
       art = Observation.joins('INNER JOIN concept_name ON concept_name.concept_id = obs.concept_id')
                        .joins('INNER JOIN encounter ON encounter.encounter_id = obs.encounter_id')
-                       .where(obs: { value_text: 'ART' }, encounter: { program_id: 18 }, concept_name: { name: 'Referrals ordered' })
+                       .where(obs: { value_text: 'ART' }, encounter: { program_id: HTS_PROGRAM_ID }, concept_name: { name: 'Referrals ordered' })
                        .where('obs_datetime BETWEEN ? AND ?', *TimeUtils.day_bounds(start_date))
                        .count
 
       booked = Observation.joins('INNER JOIN concept_name ON concept_name.concept_id = obs.concept_id')
                           .joins('INNER JOIN encounter ON encounter.encounter_id = obs.encounter_id')
-                          .where(encounter: { program_id: 18 }, concept_name: { name: 'ART visit' })
+                          .where(encounter: { program_id: HTS_PROGRAM_ID }, concept_name: { name: 'ART visit' })
                           .where('obs.value_datetime BETWEEN ? AND ?', *TimeUtils.day_bounds(start_date))
                           .count
 
       tested = Observation.joins('INNER JOIN concept_name ON concept_name.concept_id = obs.concept_id')
                           .joins('INNER JOIN encounter ON encounter.encounter_id = obs.encounter_id')
-                          .where(encounter: { program_id: 18 }, concept_name: { name: 'ART visit' }, obs: { value_datetime: start_date })
+                          .where(encounter: { program_id: HTS_PROGRAM_ID }, concept_name: { name: 'ART visit' }, obs: { value_datetime: start_date })
                           .where('obs_datetime BETWEEN ? AND ?', *TimeUtils.day_bounds(start_date))
                           .count
 
       [{
-        hts_registered: PatientProgram.where(program_id: 18).count,
+        hts_registered: PatientProgram.where(program_id: HTS_PROGRAM_ID).count,
         enrolled_on_art: art,
         booked_appointments: booked,
         tested_appointments: tested
@@ -61,12 +63,12 @@ visit_scheduled_today = Observation
     .count(:person_id)
 
   clients_tested_today = Encounter
-    .where('program_id = ? AND DATE(encounter_datetime) = ? AND encounter_type = ?', 37, Date.today, 32)
+    .where('program_id = ? AND DATE(encounter_datetime) = ? AND encounter_type = ?', HTS_PROGRAM_ID, Date.today, 32)
     .distinct
     .count(:patient_id)
 
   {
-    total_clients: Encounter.where(program_id: 37).distinct.count(:patient_id),
+    total_clients: Encounter.where(program_id: HTS_PROGRAM_ID).distinct.count(:patient_id),
     clients_with_conclusive_results: clients_with_conclusive_results,
     clients_tested_today: clients_tested_today,
     clients_referred_to_ART: clients_referred_to_ART,
@@ -77,6 +79,7 @@ end
 
 def self.find_orders(filters)
   date = filters.delete(:date)
+  order_type_id = (filters.delete(:order_type_id) || 9).to_i
 
   # Use the new SQL query to get patients with orders without results
   query = <<-SQL
@@ -109,12 +112,12 @@ def self.find_orders(filters)
       HAVING COUNT(result_obs.obs_id) = 0
     ) AS orders_without_results ON orders_without_results.order_id = lo.order_id
     WHERE lo.voided = 0
-      AND lo.order_type_id = 9
+      AND lo.order_type_id = ?
   SQL
 
   # Add dynamic filters if provided
   where_conditions = []
-  bind_values = []
+  bind_values = [order_type_id]
 
   if filters[:patient_id]
     where_conditions << "p.person_id = ?"

@@ -38,6 +38,7 @@ module ArtService
                                              &.casecmp?('true')
           @occupation = kwargs[:occupation]
           @dsd = kwargs[:dsd]
+          @location_id = User.current.location_id
         end
 
         def report
@@ -143,6 +144,10 @@ module ArtService
             INNER JOIN drug ON drug.drug_id = arv_drug.drug_id
             INNER JOIN encounter ON encounter.encounter_id = orders.encounter_id
             AND encounter.program_id = #{Program.find_by(name: 'HIV Program').id}
+            INNER JOIN patient_program pp ON pp.patient_id = orders.patient_id
+              AND pp.program_id = #{Program.find_by(name: 'HIV Program').id}
+              AND pp.voided = 0
+              AND pp.location_id = #{@location_id}
             #{dsd_query(dsd: @dsd, model: 'orders') if @dsd}
             INNER JOIN obs ON obs.order_id = orders.order_id AND obs.voided = 0
             	AND obs.concept_id = #{amount_dispensed} AND obs.value_numeric > 0

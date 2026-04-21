@@ -307,7 +307,8 @@ module ArtService
 
       def appointment_encounters
         Encounter.where(program: Program.where(name: 'HIV Program'),
-                        type: EncounterType.where(name: 'Appointment'))
+                        type: EncounterType.where(name: 'Appointment'),
+                        location_id: User.current.location_id)
       end
 
       def registration_encounters

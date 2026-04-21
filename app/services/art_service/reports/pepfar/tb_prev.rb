@@ -7,6 +7,7 @@ module ArtService
         def initialize(start_date:, end_date:)
           @completion_start_date = start_date.to_date.strftime('%Y-%m-%d 00:00:00')
           @completion_end_date = end_date.to_date.strftime('%Y-%m-%d 23:59:59')
+          @location_id = User.current.location_id
         end
 
         def report
@@ -127,6 +128,7 @@ module ArtService
                   and (`s`.`voided` = 0)
                   and (`p`.`program_id` = 1)
                   and (`s`.`state` = 7)
+                  and `p`.`location_id` = #{@location_id}
                   and `p`.patient_id IN(#{patient_ids.join(',')}))
             group by `p`.`patient_id`
             HAVING date_enrolled IS NOT NULL;
@@ -145,6 +147,10 @@ module ArtService
             INNER JOIN drug_order t ON o.order_id = t.order_id
             INNER JOIN drug d ON d.drug_id = t.drug_inventory_id
             INNER JOIN encounter e ON e.patient_id = o.patient_id AND e.program_id = 1
+            INNER JOIN patient_program pp ON pp.patient_id = o.patient_id
+              AND pp.program_id = 1
+              AND pp.voided = 0
+              AND pp.location_id = #{@location_id}
             WHERE o.voided = 0 AND (o.start_date
             BETWEEN '#{initiation_start_date}' AND '#{@completion_end_date}')
             AND d.concept_id = 656 AND t.quantity > 0

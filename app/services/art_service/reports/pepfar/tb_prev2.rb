@@ -14,6 +14,7 @@ module ArtService
         def initialize(start_date:, end_date:, **_kwargs)
           @start_date = ActiveRecord::Base.connection.quote(start_date)
           @end_date = ActiveRecord::Base.connection.quote(end_date)
+          @location_id = User.current.location_id
         end
 
         def find_report
@@ -109,6 +110,7 @@ module ArtService
               ON patient_program.patient_id = person.person_id
               AND patient_program.program_id IN (SELECT program_id FROM program WHERE name = 'HIV Program')
               AND patient_program.voided = 0
+              AND patient_program.location_id = #{@location_id}
             INNER JOIN patient_state
               ON patient_state.patient_program_id = patient_program.patient_program_id
               AND patient_state.state = 7 /* State: 7 == On antiretrovirals */
@@ -160,6 +162,11 @@ module ArtService
               /* External consultations */
               SELECT DISTINCT registration_encounter.patient_id
               FROM patient_program
+              INNER JOIN patient_program
+              ON patient_program.patient_id = encounter.patient_id
+              AND patient_program.program_id IN (SELECT program_id FROM program WHERE name = 'HIV Program')
+              AND patient_program.location_id = #{@location_id}
+              AND patient_program.voided = 0
               INNER JOIN program ON program.name = 'HIV Program'
               INNER JOIN encounter AS registration_encounter
                 ON registration_encounter.patient_id = patient_program.patient_id
