@@ -2,10 +2,15 @@
 
 require 'utils/remappable_hash'
 require 'zebra_printer/init'
+require 'securerandom'
 
 module Api
   module V1
     class LocationsController < ApplicationController
+      FACILITY_LEVEL_ATTRIBUTE = 'Facility Level'
+      FACILITY_TYPE_ATTRIBUTE = 'Facility Type'
+      ALLOWED_FACILITY_LEVELS = %w[Primary Secondary Tertiary].freeze
+
       skip_before_action :authenticate, only: %i[print_label current_facility]
 
       # Retrieve all locations
@@ -96,6 +101,70 @@ module Api
       # GET /locations/current_facility
       def current_facility
         render json: Location.current_health_center
+      end
+
+      # GET /locations/:id/facility_level
+      # PUT /locations/:id/facility_level
+      # PATCH /locations/:id/facility_level
+      def facility_level
+        location = Location.find_by(location_id: params[:id])
+        return render json: { error: 'Location not found' }, status: :not_found unless location
+
+        unless authorized_for_location?(location.location_id)
+          return render json: { error: 'Location is out of your authorized scope' }, status: :forbidden
+        end
+
+        if request.get?
+          current_level = facility_level_for_location(location.location_id)
+          return render json: {
+            location_id: location.location_id,
+            facility_level: current_level,
+            allowed_levels: ALLOWED_FACILITY_LEVELS
+          }
+        end
+
+        level = normalize_facility_level(params[:facility_level])
+        return render json: { error: "facility_level must be one of: #{ALLOWED_FACILITY_LEVELS.join(', ')}" },
+                      status: :unprocessable_entity if level.blank?
+
+        attribute_type_id = LocationAttributeType.where(name: FACILITY_LEVEL_ATTRIBUTE).pick(:location_attribute_type_id)
+        return render json: { error: "'#{FACILITY_LEVEL_ATTRIBUTE}' attribute type not found" },
+                      status: :unprocessable_entity if attribute_type_id.blank?
+
+        location_attribute = LocationAttribute.where(
+          location_id: location.location_id,
+          attribute_type_id: attribute_type_id
+        ).where(voided: [nil, false, 0]).order(location_attribute_id: :desc).first
+
+        now = Time.current
+        user_id = User.current&.user_id
+
+        if location_attribute
+          location_attribute.update!(
+            value_reference: level,
+            changed_by: user_id,
+            date_changed: now,
+            voided: false
+          )
+        else
+          LocationAttribute.create!(
+            location_id: location.location_id,
+            attribute_type_id: attribute_type_id,
+            value_reference: level,
+            uuid: SecureRandom.uuid,
+            creator: user_id,
+            date_created: now,
+            voided: false
+          )
+        end
+
+        render json: {
+          location_id: location.location_id,
+          facility_level: level,
+          message: 'Facility level updated successfully'
+        }, status: :ok
+      rescue ActiveRecord::RecordInvalid => e
+        render json: { error: e.record.errors.full_messages.join(', ') }, status: :unprocessable_entity
       end
 
       def create
@@ -214,6 +283,50 @@ module Api
           Location.find(params[:location_id])
         elsif params[:location_name]
           Location.find_by_name(params[:location_name])
+        end
+      end
+
+      def authorized_for_location?(location_id)
+        return false unless User.current
+        return true if User.current.global_superuser?
+
+        User.current.managed_location_ids.include?(location_id.to_i)
+      end
+
+      def normalize_facility_level(value)
+        return nil if value.blank?
+
+        ALLOWED_FACILITY_LEVELS.find { |allowed| allowed.casecmp(value.to_s.strip).zero? }
+      end
+
+      def facility_level_for_location(location_id)
+        return nil if location_id.blank?
+
+        explicit_level = location_attribute_value(location_id, FACILITY_LEVEL_ATTRIBUTE)
+        return explicit_level if explicit_level.present?
+
+        facility_type = location_attribute_value(location_id, FACILITY_TYPE_ATTRIBUTE)
+        map_facility_type_to_level(facility_type)
+      end
+
+      def location_attribute_value(location_id, attribute_type_name)
+        attribute_type_id = LocationAttributeType.where(name: attribute_type_name).pick(:location_attribute_type_id)
+        return nil if attribute_type_id.blank?
+
+        LocationAttribute.where(location_id:, attribute_type_id:)
+                         .where(voided: [nil, false, 0])
+                         .order(location_attribute_id: :desc)
+                         .pick(:value_reference)
+      end
+
+      def map_facility_type_to_level(facility_type)
+        case facility_type.to_s.strip.downcase
+        when 'health centre', 'health center'
+          'Primary'
+        when 'district hospital'
+          'Secondary'
+        when 'central hospital'
+          'Tertiary'
         end
       end
     end

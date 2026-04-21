@@ -157,6 +157,12 @@ Rails.application.routes.draw do
           "/api/v1/labels/location?location_id=#{params[:location_id]}"
         end)
 
+        member do
+          get :facility_level
+          put :facility_level
+          patch :facility_level
+        end
+
         collection do
           get :districts
           get :current_facility
