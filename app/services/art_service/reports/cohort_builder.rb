@@ -594,7 +594,9 @@ module ArtService
         load_data_into_temp_cohort_members_table(end_date)
         ActiveRecord::Base.connection.execute <<~SQL
           INSERT INTO #{temp_earliest_start_date}
-          SELECT patient_id, date_enrolled, earliest_start_date, recorded_start_date, birthdate, birthdate_estimated, death_date, gender, age_at_initiation, age_in_days, reason_for_starting_art
+          SELECT patient_id, date_enrolled, earliest_start_date, recorded_start_date, 
+          birthdate, birthdate_estimated, death_date, gender, age_at_initiation, 
+          age_in_days, reason_for_starting_art
           FROM #{temp_cohort_members} #{occupation_filter(occupation:, field_name: 'occupation')}
         SQL
       end
