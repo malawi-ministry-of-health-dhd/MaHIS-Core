@@ -3,11 +3,12 @@ require 'cgi'
 module Api
   module V1
     class FhirController < ApplicationController
-      BASE_FHIR_URL = YAML.safe_load(File.read('config/application.yml'))['BASE_FHIR_URL'] # change to your HAPI FHIR URL
+      APP_CONFIG = YAML.safe_load(File.read('config/application.yml'))
+      BASE_FHIR_URL = APP_CONFIG['BASE_FHIR_URL'] # change to your HAPI FHIR URL
 
       SYNC_STATUS_TAG = 'ichis-mahis-pending'.freeze
-      ICHIS_IDENTIFIER_SYSTEM = 'https://ichis.org/ichisGeneratedID'.freeze
-      DHIS2_TEI_IDENTIFIER_SYSTEM = 'https://dhis2.org/trackedEntityInstance'.freeze
+      ICHIS_IDENTIFIER_SYSTEM = APP_CONFIG.fetch('ICHIS_IDENTIFIER_SYSTEM', 'https://ichis.org/ichisGeneratedID').freeze
+      DHIS2_TEI_IDENTIFIER_SYSTEM = APP_CONFIG.fetch('DHIS2_TEI_IDENTIFIER_SYSTEM', 'https://dhis2.org/trackedEntityInstance').freeze
 
       def patients
         response = RestClient.get("#{BASE_FHIR_URL}/Patient", accept: 'application/fhir+json')
