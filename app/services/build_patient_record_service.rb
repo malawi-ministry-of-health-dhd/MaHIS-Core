@@ -68,6 +68,8 @@ module BuildPatientRecordService
         ID: patient_identifier(patient, 3),
         nationalID: patient_identifier(patient, 28),
         NcdID: patient_identifier(patient, 31),
+        ichisID: patient_identifier(patient, 10),
+        TEI: extract_tei(patient),
         program_id: '',
         provider_id: '',
         patient_identifiers: patient.patient_identifiers.as_json,
@@ -129,6 +131,39 @@ module BuildPatientRecordService
         birthID: '',
         relationshipID: ''
       }
+    end
+
+    def extract_tei(patient)
+      return '' if patient.blank?
+
+      tei_from_person_attribute = begin
+        person = patient.person
+        if person&.association(:person_attributes)&.loaded?
+          person.person_attributes.find do |attribute|
+            %w[TEI trackedEntityInstance].include?(attribute.type&.name)
+          end&.value
+        else
+          person&.person_attributes
+                &.includes(:type)
+                &.find { |attribute| %w[TEI trackedEntityInstance].include?(attribute.type&.name) }
+                &.value
+        end
+      rescue StandardError => e
+        Rails.logger.warn("Failed to fetch TEI from person attributes for patient #{patient.patient_id}: #{e.message}")
+        nil
+      end
+
+      return tei_from_person_attribute if tei_from_person_attribute.present?
+
+      tei_identifier = begin
+        type = PatientIdentifierType.where(name: ['TEI', 'Tracked Entity Instance']).first
+        type.present? ? patient_identifier(patient, type.patient_identifier_type_id) : ''
+      rescue StandardError => e
+        Rails.logger.warn("Failed to fetch TEI from patient identifiers for patient #{patient.patient_id}: #{e.message}")
+        ''
+      end
+
+      tei_identifier.to_s
     end
 
     def build_vaccine_administration_data(patient_id)
