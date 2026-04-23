@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
- 
-
 def create_concept(concept_name, datatype_id: 4, concept_class_id: 11, is_set: false)
   existing_concept = Concept.find_by(short_name: concept_name)
   return existing_concept if existing_concept
@@ -14,7 +12,6 @@ def create_concept(concept_name, datatype_id: 4, concept_class_id: 11, is_set: f
     creator: User.current.id,
     date_created: Time.now
   )
-
 end
 
 def create_concept_name(concept, name, type: 'FULLY_SPECIFIED', locale: 'en')
@@ -29,7 +26,6 @@ def create_concept_name(concept, name, type: 'FULLY_SPECIFIED', locale: 'en')
   )
 end
 
-
 def create_program(program_name, concept)
   existing_program = Program.find_by(name: program_name)
   return existing_program if existing_program
@@ -42,8 +38,6 @@ def create_program(program_name, concept)
     date_created: Time.now
   )
 end
-
- 
 
 def run_create_program
   puts 'Creating IMPOW program and related concepts...'
@@ -86,7 +80,8 @@ def run_create_program
       program_concept ||= create_concept(program_name)
 
       concept_info[:concept_names].each do |name|
-        exists = ConceptName.where(concept_id: program_concept.id, name: name[:value], concept_name_type: name[:type]).exists?
+        exists = ConceptName.where(concept_id: program_concept.id, name: name[:value],
+                                   concept_name_type: name[:type]).exists?
         create_concept_name(program_concept, name[:value], type: name[:type]) unless exists
       end
 
