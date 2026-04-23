@@ -3,43 +3,41 @@
 require 'securerandom'
 
 CONCEPTS_TO_CREATE = [
-    {
-      program_name: 'IMPOW PROGRAM',
-      concept_names: [
-        { value: 'IMPOW PROGRAM', type: 'FULLY_SPECIFIED' }
-      ]
-    },
-    {
-      program_name: 'Outpatient Therapeutic Services',
-      concept_names: [
-        { value: 'Outpatient Therapeutic Services', type: 'FULLY_SPECIFIED' },
-        { value: 'OTS', type: 'SHORT' }
-      ]
-    },
-    {
-      program_name: 'Supplementary Feeding Services',
-      concept_names: [
-        { value: 'Supplementary Feeding Services', type: 'FULLY_SPECIFIED' },
-        { value: 'SFS', type: 'SHORT' }
-      ]
-    },
-    {
-      program_name: 'Inpatient Therapeutic Service',
-      concept_names: [
-        { value: 'Inpatient Therapeutic Service', type: 'FULLY_SPECIFIED' },
-        { value: 'ITS', type: 'SHORT' }
-      ]
-    }
-  ]
+  {
+    program_name: 'IMPOW PROGRAM',
+    concept_names: [
+      { value: 'IMPOW PROGRAM', type: 'FULLY_SPECIFIED' }
+    ]
+  },
+  {
+    program_name: 'Outpatient Therapeutic Services',
+    concept_names: [
+      { value: 'Outpatient Therapeutic Services', type: 'FULLY_SPECIFIED' },
+      { value: 'OTS', type: 'SHORT' }
+    ]
+  },
+  {
+    program_name: 'Supplementary Feeding Services',
+    concept_names: [
+      { value: 'Supplementary Feeding Services', type: 'FULLY_SPECIFIED' },
+      { value: 'SFS', type: 'SHORT' }
+    ]
+  },
+  {
+    program_name: 'Inpatient Therapeutic Service',
+    concept_names: [
+      { value: 'Inpatient Therapeutic Service', type: 'FULLY_SPECIFIED' },
+      { value: 'ITS', type: 'SHORT' }
+    ]
+  }
+]
 
 ENCOUNTER_TYPES_TO_CREATE = [
   { name: 'Triage', description: '' },
   { name: 'Medical Assessment', description: '' }
 ]
 
-
 def create_concept(concept_name, datatype_id: 4, concept_class_id: 11, is_set: false)
-
   existing_concept = Concept.find_by(short_name: concept_name)
   if existing_concept
     puts "Skipped concept: #{concept_name} (already exists)"
@@ -54,7 +52,6 @@ def create_concept(concept_name, datatype_id: 4, concept_class_id: 11, is_set: f
     creator: User.current.id,
     date_created: Time.now
   )
-
 end
 
 def create_concept_name(concept, name, type: 'FULLY_SPECIFIED', locale: 'en')
@@ -73,7 +70,6 @@ def create_concept_name(concept, name, type: 'FULLY_SPECIFIED', locale: 'en')
     date_created: Time.now
   )
 end
-
 
 def create_program(program_name, concept)
   existing_program = Program.find_by(name: program_name)
@@ -141,7 +137,25 @@ def get_dosage_form_concept(dosage_form_name)
   dosage_form_concept
 end
 
-def create_drug_and_link_to_set(drug_name, set_concept, sort_weight = 1, dosage_form_name = 'Sachet')
+def get_route_concept(route_name)
+  # Find existing route concept
+  route_concept = Concept.joins(:concept_names)
+                         .where(concept_names: { name: route_name })
+                         .first
+
+  unless route_concept
+    # Create route if it doesn't exist
+    route_concept = create_concept(route_name, datatype_id: 4, concept_class_id: 11, is_set: false)
+    exists = ConceptName.where(concept_id: route_concept.id, name: route_name,
+                               concept_name_type: 'FULLY_SPECIFIED').exists?
+    create_concept_name(route_concept, route_name, type: 'FULLY_SPECIFIED') unless exists
+  end
+
+  route_concept
+end
+
+def create_drug_and_link_to_set(drug_name, set_concept, sort_weight = 1, dosage_form_name = 'Sachet',
+                                route_name = 'Oral', units = 'g')
   # Create drug concept (Drug class, N/A datatype)
   drug_concept = create_concept(drug_name, datatype_id: 4, concept_class_id: 3, is_set: false)
 
@@ -150,8 +164,9 @@ def create_drug_and_link_to_set(drug_name, set_concept, sort_weight = 1, dosage_
                              concept_name_type: 'FULLY_SPECIFIED').exists?
   create_concept_name(drug_concept, drug_name, type: 'FULLY_SPECIFIED') unless exists
 
-  # Get dosage form concept
+  # Get dosage form and route concepts
   dosage_form_concept = get_dosage_form_concept(dosage_form_name)
+  route_concept = get_route_concept(route_name)
 
   # Create drug record in drug table
   drug = Drug.find_by(concept_id: drug_concept.concept_id)
@@ -163,12 +178,14 @@ def create_drug_and_link_to_set(drug_name, set_concept, sort_weight = 1, dosage_
       name: drug_name,
       combination: 0,
       dosage_form: dosage_form_concept.concept_id,
+      route: route_concept.concept_id,
+      units: units,
       creator: User.current.id,
       date_created: Time.now,
       retired: 0,
       uuid: SecureRandom.uuid
     )
-    puts "  Created drug: #{drug_name} (Form: #{dosage_form_name})"
+    puts "  Created drug: #{drug_name} (Form: #{dosage_form_name}, Route: #{route_name}, Units: #{units})"
   end
 
   # Link drug concept to concept set
@@ -251,14 +268,14 @@ def run_create_program
       end
 
       # Only create a program for IMPOW PROGRAM
-      if program_name == 'IMPOW PROGRAM'
-        program = Program.find_by(name: program_name)
-        if program
-          puts "Skipped program: #{program_name} (already exists)"
-        else
-          create_program(program_name, program_concept)
-          puts "Created program: #{program_name}"
-        end
+      next unless program_name == 'IMPOW PROGRAM'
+
+      program = Program.find_by(name: program_name)
+      if program
+        puts "Skipped program: #{program_name} (already exists)"
+      else
+        create_program(program_name, program_concept)
+        puts "Created program: #{program_name}"
       end
     end
 
