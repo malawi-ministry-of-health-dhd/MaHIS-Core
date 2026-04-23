@@ -278,7 +278,7 @@ def create_nutrition_drugs
     otp_set = create_drug_concept_set('Outpatient Therapeutic Services', 'OTP')
 
     # RUTF comes in sachets
-    create_drug_and_link_to_set('Ready-to-Use Therapeutic Food (RUTF)', otp_set, 1, 'Sachet')
+    create_drug_and_link_to_set('Ready-to-Use Therapeutic Food (RUTF)', otp_set, 1, 'Sachet', 'Oral', 'Sachets')
 
     # Create specific Amoxicillin 1000mg tablet
     puts "\n  Creating Amoxicillin 1000mg tablet..."
@@ -311,7 +311,7 @@ def create_nutrition_drugs
     # F-75 and F-100 share the same "Therapeutic Milk" concept but are different drugs
     create_drug_and_link_to_set('F-75 Therapeutic Milk (F75)', nru_set, 1, 'Powder', 'Oral', 'g', 'Therapeutic Milk')
     create_drug_and_link_to_set('F-100 Therapeutic Milk (F100)', nru_set, 2, 'Powder', 'Oral', 'g', 'Therapeutic Milk')
-    create_drug_and_link_to_set('Ready-to-Use Therapeutic Food (RUTF)', nru_set, 3, 'Sachet')
+    create_drug_and_link_to_set('Ready-to-Use Therapeutic Food (RUTF)', nru_set, 3, 'Sachet', 'Oral', 'Sachets')
 
     puts "\n" + '=' * 80
     puts 'Successfully created all IMPOW nutrition drugs and concept sets!'
