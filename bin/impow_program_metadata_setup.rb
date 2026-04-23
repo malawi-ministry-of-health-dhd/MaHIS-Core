@@ -280,9 +280,13 @@ def create_nutrition_drugs
     # RUTF comes in sachets
     create_drug_and_link_to_set('Ready-to-Use Therapeutic Food (RUTF)', otp_set, 1, 'Sachet')
 
+    # Create specific Amoxicillin 1000mg tablet
+    puts "\n  Creating Amoxicillin 1000mg tablet..."
+    create_drug_and_link_to_set('Amoxicillin (1000mg tablet)', otp_set, 2, 'Tablet', 'Oral', 'tabs', 'Amoxicillin')
+
     # Link existing Amoxicillin drugs to OTP set
     puts "\n  Linking existing Amoxicillin drugs to OTP..."
-    link_existing_drugs_to_set('Amoxicillin', otp_set, 2)
+    link_existing_drugs_to_set('Amoxicillin', otp_set, 10)
 
     # Link existing Albendazole drugs to OTP set
     puts "\n  Linking existing Albendazole drugs to OTP..."
