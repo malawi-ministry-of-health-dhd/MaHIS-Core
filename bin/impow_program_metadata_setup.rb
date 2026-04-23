@@ -31,16 +31,6 @@ end
 
 
 def create_program(program_name, concept)
-
-  Program.create!(
-    name: program_name,
-    description: 'Integrated Management and Prevention of Oedema and Wasting',
-    concept_id: concept.id,
-    creator: User.current.id,
-    date_created: Time.now
-  )
-
-
   existing_program = Program.find_by(name: program_name)
   return existing_program if existing_program
 
