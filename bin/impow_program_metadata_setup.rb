@@ -14,18 +14,16 @@ def create_concept(concept_name, datatype_id: 4, concept_class_id: 11, is_set: f
 
 end
 
-def create_concept_name(concept, name, locale: 'en')
-
+def create_concept_name(concept, name, type: 'FULLY_SPECIFIED', locale: 'en')
   ConceptName.create!(
     concept_id: concept.id,
     name: name,
     locale: locale,
     locale_preferred: true,
-    concept_name_type: 'FULLY_SPECIFIED',
+    concept_name_type: type,
     creator: User.current.id,
     date_created: Time.now
   )
-
 end
 
 
@@ -44,24 +42,65 @@ end
  
 
 def run_create_program
-
-  puts 'Creating IMPOW program...'
-  program_name = 'IMPOW PROGRAM'
-
-  program_concept_name = ConceptName.find_by_name(program_name)
+  puts 'Creating IMPOW program and related concepts...'
   User.current = User.find_by_username('admin') || User.first
 
-  # return if program_concept_name.present?
-  
+  concepts_to_create = [
+    {
+      program_name: 'IMPOW PROGRAM',
+      concept_names: [
+        { value: 'IMPOW PROGRAM', type: 'FULLY_SPECIFIED' }
+      ]
+    },
+    {
+      program_name: 'Outpatient Therapeutic Services',
+      concept_names: [
+        { value: 'Outpatient Therapeutic Services', type: 'FULLY_SPECIFIED' },
+        { value: 'OTS', type: 'SHORT' }
+      ]
+    },
+    {
+      program_name: 'Supplementary Feeding Services',
+      concept_names: [
+        { value: 'Supplementary Feeding Services', type: 'FULLY_SPECIFIED' },
+        { value: 'SFS', type: 'SHORT' }
+      ]
+    },
+    {
+      program_name: 'Inpatient Therapeutic Service',
+      concept_names: [
+        { value: 'Inpatient Therapeutic Service', type: 'FULLY_SPECIFIED' },
+        { value: 'ITS', type: 'SHORT' }
+      ]
+    },
+    {
+      program_name: 'Community',
+      concept_names: [
+        { value: 'Community', type: 'FULLY_SPECIFIED' },
+        { value: 'Community', type: 'SHORT' }
+      ]
+    }
+  ]
+
   ActiveRecord::Base.transaction do
+    concepts_to_create.each do |concept_info|
+      program_name = concept_info[:program_name]
+      program_concept = Concept.find_by_short_name(program_name)
+      program_concept ||= create_concept(program_name)
 
-    program_concept = Concept.find_by_short_name(program_name)
-    program_concept ||= create_concept(program_name)
+      concept_info[:concept_names].each do |name|
+        exists = ConceptName.where(concept_id: program_concept.id, name: name[:value], concept_name_type: name[:type]).exists?
+        create_concept_name(program_concept, name[:value], type: name[:type]) unless exists
+      end
 
-    create_concept_name(program_concept, program_name) unless program_concept_name.present?
-    create_program(program_name, program_concept)
-
-    puts "Created program: #{program_name}"
+      # Only create a program for IMPOW PROGRAM
+      if program_name == 'IMPOW PROGRAM'
+        create_program(program_name, program_concept)
+        puts "Created program: #{program_name}"
+      else
+        puts "Created concept: #{program_name}"
+      end
+    end
   end
 end
 
