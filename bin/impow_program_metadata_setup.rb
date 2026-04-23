@@ -284,6 +284,10 @@ def create_nutrition_drugs
     puts "\n  Creating Amoxicillin 1000mg tablet..."
     create_drug_and_link_to_set('Amoxicillin (1000mg tablet)', otp_set, 2, 'Tablet', 'Oral', 'tabs', 'Amoxicillin')
 
+    # Create specific Amoxicillin 750mg tablet
+    puts "\n  Creating Amoxicillin 750mg tablet..."
+    create_drug_and_link_to_set('Amoxicillin (750mg tablet)', otp_set, 3, 'Tablet', 'Oral', 'tabs', 'Amoxicillin')
+
     # Link existing Amoxicillin drugs to OTP set
     puts "\n  Linking existing Amoxicillin drugs to OTP..."
     link_existing_drugs_to_set('Amoxicillin', otp_set, 10)
