@@ -72,13 +72,6 @@ def run_create_program
         { value: 'Inpatient Therapeutic Service', type: 'FULLY_SPECIFIED' },
         { value: 'ITS', type: 'SHORT' }
       ]
-    },
-    {
-      program_name: 'Community',
-      concept_names: [
-        { value: 'Community', type: 'FULLY_SPECIFIED' },
-        { value: 'Community', type: 'SHORT' }
-      ]
     }
   ]
 
