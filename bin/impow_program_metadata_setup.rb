@@ -155,21 +155,24 @@ def get_route_concept(route_name)
 end
 
 def create_drug_and_link_to_set(drug_name, set_concept, sort_weight = 1, dosage_form_name = 'Sachet',
-                                route_name = 'Oral', units = 'g')
+                                route_name = 'Oral', units = 'g', concept_name = nil)
+  # Use drug_name as concept_name if not provided separately
+  concept_name ||= drug_name
+
   # Create drug concept (Drug class, N/A datatype)
-  drug_concept = create_concept(drug_name, datatype_id: 4, concept_class_id: 3, is_set: false)
+  drug_concept = create_concept(concept_name, datatype_id: 4, concept_class_id: 3, is_set: false)
 
   # Create concept name if not exists
-  exists = ConceptName.where(concept_id: drug_concept.id, name: drug_name,
+  exists = ConceptName.where(concept_id: drug_concept.id, name: concept_name,
                              concept_name_type: 'FULLY_SPECIFIED').exists?
-  create_concept_name(drug_concept, drug_name, type: 'FULLY_SPECIFIED') unless exists
+  create_concept_name(drug_concept, concept_name, type: 'FULLY_SPECIFIED') unless exists
 
   # Get dosage form and route concepts
   dosage_form_concept = get_dosage_form_concept(dosage_form_name)
   route_concept = get_route_concept(route_name)
 
-  # Create drug record in drug table
-  drug = Drug.find_by(concept_id: drug_concept.concept_id)
+  # Create drug record in drug table with specific drug_name
+  drug = Drug.find_by(concept_id: drug_concept.concept_id, name: drug_name)
   if drug
     puts "  Drug already exists: #{drug_name}"
   else
@@ -185,7 +188,7 @@ def create_drug_and_link_to_set(drug_name, set_concept, sort_weight = 1, dosage_
       retired: 0,
       uuid: SecureRandom.uuid
     )
-    puts "  Created drug: #{drug_name} (Form: #{dosage_form_name}, Route: #{route_name}, Units: #{units})"
+    puts "  Created drug: #{drug_name} (Concept: #{concept_name}, Form: #{dosage_form_name}, Route: #{route_name}, Units: #{units})"
   end
 
   # Link drug concept to concept set
@@ -207,6 +210,52 @@ def create_drug_and_link_to_set(drug_name, set_concept, sort_weight = 1, dosage_
   end
 
   drug
+end
+
+def link_existing_drugs_to_set(concept_name, set_concept, start_sort_weight = 1)
+  # Find the concept by name
+  concept = Concept.joins(:concept_names)
+                   .where(concept_names: { name: concept_name })
+                   .first
+
+  unless concept
+    puts "  WARNING: Concept '#{concept_name}' not found. Skipping."
+    return []
+  end
+
+  # Find all drugs with this concept_id
+  drugs = Drug.where(concept_id: concept.concept_id)
+
+  if drugs.empty?
+    puts "  No drugs found for concept '#{concept_name}'. Skipping."
+    return []
+  end
+
+  puts "  Found #{drugs.count} drug(s) for concept '#{concept_name}'"
+
+  # Link each drug's concept to the set
+  drugs.each_with_index do |drug, index|
+    concept_set_link = ConceptSet.find_by(
+      concept_set: set_concept.concept_id,
+      concept_id: drug.concept_id
+    )
+
+    if concept_set_link
+      puts "    Drug '#{drug.name}' already linked to set"
+    else
+      ConceptSet.create!(
+        concept_set: set_concept.concept_id,
+        concept_id: drug.concept_id,
+        sort_weight: start_sort_weight + index,
+        creator: User.current.id,
+        date_created: Time.now,
+        uuid: SecureRandom.uuid
+      )
+      puts "    Linked drug '#{drug.name}' to set"
+    end
+  end
+
+  drugs
 end
 
 def create_nutrition_drugs
@@ -231,13 +280,29 @@ def create_nutrition_drugs
     # RUTF comes in sachets
     create_drug_and_link_to_set('Ready-to-Use Therapeutic Food (RUTF)', otp_set, 1, 'Sachet')
 
+    # Link existing Amoxicillin drugs to OTP set
+    puts "\n  Linking existing Amoxicillin drugs to OTP..."
+    link_existing_drugs_to_set('Amoxicillin', otp_set, 2)
+
+    # Link existing Albendazole drugs to OTP set
+    puts "\n  Linking existing Albendazole drugs to OTP..."
+    link_existing_drugs_to_set('Albendazole', otp_set, 10)
+
+    # Link existing Mebendazole drugs to OTP set
+    puts "\n  Linking existing Mebendazole drugs to OTP..."
+    link_existing_drugs_to_set('Mebendazole', otp_set, 20)
+
+    # Link existing Vitamin A drugs to OTP set
+    puts "\n  Linking existing Vitamin A drugs to OTP..."
+    link_existing_drugs_to_set('Vitamin A', otp_set, 30)
+
     # 3. NRU (Inpatient Therapeutic Service) Drugs
     puts "\n3. Creating NRU Drug Concept Set..."
     nru_set = create_drug_concept_set('Inpatient Therapeutic Service', 'NRU')
 
-    # F-75 and F-100 are powders, RUTF is sachet
-    create_drug_and_link_to_set('F-75 Therapeutic Milk (F75)', nru_set, 1, 'Powder')
-    create_drug_and_link_to_set('F-100 Therapeutic Milk (F100)', nru_set, 2, 'Powder')
+    # F-75 and F-100 share the same "Therapeutic Milk" concept but are different drugs
+    create_drug_and_link_to_set('F-75 Therapeutic Milk (F75)', nru_set, 1, 'Powder', 'Oral', 'g', 'Therapeutic Milk')
+    create_drug_and_link_to_set('F-100 Therapeutic Milk (F100)', nru_set, 2, 'Powder', 'Oral', 'g', 'Therapeutic Milk')
     create_drug_and_link_to_set('Ready-to-Use Therapeutic Food (RUTF)', nru_set, 3, 'Sachet')
 
     puts "\n" + '=' * 80
