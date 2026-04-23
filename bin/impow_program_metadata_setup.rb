@@ -3,6 +3,9 @@
  
 
 def create_concept(concept_name, datatype_id: 4, concept_class_id: 11, is_set: false)
+  existing_concept = Concept.find_by(short_name: concept_name)
+  return existing_concept if existing_concept
+
   Concept.create!(
     short_name: concept_name,
     datatype_id: datatype_id,
@@ -37,6 +40,17 @@ def create_program(program_name, concept)
     date_created: Time.now
   )
 
+
+  existing_program = Program.find_by(name: program_name)
+  return existing_program if existing_program
+
+  Program.create!(
+    name: program_name,
+    description: 'Integrated Management and Prevention of Oedema and Wasting',
+    concept_id: concept.id,
+    creator: User.current.id,
+    date_created: Time.now
+  )
 end
 
  
