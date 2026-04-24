@@ -38,6 +38,7 @@ class ReportService
     return report if report
 
     LOGGER.debug("#{name} report not found... Queueing one...")
+    kwargs[:rebuild] = 'true' if @overwrite_mode
     queue_report(name:, type:, start_date:, end_date:, **kwargs)
     nil
   end
