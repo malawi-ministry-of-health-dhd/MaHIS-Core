@@ -33,12 +33,12 @@ module AdministerVaccineService
     end
     def validate_program_and_encounter!(program_id, encounter_id)
       program = Program.find(program_id)
-      unless program.name == 'IMMUNIZATION PROGRAM'
+      unless program.name.to_s.strip.casecmp?('IMMUNIZATION PROGRAM')
         raise StandardError, "Not an immunization program ##{program.program_id}"
       end
 
       encounter = Encounter.find(encounter_id)
-      unless encounter.type.name == 'TREATMENT'
+      unless encounter.type&.name.to_s.strip.casecmp?('TREATMENT')
         raise StandardError, "Not a treatment encounter ##{encounter.encounter_id}"
       end
     end
