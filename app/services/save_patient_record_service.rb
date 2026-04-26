@@ -16,6 +16,8 @@ class SavePatientRecordService
   }.freeze
 
   def create_patient_record(record)
+    strip_derived_patient_fields!(record)
+
     required_fields = extract_required_fields(record)
     return "required fields missing" unless required_fields_present?(required_fields)
 
@@ -166,7 +168,6 @@ class SavePatientRecordService
 
       when :save_vaccines, :void_vaccine
         patient_data[:vaccineAdministration] = BuildPatientRecordService.build_vaccine_administration_data(patient_id)
-        patient_data[:vaccineSchedule]       = BuildPatientRecordService.safe_get_vaccine_schedule(person)
         patient_data[:MedicationOrder]       = BuildPatientRecordService.build_medication_data(patient_id)
         allowed_encounter_types << get_encounter_id('TREATMENT')
 
@@ -207,6 +208,7 @@ class SavePatientRecordService
       .transform_values { |r| r.errors }
       .as_json
 
+    strip_derived_patient_fields!(patient_data)
     patient_data.as_json
   end
 
@@ -274,5 +276,13 @@ class SavePatientRecordService
 
   def immunization_program_id
     @immunization_program_id ||= Program.find_by(name: 'IMMUNIZATION PROGRAM')&.program_id
+  end
+
+  def strip_derived_patient_fields!(record)
+    return record unless record.respond_to?(:delete)
+
+    record.delete(:vaccineSchedule)
+    record.delete('vaccineSchedule')
+    record
   end
 end

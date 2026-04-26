@@ -88,8 +88,7 @@ module BuildPatientRecordService
       {
         personInformation: build(person, name, address, patient),
         guardianInformation: build_guardian_data(patient.patient_id),
-        otherPersonInformation: build_other_person_info,
-        vaccineSchedule: []
+        otherPersonInformation: build_other_person_info
       }
     end
 
