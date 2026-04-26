@@ -10,13 +10,13 @@ class PatientIdentifierType < RetirableRecord
   def next_identifier(options = {})
     return nil unless name == 'National id'
 
-    new_national_id = use_moh_national_id ? new_national_id : new_v1_id
+    new_national_id = use_moh_national_id ? new_national_id(options) : new_v1_id(options)
 
     patient_identifier = PatientIdentifier.new
     patient_identifier.type = self
     patient_identifier.identifier = new_national_id
     patient_identifier.patient = options[:patient]
-      
+    location_id = options[:location_id].presence || current_location_id
     raise InvalidParameterError, 'Unable to resolve current location for identifier creation' if location_id.blank?
 
     patient_identifier.location_id = location_id
@@ -51,12 +51,12 @@ class PatientIdentifierType < RetirableRecord
     false
   end
 
-  def new_national_id
-    NationalId.next_id(options[:patient].patient_id)
+  def new_national_id(options = {})
+    NationalId.next_id(options[:patient]&.patient_id)
   end
 
-  def new_v1_id
-    id_prefix = v1_id_prefix
+  def new_v1_id(options = {})
+    id_prefix = v1_id_prefix(options[:location_id])
     last_identifier = last_id_number(id_prefix)
     next_number = (last_identifier[id_prefix.size..-2].to_i + 1).to_s.rjust(7, '0')
     new_national_id_no_check_digit = "#{id_prefix}#{next_number}"
@@ -66,8 +66,13 @@ class PatientIdentifierType < RetirableRecord
     "#{new_national_id_no_check_digit}#{check_digit}"
   end
 
-  def v1_id_prefix
-    location = Location.current || Location.current_health_center
+  def v1_id_prefix(location_id = nil)
+    location = if location_id
+                 Location.find_by(location_id:)
+               else
+                 Location.current || Location.current_health_center
+               end
+
     health_center_id = location&.site_id.to_s.rjust(3, '0')
     "P1#{health_center_id}"
   end
