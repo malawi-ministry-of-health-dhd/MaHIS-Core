@@ -150,15 +150,21 @@ class Api::V1::ImmunizationReportController < ApplicationController
   end
 
   def fetch_or_build_dashboard_stats(start_date, end_date, location_id)
-    dashboard_stats = ImmunizationCacheDatum.where(name: 'dashboard_stats', location_id:).pick(:value)
-    return normalize_dashboard_stats_hash(dashboard_stats) if dashboard_stats.present?
+    fresh_stats = ImmunizationService::Reports::Stats::ImmunizationDashboard.new(
+      start_date: start_date.to_s,
+      end_date: end_date.to_s,
+      location_id:
+    ).data
 
-    ImmunizationReportJob.perform_now(start_date.to_s, end_date.to_s, location_id)
-
-    rebuilt = ImmunizationCacheDatum.where(name: 'dashboard_stats', location_id:).pick(:value)
-    normalize_dashboard_stats_hash(rebuilt)
+    normalized = normalize_dashboard_stats_hash(fresh_stats)
+    persist_cache('dashboard_stats', location_id, normalized)
+    normalized
   rescue StandardError => e
-    Rails.logger.error("Failed to fetch/build immunization dashboard stats for location #{location_id}: #{e.class}: #{e.message}")
+    Rails.logger.error("Failed to build immunization dashboard stats for location #{location_id}: #{e.class}: #{e.message}")
+
+    cached_stats = ImmunizationCacheDatum.where(name: 'dashboard_stats', location_id:).pick(:value)
+    return normalize_dashboard_stats_hash(cached_stats) if cached_stats.present?
+
     default_dashboard_stats
   end
 

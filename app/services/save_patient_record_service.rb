@@ -54,6 +54,7 @@ class SavePatientRecordService
 
     patient_record = build_and_save_patient_record(patient_id, record, operation_results, overall_sync_status)
     ensure_primary_identifier_persisted!(patient_id, patient_record)
+    refresh_immunization_dashboard_if_needed(record)
 
     if couchdb_configured?
       patient_record["_id"] = patient_record["ID"]
@@ -245,5 +246,33 @@ class SavePatientRecordService
     return if saved_identifier.present?
 
     raise "Primary identifier #{identifier} not found in MySQL for patient #{patient_id}"
+  end
+
+  def refresh_immunization_dashboard_if_needed(record)
+    return unless immunization_record?(record)
+
+    location_id = record[:location_id].presence || User.current&.location_id
+    return if location_id.blank?
+
+    today = Date.today
+    start_date = today.beginning_of_year.to_s
+    end_date = today.to_s
+    ImmunizationReportJob.perform_later(start_date, end_date, location_id)
+  rescue StandardError => e
+    Rails.logger.error("Failed to queue immunization dashboard refresh: #{e.class}: #{e.message}")
+  end
+
+  def immunization_record?(record)
+    program_id = immunization_program_id
+    return false if program_id.blank?
+
+    return true if record[:program_id].to_i == program_id
+
+    enrollments = Array(record[:activePrograms]).compact
+    enrollments.any? { |enrollment| enrollment[:program_id].to_i == program_id }
+  end
+
+  def immunization_program_id
+    @immunization_program_id ||= Program.find_by(name: 'IMMUNIZATION PROGRAM')&.program_id
   end
 end

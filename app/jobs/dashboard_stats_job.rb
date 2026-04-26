@@ -1,7 +1,7 @@
 class DashboardStatsJob < ApplicationJob
   queue_as :default
 
-  def perform(location_id, start_date = 1.year.ago.to_date.to_s, end_date = Date.today.to_s)
+  def perform(location_id, start_date = Date.today.beginning_of_year.to_s, end_date = Date.today.to_s)
     dashboard_stats = ImmunizationCacheDatum.where(name: 'dashboard_stats',
                                                    location_id: location_id).pick(:value)
 
