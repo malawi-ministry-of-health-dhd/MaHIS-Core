@@ -32,7 +32,7 @@ module PatientRecordService
                 observation_service.create_observation(encounter, params)
               rescue StandardError => e
                 log_error("Error saving obs for encounter #{encounter_id}", e)
-                collected_errors << "Encounter #{encounter_type.name}, obs #{archetype[:concept_id]}: #{e.message}"
+                collected_errors << "Encounter #{encounter_type.name}, obs #{format_observation_reference(archetype)}: #{e.message}"
                 # continues to next obs
               end
             end
@@ -45,6 +45,32 @@ module PatientRecordService
       end
 
       OperationResult.new(success: true, errors: collected_errors)
+    end
+
+    private
+
+    def format_observation_reference(archetype)
+      concept_id = value_for(archetype, :concept_id)
+      payload_concept_name = value_for(archetype, :concept_name).to_s.strip
+      concept_name = payload_concept_name.presence || concept_name_for(concept_id)
+
+      return concept_name if concept_name.present?
+      return "concept_id=#{concept_id}" if concept_id.present?
+
+      "unknown concept"
+    end
+
+    def concept_name_for(concept_id)
+      return nil if concept_id.blank?
+
+      @concept_name_cache ||= {}
+      @concept_name_cache[concept_id] ||= ConceptName.where(concept_id: concept_id, voided: 0).order(:concept_name_id).limit(1).pick(:name)
+    end
+
+    def value_for(container, key)
+      return nil unless container.respond_to?(:[])
+
+      container[key] || container[key.to_s]
     end
   end
 end

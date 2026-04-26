@@ -16,7 +16,10 @@ class PatientIdentifierType < RetirableRecord
     patient_identifier.type = self
     patient_identifier.identifier = new_national_id
     patient_identifier.patient = options[:patient]
-    patient_identifier.location_id = current_location_id
+      
+    raise InvalidParameterError, 'Unable to resolve current location for identifier creation' if location_id.blank?
+
+    patient_identifier.location_id = location_id
     patient_identifier.save if patient_identifier.patient
     patient_identifier
   end
@@ -30,7 +33,10 @@ class PatientIdentifierType < RetirableRecord
     patient_identifier.type = self
     patient_identifier.identifier = new_national_id.upcase
     patient_identifier.patient = options[:patient]
-    patient_identifier.location_id = current_location_id
+    location_id = options[:location_id].presence || current_location_id
+    raise InvalidParameterError, 'Unable to resolve current location for identifier creation' if location_id.blank?
+
+    patient_identifier.location_id = location_id
     patient_identifier.save if patient_identifier.patient
     patient_identifier
   end
