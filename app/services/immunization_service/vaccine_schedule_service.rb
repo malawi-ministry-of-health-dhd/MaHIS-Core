@@ -16,6 +16,181 @@ module ImmunizationService
     DRUGS_DISPENSED_CONCEPT = 'Drugs dispensed'.freeze
     BATCH_NUMBER_CONCEPT = 'Batch Number'.freeze
     FEMALE_ONLY_IMMUNIZATIONS_CONCEPT = 'Female only immunizations'.freeze
+    FALLBACK_GENERIC_MILESTONES = [
+      {
+        age: 'At birth',
+        antigens: [
+          { key: :bcg, name: 'BCG', window: '24 months' },
+          { key: :opv, name: 'OPV 0', window: '14 weeks' }
+        ]
+      },
+      {
+        age: '6 weeks',
+        antigens: [
+          { key: :opv, name: 'OPV 1', window: '24 months' },
+          { key: :penta, name: 'Penta 1', window: '24 months' },
+          { key: :rota, name: 'Rota 1', window: '24 months' },
+          { key: :pcv, name: 'PCV 1', window: '24 months' }
+        ]
+      },
+      {
+        age: '10 weeks',
+        antigens: [
+          { key: :opv, name: 'OPV 2', window: '24 months' },
+          { key: :penta, name: 'Penta 2', window: '24 months' },
+          { key: :rota, name: 'Rota 2', window: '24 months' },
+          { key: :pcv, name: 'PCV 2', window: '24 months' }
+        ]
+      },
+      {
+        age: '14 weeks',
+        antigens: [
+          { key: :opv, name: 'OPV 3', window: '24 months' },
+          { key: :penta, name: 'Penta 3', window: '24 months' },
+          { key: :pcv, name: 'PCV 3', window: '24 months' },
+          { key: :ipv, name: 'IPV', window: '24 months' }
+        ]
+      },
+      { age: '5 months', antigens: [{ key: :mv, name: 'MV 1', window: '36 Month' }] },
+      {
+        age: '6 months',
+        antigens: [
+          { key: :mv, name: 'MV 2', window: '36 Month' },
+          { key: :vit_a, name: 'Vit A 1', window: '24 months' }
+        ]
+      },
+      { age: '7 months', antigens: [{ key: :mv, name: 'MV 3', window: '36 Month' }] },
+      {
+        age: '9 months',
+        antigens: [
+          { key: :mr, name: 'MR 1', window: '24 months' },
+          { key: :tcv, name: 'TCV', window: '24 months' }
+        ]
+      },
+      {
+        age: '1 year',
+        antigens: [
+          { key: :vit_a, name: 'Vit A 2', window: '24 months' },
+          { key: :alb_200, name: 'Albendazole (200mg tablet) 1', window: '5 years' },
+          { key: :alb_400, name: 'Albendazole (400mg tablet) 1', window: '5 years' }
+        ]
+      },
+      { age: '15 months', antigens: [{ key: :mr, name: 'MR 2', window: '24 months' }] },
+      {
+        age: '18 months',
+        antigens: [
+          { key: :vit_a, name: 'Vit A 3', window: '24 months' },
+          { key: :alb_200, name: 'Albendazole (200mg tablet) 2', window: '5 years' },
+          { key: :alb_400, name: 'Albendazole (400mg tablet) 2', window: '5 years' }
+        ]
+      },
+      { age: '22 months', antigens: [{ key: :mv, name: 'MV 4', window: '36 Month' }] },
+      {
+        age: '2 years',
+        antigens: [
+          { key: :vit_a, name: 'Vit A 4', window: '24 months' },
+          { key: :alb_200, name: 'Albendazole (200mg tablet) 3', window: '5 years' },
+          { key: :alb_400, name: 'Albendazole (400mg tablet) 3', window: '5 years' }
+        ]
+      },
+      {
+        age: '30 months',
+        antigens: [
+          { key: :vit_a, name: 'Vit A 5', window: '24 months' },
+          { key: :alb_200, name: 'Albendazole (200mg tablet) 4', window: '5 years' },
+          { key: :alb_400, name: 'Albendazole (400mg tablet) 4', window: '5 years' }
+        ]
+      },
+      {
+        age: '3 years',
+        antigens: [
+          { key: :vit_a, name: 'Vit A 6', window: '24 months' },
+          { key: :alb_200, name: 'Albendazole (200mg tablet) 5', window: '5 years' },
+          { key: :alb_400, name: 'Albendazole (400mg tablet) 5', window: '5 years' }
+        ]
+      },
+      {
+        age: '42 months',
+        antigens: [
+          { key: :vit_a, name: 'Vit A 7', window: '24 months' },
+          { key: :alb_200, name: 'Albendazole (200mg tablet) 6', window: '5 years' },
+          { key: :alb_400, name: 'Albendazole (400mg tablet) 6', window: '5 years' }
+        ]
+      },
+      {
+        age: '4 years',
+        antigens: [
+          { key: :vit_a, name: 'Vit A 8', window: '24 months' },
+          { key: :alb_200, name: 'Albendazole (200mg tablet) 7', window: '5 years' },
+          { key: :alb_400, name: 'Albendazole (400mg tablet) 7', window: '5 years' }
+        ]
+      },
+      {
+        age: '54 months',
+        antigens: [
+          { key: :vit_a, name: 'Vit A 9', window: '24 months' },
+          { key: :alb_200, name: 'Albendazole (200mg tablet) 8', window: '5 years' },
+          { key: :alb_400, name: 'Albendazole (400mg tablet) 8', window: '5 years' }
+        ]
+      },
+      {
+        age: '5 years',
+        antigens: [
+          { key: :vit_a, name: 'Vit A 10', window: '24 months' },
+          { key: :alb_200, name: 'Albendazole (200mg tablet) 9', window: '5 years' },
+          { key: :alb_400, name: 'Albendazole (400mg tablet) 9', window: '5 years' }
+        ]
+      },
+      {
+        age: '9 years',
+        antigens: [
+          { key: :hpv, name: 'HPV 1', window: '14 Years', female_only: true }
+        ]
+      },
+      {
+        age: '114 months',
+        antigens: [
+          { key: :hpv, name: 'HPV 2', window: '14 Years', female_only: true }
+        ]
+      },
+      {
+        age: '15 years',
+        antigens: [
+          { key: :td, name: 'TD 1', window: '100 years' }
+        ]
+      },
+      {
+        age: '180.9 months',
+        antigens: [
+          { key: :td, name: 'TD 2', window: '100 years' }
+        ]
+      },
+      {
+        age: '186 months',
+        antigens: [
+          { key: :td, name: 'TD 3', window: '100 years' }
+        ]
+      },
+      {
+        age: '12 years above',
+        antigens: [
+          { key: :covid_pfizer, name: 'Pfizer COVID-19', window: '100 years' }
+        ]
+      },
+      {
+        age: '18 years above',
+        antigens: [
+          { key: :covid_astrazeneca, name: 'AstraZeneca Covid 19', window: '100 years' },
+          { key: :covid_jj, name: 'Johnson & Johnson Covid 19', window: '100 years' }
+        ]
+      },
+      {
+        age: '20 years',
+        antigens: [
+          { key: :td, name: 'TD 4', window: '100 years' }
+        ]
+      }
+    ].freeze
 
 
     def self.vaccine_schedule(patient)
@@ -50,6 +225,11 @@ module ImmunizationService
         end
         vaccines
       end
+
+      if immunization_with_window.blank?
+        immunization_with_window = fallback_immunization_with_window(immunizations, patient.gender)
+      end
+
       vaccines_given = administered_vaccines(patient.person_id, immunization_with_window.pluck(:drug_id))
       grouped_immunizations = immunization_with_window.group_by { | immunizations | immunizations[:milestone_name] }
       sorted_grouped_immunizations = grouped_immunizations.sort_by { |milestone| milestone[1][0][:sort_weight]}.to_h
@@ -476,7 +656,52 @@ module ImmunizationService
                   .where(name: 'Female only immunizations').pluck(:concept_id))
                   .pluck(:concept_id).include?(immunization.concept_id)
       end
-    end 
+    end
+
+    def self.fallback_immunization_with_window(immunizations, gender)
+      gender_code = gender.to_s.strip.upcase.first
+      drug_ids = fallback_drug_ids(immunizations)
+
+      FALLBACK_GENERIC_MILESTONES.each_with_index.flat_map do |milestone, index|
+        milestone[:antigens].filter_map do |antigen|
+          next if antigen[:female_only] && gender_code == 'M'
+
+          drug_id = drug_ids[antigen[:key]]
+          next unless drug_id
+
+          {
+            milestone_name: milestone[:age],
+            sort_weight: index + 1,
+            drug_id: drug_id,
+            drug_name: antigen[:name],
+            window_period: antigen[:window]
+          }
+        end
+      end
+    end
+
+    def self.fallback_drug_ids(immunizations)
+      immunizations.each_with_object({}) do |immunization, ids|
+        name = immunization.name.to_s.downcase
+        ids[:bcg] ||= immunization.drug_id if name.include?('bcg')
+        ids[:opv] ||= immunization.drug_id if name.include?('opv') || name.include?('bopv')
+        ids[:penta] ||= immunization.drug_id if name.include?('dpt-hepb-hib') || name.include?('penta')
+        ids[:rota] ||= immunization.drug_id if name.include?('rota')
+        ids[:pcv] ||= immunization.drug_id if name.include?('pcv')
+        ids[:ipv] ||= immunization.drug_id if name == 'ipv' || name.include?(' ipv')
+        ids[:mv] ||= immunization.drug_id if name.include?('rts') || name.include?('mv')
+        ids[:mr] ||= immunization.drug_id if name.include?('mr vaccine') || name.start_with?('mr ')
+        ids[:tcv] ||= immunization.drug_id if name.include?('tcv')
+        ids[:vit_a] ||= immunization.drug_id if name.include?('vit a')
+        ids[:alb_200] ||= immunization.drug_id if name.include?('albendazole (200mg')
+        ids[:alb_400] ||= immunization.drug_id if name.include?('albendazole (400mg')
+        ids[:hpv] ||= immunization.drug_id if name.include?('hpv')
+        ids[:td] ||= immunization.drug_id if name == 'td' || name.include?('tetanus diphtheria') || name.include?('td (0.5ml)')
+        ids[:covid_pfizer] ||= immunization.drug_id if name.include?('pfizer')
+        ids[:covid_astrazeneca] ||= immunization.drug_id if name.include?('astrazeneca')
+        ids[:covid_jj] ||= immunization.drug_id if name.include?('johnson')
+      end
+    end
     
    
   end
