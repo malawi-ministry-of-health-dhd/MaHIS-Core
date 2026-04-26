@@ -17,10 +17,10 @@ class PatientService
         begin
           assign_patient_dde_npid(patient, program, npid)
         rescue StandardError
-          create_local_npid(patient, malawi_national_id, location_id: location_id)
+          create_local_npid(patient, malawi_national_id, npid: npid, location_id: location_id)
         end
       else
-        create_local_npid(patient, malawi_national_id, location_id: location_id)
+        create_local_npid(patient, malawi_national_id, npid: npid, location_id: location_id)
       end
 
       patient.reload
@@ -29,8 +29,8 @@ class PatientService
   end
 
   # method to create local npid
-  def create_local_npid(patient, malawi_national_id, location_id: nil)
-    assign_patient_v3_npid(patient, location_id: location_id)
+  def create_local_npid(patient, malawi_national_id, npid: nil, location_id: nil)
+    assign_patient_v3_npid(patient, location_id: location_id, identifier: npid)
     assign_patient_v28_malawiNid(patient, malawi_national_id, location_id: location_id) if malawi_national_id.present?
   end
 
@@ -719,9 +719,9 @@ class PatientService
   end
 
   # Blesses patient with a v3 npid
-  def assign_patient_v3_npid(patient, location_id: nil)
+  def assign_patient_v3_npid(patient, location_id: nil, identifier: nil)
     identifier_type = PatientIdentifierType.find_by(name: 'National id')
-    identifier_type.next_identifier(patient:, location_id:)
+    identifier_type.next_identifier(patient: patient, location_id: location_id, identifier: identifier)
   end
 
   # Blesses patient with a v28 malawiNid

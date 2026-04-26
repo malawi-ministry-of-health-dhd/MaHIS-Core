@@ -10,7 +10,7 @@ class PatientIdentifierType < RetirableRecord
   def next_identifier(options = {})
     return nil unless name == 'National id'
 
-    new_national_id = use_moh_national_id ? new_national_id(options) : new_v1_id(options)
+    new_national_id = options[:identifier].presence || (use_moh_national_id ? new_national_id(options) : new_v1_id(options))
 
     patient_identifier = PatientIdentifier.new
     patient_identifier.type = self
