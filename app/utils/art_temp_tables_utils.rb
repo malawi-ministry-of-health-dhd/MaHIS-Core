@@ -6,68 +6,173 @@
 module ArtTempTablesUtils
   include ArtTempTablesNaming
 
-  def prepare_tables
-    prepare_cohort_tables
-    prepare_outcome_tables
-    prepare_maternal_tables
+  def prepare_tables(skip_shared: false, force_rebuild: false)
+    already_built = !force_rebuild && outcome_tables_populated?
+    prepare_cohort_tables(skip_shared: skip_shared, force_rebuild: force_rebuild)
+    # Skip outcome/maternal DDL entirely when data is already present and we're not forcing a rebuild
+    prepare_outcome_tables(force_rebuild: force_rebuild) unless already_built
+    prepare_maternal_tables(force_rebuild: force_rebuild) unless already_built
   end
 
   # rubocop:disable Metrics/MethodLength
   # rubocop:disable Metrics/AbcSize
   # rubocop:disable Metrics/PerceivedComplexity
   # rubocop:disable Metrics/CyclomaticComplexity
-  def prepare_cohort_tables
-    create_temp_cohort_members_table unless check_if_table_exists(temp_cohort_members)
-    drop_temp_cohort_members_table unless count_table_columns(temp_cohort_members) == 12
-    create_tmp_patient_table unless check_if_table_exists(temp_earliest_start_date)
-    drop_tmp_patient_table unless count_table_columns(temp_earliest_start_date) == 11
-    create_temp_other_patient_types unless check_if_table_exists(temp_other_patient_types)
-    drop_temp_other_patient_types unless count_table_columns(temp_other_patient_types) == 1
-    create_temp_register_start_date_table unless check_if_table_exists(temp_register_start_date)
-    drop_temp_register_start_date_table unless count_table_columns(temp_register_start_date) == 2
-    create_temp_order_details unless check_if_table_exists(temp_order_details)
-    drop_temp_order_details unless count_table_columns(temp_order_details) == 2
-    create_art_start_date unless check_if_table_exists(temp_art_start_date)
-    drop_art_start_date unless count_table_columns(temp_art_start_date) == 2
-    create_temp_patient_tb_status unless check_if_table_exists(temp_patient_tb_status)
-    drop_temp_patient_tb_status unless count_table_columns(temp_patient_tb_status) == 2
-    create_temp_latest_tb_status unless check_if_table_exists(temp_latest_tb_status)
-    drop_temp_latest_tb_status unless count_table_columns(temp_latest_tb_status) == 2
-    create_tmp_max_adherence unless check_if_table_exists(tmp_max_adherence)
-    drop_tmp_max_adherence unless count_table_columns(tmp_max_adherence) == 2
-    create_temp_pregnant_obs unless check_if_table_exists(temp_pregnant_obs)
-    drop_temp_pregnant_obs unless count_table_columns(temp_pregnant_obs) == 3
-    create_temp_patient_side_effects unless check_if_table_exists(temp_patient_side_effects)
-    drop_temp_patient_side_effects unless count_table_columns(temp_patient_side_effects) == 2
+  def prepare_cohort_tables(skip_shared: false, force_rebuild: false)
+    if force_rebuild
+      # Drop all cohort tables then immediately recreate empty — clean slate for full rebuild
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_cohort_members}")
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_earliest_start_date}")
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_other_patient_types}")
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_register_start_date}")
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_order_details}")
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_art_start_date}")
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_patient_tb_status}")
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_latest_tb_status}")
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{tmp_max_adherence}")
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_pregnant_obs}")
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_patient_side_effects}")
+      create_temp_cohort_members_table
+      create_tmp_patient_table
+      create_temp_other_patient_types
+      create_temp_register_start_date_table
+      create_temp_order_details
+      create_art_start_date
+      create_temp_patient_tb_status
+      create_temp_latest_tb_status
+      create_tmp_max_adherence
+      create_temp_pregnant_obs
+      create_temp_patient_side_effects
+      return
+    end
+
+    # When skip_shared is true the tables already have valid populated data — reuse as-is
+    return if skip_shared
+
+    cols = batch_column_counts(
+      temp_cohort_members, temp_earliest_start_date, temp_other_patient_types,
+      temp_register_start_date, temp_order_details, temp_art_start_date,
+      temp_patient_tb_status, temp_latest_tb_status, tmp_max_adherence,
+      temp_pregnant_obs, temp_patient_side_effects
+    )
+
+    cols[temp_cohort_members]           == 0 ? create_temp_cohort_members_table      : (drop_temp_cohort_members_table      unless cols[temp_cohort_members]           == 12)
+    cols[temp_earliest_start_date]      == 0 ? create_tmp_patient_table              : (drop_tmp_patient_table              unless cols[temp_earliest_start_date]      == 11)
+    cols[temp_other_patient_types]      == 0 ? create_temp_other_patient_types       : (drop_temp_other_patient_types       unless cols[temp_other_patient_types]      == 1)
+    cols[temp_register_start_date]      == 0 ? create_temp_register_start_date_table : (drop_temp_register_start_date_table unless cols[temp_register_start_date]      == 2)
+    cols[temp_order_details]            == 0 ? create_temp_order_details             : (drop_temp_order_details             unless cols[temp_order_details]            == 2)
+    cols[temp_art_start_date]           == 0 ? create_art_start_date                 : (drop_art_start_date                 unless cols[temp_art_start_date]           == 2)
+    cols[temp_patient_tb_status]        == 0 ? create_temp_patient_tb_status         : (drop_temp_patient_tb_status         unless cols[temp_patient_tb_status]        == 2)
+    cols[temp_latest_tb_status]         == 0 ? create_temp_latest_tb_status          : (drop_temp_latest_tb_status          unless cols[temp_latest_tb_status]         == 2)
+    cols[tmp_max_adherence]             == 0 ? create_tmp_max_adherence              : (drop_tmp_max_adherence              unless cols[tmp_max_adherence]             == 2)
+    cols[temp_pregnant_obs]             == 0 ? create_temp_pregnant_obs              : (drop_temp_pregnant_obs              unless cols[temp_pregnant_obs]             == 3)
+    cols[temp_patient_side_effects]     == 0 ? create_temp_patient_side_effects      : (drop_temp_patient_side_effects      unless cols[temp_patient_side_effects]     == 2)
+
     truncate_cohort_tables
   end
 
-  def prepare_outcome_tables
+  def prepare_outcome_tables(force_rebuild: false)
     [false, true].each do |start|
-      create_outcome_table(start:) unless check_if_table_exists(temp_patient_outcomes(start:))
-      drop_temp_patient_outcome_table(start:) unless count_table_columns(temp_patient_outcomes(start:)) == 6
-      create_temp_max_drug_orders_table(start:) unless check_if_table_exists(temp_max_drug_orders(start:))
-      drop_temp_max_drug_orders_table(start:) unless count_table_columns(temp_max_drug_orders(start:)) == 3
-      create_tmp_min_auto_expire_date(start:) unless check_if_table_exists(temp_min_auto_expire_date(start:))
-      drop_tmp_min_auto_expirte_date(start:) unless count_table_columns(temp_min_auto_expire_date(start:)) == 5
-      create_temp_max_patient_state(start:) unless check_if_table_exists(temp_max_patient_state(start:))
-      create_temp_current_state(start:) unless check_if_table_exists(temp_current_state(start:))
-      create_temp_current_medication(start:) unless check_if_table_exists(temp_current_medication(start:))
-      drop_temp_current_state(start:) unless count_table_columns(temp_current_state(start:)) == 6
+      if force_rebuild
+        # Drop and immediately recreate empty so Cohort::Outcomes can truncate and repopulate
+        ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_patient_outcomes(start: start)}")
+        create_outcome_table(start:)
+        ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_max_drug_orders(start: start)}")
+        create_temp_max_drug_orders_table(start:)
+        ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_min_auto_expire_date(start: start)}")
+        create_tmp_min_auto_expire_date(start:)
+        ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_max_patient_state(start: start)}")
+        create_temp_max_patient_state(start:)
+        ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_current_state(start: start)}")
+        create_temp_current_state(start:)
+        ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_current_medication(start: start)}")
+        create_temp_current_medication(start:)
+        next
+      end
+
+      table_names = [
+        temp_patient_outcomes(start:), temp_max_drug_orders(start:),
+        temp_min_auto_expire_date(start:), temp_max_patient_state(start:),
+        temp_current_state(start:), temp_current_medication(start:)
+      ]
+      cols = batch_column_counts(*table_names)
+
+      cols[temp_patient_outcomes(start:)]      == 0 ? create_outcome_table(start:)                : (drop_temp_patient_outcome_table(start:)    unless cols[temp_patient_outcomes(start:)]      == 6)
+      cols[temp_max_drug_orders(start:)]       == 0 ? create_temp_max_drug_orders_table(start:)   : (drop_temp_max_drug_orders_table(start:)    unless cols[temp_max_drug_orders(start:)]       == 3)
+      cols[temp_min_auto_expire_date(start:)]  == 0 ? create_tmp_min_auto_expire_date(start:)     : (drop_tmp_min_auto_expirte_date(start:)     unless cols[temp_min_auto_expire_date(start:)]  == 5)
+      create_temp_max_patient_state(start:)   if cols[temp_max_patient_state(start:)]  == 0
+      # Use if/elsif so we never drop a table we just created in this same snapshot
+      if cols[temp_current_state(start:)]      == 0
+        create_temp_current_state(start:)
+      elsif cols[temp_current_state(start:)]   != 6
+        drop_temp_current_state(start:)
+      end
+      create_temp_current_medication(start:)  if cols[temp_current_medication(start:)] == 0
     end
   end
 
-  def prepare_maternal_tables
-    create_temp_maternal_status unless check_if_table_exists(temp_maternal_status)
-    return if count_table_columns('temp_maternal_status') == 2
+  def prepare_maternal_tables(force_rebuild: false)
+    if force_rebuild
+      # Drop and immediately recreate empty so MaternalStatus can repopulate
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_maternal_status}")
+      create_temp_maternal_status
+      return
+    end
 
-    drop_temp_maternal_status
+    cols = batch_column_counts(temp_maternal_status)
+    if cols[temp_maternal_status] == 0
+      create_temp_maternal_status
+    elsif cols[temp_maternal_status] != 2
+      drop_temp_maternal_status
+    end
   end
+
   # rubocop:enable Metrics/AbcSize
   # rubocop:enable Metrics/PerceivedComplexity
   # rubocop:enable Metrics/CyclomaticComplexity
 
   private
+
+  # Single INFORMATION_SCHEMA query for multiple tables. Returns { table_name => column_count }.
+  # Tables that do not exist have a count of 0.
+  def batch_column_counts(*table_names)
+    quoted = table_names.map { |t| ActiveRecord::Base.connection.quote(t) }.join(', ')
+    rows = ActiveRecord::Base.connection.select_all <<~SQL
+      SELECT table_name, COUNT(*) AS col_count
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE table_schema = DATABASE()
+      AND table_name IN (#{quoted})
+      GROUP BY table_name
+    SQL
+    result = table_names.each_with_object({}) { |t, h| h[t] = 0 }
+    rows.each { |row| result[row['table_name']] = row['col_count'].to_i }
+    result
+  end
+
+  # Executes a CREATE INDEX / ALTER TABLE ADD INDEX statement, silently
+  # ignoring duplicate-key errors that arise when the table already has the index
+  # (e.g. CREATE TABLE IF NOT EXISTS + separate CREATE INDEX race condition).
+  def safe_create_index(sql)
+    ActiveRecord::Base.connection.execute(sql)
+  rescue ActiveRecord::StatementInvalid => e
+    raise unless e.message.include?('Duplicate key name')
+  end
+
+  def shared_cohort_tables_populated?
+    ActiveRecord::Base.connection.select_value(
+      "SELECT COUNT(*) FROM #{temp_earliest_start_date}"
+    ).to_i.positive?
+  rescue ActiveRecord::StatementInvalid
+    false
+  end
+
+  def outcome_tables_populated?
+    ActiveRecord::Base.connection.select_value(
+      "SELECT COUNT(*) FROM #{temp_patient_outcomes}"
+    ).to_i.positive?
+  rescue ActiveRecord::StatementInvalid
+    false
+  end
 
   def check_if_table_exists(table_name)
     result = ActiveRecord::Base.connection.select_one <<~SQL
@@ -100,7 +205,7 @@ module ArtTempTablesUtils
 
   def create_temp_cohort_members_table
     ActiveRecord::Base.connection.execute <<~SQL
-      CREATE TABLE #{temp_cohort_members} (
+      CREATE TABLE IF NOT EXISTS #{temp_cohort_members} (
         patient_id INT PRIMARY KEY,
         date_enrolled DATE,
         earliest_start_date DATE,
@@ -119,32 +224,14 @@ module ArtTempTablesUtils
   end
 
   def create_temp_cohort_members_index
-    ActiveRecord::Base.connection.execute(
-      "CREATE INDEX #{temp_index_name('member_id_index')} ON #{temp_cohort_members} (patient_id)"
-    )
-    ActiveRecord::Base.connection.execute(
-      "CREATE INDEX #{temp_index_name('member_enrolled_index')} ON #{temp_cohort_members} (date_enrolled)"
-    )
-
-    ActiveRecord::Base.connection.execute(
-      "CREATE INDEX #{temp_index_name('member_date_enrolled_index')} ON #{temp_cohort_members} (patient_id, date_enrolled)"
-    )
-
-    ActiveRecord::Base.connection.execute(
-      "CREATE INDEX #{temp_index_name('member_start_date_index')} ON #{temp_cohort_members} (earliest_start_date)"
-    )
-    ActiveRecord::Base.connection.execute(
-      "CREATE INDEX #{temp_index_name('member_start_date__date_enrolled_index')} ON #{temp_cohort_members} (patient_id, earliest_start_date, date_enrolled, gender)"
-    )
-    ActiveRecord::Base.connection.execute(
-      "CREATE INDEX #{temp_index_name('member_reason')} ON #{temp_cohort_members} (reason_for_starting_art)"
-    )
-    ActiveRecord::Base.connection.execute(
-      "CREATE INDEX #{temp_index_name('member_birthdate_idx')} ON #{temp_cohort_members} (birthdate)"
-    )
-    ActiveRecord::Base.connection.execute(
-      "CREATE INDEX #{temp_index_name('member_occupation_idx')} ON #{temp_cohort_members} (birthdate)"
-    )
+    safe_create_index("CREATE INDEX #{temp_index_name('member_id_index')} ON #{temp_cohort_members} (patient_id)")
+    safe_create_index("CREATE INDEX #{temp_index_name('member_enrolled_index')} ON #{temp_cohort_members} (date_enrolled)")
+    safe_create_index("CREATE INDEX #{temp_index_name('member_date_enrolled_index')} ON #{temp_cohort_members} (patient_id, date_enrolled)")
+    safe_create_index("CREATE INDEX #{temp_index_name('member_start_date_index')} ON #{temp_cohort_members} (earliest_start_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('member_start_date__date_enrolled_index')} ON #{temp_cohort_members} (patient_id, earliest_start_date, date_enrolled, gender)")
+    safe_create_index("CREATE INDEX #{temp_index_name('member_reason')} ON #{temp_cohort_members} (reason_for_starting_art)")
+    safe_create_index("CREATE INDEX #{temp_index_name('member_birthdate_idx')} ON #{temp_cohort_members} (birthdate)")
+    safe_create_index("CREATE INDEX #{temp_index_name('member_occupation_idx')} ON #{temp_cohort_members} (birthdate)")
   end
 
   def drop_tmp_patient_table
@@ -172,29 +259,13 @@ module ArtTempTablesUtils
   end
 
   def create_tmp_patient_table_indexes
-    ActiveRecord::Base.connection.execute(
-      "CREATE INDEX #{temp_index_name('patient_id_index')} ON #{temp_earliest_start_date} (patient_id)"
-    )
-    ActiveRecord::Base.connection.execute(
-      "CREATE INDEX #{temp_index_name('date_enrolled_index')} ON #{temp_earliest_start_date} (date_enrolled)"
-    )
-
-    ActiveRecord::Base.connection.execute(
-      "CREATE INDEX #{temp_index_name('patient_id__date_enrolled_index')} ON #{temp_earliest_start_date} (patient_id, date_enrolled)"
-    )
-
-    ActiveRecord::Base.connection.execute(
-      "CREATE INDEX #{temp_index_name('earliest_start_date_index')} ON #{temp_earliest_start_date} (earliest_start_date)"
-    )
-    ActiveRecord::Base.connection.execute(
-      "CREATE INDEX #{temp_index_name('earliest_start_date__date_enrolled_index')} ON #{temp_earliest_start_date} (patient_id, earliest_start_date, date_enrolled, gender)"
-    )
-    ActiveRecord::Base.connection.execute(
-      "CREATE INDEX #{temp_index_name('idx_reason_for_art')} ON #{temp_earliest_start_date} (reason_for_starting_art)"
-    )
-    ActiveRecord::Base.connection.execute(
-      "CREATE INDEX #{temp_index_name('birthdate_idx')} ON #{temp_earliest_start_date} (birthdate)"
-    )
+    safe_create_index("CREATE INDEX #{temp_index_name('patient_id_index')} ON #{temp_earliest_start_date} (patient_id)")
+    safe_create_index("CREATE INDEX #{temp_index_name('date_enrolled_index')} ON #{temp_earliest_start_date} (date_enrolled)")
+    safe_create_index("CREATE INDEX #{temp_index_name('patient_id__date_enrolled_index')} ON #{temp_earliest_start_date} (patient_id, date_enrolled)")
+    safe_create_index("CREATE INDEX #{temp_index_name('earliest_start_date_index')} ON #{temp_earliest_start_date} (earliest_start_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('earliest_start_date__date_enrolled_index')} ON #{temp_earliest_start_date} (patient_id, earliest_start_date, date_enrolled, gender)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_reason_for_art')} ON #{temp_earliest_start_date} (reason_for_starting_art)")
+    safe_create_index("CREATE INDEX #{temp_index_name('birthdate_idx')} ON #{temp_earliest_start_date} (birthdate)")
   end
 
   def drop_temp_register_start_date_table
@@ -206,7 +277,7 @@ module ArtTempTablesUtils
 
   def create_temp_register_start_date_table
     ActiveRecord::Base.connection.execute <<-SQL
-      CREATE TABLE #{temp_register_start_date} (
+      CREATE TABLE IF NOT EXISTS #{temp_register_start_date} (
         patient_id INT(11) NOT NULL,
         start_date DATE NOT NULL,
         PRIMARY KEY (patient_id)
@@ -216,7 +287,7 @@ module ArtTempTablesUtils
   end
 
   def create_temp_register_start_date_table_indexes
-    ActiveRecord::Base.connection.execute "CREATE INDEX #{temp_index_name('trsd_date')} ON #{temp_register_start_date} (start_date)"
+    safe_create_index("CREATE INDEX #{temp_index_name('trsd_date')} ON #{temp_register_start_date} (start_date)")
   end
 
   def drop_temp_other_patient_types
@@ -228,7 +299,7 @@ module ArtTempTablesUtils
 
   def create_temp_other_patient_types
     ActiveRecord::Base.connection.execute <<~SQL
-      CREATE TABLE #{temp_other_patient_types} (
+      CREATE TABLE IF NOT EXISTS #{temp_other_patient_types} (
         patient_id INT(11) NOT NULL,
         PRIMARY KEY (patient_id)
       )
@@ -244,7 +315,7 @@ module ArtTempTablesUtils
 
   def create_temp_order_details
     ActiveRecord::Base.connection.execute <<-SQL
-      CREATE TABLE #{temp_order_details} (
+      CREATE TABLE IF NOT EXISTS #{temp_order_details} (
         patient_id INT NOT NULL,
         start_date DATE NOT NULL,
         PRIMARY KEY (patient_id)
@@ -254,7 +325,7 @@ module ArtTempTablesUtils
   end
 
   def create_temp_order_details_indexes
-    ActiveRecord::Base.connection.execute "CREATE INDEX #{temp_index_name('tod_date')} ON #{temp_order_details} (start_date)"
+    safe_create_index("CREATE INDEX #{temp_index_name('tod_date')} ON #{temp_order_details} (start_date)")
   end
 
   def drop_art_start_date
@@ -266,7 +337,7 @@ module ArtTempTablesUtils
 
   def create_art_start_date
     ActiveRecord::Base.connection.execute <<-SQL
-      CREATE TABLE #{temp_art_start_date} (
+      CREATE TABLE IF NOT EXISTS #{temp_art_start_date} (
         patient_id INT(11) NOT NULL,
         value_datetime DATE NOT NULL,
         PRIMARY KEY (patient_id)
@@ -276,7 +347,7 @@ module ArtTempTablesUtils
   end
 
   def create_art_start_date_indexes
-    ActiveRecord::Base.connection.execute "CREATE INDEX #{temp_index_name('tasd_date')} ON #{temp_art_start_date} (value_datetime)"
+    safe_create_index("CREATE INDEX #{temp_index_name('tasd_date')} ON #{temp_art_start_date} (value_datetime)")
   end
 
   def drop_temp_patient_tb_status
@@ -288,7 +359,7 @@ module ArtTempTablesUtils
 
   def create_temp_patient_tb_status
     ActiveRecord::Base.connection.execute <<~SQL
-      CREATE TABLE #{temp_patient_tb_status} (
+      CREATE TABLE IF NOT EXISTS #{temp_patient_tb_status} (
         patient_id INT(11) PRIMARY KEY,
         tb_status INT(11)
       )
@@ -297,18 +368,9 @@ module ArtTempTablesUtils
   end
 
   def create_temp_patient_tb_status_indexes
-    ActiveRecord::Base.connection.execute(
-      "ALTER TABLE #{temp_patient_tb_status}
-       ADD INDEX #{temp_index_name('patient_id_index')} (patient_id)"
-    )
-    ActiveRecord::Base.connection.execute(
-      "ALTER TABLE #{temp_patient_tb_status}
-       ADD INDEX #{temp_index_name('tb_status_index')} (tb_status)"
-    )
-    ActiveRecord::Base.connection.execute(
-      "ALTER TABLE #{temp_patient_tb_status}
-       ADD INDEX #{temp_index_name('patient_id_tb_status_index')} (patient_id, tb_status)"
-    )
+    safe_create_index("ALTER TABLE #{temp_patient_tb_status} ADD INDEX #{temp_index_name('patient_id_index')} (patient_id)")
+    safe_create_index("ALTER TABLE #{temp_patient_tb_status} ADD INDEX #{temp_index_name('tb_status_index')} (tb_status)")
+    safe_create_index("ALTER TABLE #{temp_patient_tb_status} ADD INDEX #{temp_index_name('patient_id_tb_status_index')} (patient_id, tb_status)")
   end
 
   def drop_temp_latest_tb_status
@@ -320,7 +382,7 @@ module ArtTempTablesUtils
 
   def create_temp_latest_tb_status
     ActiveRecord::Base.connection.execute <<~SQL
-      CREATE TABLE #{temp_latest_tb_status}(
+      CREATE TABLE IF NOT EXISTS #{temp_latest_tb_status}(
         person_id INT PRIMARY KEY,
         obs_datetime DATETIME
       )
@@ -328,7 +390,7 @@ module ArtTempTablesUtils
   end
 
   def create_temp_latest_tb_status_indexes
-    ActiveRecord::Base.connection.execute "CREATE INDEX #{temp_index_name('tlts_date')} ON #{temp_latest_tb_status}(obs_datetime)"
+    safe_create_index("CREATE INDEX #{temp_index_name('tlts_date')} ON #{temp_latest_tb_status}(obs_datetime)")
   end
 
   def drop_tmp_max_adherence
@@ -338,7 +400,7 @@ module ArtTempTablesUtils
 
   def create_tmp_max_adherence
     ActiveRecord::Base.connection.execute <<~SQL
-      CREATE TABLE #{tmp_max_adherence} (
+      CREATE TABLE IF NOT EXISTS #{tmp_max_adherence} (
         person_id INT PRIMARY KEY,
         visit_date DATE
       )
@@ -347,7 +409,7 @@ module ArtTempTablesUtils
   end
 
   def create_tmp_max_adherence_indexes
-    ActiveRecord::Base.connection.execute("CREATE INDEX #{temp_index_name('tma_date')} ON #{tmp_max_adherence} (visit_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('tma_date')} ON #{tmp_max_adherence} (visit_date)")
   end
 
   def drop_temp_pregnant_obs
@@ -357,7 +419,7 @@ module ArtTempTablesUtils
 
   def create_temp_pregnant_obs
     ActiveRecord::Base.connection.execute <<~SQL
-      CREATE TABLE #{temp_pregnant_obs}(
+      CREATE TABLE IF NOT EXISTS #{temp_pregnant_obs}(
         person_id INT PRIMARY KEY,
         value_coded INT  NULL,
         obs_datetime DATE NULL
@@ -367,7 +429,7 @@ module ArtTempTablesUtils
   end
 
   def create_temp_pregnant_obs_indexes
-    ActiveRecord::Base.connection.execute "CREATE INDEX #{temp_index_name('fre_obs_time')} ON #{temp_pregnant_obs}(obs_datetime)"
+    safe_create_index("CREATE INDEX #{temp_index_name('fre_obs_time')} ON #{temp_pregnant_obs}(obs_datetime)")
   end
 
   def drop_temp_patient_side_effects
@@ -379,7 +441,7 @@ module ArtTempTablesUtils
 
   def create_temp_patient_side_effects
     ActiveRecord::Base.connection.execute <<~SQL
-      CREATE TABLE #{temp_patient_side_effects} (
+      CREATE TABLE IF NOT EXISTS #{temp_patient_side_effects} (
         patient_id INT(11) PRIMARY KEY,
         has_se VARCHAR(120) NOT NULL
       )
@@ -388,9 +450,7 @@ module ArtTempTablesUtils
   end
 
   def create_temp_patient_side_effects_indexes
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('idx_side_effects')} ON #{temp_patient_side_effects} (patient_id, has_se)
-    SQL
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_side_effects')} ON #{temp_patient_side_effects} (patient_id, has_se)")
   end
 
   # ===================================
@@ -404,7 +464,7 @@ module ArtTempTablesUtils
 
   def create_temp_maternal_status
     ActiveRecord::Base.connection.execute <<~SQL
-      CREATE TABLE #{temp_maternal_status} (
+      CREATE TABLE IF NOT EXISTS #{temp_maternal_status} (
         patient_id INT PRIMARY KEY,
         maternal_status VARCHAR(5) NOT NULL
       )
@@ -413,9 +473,7 @@ module ArtTempTablesUtils
   end
 
   def create_temp_maternal_status_indexes
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('idx_maternal_status')} ON #{temp_maternal_status} (patient_id, maternal_status)
-    SQL
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_maternal_status')} ON #{temp_maternal_status} (patient_id, maternal_status)")
   end
 
   # ===================================
@@ -442,21 +500,11 @@ module ArtTempTablesUtils
   end
 
   def craete_tmp_current_med_index(start: false)
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('idx_cm_concept', start: start)} ON #{temp_current_medication(start: start)} (concept_id)
-    SQL
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('idx_cm_drug', start: start)} ON #{temp_current_medication(start: start)} (drug_id)
-    SQL
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('idx_cm_date', start: start)} ON #{temp_current_medication(start: start)} (start_date)
-    SQL
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('idx_cm_pepfar', start: start)} ON #{temp_current_medication(start: start)} (pepfar_defaulter_date)
-    SQL
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('idx_cm_moh', start: start)} ON #{temp_current_medication(start: start)} (moh_defaulter_date)
-    SQL
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_cm_concept', start: start)} ON #{temp_current_medication(start: start)} (concept_id)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_cm_drug', start: start)} ON #{temp_current_medication(start: start)} (drug_id)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_cm_date', start: start)} ON #{temp_current_medication(start: start)} (start_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_cm_pepfar', start: start)} ON #{temp_current_medication(start: start)} (pepfar_defaulter_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_cm_moh', start: start)} ON #{temp_current_medication(start: start)} (moh_defaulter_date)")
   end
 
   def create_temp_current_state(start: false)
@@ -474,18 +522,10 @@ module ArtTempTablesUtils
   end
 
   def create_current_state_index(start: false)
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('idx_state_name', start: start)} ON #{temp_current_state(start: start)} (cum_outcome)
-    SQL
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('idx_state_id', start: start)} ON #{temp_current_state(start: start)} (state)
-    SQL
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('idx_state_count', start: start)} ON #{temp_current_state(start: start)} (outcomes)
-    SQL
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('idx_patient_state_id', start: start)} ON #{temp_current_state(start: start)} (patient_state_id)
-    SQL
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_state_name', start: start)} ON #{temp_current_state(start: start)} (cum_outcome)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_state_id', start: start)} ON #{temp_current_state(start: start)} (state)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_state_count', start: start)} ON #{temp_current_state(start: start)} (outcomes)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_patient_state_id', start: start)} ON #{temp_current_state(start: start)} (patient_state_id)")
   end
 
   def create_tmp_min_auto_expire_date(start: false)
@@ -529,21 +569,11 @@ module ArtTempTablesUtils
   end
 
   def create_outcome_indexes(start: false)
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('moh_outcome', start: start)} ON #{temp_patient_outcomes(start: start)} (moh_cum_outcome)
-    SQL
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('moh_out_date', start: start)} ON #{temp_patient_outcomes(start: start)} (moh_outcome_date)
-    SQL
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('pepfar_outcome', start: start)} ON #{temp_patient_outcomes(start: start)} (pepfar_cum_outcome)
-    SQL
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('pepfar_out_date', start: start)} ON #{temp_patient_outcomes(start: start)} (pepfar_outcome_date)
-    SQL
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('idx_out_step', start: start)} ON #{temp_patient_outcomes(start: start)} (step)
-    SQL
+    safe_create_index("CREATE INDEX #{temp_index_name('moh_outcome', start: start)} ON #{temp_patient_outcomes(start: start)} (moh_cum_outcome)")
+    safe_create_index("CREATE INDEX #{temp_index_name('moh_out_date', start: start)} ON #{temp_patient_outcomes(start: start)} (moh_outcome_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('pepfar_outcome', start: start)} ON #{temp_patient_outcomes(start: start)} (pepfar_cum_outcome)")
+    safe_create_index("CREATE INDEX #{temp_index_name('pepfar_out_date', start: start)} ON #{temp_patient_outcomes(start: start)} (pepfar_outcome_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_out_step', start: start)} ON #{temp_patient_outcomes(start: start)} (step)")
   end
 
   def drop_temp_max_drug_orders_table(start: false)
@@ -564,12 +594,8 @@ module ArtTempTablesUtils
   end
 
   def create_max_drug_orders_indexes(start: false)
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('idx_max_orders', start: start)} ON #{temp_max_drug_orders(start: start)} (start_date)
-    SQL
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('idx_max_min_orders', start: start)} ON #{temp_max_drug_orders(start: start)} (min_order_date)
-    SQL
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_max_orders', start: start)} ON #{temp_max_drug_orders(start: start)} (start_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_max_min_orders', start: start)} ON #{temp_max_drug_orders(start: start)} (min_order_date)")
   end
 
   def drop_tmp_min_auto_expirte_date(start: false)
@@ -578,15 +604,9 @@ module ArtTempTablesUtils
   end
 
   def create_min_auto_expire_date_indexes(start: false)
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('idx_min_auto_expire_date', start: start)} ON #{temp_min_auto_expire_date(start: start)} (auto_expire_date)
-    SQL
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('idx_min_pepfar', start: start)} ON #{temp_min_auto_expire_date(start: start)} (pepfar_defaulter_date)
-    SQL
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('idx_min_moh', start: start)} ON #{temp_min_auto_expire_date(start: start)} (moh_defaulter_date)
-    SQL
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_min_auto_expire_date', start: start)} ON #{temp_min_auto_expire_date(start: start)} (auto_expire_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_min_pepfar', start: start)} ON #{temp_min_auto_expire_date(start: start)} (pepfar_defaulter_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_min_moh', start: start)} ON #{temp_min_auto_expire_date(start: start)} (moh_defaulter_date)")
   end
 
   def create_temp_max_patient_state(start: false)
@@ -601,9 +621,7 @@ module ArtTempTablesUtils
   end
 
   def create_max_patient_state_indexes(start: false)
-    ActiveRecord::Base.connection.execute <<~SQL
-      CREATE INDEX #{temp_index_name('idx_max_patient_state', start: start)} ON #{temp_max_patient_state(start: start)} (start_date)
-    SQL
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_max_patient_state', start: start)} ON #{temp_max_patient_state(start: start)} (start_date)")
   end
 
   def update_steps(start: false, portion: false)

@@ -49,7 +49,8 @@ RSpec.configure do |config|
   # Only these specs are known to pass - all others will be marked as pending
   PASSING_SPECS = [
     'report_spec.rb',
-    'cohort_builder_spec.rb'
+    'cohort_builder_spec.rb',
+    'medication_order_saver_spec.rb'
   ].freeze
 
   # Wrap individual test execution to skip non-passing specs

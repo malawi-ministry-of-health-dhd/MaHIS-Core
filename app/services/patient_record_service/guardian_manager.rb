@@ -21,7 +21,8 @@ module PatientRecordService
     end
 
     def update_guardian_information(patient_id, record)
-      return ok unless record[:guardianInformation][:unsaved].present? &&
+      unsaved_guardian = record.dig(:guardianInformation, :unsaved)
+      return ok unless unsaved_guardian.present? &&
                        record[:saveStatusGuardianInformation] == 'edit'
 
       service           = PersonRelationshipService.new(Person.find(patient_id))

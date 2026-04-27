@@ -22,8 +22,8 @@ module ArtService
         end
 
         def find_report
-          # Check if temp tables exist, rebuild if they don't (even if rebuild=false)
-          if !rebuild && !check_if_table_exists(temp_current_medication)
+          # Rebuild only when explicitly requested or outcome tables have no data
+          if !rebuild && !outcome_tables_populated?
             Rails.logger.info("Temporary tables don't exist, building them for first time...")
             rebuild_report
           elsif rebuild
@@ -197,7 +197,7 @@ module ArtService
         # rubocop:enable Metrics/MethodLength
 
         def update_outcomes
-          if check_if_table_exists('temp_patient_outcomes')
+          if outcome_tables_populated?
             ArtService::Reports::Cohort::Outcomes.new(end_date:, occupation:,
                                                       definition: type).update_outcomes_by_definition
           else
@@ -207,7 +207,16 @@ module ArtService
 
         def rebuild_report
           ArtService::Reports::CohortBuilder.new(outcomes_definition: type)
-                                            .init_temporary_tables(start_date, end_date, occupation)
+                                            .init_temporary_tables(start_date, end_date, occupation,
+                                                                   force_rebuild: rebuild)
+        end
+
+        def outcome_tables_populated?
+          ActiveRecord::Base.connection.select_value(
+            "SELECT COUNT(*) FROM #{temp_patient_outcomes}"
+          ).to_i.positive?
+        rescue ActiveRecord::StatementInvalid
+          false
         end
 
         def check_if_table_exists(table_name)

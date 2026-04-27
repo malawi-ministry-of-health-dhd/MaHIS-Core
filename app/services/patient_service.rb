@@ -6,7 +6,7 @@ class PatientService
 
   CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
   DDE_LOCATION_ID = CONFIG['DDE_LOCATION_ID'] || ""
-  def create_patient(program, person, malawi_national_id = nil, npid = nil)
+  def create_patient(program, person, malawi_national_id = nil, npid = nil, location_id: nil)
     ActiveRecord::Base.transaction do
       patient = Patient.create(patient_id: person.id)
       unless patient.errors.empty?
@@ -17,10 +17,10 @@ class PatientService
         begin
           assign_patient_dde_npid(patient, program, npid)
         rescue StandardError
-          create_local_npid(patient, malawi_national_id)
+          create_local_npid(patient, malawi_national_id, npid: npid, location_id: location_id)
         end
       else
-        create_local_npid(patient, malawi_national_id)
+        create_local_npid(patient, malawi_national_id, npid: npid, location_id: location_id)
       end
 
       patient.reload
@@ -29,9 +29,9 @@ class PatientService
   end
 
   # method to create local npid
-  def create_local_npid(patient, malawi_national_id)
-    assign_patient_v3_npid(patient)
-    assign_patient_v28_malawiNid(patient, malawi_national_id) if malawi_national_id.present?
+  def create_local_npid(patient, malawi_national_id, npid: nil, location_id: nil)
+    assign_patient_v3_npid(patient, location_id: location_id, identifier: npid)
+    assign_patient_v28_malawiNid(patient, malawi_national_id, location_id: location_id) if malawi_national_id.present?
   end
 
   ##
@@ -396,14 +396,14 @@ class PatientService
     )
   end
 
-  def assign_npid(patient, program_id)
+  def assign_npid(patient, program_id, location_id: nil)
     national_id_type = patient_identifier_type(PatientIdentifierType::NPID_TYPE_NAME)
     existing_identifiers = patient_identifiers(patient, national_id_type)
     existing_identifiers[0]
 
     # Force immediate execution of query. We don't want it executing after saving
     # the new identifier below
-    new_identifier = next_available_npid(patient:, identifier_type: national_id_type, program_id:)
+    new_identifier = next_available_npid(patient:, identifier_type: national_id_type, program_id:, location_id:)
 
     existing_identifiers.each do |identifier|
       identifier.void("Re-assigned to new national identifier: #{new_identifier.class.name === 'PatientIdentifier' ? new_identifier.identifier : new_identifier.identifier(national_id_type.name)}")
@@ -719,15 +719,15 @@ class PatientService
   end
 
   # Blesses patient with a v3 npid
-  def assign_patient_v3_npid(patient)
+  def assign_patient_v3_npid(patient, location_id: nil, identifier: nil)
     identifier_type = PatientIdentifierType.find_by(name: 'National id')
-    identifier_type.next_identifier(patient:)
+    identifier_type.next_identifier(patient: patient, location_id: location_id, identifier: identifier)
   end
 
   # Blesses patient with a v28 malawiNid
-  def assign_patient_v28_malawiNid(patient, malawi_national_id)
+  def assign_patient_v28_malawiNid(patient, malawi_national_id, location_id: nil)
     identifier_type = PatientIdentifierType.find_by(name: 'Malawi National ID')
-    identifier_type.next_identifier_for_malawi_nid(patient:, MNID: malawi_national_id)
+    identifier_type.next_identifier_for_malawi_nid(patient:, MNID: malawi_national_id, location_id:)
   end
 
   # Blesses patient with a DDE npid
@@ -813,12 +813,12 @@ class PatientService
   end
 
   # Returns the next available patient identifier for assignment
-  def next_available_npid(patient:, identifier_type:, program_id: nil)
+  def next_available_npid(patient:, identifier_type:, program_id: nil, location_id: nil)
     unless identifier_type.name.match?(/#{PatientIdentifierType::NPID_TYPE_NAME}/i)
       raise "Unknown identifier type: #{identifier_type.name}"
     end
 
-    return identifier_type.next_identifier(patient:) unless use_dde_service?
+    return identifier_type.next_identifier(patient:, location_id:) unless use_dde_service?
 
     dde_patient_id_type = patient_identifier_type(PatientIdentifierType::DDE_ID_TYPE_NAME)
     dde_patient_id = patient_identifiers(patient, dde_patient_id_type).first&.identifier
