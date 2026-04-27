@@ -28,7 +28,12 @@ module PatientRecordService
             saved_drug_orders = DrugOrderService.create_drug_orders(encounter: encounter, drug_orders: [order])
             raise "Drug order creation returned empty result for order: #{order.inspect}" if saved_drug_orders.blank?
 
-            dispensation_result = save_dispensation_data(patient_id, record, saved_drug_orders[0].order_id, order[:dispensation])
+            dispensation_result = save_dispensation_data(
+              patient_id,
+              record,
+              saved_drug_orders[0].order_id,
+              fetch_value(order, :dispensation)
+            )
             collected_errors.concat(dispensation_result.errors) if dispensation_result.errors.any?
           end
         rescue StandardError => e
@@ -67,7 +72,7 @@ module PatientRecordService
       if dispensation_data.nil? && order_id.nil?
         extract_unsaved_dispensations(record)
       else
-        build_single_dispensation(patient_id, order_id, dispensation_data)
+        build_dispensation_payloads(patient_id, order_id, dispensation_data)
       end
     end
 
@@ -76,36 +81,31 @@ module PatientRecordService
       return [] unless unsaved_data&.any?
 
       unsaved_data.flat_map do |dispensation_params|
-        next [] unless dispensation_params[:dispensation]
-
-        dispensation_params[:dispensation].map do |dispensation|
-          {
-            provider_id:   dispensation[:provider_id],
-            program_id:    dispensation[:program_id],
-            patient_id:    dispensation[:patient_id],
-            dispensations: [{
-              drug_order_id: dispensation[:drug_order_id],
-              date:          dispensation[:date],
-              quantity:      dispensation[:quantity]
-            }]
-          }
-        end
+        build_dispensation_payloads(nil, nil, fetch_value(dispensation_params, :dispensation))
       end
     end
 
-    def build_single_dispensation(patient_id, order_id, dispensation_data)
+    def build_dispensation_payloads(patient_id, order_id, dispensation_data)
       return [] if dispensation_data.nil?
 
-      [{
-        provider_id:   dispensation_data[:provider_id],
-        program_id:    dispensation_data[:program_id],
-        patient_id:    patient_id,
-        dispensations: [{
-          drug_order_id: order_id,
-          date:          dispensation_data[:date],
-          quantity:      dispensation_data[:quantity]
-        }]
-      }]
+      Array.wrap(dispensation_data).compact.map do |dispensation|
+        {
+          provider_id:   fetch_value(dispensation, :provider_id),
+          program_id:    fetch_value(dispensation, :program_id),
+          patient_id:    patient_id || fetch_value(dispensation, :patient_id),
+          dispensations: [{
+            drug_order_id: order_id || fetch_value(dispensation, :drug_order_id),
+            date:          fetch_value(dispensation, :date),
+            quantity:      fetch_value(dispensation, :quantity)
+          }]
+        }
+      end
+    end
+
+    def fetch_value(hash_or_params, key)
+      return unless hash_or_params.respond_to?(:[])
+
+      hash_or_params[key] || hash_or_params[key.to_s]
     end
 
     def process_single_dispensation(params, record)
@@ -118,7 +118,7 @@ module PatientRecordService
       provider = find_provider(provider_id)
       return unless program && provider
 
-      DispensationService.create(program, dispensations, provider, record[:location_id])
+      DispensationService.create(program, dispensations, provider, fetch_value(record, :location_id))
     end
 
     def find_program(program_id)
