@@ -63,12 +63,12 @@ module Api
       end
       def update
         ta = TraditionalAuthority.find(params[:id])
+
         ta.update!(
           name: params[:name] || ta.name,
           parent_location: params[:district_id] || ta.parent_location,
-          creator: User.current.id,
-          date_created: Time.current
         )
+
         render json: ta.reload
       rescue StandardError => e
         render json: { error: e.message }, status: :bad_request
