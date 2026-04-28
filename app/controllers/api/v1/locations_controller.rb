@@ -227,11 +227,14 @@ module Api
                                .order(:county_district)
                                .pluck(:county_district)
 
-        # Map to objects with an ascending counter starting at 1
+        # Map to objects with an ascending counter starting at 1 and include location_id
         formatted_districts = unique_names.each_with_index.map do |name, index|
+          # Find a representative location for this district
+          representative_location = Location.where(county_district: name).first
           {
             id: index + 1,
-            name: name
+            name: name,
+            location_id: representative_location&.location_id
           }
         end
 
