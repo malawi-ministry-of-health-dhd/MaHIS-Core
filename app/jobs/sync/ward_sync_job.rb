@@ -5,7 +5,8 @@ module Sync
     # Sync all wards to CouchDB
     def perform(batch_size = 100)
       sync_records_to_couchdb(Location, 'wards', batch_size) do |model_class|
-        model_class.where(retired: false, description: "Ward")
+        model_class.joins(:tag_maps => :location_tag)
+                   .where(retired: false, location_tag: { name: "Ward" })
       end
     end
     

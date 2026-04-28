@@ -43,7 +43,25 @@ module Api
           traditional_authorities = traditional_authorities.where(location_id: traditional_authority_id)
         end
 
-        render json: paginate(traditional_authorities.order(:name))
+        # Get total count before pagination
+        total_count = traditional_authorities.count
+
+        # Apply pagination
+        paginated_data = paginate(traditional_authorities.order(:name))
+
+        # Get pagination parameters
+        page = (params[:page] || 1).to_i
+        page_size = (params[:page_size] || 10).to_i
+
+        render json: {
+          data: paginated_data,
+          pagination: {
+            current_page: page,
+            per_page: page_size,
+            total_count: total_count,
+            total_pages: (total_count / page_size.to_f).ceil
+          }
+        }
       end
 
       def destroy
@@ -63,12 +81,12 @@ module Api
       end
       def update
         ta = TraditionalAuthority.find(params[:id])
+
         ta.update!(
           name: params[:name] || ta.name,
           parent_location: params[:district_id] || ta.parent_location,
-          creator: User.current.id,
-          date_created: Time.current
         )
+
         render json: ta.reload
       rescue StandardError => e
         render json: { error: e.message }, status: :bad_request
