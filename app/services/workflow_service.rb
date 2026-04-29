@@ -23,6 +23,12 @@ class WorkflowService
     @engine.next_encounter
   end
 
+  def visit_context
+    return nil unless @engine.respond_to?(:visit_context)
+
+    @engine.visit_context
+  end
+
   private
 
   # Creates a workflow engine for the given program_id and patient_id

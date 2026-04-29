@@ -15,6 +15,17 @@ module Api
         end
       end
 
+      # Returns a flat visit context object for offline workflow decisions
+      def visit_context
+        context = service.visit_context
+
+        if context
+          render json: context
+        else
+          render json: { error: 'Visit context not available for this program' }, status: :not_implemented
+        end
+      end
+
       private
 
       def service

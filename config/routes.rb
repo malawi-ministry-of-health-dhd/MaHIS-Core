@@ -321,6 +321,7 @@ Rails.application.routes.draw do
 
       # Workflow engine
       get '/workflows/:program_id/:patient_id' => 'workflows#next_encounter'
+      get '/workflows/:program_id/:patient_id/context' => 'workflows#visit_context'
 
       get '/current_time', to: 'time#current_time'
 

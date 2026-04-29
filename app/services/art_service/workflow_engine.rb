@@ -39,6 +39,76 @@ module ArtService
       nil
     end
 
+    # Returns a flat context object with all visit state for offline use
+    def visit_context
+      {
+        # Identifiers
+        patientId: @patient.patient_id,
+        programId: @program.program_id,
+        visitDate: @date.to_s,
+
+        # Demographics
+        patientAge: @patient.age(today: @date),
+        patientIsMinor: patient_is_a_minor?,
+
+        # Registration
+        isRegistered: !patient_not_registered?,
+        isVisitingPatient: !patient_not_visiting?,
+        patientType: find_patient_type,
+
+        # Reception
+        isCheckedIn: patient_checked_in?,
+
+        # Program state
+        isAlive: patient_is_alive?,
+
+        # Vitals
+        hasWeightToday: !patient_has_no_weight_today?,
+        hasHeightEver: !patient_has_no_height?,
+        hasHeightToday: !patient_has_no_height_today?,
+
+        # ART history
+        hasReceivedArtBefore: patient_received_art?,
+
+        # Fast track
+        fastTrackEnabled: fast_track_activated?,
+        isOnFastTrack: !patient_not_on_fast_track?,
+        fastTrackVisitCompleted: !patient_has_not_completed_fast_track_visit?,
+
+        # Staging & screening
+        alreadyStaged: !patient_not_already_staged?,
+        continueToAhd: continue_ahd_screening_accepted?,
+        hasPositiveSymptomsToday: patient_has_symptoms_screening?,
+
+        # Consultation
+        referredToClinician: referred_to_clinician?,
+        seenByClinician: seen_by_clinician?,
+        prescribeDrugs: prescribe_drugs_value,
+
+        # Treatment
+        hasTreatmentToday: patient_got_treatment?,
+        hasOrders: patient_got_treatment?,
+        dispensingComplete: dispensing_complete?,
+
+        # Settings
+        htnEnabled: htn_workflow_activated?,
+
+        # Today's encounters
+        hasHivClinicRegistration: encounter_done?(HIV_CLINIC_REGISTRATION),
+        hasHivReception: encounter_done?(HIV_RECEPTION),
+        hasVitals: encounter_done?(VITALS),
+        hasSymptomScreening: encounter_done?(SYMPTOM_SCREENING),
+        hasHivStaging: encounter_done?(HIV_STAGING),
+        hasAhdScreening: encounter_done?(AHD_SCREENING),
+        hasArtAdherence: encounter_done?(ART_ADHERENCE),
+        hasHivClinicConsultation: encounter_done?(HIV_CLINIC_CONSULTATION),
+        hasTreatment: encounter_done?(TREATMENT),
+        hasFastTrackAssessment: encounter_done?(FAST_TRACK),
+        hasDispensing: encounter_done?(DISPENSING),
+        hasAppointment: encounter_done?(APPOINTMENT)
+      }
+    end
+
     private
 
     LOGGER = Rails.logger
@@ -490,6 +560,45 @@ module ArtService
 
     def load_hiv_program
       program('HIV Program')
+    end
+
+    # Helper methods for visit_context
+
+    def find_patient_type
+      obs = find_visit_type_observation
+      return nil if obs.blank?
+
+      concept_name = ConceptName.find_by(concept_id: obs.value_coded)
+      concept_name&.name&.downcase&.gsub(' ', '_')
+    end
+
+    def prescribe_drugs_value
+      prescribe_drugs_concept = concept('Prescribe drugs')
+      start_time, end_time = TimeUtils.day_bounds(@date)
+
+      obs = Observation.joins(:encounter).where(
+        'concept_id = ? AND person_id = ? AND program_id = ? AND obs_datetime BETWEEN ? AND ?',
+        prescribe_drugs_concept.concept_id, @patient.patient_id, @program.program_id, start_time, end_time
+      ).order(obs_datetime: :desc).first
+
+      return nil if obs.blank?
+
+      obs.value_coded == concept('Yes').concept_id
+    end
+
+    def htn_workflow_activated?
+      global_property('activate.htn.enhancement')&.property_value&.downcase == 'true'
+    end
+
+    def encounter_done?(encounter_type_name)
+      return false if encounter_type_name == VITALS
+
+      encounter_type = EncounterType.find_by(name: encounter_type_name)
+      return false if encounter_type.blank?
+
+      Encounter.where(type: encounter_type, patient: @patient, program: @program)
+               .where('encounter_datetime BETWEEN ? AND ?', *TimeUtils.day_bounds(@date))
+               .exists?
     end
   end
 end
