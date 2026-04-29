@@ -6,11 +6,10 @@ module PatientRecordService
     ENCOUNTER_TYPE_MAPPING = SavePatientRecordService::ENCOUNTER_TYPE_MAPPING
 
     def save_medication_order(patient_id, record)
-      orders_unsaved = record.dig(:MedicationOrder, :unsaved)
-      return ok unless orders_unsaved&.any?
-
       collected_errors = []
 
+      # Standard path: MedicationOrder.unsaved
+      orders_unsaved = record.dig(:MedicationOrder, :unsaved) || []
       orders_unsaved.each do |order|
         next unless order
 
@@ -39,20 +38,47 @@ module PatientRecordService
         rescue StandardError => e
           log_error("Failed to create medication order", e)
           collected_errors << "Order #{order.inspect}: #{e.message}"
-          # continues to next order
         end
       end
+
+      # Offline path: art_orders_pending — drug orders captured while offline
+      pending_orders = fetch_value(record, :art_orders_pending) || []
+      Array.wrap(pending_orders).each do |entry|
+        next unless entry
+        next unless within_session_day?(entry)
+
+        begin
+          ActiveRecord::Base.transaction(requires_new: true) do
+            encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[:treatment])
+            encounter_datetime = parse_encounter_datetime(entry)
+            entry_record = record.merge(encounter_datetime: encounter_datetime)
+
+            encounter_id = create_encounter(patient_id, encounter_type.id, entry_record)
+            encounter    = Encounter.find(encounter_id)
+
+            drugs = fetch_value(entry, :drugs) || []
+            saved_drug_orders = DrugOrderService.create_drug_orders(encounter: encounter, drug_orders: drugs)
+            raise "Drug order creation returned empty result" if saved_drug_orders.blank?
+
+            save_pending_order_obs(encounter, entry)
+          end
+        rescue StandardError => e
+          log_error("Failed to create offline medication order", e)
+          collected_errors << "Offline order entry: #{e.message}"
+        end
+      end
+
+      return ok if collected_errors.empty? && orders_unsaved.empty? && pending_orders.empty?
 
       OperationResult.new(success: true, errors: collected_errors)
     end
 
     def save_dispensation_data(patient_id, record, order_id = nil, dispensation_data = nil)
-      permitted_data = build_permitted_data(patient_id, record, order_id, dispensation_data)
-      return ok unless permitted_data&.any?
-
       collected_errors = []
 
-      permitted_data.each do |params|
+      # Standard path
+      permitted_data = build_permitted_data(patient_id, record, order_id, dispensation_data)
+      permitted_data&.each do |params|
         begin
           process_single_dispensation(params, record)
         rescue StandardError => e
@@ -60,6 +86,29 @@ module PatientRecordService
           collected_errors << e.message
         end
       end
+
+      # Offline path: art_dispensation_pending — dispensations captured while offline
+      pending_dispensations = fetch_value(record, :art_dispensation_pending) || []
+      Array.wrap(pending_dispensations).each do |entry|
+        next unless entry
+        next unless within_session_day?(entry)
+
+        begin
+          orders = fetch_value(entry, :orders) || []
+          orders.each do |order_entry|
+            qty      = fetch_value(order_entry, :quantity).to_i
+            drug_ord = DrugOrder.find_by(order_id: fetch_value(order_entry, :order_id))
+            next unless drug_ord && qty.positive?
+
+            drug_ord.update!(quantity: qty)
+          end
+        rescue StandardError => e
+          log_error("Failed to process offline dispensation entry", e)
+          collected_errors << "Offline dispensation entry: #{e.message}"
+        end
+      end
+
+      return ok if collected_errors.empty? && (permitted_data.nil? || permitted_data.empty?) && pending_dispensations.empty?
 
       OperationResult.new(success: true, errors: collected_errors)
     rescue StandardError => e
@@ -134,6 +183,59 @@ module PatientRecordService
     rescue ActiveRecord::RecordNotFound
       Rails.logger.error("Provider not found: #{provider_id}")
       nil
+    end
+
+    # Returns true if the entry's encounter_datetime falls on today's session date.
+    # Entries from previous days are skipped — they can no longer be processed.
+    def within_session_day?(entry)
+      raw = fetch_value(entry, :encounter_datetime)
+      return false if raw.blank?
+
+      entry_date = raw.to_s.to_date
+      entry_date == Date.today
+    rescue ArgumentError, TypeError
+      false
+    end
+
+    def parse_encounter_datetime(entry)
+      raw = fetch_value(entry, :encounter_datetime)
+      raw.present? ? raw.to_time : Time.now
+    rescue ArgumentError, TypeError
+      Time.now
+    end
+
+    # Saves regimen-switch and hanging-pills obs from an offline prescription entry
+    # onto the already-created TREATMENT encounter.
+    def save_pending_order_obs(encounter, entry)
+      reason_for_switch = fetch_value(entry, :reasonForSwitch)
+      if reason_for_switch.present?
+        concept_id = ConceptName.find_by(name: 'Reason for regimen switch')&.concept_id
+        if concept_id
+          observation_service.create_observation(
+            encounter,
+            ActionController::Parameters.new(
+              concept_id: concept_id,
+              value_text: reason_for_switch,
+              obs_datetime: encounter.encounter_datetime
+            ).permit!
+          )
+        end
+      end
+
+      hanging_pills_status = fetch_value(entry, :hangingPillsStatus)
+      if hanging_pills_status.present?
+        concept_id = ConceptName.find_by(name: 'Hanging pills')&.concept_id
+        if concept_id
+          observation_service.create_observation(
+            encounter,
+            ActionController::Parameters.new(
+              concept_id: concept_id,
+              value_text: hanging_pills_status,
+              obs_datetime: encounter.encounter_datetime
+            ).permit!
+          )
+        end
+      end
     end
   end
 end
