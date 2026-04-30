@@ -157,6 +157,155 @@ def ensure_facility_level_data!
   SQL
 end
 
+CONCEPT_WORD_STOP_WORDS = %w[A AND AT BUT BY FOR HAS OF THE TO].freeze
+CONCEPT_WORD_REGEX_LARGE = /[!"#$%&'()*,+\-.\/:;<=>?@\[\]\\^_`{|}~]/
+CONCEPT_WORD_REGEX_SMALL = /[!"#$%&'()*,.\/:;<=>?@\[\]\\^_`{|}~]/
+
+def concept_word_parts(phrase, locale)
+  return [] if phrase.blank?
+
+  normalized_phrase = phrase.to_s.gsub(
+    phrase.to_s.length > 2 ? CONCEPT_WORD_REGEX_LARGE : CONCEPT_WORD_REGEX_SMALL,
+    ' '
+  )
+
+  normalized_phrase
+    .strip
+    .tr("\n", ' ')
+    .split
+    .each_with_object([]) do |part, parts|
+      word = part.strip.upcase
+      next if word.blank?
+      next if (locale.blank? || locale.to_s.start_with?('en')) && CONCEPT_WORD_STOP_WORDS.include?(word)
+      next if parts.include?(word)
+
+      parts << word
+    end
+end
+
+def concept_word_weight(name:, word:, concept_name_type:, locale_preferred:)
+  concept_name = name.to_s.upcase
+  return 0.0 unless concept_name.include?(word)
+
+  weight = 1.0
+  word_length = [word.length, 1].max.to_f
+  name_length = [concept_name.length, 1].max.to_f
+  name_type = concept_name_type.to_s
+  preferred = locale_preferred.to_i == 1
+
+  bonus = lambda do |coefficient|
+    type_bonus =
+      if name_type == 'INDEX_TERM' || (preferred && name_type == 'FULLY_SPECIFIED')
+        coefficient * 0.25
+      elsif preferred
+        coefficient * 0.24
+      elsif name_type == 'FULLY_SPECIFIED'
+        coefficient * 0.23
+      elsif name_type.blank?
+        coefficient * 0.22
+      elsif name_type == 'SHORT'
+        coefficient * 0.21
+      else
+        0.0
+      end
+
+    type_bonus + (coefficient / name_length)
+  end
+
+  if concept_name == word
+    coefficient = 5.0
+    weight += coefficient
+    coefficient += coefficient / word_length
+    weight += coefficient / word_length
+  elsif concept_name.start_with?(word)
+    coefficient = 3.0
+    weight += coefficient / word_length
+  else
+    coefficient = 1.0
+    word_index = concept_name.index(word) || 0
+    weight += (coefficient / (word_index + 1)) * ((name_length - word_length) / name_length)
+  end
+
+  weight + bonus.call(coefficient)
+end
+
+def rebuild_concept_word_index!
+  conn = ActiveRecord::Base.connection
+  foreign_key_checks_changed = false
+  return unless conn.table_exists?(:concept_word) && conn.table_exists?(:concept_name) && conn.table_exists?(:concept)
+
+  puts 'Rebuilding concept name search index...'
+
+  previous_foreign_key_checks = conn.select_value('SELECT @@FOREIGN_KEY_CHECKS')
+  conn.execute('SET FOREIGN_KEY_CHECKS=0')
+  foreign_key_checks_changed = true
+
+  indexed_words = 0
+
+  ActiveRecord::Base.transaction do
+    conn.execute('DELETE FROM concept_word')
+    conn.execute('ALTER TABLE concept_word AUTO_INCREMENT = 1')
+
+    concept_names = conn.select_all(<<~SQL)
+      SELECT
+        cn.concept_name_id,
+        cn.concept_id,
+        cn.name,
+        cn.locale,
+        cn.concept_name_type,
+        cn.locale_preferred
+      FROM concept_name cn
+      INNER JOIN concept c ON c.concept_id = cn.concept_id
+      WHERE COALESCE(cn.voided, 0) = 0
+      ORDER BY cn.concept_name_id
+    SQL
+
+    values = []
+    concept_names.each do |row|
+      locale = row['locale'].to_s
+
+      concept_word_parts(row['name'], locale).each do |word|
+        indexed_words += 1
+        values << [
+          row['concept_id'].to_i,
+          conn.quote(word[0, 50]),
+          conn.quote(locale),
+          row['concept_name_id'].to_i,
+          format(
+            '%.12f',
+            concept_word_weight(
+              name: row['name'],
+              word: word[0, 50],
+              concept_name_type: row['concept_name_type'],
+              locale_preferred: row['locale_preferred']
+            )
+          )
+        ]
+
+        next if values.size < 1_000
+
+        conn.execute <<~SQL
+          INSERT INTO concept_word (concept_id, word, locale, concept_name_id, weight)
+          VALUES #{values.map { |value| "(#{value.join(', ')})" }.join(', ')}
+        SQL
+        values.clear
+      end
+    end
+
+    if values.any?
+      conn.execute <<~SQL
+        INSERT INTO concept_word (concept_id, word, locale, concept_name_id, weight)
+        VALUES #{values.map { |value| "(#{value.join(', ')})" }.join(', ')}
+      SQL
+    end
+  end
+ensure
+  if defined?(conn) && conn && foreign_key_checks_changed
+    conn.execute("SET FOREIGN_KEY_CHECKS=#{previous_foreign_key_checks || 1}")
+  end
+  puts "Concept name search index rebuilt with #{indexed_words} words" if defined?(indexed_words)
+end
+
 # -------------------------------------------------------------------
 # Load OpenMRS skeleton database
 # -------------------------------------------------------------------
@@ -207,6 +356,7 @@ else
 end
 
 ensure_facility_level_data!
+rebuild_concept_word_index!
 
 roles = Role.where(role: ['Superuser', 'Global Superuser'])
 

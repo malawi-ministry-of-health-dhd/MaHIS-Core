@@ -20,7 +20,8 @@ namespace :sync do
       Sync::VillageSyncJob,
       Sync::DdeIdsSyncJob,
       Sync::DiagnosisSyncJob,
-      Sync::WardSyncJob
+      Sync::WardSyncJob,
+      Sync::DepartmentSyncJob
     ]
 
     jobs.each(&:perform_async)
