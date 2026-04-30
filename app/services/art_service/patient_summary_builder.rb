@@ -16,6 +16,14 @@ module ArtService
     BREASTFEEDING_CONCEPT   = 'Breast feeding'
     SIDE_EFFECTS_CONCEPT    = 'Malawi ART side effects'
 
+    HAS_TRANSFER_LETTER_CONCEPT     = 'Has transfer letter'
+    DATE_ART_LAST_TAKEN_CONCEPT     = 'Date ART last taken'
+    TB_TREATMENT_START_DATE_CONCEPT = 'TB treatment start date'
+    PILLS_BROUGHT_CONCEPT           = 'Amount of drug brought to clinic'
+    HIV_VIRAL_LOAD_CONCEPT          = 'HIV Viral Load'
+    TEST_TYPE_CONCEPT               = 'Test type'
+    LAB_TEST_RESULT_CONCEPT         = 'Lab test result'
+
     TPT_DRUG_CONCEPTS    = %w[Isoniazid Rifapentine Isoniazid/Rifapentine].freeze
     TPT_IPT_MONTHS       = 6
     TPT_3HP_MONTHS       = 3
@@ -70,6 +78,12 @@ module ArtService
         'has_height_ever' => has_height_ever?,
         'ever_received_arvs' => ever_received_arvs?,
         'already_staged' => already_staged?,
+        'isTransferIn' => is_transfer_in?,
+        'receivedArvsAtOtherFacility' => received_arvs_at_other_facility,
+        'hasTransferLetter' => has_transfer_letter?,
+        'weightHistory' => build_weight_history,
+        'regimenHistory' => build_regimen_history,
+        'latest_viral_load' => latest_viral_load,
         'visits' => build_visits
       }
     end
@@ -82,7 +96,9 @@ module ArtService
       @concept_id_map = fetch_concept_ids(
         [WEIGHT_CONCEPT, HEIGHT_CONCEPT, TB_STATUS_CONCEPT, PATIENT_TYPE_CONCEPT,
          PATIENT_PRESENT_CONCEPT, PREGNANT_CONCEPT, BREASTFEEDING_CONCEPT, SIDE_EFFECTS_CONCEPT,
-         REFER_TO_CLINICIAN_CONCEPT, APPOINTMENT_DATE_CONCEPT, MEDICATION_ORDERS_CONCEPT]
+         REFER_TO_CLINICIAN_CONCEPT, APPOINTMENT_DATE_CONCEPT, MEDICATION_ORDERS_CONCEPT,
+         HAS_TRANSFER_LETTER_CONCEPT, DATE_ART_LAST_TAKEN_CONCEPT,
+         TB_TREATMENT_START_DATE_CONCEPT, PILLS_BROUGHT_CONCEPT]
       )
       @tpt_drug_concept_ids = fetch_concept_ids(TPT_DRUG_CONCEPTS).values
 
@@ -101,6 +117,8 @@ module ArtService
       @visit_dates            = load_visit_dates
       @all_encounters_by_date = load_all_encounters
       @clinician_obs_dates    = load_clinician_obs_dates
+      @pills_brought_by_date  = load_pills_brought
+      @viral_load_results, @viral_load_by_date = load_viral_load_results
     end
 
     def fetch_concept_ids(names)
@@ -203,6 +221,64 @@ module ArtService
       Set.new(rows.map { |r| r['obs_date'].to_s })
     end
 
+    def load_pills_brought
+      pills_concept_id = @concept_id_map[PILLS_BROUGHT_CONCEPT]
+      return {} unless pills_concept_id
+
+      rows = ActiveRecord::Base.connection.exec_query(<<~SQL).to_a
+        SELECT DATE(o.obs_datetime) AS obs_date,
+               d.name               AS drug_name,
+               o.value_numeric      AS quantity
+        FROM obs o
+        INNER JOIN orders ord        ON ord.order_id = o.order_id AND ord.voided = 0
+        INNER JOIN drug_order do_tbl ON do_tbl.order_id = ord.order_id
+        INNER JOIN drug d            ON d.drug_id = do_tbl.drug_inventory_id
+        WHERE o.person_id  = #{@patient_id}
+          AND o.voided     = 0
+          AND o.concept_id = #{pills_concept_id}
+        ORDER BY o.obs_datetime DESC
+      SQL
+
+      rows.each_with_object(Hash.new { |h, k| h[k] = [] }) do |r, h|
+        h[r['obs_date'].to_s] << { 'name' => r['drug_name'], 'quantity' => r['quantity'] }
+      end
+    end
+
+    def load_viral_load_results
+      test_type_id  = ConceptName.find_by(name: TEST_TYPE_CONCEPT)&.concept_id
+      hiv_vl_id     = ConceptName.find_by(name: HIV_VIRAL_LOAD_CONCEPT)&.concept_id
+      lab_result_id = ConceptName.find_by(name: LAB_TEST_RESULT_CONCEPT)&.concept_id
+      return [[], {}] unless test_type_id && hiv_vl_id && lab_result_id
+
+      rows = ActiveRecord::Base.connection.exec_query(<<~SQL).to_a
+        SELECT DATE(o.obs_datetime) AS obs_date,
+               CONCAT(
+                 COALESCE(r.value_modifier, ''),
+                 COALESCE(CAST(r.value_numeric AS CHAR), ''),
+                 COALESCE(r.value_text, '')
+               )                   AS vl_value
+        FROM obs o
+        INNER JOIN obs tr ON tr.obs_group_id = o.obs_id
+                         AND tr.voided       = 0
+                         AND tr.concept_id   = #{lab_result_id}
+        INNER JOIN obs r  ON r.obs_group_id  = tr.obs_id
+                         AND r.voided        = 0
+                         AND r.concept_id    = #{hiv_vl_id}
+        WHERE o.person_id   = #{@patient_id}
+          AND o.voided      = 0
+          AND o.concept_id  = #{test_type_id}
+          AND o.value_coded = #{hiv_vl_id}
+          AND (r.value_numeric IS NOT NULL OR r.value_text IS NOT NULL)
+        ORDER BY o.obs_datetime DESC
+      SQL
+
+      by_date = rows.each_with_object({}) do |r, h|
+        h[r['obs_date'].to_s] ||= r['vl_value']
+      end
+
+      [rows, by_date]
+    end
+
     # ── Enrollment / static ──────────────────────────────────────────────────
 
     def arv_number
@@ -300,6 +376,56 @@ module ArtService
       @all_encounters_by_date.values.any? { |types| types.include?(HIV_STAGING_ENCOUNTER) }
     end
 
+    # ── Transfer-in / history ────────────────────────────────────────────────
+
+    def has_transfer_letter?
+      rows = @all_obs[@concept_id_map[HAS_TRANSFER_LETTER_CONCEPT]] || []
+      rows.any? { |r| truthy_value?(r) }
+    end
+
+    def is_transfer_in?
+      return true if has_transfer_letter?
+
+      latest_obs_value(PATIENT_TYPE_CONCEPT)&.match?(/transfer\s*in/i) || false
+    end
+
+    def received_arvs_at_other_facility
+      return 'Yes' if has_transfer_letter?
+
+      concept_id = @concept_id_map[DATE_ART_LAST_TAKEN_CONCEPT]
+      return nil unless concept_id
+
+      dt = (@all_obs[concept_id] || []).first&.dig('value_datetime')&.to_s
+      dt.presence&.split(' ')&.first
+    end
+
+    def build_weight_history
+      concept_id = @concept_id_map[WEIGHT_CONCEPT]
+      return [] unless concept_id
+
+      (@all_obs[concept_id] || []).map do |r|
+        { 'date' => r['obs_date'].to_s, 'weight' => r['value_numeric'] }
+      end
+    end
+
+    def build_regimen_history
+      arv_order_dates = @all_orders.select do |_date, rows|
+        rows.any? { |r| @arv_drug_ids.include?(r['drug_inventory_id']) }
+      end.keys.sort.reverse
+
+      arv_order_dates.each_with_object([]) do |date_str, history|
+        row = ActiveRecord::Base.connection.select_one(
+          "SELECT patient_current_regimen(#{@patient_id}, '#{date_str} 23:59:59') AS regimen"
+        )
+        regimen = row&.dig('regimen').presence
+        history << { 'date' => date_str, 'regimen' => regimen } if regimen
+      end
+    end
+
+    def latest_viral_load
+      @viral_load_results.first&.dig('vl_value')
+    end
+
     # ── Per-visit helpers ────────────────────────────────────────────────────
 
     def encounter_done_on?(date_str, enc_type_name)
@@ -363,7 +489,7 @@ module ArtService
 
       arv_drugs   = orders_on_date.select { |r| @arv_drug_ids.include?(r['drug_inventory_id']) }
                                   .uniq { |r| r['drug_name'] }
-                                  .map { |r| { 'name' => r['drug_name'], 'quantity' => r['quantity'] } }
+                                  .map { |r| { 'drug_id' => r['drug_inventory_id'], 'name' => r['drug_name'], 'quantity' => r['quantity'] } }
       other_drugs = orders_on_date.select { |r| @tpt_drug_ids.include?(r['drug_inventory_id']) }
                                   .map { |r| r['drug_name'] }.uniq
 
@@ -402,7 +528,10 @@ module ArtService
         'hasTreatment'              => encounter_done_on?(date_str, TREATMENT_ENCOUNTER),
         'hasFastTrackAssessment'    => encounter_done_on?(date_str, FAST_TRACK_ENCOUNTER),
         'hasDispensing'             => encounter_done_on?(date_str, DISPENSING_ENCOUNTER),
-        'hasAppointment'            => encounter_done_on?(date_str, APPOINTMENT_ENCOUNTER)
+        'hasAppointment'            => encounter_done_on?(date_str, APPOINTMENT_ENCOUNTER),
+        'pillsBroughtToClinic'      => pills_brought_on(date_str),
+        'tbTreatmentStartDate'      => tb_treatment_start_date_on(obs_on_date),
+        'viral_load'                => viral_load_on(date_str)
       }
     end
 
@@ -439,6 +568,22 @@ module ArtService
     def truthy_value?(row)
       val = row['value_coded_name'] || row['value_text'] || ''
       val.match?(/yes|true|1/i)
+    end
+
+    def pills_brought_on(date_str)
+      @pills_brought_by_date[date_str] || []
+    end
+
+    def tb_treatment_start_date_on(obs_on_date)
+      concept_id = @concept_id_map[TB_TREATMENT_START_DATE_CONCEPT]
+      return nil unless concept_id
+
+      dt = obs_on_date[concept_id]&.dig('value_datetime')&.to_s
+      dt.presence&.split(' ')&.first
+    end
+
+    def viral_load_on(date_str)
+      @viral_load_by_date[date_str]
     end
 
     # ── Cached IDs ───────────────────────────────────────────────────────────
