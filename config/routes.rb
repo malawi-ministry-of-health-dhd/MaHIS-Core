@@ -371,6 +371,7 @@ Rails.application.routes.draw do
       post '/reports/encounters' => 'encounters#count'
 
       post '/save_patient_record' => 'patients#save_patient_record'
+      get '/couchdb/config', to: 'couchdb_configurations#show'
       # drugs_cms routes
       get '/drug_cms/search', to: 'drug_cms#search'
       resources :drug_cms, only: %i[index]

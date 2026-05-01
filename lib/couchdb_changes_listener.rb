@@ -1,6 +1,7 @@
 require 'rest-client'
 require 'json'
 require 'yaml'
+require_relative 'couchdb_url'
 
 class CouchdbChangesListener
   CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
@@ -138,12 +139,8 @@ class CouchdbChangesListener
   end
 
   def listen_to_changes
-    base_uri = URI(config[:couchdb_url])
-    username = base_uri.user || config[:username]
-    password = base_uri.password || config[:password]
-    
-    clean_base_url = "#{base_uri.scheme}://#{base_uri.host}:#{base_uri.port}"
-    url = "#{clean_base_url}/#{db_name}/_changes"
+    username, password = couchdb_credentials
+    url = couchdb_url(db_name, '_changes')
     
     params = {
       feed: 'continuous',
@@ -211,12 +208,8 @@ class CouchdbChangesListener
   end
 
   def fetch_unprocessed_documents
-    base_uri = URI(config[:couchdb_url])
-    username = base_uri.user || config[:username]
-    password = base_uri.password || config[:password]
-    
-    clean_base_url = "#{base_uri.scheme}://#{base_uri.host}:#{base_uri.port}"
-    url = "#{clean_base_url}/#{db_name}/_find"
+    username, password = couchdb_credentials
+    url = couchdb_url(db_name, '_find')
     
     query = {
       selector: {
@@ -409,13 +402,9 @@ class CouchdbChangesListener
 
   def fetch_current_document(doc_id)
     begin
-      base_uri = URI(config[:couchdb_url])
-      username = base_uri.user || config[:username]
-      password = base_uri.password || config[:password]
-      
-      clean_base_url = "#{base_uri.scheme}://#{base_uri.host}:#{base_uri.port}"
+      username, password = couchdb_credentials
       encoded_doc_id = URI.encode_www_form_component(doc_id)
-      fetch_url = "#{clean_base_url}/#{db_name}/#{encoded_doc_id}"
+      fetch_url = couchdb_url(db_name, encoded_doc_id)
       
       resource_options = { headers: { accept: :json } }
       resource_options[:user] = username if username
@@ -439,13 +428,9 @@ class CouchdbChangesListener
   end
 
   def update_couchdb_document_direct(doc_id, document_data)
-    base_uri = URI(config[:couchdb_url])
-    username = base_uri.user || config[:username]
-    password = base_uri.password || config[:password]
-    
-    clean_base_url = "#{base_uri.scheme}://#{base_uri.host}:#{base_uri.port}"
+    username, password = couchdb_credentials
     encoded_doc_id = URI.encode_www_form_component(doc_id)
-    update_url = "#{clean_base_url}/#{db_name}/#{encoded_doc_id}"
+    update_url = couchdb_url(db_name, encoded_doc_id)
     
     resource_options = {
       headers: { content_type: :json, accept: :json }
@@ -496,5 +481,13 @@ class CouchdbChangesListener
         nil
       end
     end
+  end
+
+  def couchdb_credentials
+    CouchdbUrl.credentials(config[:couchdb_url], config[:username], config[:password])
+  end
+
+  def couchdb_url(*segments)
+    CouchdbUrl.join(config[:couchdb_url], *segments, include_credentials: false)
   end
 end
