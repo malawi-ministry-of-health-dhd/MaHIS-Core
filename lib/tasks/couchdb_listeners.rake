@@ -1,4 +1,6 @@
 # lib/tasks/couchdb_listeners.rake
+require Rails.root.join('lib', 'facility_dde_activation_listener').to_s
+
 namespace :couchdb do
   desc "Start CouchDB listeners for all databases"
   task start_all_listeners: :environment do
@@ -35,6 +37,8 @@ namespace :couchdb do
 
     Rails.logger.info("[CouchDB Listener] All backfills done. Starting live change-feed listeners...")
 
+    Thread.new { FacilityDdeActivationListener.new.start }
+
     # Phase 2: Start live listeners (skip backfill on startup — already done above)
     CouchdbChangesListener.start_multiple_live_only(sequential_configs)
   end
@@ -58,8 +62,9 @@ namespace :couchdb do
       },
     }
 
-    config = config_map[db_name]
-    if config
+    if db_name == 'facilities'
+      FacilityDdeActivationListener.new.start
+    elsif (config = config_map[db_name])
       listener = CouchdbChangesListener.new(db_name: db_name, **config)
       listener.start
     else

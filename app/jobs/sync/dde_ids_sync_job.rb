@@ -268,7 +268,7 @@ module Sync
         "_id" => generate_document_id(npid_data, actual_npid),
         "dde_id" => actual_npid,
         "dde_location_id" => npid_data['dde_location_id'],
-        "location_id" => npid_data['location_id'],
+        "location_id" => npid_data['location_id'].to_s,
         "npid" => actual_npid,
         "assigned" => npid_data.fetch('assigned', false),
         "allocated" => npid_data.fetch('allocated', true),
