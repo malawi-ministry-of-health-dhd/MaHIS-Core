@@ -6,7 +6,12 @@ module ModelUtils
   #
   # Parameters:
   #  name - A string repr of the concept name
-  def concept(name)
+  def concept(*args)
+    if args.empty?
+      Rails.logger.error("CONCEPT_DEBUG: called with 0 args from:\n#{caller[0..15].join("\n")}")
+      raise ArgumentError, "concept: wrong number of arguments (given 0, expected 1). See CONCEPT_DEBUG in log."
+    end
+    name = args.first
     return unless name.present?
 
     Concept.joins(:concept_names).where('concept_name.name = ?', name).first

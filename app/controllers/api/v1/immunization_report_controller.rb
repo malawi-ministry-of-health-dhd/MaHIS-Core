@@ -2,7 +2,16 @@ class Api::V1::ImmunizationReportController < ApplicationController
   before_action :report_params , only: [:stats, :vaccines_administered]
 
   def stats
-    DashboardStatsJob.perform_later(User.current.location_id)
+    start_date = report_params[:start_date].to_date
+    end_date = report_params[:end_date].to_date
+    location_id = User.current.location_id
+
+    dashboard_stats = fetch_or_build_dashboard_stats(start_date, end_date, location_id)
+    dashboard_stats = refresh_due_counts!(dashboard_stats, location_id)
+
+    DashboardStatsJob.perform_later(location_id, start_date.to_s, end_date.to_s)
+
+    render json: dashboard_stats
   end
 
   def vaccine_names
@@ -138,5 +147,71 @@ class Api::V1::ImmunizationReportController < ApplicationController
   def report_params
     params.require(%i[start_date end_date])
     params.permit(%i[start_date end_date])
+  end
+
+  def fetch_or_build_dashboard_stats(start_date, end_date, location_id)
+    fresh_stats = ImmunizationService::Reports::Stats::ImmunizationDashboard.new(
+      start_date: start_date.to_s,
+      end_date: end_date.to_s,
+      location_id:
+    ).data
+
+    normalized = normalize_dashboard_stats_hash(fresh_stats)
+    persist_cache('dashboard_stats', location_id, normalized)
+    normalized
+  rescue StandardError => e
+    Rails.logger.error("Failed to build immunization dashboard stats for location #{location_id}: #{e.class}: #{e.message}")
+
+    cached_stats = ImmunizationCacheDatum.where(name: 'dashboard_stats', location_id:).pick(:value)
+    return normalize_dashboard_stats_hash(cached_stats) if cached_stats.present?
+
+    default_dashboard_stats
+  end
+
+  def refresh_due_counts!(dashboard_stats, location_id)
+    missed_visits = ImmunizationService::FollowUp.new.fetch_missed_immunizations(location_id)
+
+    refreshed_stats = normalize_dashboard_stats_hash(dashboard_stats).merge(
+      'under_five_overdue' => missed_visits[:under_five_count].to_i,
+      'over_five_overdue' => missed_visits[:over_five_count].to_i,
+      'due_today_count' => missed_visits[:due_today_count].to_i,
+      'due_this_week_count' => missed_visits[:due_this_week_count].to_i,
+      'due_this_month_count' => missed_visits[:due_this_month_count].to_i
+    )
+
+    persist_cache('dashboard_stats', location_id, refreshed_stats)
+    persist_cache('missed_immunizations', location_id, missed_visits)
+
+    refreshed_stats
+  rescue StandardError => e
+    Rails.logger.error("Failed to refresh due counts for location #{location_id}: #{e.class}: #{e.message}")
+    normalize_dashboard_stats_hash(dashboard_stats)
+  end
+
+  def persist_cache(name, location_id, value)
+    cache = ImmunizationCacheDatum.find_or_initialize_by(name:, location_id:)
+    cache.value = value
+    cache.save!
+  end
+
+  def normalize_dashboard_stats_hash(value)
+    merged = default_dashboard_stats.merge((value || {}).to_h.deep_stringify_keys)
+    merged.slice(*default_dashboard_stats.keys, 'total_male_registered', 'total_client_registered',
+                 'total_female_registered', 'vaccination_counts_by_month')
+  rescue StandardError
+    default_dashboard_stats
+  end
+
+  def default_dashboard_stats
+    {
+      'total_vaccinated_this_year' => 0,
+      'total_female_vaccinated_this_year' => 0,
+      'total_male_vaccinated_this_year' => 0,
+      'due_today_count' => 0,
+      'due_this_week_count' => 0,
+      'due_this_month_count' => 0,
+      'under_five_overdue' => 0,
+      'over_five_overdue' => 0
+    }
   end
 end

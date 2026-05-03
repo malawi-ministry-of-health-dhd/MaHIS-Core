@@ -21,6 +21,7 @@ module ArtService
         @start_date = start_date
         @end_date = end_date
         @type = type
+        @rebuild = kwargs[:rebuild].to_s.casecmp?('true') || kwargs[:rebuild] == true
         @cohort_builder = CohortBuilder.new
         @cohort_struct = CohortStruct.new
         @occupation = kwargs[:occupation]
@@ -28,12 +29,9 @@ module ArtService
 
       def build_report
         with_lock(lock_file, blocking: false) do
-          @cohort_builder.build(@cohort_struct, @start_date, @end_date, @occupation)
+          @cohort_builder.build(@cohort_struct, @start_date, @end_date, @occupation, force_rebuild: @rebuild)
           clear_drill_down
           save_report
-        ensure
-          # Always cleanup temporary tables after report generation
-          cleanup_tables
         end
       rescue FailedToAcquireLock => e
         Rails.logger.warn("ART#Cohort report is locked by another process: #{e}")
@@ -55,15 +53,6 @@ module ArtService
               .first
       end
 
-      private
-
-      def cleanup_tables
-        Rails.logger.info("Cleaning up temporary tables for location #{Location.current&.location_id}")
-        @cohort_builder.cleanup_temporary_tables
-      rescue StandardError => e
-        Rails.logger.error("Failed to cleanup temporary tables: #{e.message}")
-      end
-
       def defaulter_list(pepfar)
         report_type = (pepfar ? 'pepfar' : 'moh')
         ArtService::Reports::CohortBuilder.new(outcomes_definition: report_type)
@@ -80,6 +69,10 @@ module ArtService
             DATE(appointment.appointment_date) AS appointment_date
           FROM #{temp_earliest_start_date} e
           INNER JOIN #{temp_patient_outcomes} o ON e.patient_id = o.patient_id
+          INNER JOIN patient_program pp ON pp.patient_id = e.patient_id
+            AND pp.program_id = 1
+            AND pp.voided = 0
+            AND pp.location_id = #{User.current.location_id}
           INNER JOIN (
             SELECT e.patient_id, MAX(o.value_datetime) appointment_date
             FROM encounter e
@@ -108,6 +101,15 @@ module ArtService
           HAVING (defaulter_date >= DATE('#{@start_date}') AND defaulter_date <= DATE('#{@end_date}')) OR (defaulter_date IS NULL)
           ORDER BY e.patient_id, n.date_created DESC;
         SQL
+      end
+
+      private
+
+      def cleanup_tables
+        Rails.logger.info("Cleaning up temporary tables for location #{Location.current&.location_id}")
+        @cohort_builder.cleanup_temporary_tables
+      rescue StandardError => e
+        Rails.logger.error("Failed to cleanup temporary tables: #{e.message}")
       end
 
       public

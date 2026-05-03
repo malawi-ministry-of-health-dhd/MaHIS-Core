@@ -34,17 +34,20 @@ module Api
         provider = User.current.user_id
         provider = params[:user_id] if params.include?(:user_id)
 
-        property = UserProperty.find_by property: name,
-                                        user_id: provider
+        # MySQL INSERT ... ON DUPLICATE KEY UPDATE — atomic, race-safe
+        ActiveRecord::Base.connection.execute(
+          ActiveRecord::Base.sanitize_sql_array([
+            "INSERT INTO user_property (user_id, property, property_value)
+            VALUES (?, ?, ?)
+            ON DUPLICATE KEY UPDATE property_value = VALUES(property_value)",
+            provider, name, value
+          ])
+        )
 
-        property ||= UserProperty.new property: name, user_id: provider
-        property.property_value = value
-
-        if property.save
-          render json: property, status: success_response_status
-        else
-          render json: ['Failed to save property'], status: :internal_server_error
-        end
+        property = UserProperty.find_by!(property: name, user_id: provider)
+        render json: property, status: success_response_status
+      rescue ActiveRecord::StatementInvalid => e
+        render json: ["Failed to save property: #{e.message}"], status: :internal_server_error
       end
 
       def update

@@ -71,26 +71,32 @@ module ArtService
         SQL
       end
 
-      def init_temporary_tables(start_date, end_date, occupation)
-        prepare_tables
-        create_location_specific_mysql_functions
-        load_temp_other_patient_types(end_date)
-        load_temp_register_start_date_table(end_date)
-        load_temp_order_details(end_date)
-        load_art_start_date(end_date)
-        load_data_into_temp_earliest_start_date(end_date.to_date, occupation)
-        update_cum_outcome(start_date:, end_date:)
+      def init_temporary_tables(start_date, end_date, occupation, force_rebuild: false)
+        shared_loaded = !force_rebuild && shared_cohort_tables_populated?
+        prepare_tables(skip_shared: shared_loaded, force_rebuild: force_rebuild)
+        unless shared_loaded
+          create_location_specific_mysql_functions
+          load_temp_other_patient_types(end_date)
+          load_temp_register_start_date_table(end_date)
+          load_temp_order_details(end_date)
+          load_art_start_date(end_date)
+          load_data_into_temp_earliest_start_date(end_date.to_date, occupation)
+        end
+        update_cum_outcome(start_date:, end_date:, force_rebuild:)
       end
 
-      def build(cohort_struct, start_date, end_date, occupation)
-        # load_tmp_patient_table(cohort_struct)
-        prepare_tables
-        create_location_specific_mysql_functions
-        load_temp_other_patient_types(end_date)
-        load_temp_register_start_date_table(end_date)
-        load_temp_order_details(end_date)
-        load_art_start_date(end_date)
-        load_data_into_temp_earliest_start_date(end_date.to_date, occupation)
+      def build(cohort_struct, start_date, end_date, occupation, force_rebuild: true)
+        skip_preparation = !force_rebuild && shared_cohort_tables_populated?
+        unless skip_preparation
+          # load_tmp_patient_table(cohort_struct)
+          prepare_tables(force_rebuild: force_rebuild)
+          create_location_specific_mysql_functions
+          load_temp_other_patient_types(end_date)
+          load_temp_register_start_date_table(end_date)
+          load_temp_order_details(end_date)
+          load_art_start_date(end_date)
+          load_data_into_temp_earliest_start_date(end_date.to_date, occupation)
+        end
 
         # create_tmp_patient_table_2(end_date)
 
@@ -111,7 +117,9 @@ module ArtService
         batch_load_patient_types(cohort_struct, start_date, end_date, cum_start_date, quarter_start_date)
 
         # Pregnant females (all ages)
-        load_temp_pregnant_obs(cum_start_date, end_date)
+        unless skip_preparation
+          load_temp_pregnant_obs(cum_start_date, end_date)
+        end
         cohort_struct.pregnant_females_all_ages = pregnant_females_all_ages(start_date, end_date)
         cohort_struct.cum_pregnant_females_all_ages = pregnant_females_all_ages(cum_start_date, end_date)
         cohort_struct.quarterly_pregnant_females_all_ages = pregnant_females_all_ages(quarter_start_date, end_date)
@@ -211,9 +219,11 @@ module ArtService
         cohort_struct.quarterly_kaposis_sarcoma = kaposis_sarcoma(quarter_start_date, end_date)
 
         # From this point going down: we UPDATE #{temp_earliest_start_date} cum_outcome field to have the latest Cumulative outcome
-        update_cum_outcome(start_date: quarter_start_date, end_date:)
-        update_tb_status(end_date)
-        update_patient_side_effects(end_date)
+        update_cum_outcome(start_date: quarter_start_date, end_date:, force_rebuild: force_rebuild)
+        unless skip_preparation
+          update_tb_status(end_date)
+          update_patient_side_effects(end_date)
+        end
 
         # Total Alive and On ART
         # Unique PatientProgram entries at the current location for those patients with at least one state
@@ -762,11 +772,29 @@ module ArtService
       # rubocop:enable Metrics/MethodLength
       # rubocop:enable Metrics/AbcSize
 
-      def update_cum_outcome(start_date:, end_date:)
+      def update_cum_outcome(start_date:, end_date:, force_rebuild: false)
+        return if !force_rebuild && outcome_tables_populated?
+
         ArtService::Reports::Cohort::Outcomes.new(end_date:, start_date:,
                                                   definition: @outcomes_definition,
                                                   rebuild: 'true').update_cummulative_outcomes
         ArtService::Reports::MaternalStatus.new(end_date:, start_date:).process_data
+      end
+
+      def outcome_tables_populated?
+        ActiveRecord::Base.connection.select_value(
+          "SELECT COUNT(*) FROM #{temp_patient_outcomes}"
+        ).to_i.positive?
+      rescue ActiveRecord::StatementInvalid
+        false
+      end
+
+      def shared_cohort_tables_populated?
+        ActiveRecord::Base.connection.select_value(
+          "SELECT COUNT(*) FROM #{temp_earliest_start_date}"
+        ).to_i.positive?
+      rescue ActiveRecord::StatementInvalid
+        false
       end
 
       def update_tb_status(end_date)
@@ -1336,8 +1364,10 @@ module ArtService
       end
 
       def load_tmp_max_adherence(end_date)
+        return if ActiveRecord::Base.connection.select_value("SELECT COUNT(*) FROM #{tmp_max_adherence}").to_i > 0
+
         arv_drugs_concept_id = concept('Antiretroviral drugs')&.concept_id
-        
+
         ActiveRecord::Base.connection.execute <<~SQL
           INSERT INTO #{tmp_max_adherence}
           SELECT obs.person_id, DATE(MAX(obs.obs_datetime)) AS visit_date

@@ -5,7 +5,7 @@ module ArtService
     class VisitsReport
       include ModelUtils
 
-      def initialize(name:, type:, start_date:, end_date:)
+      def initialize(name:, type:, start_date:, end_date:, **)
         @name = name
         @type = type
         @start_date = start_date.to_date
@@ -14,22 +14,34 @@ module ArtService
 
       def build_report
         visits = (@start_date..@end_date).each_with_object({}) do |date, visits|
-          visits[date] ||= { incomplete: 0, complete: 0 }
-
-          find_visiting_patients(date).each do |patient|
-            if workflow_engine(patient, date).next_encounter
-              visits[date][:incomplete] += 1
-            else
-              visits[date][:complete] += 1
-            end
-          end
+          visits[date] = calculate_daily_stats(date)
         end
 
         save_report visits
       end
 
+      def calculate_daily_stats(date)
+        stats = { incomplete: 0, complete: 0 }
+
+        find_visiting_patients(date).each do |patient|
+          if workflow_engine(patient, date).next_encounter
+            stats[:incomplete] += 1
+          else
+            stats[:complete] += 1
+          end
+        end
+
+        stats
+      end
+
       def find_report
         (@start_date..@end_date).each_with_object({}) do |date, parsed_report|
+          if date == Date.today
+            parsed_report[date] = calculate_daily_stats(date)
+            save_report({ date => parsed_report[date] })
+            next
+          end
+
           report = fetch_report date
 
           parsed_values = report.values.each_with_object({}) do |report_value, parsed_values|
@@ -75,10 +87,11 @@ module ArtService
       def save_report(visits)
         visits.each do |date, values|
           report = fetch_report date
+          report.values.destroy_all
 
           values.each do |indicator, value|
             ReportValue.create name: "#{date} - #{indicator}",
-                               indicator_name: indicator,
+                               indicator_name: indicator.to_s,
                                contents: value,
                                content_type: 'integer',
                                report:,

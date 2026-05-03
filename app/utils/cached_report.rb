@@ -28,7 +28,7 @@ class CachedReport
   def initialize_and_save_report
     ArtService::Reports::CohortBuilder
       .new(outcomes_definition: @report_type)
-      .init_temporary_tables(@start_date, @end_date, @occupation)
+      .init_temporary_tables(@start_date, @end_date, @occupation, force_rebuild: @rebuild.present?)
 
     save_report
   end
@@ -60,10 +60,24 @@ class CachedReport
   end
 
   def all_temp_tables_are_ok?
-    # check if table exists and has the corrent column count
-    TEMP_TABLES_COLUMN_COUNT.all? do |table_name, column_count|
-      check_if_table_exists(table_name) && count_table_columns(table_name) == column_count
-    end
+    # Use location-scoped table names to correctly check the actual tables in use
+    cols = batch_column_counts(
+      temp_cohort_members, temp_earliest_start_date, temp_other_patient_types,
+      temp_register_start_date, temp_order_details, temp_art_start_date,
+      temp_patient_tb_status, temp_latest_tb_status, tmp_max_adherence,
+      temp_pregnant_obs, temp_patient_side_effects
+    )
+    cols[temp_cohort_members]         == 12 &&
+      cols[temp_earliest_start_date]  == 11 &&
+      cols[temp_other_patient_types]  == 1  &&
+      cols[temp_register_start_date]  == 2  &&
+      cols[temp_order_details]        == 2  &&
+      cols[temp_art_start_date]       == 2  &&
+      cols[temp_patient_tb_status]    == 2  &&
+      cols[temp_latest_tb_status]     == 2  &&
+      cols[tmp_max_adherence]         == 2  &&
+      cols[temp_pregnant_obs]         == 3  &&
+      cols[temp_patient_side_effects] == 2
   end
 
   def report_saved?

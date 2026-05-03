@@ -118,7 +118,7 @@ module ArtService
           ActiveRecord::Base.connection.select_all("
             SELECT p.person_id patient_id
             FROM person p
-            INNER JOIN patient_program pp ON pp.patient_id = p.person_id AND pp.program_id = #{Program.find_by_name('HIV Program').id} AND pp.voided = 0
+            INNER JOIN patient_program pp ON pp.patient_id = p.person_id AND pp.program_id = #{Program.find_by_name('HIV Program').id} AND pp.voided = 0 AND pp.location_id = #{User.current.location_id}
             INNER JOIN patient_state ps ON ps.patient_program_id = pp.patient_program_id AND ps.state = 7 AND ps.start_date IS NOT NULL
             LEFT JOIN encounter as hiv_registration ON hiv_registration.patient_id = p.person_id AND hiv_registration.encounter_datetime < DATE(#{ActiveRecord::Base.connection.quote(end_date)}) AND hiv_registration.encounter_type = #{hiv_clinic_registration_id} AND hiv_registration.voided = 0
             LEFT JOIN (SELECT * FROM obs WHERE concept_id = #{type_of_patient_concept} AND voided = 0 AND value_coded = #{new_patient_concept} AND obs_datetime < DATE(#{ActiveRecord::Base.connection.quote(end_date)}) + INTERVAL 1 DAY) AS new_patient ON p.person_id = new_patient.person_id
