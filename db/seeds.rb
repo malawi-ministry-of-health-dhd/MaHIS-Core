@@ -1,11 +1,9 @@
 # frozen_string_literal: true
 
 require 'yaml'
-require 'shellwords'
+require 'open-uri'
+require 'fileutils'
 
-# -------------------------------------------------------------------
-# Load database configuration
-# -------------------------------------------------------------------
 if ENV['INITIAL_SETUP']
   puts "\e[31mWARNING: This will wipe out your database. Do you want to continue? (y/N)\e[0m"
   response = $stdin.gets.chomp.downcase
@@ -28,144 +26,101 @@ database = db_config['database']
 host     = db_config['host']
 port     = db_config['port']
 
-def import_sql_gz!(file_path:, username:, password:, host:, port:, database:)
-  source_cmd = "gunzip -c #{Shellwords.escape(file_path.to_s)}"
+GITHUB_METADATA_URL = ENV.fetch(
+  'GITHUB_METADATA_URL',
+  'https://raw.githubusercontent.com/malawi-ministry-of-health-dhd/MaHIS-Metadata/main/metadata.sql'
+).freeze
 
-  cmd = "#{source_cmd} | mysql -u #{Shellwords.escape(username.to_s)}"
-  cmd += " -p#{Shellwords.escape(password.to_s)}" if password.present?
-  cmd += " -h #{Shellwords.escape(host.to_s)}" if host.present?
-  cmd += " -P #{Shellwords.escape(port.to_s)}" if port.present?
-  cmd += " #{Shellwords.escape(database.to_s)}"
+SEED_CONCEPT_WORD_STOP_WORDS = %w[A AND AT BUT BY FOR HAS OF THE TO].freeze
+SEED_CONCEPT_WORD_REGEX_LARGE = /[!"#$%&'()*,+\-.\/:;<=>?@\[\]\\^_`{|}~]/
+SEED_CONCEPT_WORD_REGEX_SMALL = /[!"#$%&'()*,.\/:;<=>?@\[\]\\^_`{|}~]/
 
-  return if system(cmd)
+def mysql_import_command(username:, password:, host:, port:, database:)
+  command = ['mysql', '-u', username.to_s]
+  command << "--password=#{password}" if password.present?
+  command += ['-h', host.to_s] if host.present?
+  command += ['-P', port.to_s] if port.present?
+  command << database.to_s
+  command
+end
+
+def fetch_metadata_from_github!(url, local_path)
+  FileUtils.mkdir_p(local_path.dirname)
+
+  puts "Downloading latest metadata from GitHub..."
+  URI.open(url, open_timeout: 30, read_timeout: 300) do |remote|
+    File.open(local_path, 'wb') do |file|
+      IO.copy_stream(remote, file)
+    end
+  end
+
+  raise "Downloaded file is empty: #{local_path}" unless File.exist?(local_path) && File.size(local_path).positive?
+
+  puts "Metadata downloaded to #{local_path}"
+end
+
+def apply_metadata_compatibility_fixes!(file_path)
+  conn = ActiveRecord::Base.connection
+  changed = false
+
+  concept_map_type_id_type = conn.select_value(<<~SQL)
+    SELECT COLUMN_TYPE
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'concept_map_type'
+      AND COLUMN_NAME = 'concept_map_type_id'
+    LIMIT 1
+  SQL
+
+  sql = File.read(file_path)
+
+  if concept_map_type_id_type.present?
+    updated_sql = sql.gsub(
+      /(`concept_map_type_id`\s+)(?:int(?:\(\d+\))?(?: unsigned)?|bigint(?:\(\d+\))?(?: unsigned)?)(\s+NOT NULL DEFAULT '1',)/i,
+      "\\1#{concept_map_type_id_type}\\2"
+    )
+
+    if updated_sql != sql
+      sql = updated_sql
+      changed = true
+      puts "Applied metadata compatibility fix: concept_reference_map.concept_map_type_id -> #{concept_map_type_id_type}"
+    end
+  end
+
+  unnamed_fk_sql = sql.gsub(/CONSTRAINT\s+`[^`]+`\s+FOREIGN KEY/i, 'FOREIGN KEY')
+  if unnamed_fk_sql != sql
+    sql = unnamed_fk_sql
+    changed = true
+    puts 'Applied metadata compatibility fix: removed explicit foreign-key names.'
+  end
+
+  return unless changed
+
+  File.write(file_path, sql)
+end
+
+def import_sql_file!(file_path:, username:, password:, host:, port:, database:)
+  raise "SQL file not found: #{file_path}" unless File.exist?(file_path)
+
+  command = mysql_import_command(
+    username: username,
+    password: password,
+    host: host,
+    port: port,
+    database: database
+  )
+
+  return if system(*command, in: file_path.to_s)
 
   exit_code = $?.respond_to?(:exitstatus) ? $?.exitstatus : 'unknown'
   raise "Import failed for #{File.basename(file_path)} (exit code: #{exit_code})"
 end
 
-def ensure_facility_level_data!
-  conn = ActiveRecord::Base.connection
-  creator_id = conn.select_value('SELECT user_id FROM users ORDER BY user_id ASC LIMIT 1')
-  return if creator_id.blank?
-
-  facility_type_type_id = conn.select_value(<<~SQL)
-    SELECT location_attribute_type_id
-    FROM location_attribute_type
-    WHERE name = 'Facility Type'
-    LIMIT 1
-  SQL
-  return if facility_type_type_id.blank?
-
-  facility_level_type_id = conn.select_value(<<~SQL)
-    SELECT location_attribute_type_id
-    FROM location_attribute_type
-    WHERE name = 'Facility Level'
-    LIMIT 1
-  SQL
-
-  unless facility_level_type_id.present?
-    conn.execute <<~SQL
-      INSERT INTO location_attribute_type (
-        name,
-        datatype,
-        creator,
-        date_created,
-        retired,
-        uuid
-      )
-      VALUES (
-        'Facility Level',
-        'string',
-        #{creator_id.to_i},
-        NOW(),
-        0,
-        UUID()
-      )
-    SQL
-
-    facility_level_type_id = conn.select_value(<<~SQL)
-      SELECT location_attribute_type_id
-      FROM location_attribute_type
-      WHERE name = 'Facility Level'
-      LIMIT 1
-    SQL
-  end
-
-  conn.execute <<~SQL
-    UPDATE location_attribute level_attr
-    INNER JOIN location_attribute facility_type_attr
-      ON facility_type_attr.location_id = level_attr.location_id
-    SET level_attr.value_reference = CASE
-          WHEN LOWER(TRIM(facility_type_attr.value_reference)) IN ('health centre', 'health center') THEN 'Primary'
-          WHEN LOWER(TRIM(facility_type_attr.value_reference)) = 'district hospital' THEN 'Secondary'
-          WHEN LOWER(TRIM(facility_type_attr.value_reference)) = 'central hospital' THEN 'Tertiary'
-        END,
-        level_attr.voided = 0,
-        level_attr.changed_by = COALESCE(level_attr.changed_by, facility_type_attr.creator),
-        level_attr.date_changed = NOW()
-    WHERE level_attr.attribute_type_id = #{facility_level_type_id.to_i}
-      AND facility_type_attr.attribute_type_id = #{facility_type_type_id.to_i}
-      AND COALESCE(level_attr.voided, 0) = 0
-      AND COALESCE(facility_type_attr.voided, 0) = 0
-      AND (
-        level_attr.value_reference IS NULL
-        OR TRIM(level_attr.value_reference) = ''
-      )
-      AND LOWER(TRIM(facility_type_attr.value_reference)) IN (
-        'health centre',
-        'health center',
-        'district hospital',
-        'central hospital'
-      )
-  SQL
-
-  conn.execute <<~SQL
-    INSERT INTO location_attribute (
-      location_id,
-      attribute_type_id,
-      value_reference,
-      uuid,
-      creator,
-      date_created,
-      voided
-    )
-    SELECT
-      facility_type_attr.location_id,
-      #{facility_level_type_id.to_i},
-      CASE
-        WHEN LOWER(TRIM(facility_type_attr.value_reference)) IN ('health centre', 'health center') THEN 'Primary'
-        WHEN LOWER(TRIM(facility_type_attr.value_reference)) = 'district hospital' THEN 'Secondary'
-        WHEN LOWER(TRIM(facility_type_attr.value_reference)) = 'central hospital' THEN 'Tertiary'
-      END,
-      UUID(),
-      COALESCE(facility_type_attr.creator, #{creator_id.to_i}),
-      COALESCE(facility_type_attr.date_created, NOW()),
-      0
-    FROM location_attribute facility_type_attr
-    LEFT JOIN location_attribute level_attr
-      ON level_attr.location_id = facility_type_attr.location_id
-      AND level_attr.attribute_type_id = #{facility_level_type_id.to_i}
-    WHERE facility_type_attr.attribute_type_id = #{facility_type_type_id.to_i}
-      AND COALESCE(facility_type_attr.voided, 0) = 0
-      AND LOWER(TRIM(facility_type_attr.value_reference)) IN (
-        'health centre',
-        'health center',
-        'district hospital',
-        'central hospital'
-      )
-      AND level_attr.location_attribute_id IS NULL
-  SQL
-end
-
-CONCEPT_WORD_STOP_WORDS = %w[A AND AT BUT BY FOR HAS OF THE TO].freeze
-CONCEPT_WORD_REGEX_LARGE = /[!"#$%&'()*,+\-.\/:;<=>?@\[\]\\^_`{|}~]/
-CONCEPT_WORD_REGEX_SMALL = /[!"#$%&'()*,.\/:;<=>?@\[\]\\^_`{|}~]/
-
 def concept_word_parts(phrase, locale)
   return [] if phrase.blank?
 
   normalized_phrase = phrase.to_s.gsub(
-    phrase.to_s.length > 2 ? CONCEPT_WORD_REGEX_LARGE : CONCEPT_WORD_REGEX_SMALL,
+    phrase.to_s.length > 2 ? SEED_CONCEPT_WORD_REGEX_LARGE : SEED_CONCEPT_WORD_REGEX_SMALL,
     ' '
   )
 
@@ -176,7 +131,7 @@ def concept_word_parts(phrase, locale)
     .each_with_object([]) do |part, parts|
       word = part.strip.upcase
       next if word.blank?
-      next if (locale.blank? || locale.to_s.start_with?('en')) && CONCEPT_WORD_STOP_WORDS.include?(word)
+      next if (locale.blank? || locale.to_s.start_with?('en')) && SEED_CONCEPT_WORD_STOP_WORDS.include?(word)
       next if parts.include?(word)
 
       parts << word
@@ -306,12 +261,131 @@ ensure
   puts "Concept name search index rebuilt with #{indexed_words} words" if defined?(indexed_words)
 end
 
-# -------------------------------------------------------------------
-# Load OpenMRS skeleton database
-# -------------------------------------------------------------------
-if ENV['INITIAL_SETUP']
-  import_sql_gz!(
-    file_path: Rails.root.join('db', 'mahis_skeleton.sql.gz'),
+def ensure_facility_level_data!
+  conn = ActiveRecord::Base.connection
+  required_tables = %w[users location_attribute_type location_attribute]
+  return unless required_tables.all? { |table_name| conn.table_exists?(table_name) }
+
+  creator_id = conn.select_value('SELECT user_id FROM users ORDER BY user_id ASC LIMIT 1')
+  return if creator_id.blank?
+
+  facility_type_type_id = conn.select_value(<<~SQL)
+    SELECT location_attribute_type_id
+    FROM location_attribute_type
+    WHERE name = 'Facility Type'
+    LIMIT 1
+  SQL
+  return if facility_type_type_id.blank?
+
+  facility_level_type_id = conn.select_value(<<~SQL)
+    SELECT location_attribute_type_id
+    FROM location_attribute_type
+    WHERE name = 'Facility Level'
+    LIMIT 1
+  SQL
+
+  unless facility_level_type_id.present?
+    conn.execute <<~SQL
+      INSERT INTO location_attribute_type (
+        name,
+        datatype,
+        creator,
+        date_created,
+        retired,
+        uuid
+      )
+      VALUES (
+        'Facility Level',
+        'string',
+        #{creator_id.to_i},
+        NOW(),
+        0,
+        UUID()
+      )
+    SQL
+
+    facility_level_type_id = conn.select_value(<<~SQL)
+      SELECT location_attribute_type_id
+      FROM location_attribute_type
+      WHERE name = 'Facility Level'
+      LIMIT 1
+    SQL
+  end
+
+  conn.execute <<~SQL
+    UPDATE location_attribute level_attr
+    INNER JOIN location_attribute facility_type_attr
+      ON facility_type_attr.location_id = level_attr.location_id
+    SET level_attr.value_reference = CASE
+          WHEN LOWER(TRIM(facility_type_attr.value_reference)) IN ('health centre', 'health center') THEN 'Primary'
+          WHEN LOWER(TRIM(facility_type_attr.value_reference)) = 'district hospital' THEN 'Secondary'
+          WHEN LOWER(TRIM(facility_type_attr.value_reference)) = 'central hospital' THEN 'Tertiary'
+        END,
+        level_attr.voided = 0,
+        level_attr.changed_by = COALESCE(level_attr.changed_by, facility_type_attr.creator),
+        level_attr.date_changed = NOW()
+    WHERE level_attr.attribute_type_id = #{facility_level_type_id.to_i}
+      AND facility_type_attr.attribute_type_id = #{facility_type_type_id.to_i}
+      AND COALESCE(level_attr.voided, 0) = 0
+      AND COALESCE(facility_type_attr.voided, 0) = 0
+      AND (
+        level_attr.value_reference IS NULL
+        OR TRIM(level_attr.value_reference) = ''
+      )
+      AND LOWER(TRIM(facility_type_attr.value_reference)) IN (
+        'health centre',
+        'health center',
+        'district hospital',
+        'central hospital'
+      )
+  SQL
+
+  conn.execute <<~SQL
+    INSERT INTO location_attribute (
+      location_id,
+      attribute_type_id,
+      value_reference,
+      uuid,
+      creator,
+      date_created,
+      voided
+    )
+    SELECT
+      facility_type_attr.location_id,
+      #{facility_level_type_id.to_i},
+      CASE
+        WHEN LOWER(TRIM(facility_type_attr.value_reference)) IN ('health centre', 'health center') THEN 'Primary'
+        WHEN LOWER(TRIM(facility_type_attr.value_reference)) = 'district hospital' THEN 'Secondary'
+        WHEN LOWER(TRIM(facility_type_attr.value_reference)) = 'central hospital' THEN 'Tertiary'
+      END,
+      UUID(),
+      COALESCE(facility_type_attr.creator, #{creator_id.to_i}),
+      COALESCE(facility_type_attr.date_created, NOW()),
+      0
+    FROM location_attribute facility_type_attr
+    LEFT JOIN location_attribute level_attr
+      ON level_attr.location_id = facility_type_attr.location_id
+      AND level_attr.attribute_type_id = #{facility_level_type_id.to_i}
+    WHERE facility_type_attr.attribute_type_id = #{facility_type_type_id.to_i}
+      AND COALESCE(facility_type_attr.voided, 0) = 0
+      AND LOWER(TRIM(facility_type_attr.value_reference)) IN (
+        'health centre',
+        'health center',
+        'district hospital',
+        'central hospital'
+      )
+      AND level_attr.location_attribute_id IS NULL
+  SQL
+end
+
+begin
+  tmp_file = Rails.root.join('tmp', 'metadata.sql')
+
+  fetch_metadata_from_github!(GITHUB_METADATA_URL, tmp_file)
+  apply_metadata_compatibility_fixes!(tmp_file)
+
+  import_sql_file!(
+    file_path: tmp_file,
     username: username,
     password: password,
     host: host,
@@ -319,28 +393,23 @@ if ENV['INITIAL_SETUP']
     database: database
   )
 
-  puts 'Harmonized DB Initialization Complete 🎉'
+  puts 'GitHub metadata import complete.'
+rescue StandardError => e
+  raise "Failed to import metadata from GitHub: #{e.message}"
 end
 
-# -----------------------------------------------------------
-# Loop through db/data, get all .sql.gz and import them
-# (Skeleton is loaded via migration, not in seeds)
-# -----------------------------------------------------------
-files = Dir.glob(Rails.root.join('db', 'data', '*.sql.gz'))
-total = files.size
+local_sql_files = Dir.glob(Rails.root.join('db', 'data', '*.sql')).sort
 
-if total.positive?
-  files.each_with_index do |file_path, idx|
-    puts "Importing file #{idx + 1}/#{total}: #{File.basename(file_path)}..."
-    if File.basename(file_path) == 'locations.sql.gz' && Location.count.positive?
-      puts <<~DOC
-        DOCSkipping adding of location meta-data because locations is#{' '}
-        not empty might overwrite custom locations created ask admin to sync
-        and additional locations you might need.
-      DOC
-      next
-    end
-    import_sql_gz!(
+if local_sql_files.any?
+  local_sql_files.each_with_index do |file_path, idx|
+    puts "Importing local SQL file #{idx + 1}/#{local_sql_files.size}: #{File.basename(file_path)}..."
+
+    next if File.basename(file_path) == 'locations.sql' &&
+            defined?(Location) &&
+            Location.table_exists? &&
+            Location.count.positive?
+
+    import_sql_file!(
       file_path: file_path,
       username: username,
       password: password,
@@ -348,19 +417,20 @@ if total.positive?
       port: port,
       database: database
     )
-
-    puts "Imported data from #{File.basename(file_path)}"
   end
 else
-  puts 'No additional data files to import'
+  puts 'No additional local .sql files to import in db/data.'
 end
 
 ensure_facility_level_data!
 rebuild_concept_word_index!
 
-roles = Role.where(role: ['Superuser', 'Global Superuser'])
-
-roles.each { |role| UserRole.find_or_create_by!(user_id: 2, role: role) }
+if defined?(Role) && defined?(UserRole) && Role.table_exists? && UserRole.table_exists?
+  roles = Role.where(role: ['Superuser', 'Global Superuser'])
+  roles.each { |role| UserRole.find_or_create_by!(user_id: 2, role: role) }
+else
+  puts 'Skipping role assignment: required tables are missing.'
+end
 
 puts <<~MSG
   ----------------------------------------
