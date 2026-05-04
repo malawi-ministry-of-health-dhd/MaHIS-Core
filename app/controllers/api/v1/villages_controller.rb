@@ -26,7 +26,7 @@ module Api
       end
 
       def index
-        filters = params.permit(%i[traditional_authority_id village_id name])
+        filters = params.permit(:traditional_authority_id, :village_id, :name, :page, :page_size, village: {})
 
         traditional_authority_id, name, village_id = filters.values_at(:traditional_authority_id, :name, :village_id)
         villages = Village.all
@@ -43,7 +43,20 @@ module Api
           villages = villages.where(location_id: village_id)
         end
 
-        render json: paginate(villages.order(:name))
+        total_count = villages.count
+        page = (params[:page] || 1).to_i
+        page_size = (params[:page_size] || DEFAULT_PAGE_SIZE).to_i
+        paginated_data = paginate(villages.order(:name))
+
+        render json: {
+          data: paginated_data,
+          pagination: {
+            current_page: page,
+            per_page: page_size,
+            total_count: total_count,
+            total_pages: (total_count / page_size.to_f).ceil
+          }
+        }
       end
 
       def show
@@ -66,15 +79,27 @@ module Api
       end
       def update
         village = Village.find(params[:id])
-        village.update!(
-          name: params[:name] || village.name,
-          parent_location: params[:ta_id] || village.parent_location,
-          creator: User.current.id,
-          date_created: Time.current
-        )
+
+        village.update!(update_params)
+
         render json: village.reload
       rescue StandardError => e
         render json: { error: e.message }, status: :bad_request
+      end
+
+      private
+
+      def update_params
+        permitted = params.permit(:name, :ta_id, :traditional_authority_id, village: %i[name ta_id traditional_authority_id])
+        village_params = permitted.fetch(:village, ActionController::Parameters.new)
+
+        {}.tap do |attrs|
+          attrs[:name] = village_params[:name] || permitted[:name] if village_params[:name].present? || permitted[:name].present?
+
+          parent_location = village_params[:traditional_authority_id] || village_params[:ta_id] ||
+                            permitted[:traditional_authority_id] || permitted[:ta_id]
+          attrs[:parent_location] = parent_location if parent_location.present?
+        end
       end
     end
   end
