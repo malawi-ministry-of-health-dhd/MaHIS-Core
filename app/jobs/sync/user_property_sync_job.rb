@@ -29,7 +29,7 @@ module Sync
 
     def build_user_documents
       UserProperty.joins(:user)
-                  .where(users: { retired: 0 })
+                  .where(users: { retired: 0 }, property: 'activities')
                   .group_by(&:user_id)
                   .map do |user_id, props|
                     user = props.first.user
