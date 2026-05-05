@@ -209,6 +209,7 @@ class SavePatientRecordService
       .as_json
 
     strip_derived_patient_fields!(patient_data)
+    clear_processed_pending_fields!(patient_data)
     patient_data.as_json
   end
 
@@ -283,6 +284,16 @@ class SavePatientRecordService
 
     record.delete(:vaccineSchedule)
     record.delete('vaccineSchedule')
+    record
+  end
+
+  def clear_processed_pending_fields!(record)
+    return record unless record.respond_to?(:delete)
+
+    record.delete(:art_orders_pending)
+    record.delete('art_orders_pending')
+    record.delete(:art_dispensation_pending)
+    record.delete('art_dispensation_pending')
     record
   end
 end

@@ -97,8 +97,20 @@ module BuildPatientRecordService
         vaccineAdministration: build_vaccine_administration_data(patient_id),
         labOrders: build_lab_orders_data(patient_id),
         MedicationOrder: build_medication_data(patient_id),
-        observations: build_all_observations(patient_id, allowed_encounter_types = nil, status = "saved")
+        observations: build_all_observations(patient_id, allowed_encounter_types = nil, status = "saved"),
+        art_summary: build_art_summary(patient_id)
       }
+    end
+
+    def build_art_summary(patient_id)
+      hiv_program = Program.find_by_name('HIV Program')
+      return {} unless hiv_program
+      return {} unless PatientProgram.exists?(patient_id: patient_id, program_id: hiv_program.program_id)
+
+      ArtService::PatientSummaryBuilder.new(patient_id).build
+    rescue StandardError => e
+      Rails.logger.error("Error building art_summary for patient #{patient_id}: #{e.message}")
+      {}
     end
 
     def build_administrative_data(patient)

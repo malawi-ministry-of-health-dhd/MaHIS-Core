@@ -1,6 +1,7 @@
 require 'rest-client'
 require 'json'
 require 'yaml'
+require_relative 'couchdb_url'
 
 module CouchdbSync
   CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
@@ -16,9 +17,13 @@ module CouchdbSync
   end
 
   def ensure_db_exists(db_name)
-    RestClient.put("#{COUCHDB_URL}/#{db_name}", '')
+    RestClient.put(couchdb_url(db_name), '')
   rescue RestClient::PreconditionFailed
     # Database already exists
+  end
+
+  def couchdb_url(*segments)
+    CouchdbUrl.join(COUCHDB_URL, *segments)
   end
 
   def sync_to_couchdb(doc_data, db_name, doc_id)
@@ -27,7 +32,7 @@ module CouchdbSync
 
     ensure_db_exists(db_name)
     encoded_doc_id = URI.encode_www_form_component(doc_id.to_s)
-    doc_url = "#{COUCHDB_URL}/#{db_name}/#{encoded_doc_id}"
+    doc_url = couchdb_url(db_name, encoded_doc_id)
 
     attempt = 1
 
