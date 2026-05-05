@@ -27,7 +27,6 @@ module ArtService
     TPT_DRUG_CONCEPTS    = %w[Isoniazid Rifapentine Isoniazid/Rifapentine].freeze
     TPT_IPT_MONTHS       = 6
     TPT_3HP_MONTHS       = 3
-    RECENT_VISITS_LIMIT  = 5
 
     # Encounter type names (exact DB strings — match workflow_engine.rb)
     HIV_CLINIC_REGISTRATION_ENCOUNTER = 'HIV CLINIC REGISTRATION'
@@ -177,7 +176,6 @@ module ArtService
           AND voided     = 0
           AND program_id = #{hiv_program_id}
         ORDER BY visit_date DESC
-        LIMIT #{RECENT_VISITS_LIMIT}
       SQL
     end
 
@@ -487,9 +485,12 @@ module ArtService
       obs_on_date    = obs_for_date(date_str)
       orders_on_date = @all_orders[date_str] || []
 
-      arv_drugs   = orders_on_date.select { |r| @arv_drug_ids.include?(r['drug_inventory_id']) }
-                                  .uniq { |r| r['drug_name'] }
-                                  .map { |r| { 'drug_id' => r['drug_inventory_id'], 'name' => r['drug_name'], 'quantity' => r['quantity'] } }
+      arv_drugs = orders_on_date.select { |r| @arv_drug_ids.include?(r['drug_inventory_id']) }
+                                .uniq { |r| r['drug_name'] }
+                                .map do |r|
+        { 'drug_id' => r['drug_inventory_id'], 'name' => r['drug_name'],
+          'quantity' => r['quantity'] }
+      end
       other_drugs = orders_on_date.select { |r| @tpt_drug_ids.include?(r['drug_inventory_id']) }
                                   .map { |r| r['drug_name'] }.uniq
 
@@ -498,40 +499,40 @@ module ArtService
       )
 
       {
-        'weight'                    => obs_numeric_on(obs_on_date, WEIGHT_CONCEPT),
-        'height'                    => obs_numeric_on(obs_on_date, HEIGHT_CONCEPT),
-        'outcome'                   => outcome_row&.dig('outcome'),
-        'drugs'                     => arv_drugs,
-        'tb_status'                 => obs_value_on(obs_on_date, TB_STATUS_CONCEPT),
-        'tb_treatment_status'       => obs_value_on(obs_on_date, TB_STATUS_CONCEPT)&.match?(/rx/i) || false,
-        'patient_type'              => obs_value_on(obs_on_date, PATIENT_TYPE_CONCEPT),
-        'patient_present'           => truthy_value_in?(obs_on_date, PATIENT_PRESENT_CONCEPT),
-        'guardian_present'          => guardian_present_on?(obs_on_date),
-        'pregnant'                  => truthy_value_in?(obs_on_date, PREGNANT_CONCEPT),
-        'breastfeeding'             => truthy_value_in?(obs_on_date, BREASTFEEDING_CONCEPT),
-        'side_effects'              => obs_value_on(obs_on_date, SIDE_EFFECTS_CONCEPT),
-        'other_drugs'               => other_drugs.join(', ').presence,
-        'has_reception'             => encounter_done_on?(date_str, HIV_RECEPTION_ENCOUNTER),
-        'has_received_arvs_before'  => has_received_arvs_before?(date_str),
-        'referred_to_clinician'     => referred_to_clinician_on?(obs_on_date),
-        'seen_by_clinician'         => @clinician_obs_dates.include?(date_str),
-        'has_treatment_encounter'   => encounter_done_on?(date_str, TREATMENT_ENCOUNTER),
-        'next_appointment_date'     => appointment_date_on(obs_on_date),
-        'hasHivClinicRegistration'  => encounter_done_on?(date_str, HIV_CLINIC_REGISTRATION_ENCOUNTER),
-        'hasHivReception'           => encounter_done_on?(date_str, HIV_RECEPTION_ENCOUNTER),
-        'hasVitals'                 => encounter_done_on?(date_str, VITALS_ENCOUNTER),
-        'hasSymptomScreening'       => encounter_done_on?(date_str, SYMPTOM_SCREENING_ENCOUNTER),
-        'hasHivStaging'             => encounter_done_on?(date_str, HIV_STAGING_ENCOUNTER),
-        'hasAhdScreening'           => encounter_done_on?(date_str, AHD_SCREENING_ENCOUNTER),
-        'hasArtAdherence'           => encounter_done_on?(date_str, ART_ADHERENCE_ENCOUNTER),
-        'hasHivClinicConsultation'  => encounter_done_on?(date_str, HIV_CLINIC_CONSULT_ENCOUNTER),
-        'hasTreatment'              => encounter_done_on?(date_str, TREATMENT_ENCOUNTER),
-        'hasFastTrackAssessment'    => encounter_done_on?(date_str, FAST_TRACK_ENCOUNTER),
-        'hasDispensing'             => encounter_done_on?(date_str, DISPENSING_ENCOUNTER),
-        'hasAppointment'            => encounter_done_on?(date_str, APPOINTMENT_ENCOUNTER),
-        'pillsBroughtToClinic'      => pills_brought_on(date_str),
-        'tbTreatmentStartDate'      => tb_treatment_start_date_on(obs_on_date),
-        'viral_load'                => viral_load_on(date_str)
+        'weight' => obs_numeric_on(obs_on_date, WEIGHT_CONCEPT),
+        'height' => obs_numeric_on(obs_on_date, HEIGHT_CONCEPT),
+        'outcome' => outcome_row&.dig('outcome'),
+        'drugs' => arv_drugs,
+        'tb_status' => obs_value_on(obs_on_date, TB_STATUS_CONCEPT),
+        'tb_treatment_status' => obs_value_on(obs_on_date, TB_STATUS_CONCEPT)&.match?(/rx/i) || false,
+        'patient_type' => obs_value_on(obs_on_date, PATIENT_TYPE_CONCEPT),
+        'patient_present' => truthy_value_in?(obs_on_date, PATIENT_PRESENT_CONCEPT),
+        'guardian_present' => guardian_present_on?(obs_on_date),
+        'pregnant' => truthy_value_in?(obs_on_date, PREGNANT_CONCEPT),
+        'breastfeeding' => truthy_value_in?(obs_on_date, BREASTFEEDING_CONCEPT),
+        'side_effects' => obs_value_on(obs_on_date, SIDE_EFFECTS_CONCEPT),
+        'other_drugs' => other_drugs.join(', ').presence,
+        'has_reception' => encounter_done_on?(date_str, HIV_RECEPTION_ENCOUNTER),
+        'has_received_arvs_before' => has_received_arvs_before?(date_str),
+        'referred_to_clinician' => referred_to_clinician_on?(obs_on_date),
+        'seen_by_clinician' => @clinician_obs_dates.include?(date_str),
+        'has_treatment_encounter' => encounter_done_on?(date_str, TREATMENT_ENCOUNTER),
+        'next_appointment_date' => appointment_date_on(obs_on_date),
+        'hasHivClinicRegistration' => encounter_done_on?(date_str, HIV_CLINIC_REGISTRATION_ENCOUNTER),
+        'hasHivReception' => encounter_done_on?(date_str, HIV_RECEPTION_ENCOUNTER),
+        'hasVitals' => encounter_done_on?(date_str, VITALS_ENCOUNTER),
+        'hasSymptomScreening' => encounter_done_on?(date_str, SYMPTOM_SCREENING_ENCOUNTER),
+        'hasHivStaging' => encounter_done_on?(date_str, HIV_STAGING_ENCOUNTER),
+        'hasAhdScreening' => encounter_done_on?(date_str, AHD_SCREENING_ENCOUNTER),
+        'hasArtAdherence' => encounter_done_on?(date_str, ART_ADHERENCE_ENCOUNTER),
+        'hasHivClinicConsultation' => encounter_done_on?(date_str, HIV_CLINIC_CONSULT_ENCOUNTER),
+        'hasTreatment' => encounter_done_on?(date_str, TREATMENT_ENCOUNTER),
+        'hasFastTrackAssessment' => encounter_done_on?(date_str, FAST_TRACK_ENCOUNTER),
+        'hasDispensing' => encounter_done_on?(date_str, DISPENSING_ENCOUNTER),
+        'hasAppointment' => encounter_done_on?(date_str, APPOINTMENT_ENCOUNTER),
+        'pillsBroughtToClinic' => pills_brought_on(date_str),
+        'tbTreatmentStartDate' => tb_treatment_start_date_on(obs_on_date),
+        'viral_load' => viral_load_on(date_str)
       }
     end
 
