@@ -22,6 +22,7 @@ namespace :sync do
       Sync::DiagnosisSyncJob,
       Sync::WardSyncJob,
       Sync::RegimenIngredientSyncJob
+      Sync::DepartmentSyncJob
     ]
 
     jobs.each(&:perform_async)
