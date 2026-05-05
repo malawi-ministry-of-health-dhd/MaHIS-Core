@@ -11,9 +11,7 @@ module Sync
 
       ensure_database_exists(DB_NAME)
 
-      rows = UserProperty.joins(:user)
-                         .where(users: { retired: 0 })
-                         .map { |up| prepare_document(up) }
+      rows = build_user_documents
 
       return Sidekiq.logger.info('UserPropertySyncJob: no records to sync') if rows.empty?
 
@@ -23,26 +21,28 @@ module Sync
         Sidekiq.logger.error("UserPropertySyncJob: #{result[:errors].length} errors")
         result[:errors].first(5).each { |e| Sidekiq.logger.error("  #{e}") }
       else
-        Sidekiq.logger.info("UserPropertySyncJob: synced #{rows.size} user properties")
+        Sidekiq.logger.info("UserPropertySyncJob: synced #{rows.size} user documents")
       end
     end
 
     private
 
-    def prepare_document(up)
-      {
-        '_id'            => generate_document_id(up),
-        'user_id'        => up.user_id,
-        'username'       => up.user&.username,
-        'location_id'    => up.user&.location_id,
-        'property'       => up.property,
-        'property_value' => up.property_value
-      }
-    end
-
-    def generate_document_id(up)
-      slug = up.property.to_s.gsub(/[^a-z0-9_\-]/i, '_')
-      "user_property_#{up.user_id}_#{slug}"
+    def build_user_documents
+      UserProperty.joins(:user)
+                  .where(users: { retired: 0 })
+                  .group_by(&:user_id)
+                  .map do |user_id, props|
+                    user = props.first.user
+                    {
+                      '_id'         => "user_property_#{user_id}",
+                      'user_id'     => user_id,
+                      'username'    => user&.username,
+                      'location_id' => user&.location_id,
+                      'properties'  => props.each_with_object({}) do |up, h|
+                                         h[up.property] = up.property_value
+                                       end
+                    }
+                  end
     end
   end
 end
