@@ -1,101 +1,148 @@
 module Api
-    module V1
-        class Api::V1::VisitsController < ApplicationController
-            include CouchdbSync
-            def check_patient_status
-                patient_id = params[:patient_id]
-                visit = Visit.where(patient_id: patient_id, date_stopped: nil)
-                render json: visit, status: :ok
-            end
+  module V1
+    class Api::V1::VisitsController < ApplicationController
+      include CouchdbSync
 
-            def create
-              data = VisitService.new.create_visit(visit_params)
-              create_couchdb_visit(data)
-              render json: data
-            end
+      def check_patient_status
+        patient_id = params[:patient_id]
+        visit = Visit.where(patient_id: patient_id, date_stopped: nil)
+        render json: visit, status: :ok
+      end
 
-            def create_couchdb_visit(doc_data)
-              doc_id = generate_document_id(doc_data)
-              sync_to_couchdb(doc_data, "visits", doc_id)
-            end
-            def generate_document_id(visit)
-              # Create composite _id from identifier and start_date
-              identifier = visit[:identifier] || 'unknown'
-              start_date = visit["date_started"] ? visit["date_started"].to_time.strftime("%Y-%m-%dT%H:%M:%S") : 'no-date'
-              "#{identifier}_#{start_date}"
-            end
+      def create
+        data = VisitService.new.create_visit(visit_params)
+        create_couchdb_visit(data)
+        render json: data
+      end
 
-          def index
-            patient_id = params[:patient_id] 
-            status = params[:status] 
-            date = params[:date]
-            identifier = params[:identifier]
-            closed_date_time = params[:date_stopped]
+      def create_couchdb_visit(doc_data)
+        doc_id = generate_document_id(doc_data)
+        sync_to_couchdb(doc_data, 'visits', doc_id)
+      end
 
-            # Handle "null" string from frontend
-            closed_date_time = nil if closed_date_time == "null"
+      def generate_document_id(visit)
+        # Create composite _id from identifier and start_date
+        identifier = visit[:identifier] || 'unknown'
+        start_date = visit['date_started'] ? visit['date_started'].to_time.strftime('%Y-%m-%dT%H:%M:%S') : 'no-date'
+        "#{identifier}_#{start_date}"
+      end
 
-            if identifier.present?
-              patient_identifier = PatientIdentifier.find_by(identifier: identifier)
-              patient_id = patient_identifier&.patient_id
-            end
+      def index
+        patient_id = params[:patient_id]
+        patient_id = find_patient_id_by_identifier(params[:identifier]) if params[:identifier].present?
 
-            # Build base query with joins
-            visits = Visit.includes(:patient)
-              .select('DISTINCT visit.*, patient_identifier.identifier AS identifier')
-              .where(location_id: User.current.location_id)
-              .joins('INNER JOIN encounter ON encounter.visit_id = visit.visit_id')
-              .joins('INNER JOIN patient ON patient.patient_id = visit.patient_id')
-              .joins('INNER JOIN patient_identifier ON patient_identifier.patient_id = patient.patient_id AND patient_identifier.identifier_type = 3')
+        visits = base_visits_scope
+        visits = visits.where(patient_id: patient_id) if patient_id.present?
+        visits = filter_by_program(visits, params[:program_id])
+        visits = filter_by_date_started(visits, params[:date])
+        visits = filter_by_date_stopped(visits, params[:date_stopped])
 
-            # Apply filters
-            visits = visits.where(patient_id: patient_id) if patient_id.present?
-            visits = visits.where(encounter: { program_id: params[:program_id] })  if params[:program_id].present?
+        render json: visits.map { |visit| visit_response(visit) }, status: :ok
+      end
 
-            # Filter by closed date - Fixed logic
-            if closed_date_time.present?
-              # If a specific date is provided, filter by that date
-              visits = visits.where('DATE(date_stopped) = ?', closed_date_time)
-            elsif params[:date_stopped] == "null"
-              # If "null" is explicitly passed, get only open visits
-              visits = visits.where(date_stopped: nil)
-            end
+      def close
+        render json: VisitService.new.close_visit(visit_params)
+      end
 
-            # Filter by start date if provided
-            visits = visits.where('DATE(date_started) = ?', date) if date.present?
-            
-            # Map visit data
-            visit_data = visits.map do |visit|
-              visit.attributes.merge(
-                identifier: visit.try(:identifier),
-                full_name: visit.patient.try(:name)
-              )
-            end
+      def generate_visit_number
+        visit_number = VisitService.next_daily_visit_number!
 
-            # Return the list of visits as JSON
-            render json: visit_data, status: :ok
-          end
-            
-            def close
-              render json: VisitService.new.close_visit(visit_params)
-            end
+        render json: { next_visit_number: visit_number }, status: :ok
+      end
 
-            def generate_visit_number
+      private
 
+      def visit_params
+        params.permit(
+          :patient_id, :identifier, :date_started, :full_name, :date_stopped,
+          :program_id, :location_id, :stage, :visit_type_id
+        )
+      end
 
-              visit_number = VisitService.next_daily_visit_number!
+      def base_visits_scope
+        Visit
+          .select(
+            'visit.*',
+            'patient_identifier.identifier AS identifier',
+            "#{full_name_sql} AS full_name"
+          )
+          .where(location_id: User.current.location_id)
+          .joins(
+            'INNER JOIN patient_identifier '\
+            'ON patient_identifier.patient_identifier_id = ('\
+            'SELECT latest_identifier.patient_identifier_id '\
+            'FROM patient_identifier latest_identifier '\
+            'WHERE latest_identifier.patient_id = visit.patient_id '\
+            'AND latest_identifier.identifier_type = 3 '\
+            'AND latest_identifier.voided = 0 '\
+            'ORDER BY latest_identifier.preferred DESC, '\
+            'latest_identifier.date_created DESC, '\
+            'latest_identifier.patient_identifier_id DESC '\
+            'LIMIT 1)'
+          )
+          .joins(
+            'LEFT JOIN person_name '\
+            'ON person_name.person_name_id = ('\
+            'SELECT latest_name.person_name_id '\
+            'FROM person_name latest_name '\
+            'WHERE latest_name.person_id = visit.patient_id '\
+            'AND latest_name.voided = 0 '\
+            'ORDER BY latest_name.date_created DESC, latest_name.person_name_id DESC '\
+            'LIMIT 1)'
+          )
+      end
 
-              render json: { next_visit_number: visit_number }, status: :ok
-            end
-              
+      def filter_by_program(visits, program_id)
+        return visits.where('EXISTS (SELECT 1 FROM encounter WHERE encounter.visit_id = visit.visit_id)') if program_id.blank?
 
-            private
-           
+        visits.where(
+          'EXISTS ('\
+          'SELECT 1 FROM encounter '\
+          'WHERE encounter.visit_id = visit.visit_id '\
+          'AND encounter.program_id = ?'\
+          ')',
+          program_id
+        )
+      end
 
-            def visit_params
-                params.permit(:patient_id, :identifier, :date_started,:full_name, :date_stopped, :program_id, :location_id, :stage, :visit_type_id)
-            end
+      def filter_by_date_started(visits, date)
+        return visits if date.blank?
 
-        end
-    end   
+        start_time, end_time = TimeUtils.day_bounds(date)
+        visits.where(date_started: start_time..end_time)
+      end
+
+      def filter_by_date_stopped(visits, date_stopped)
+        return visits.where(date_stopped: nil) if date_stopped == 'null'
+        return visits if date_stopped.blank?
+
+        start_time, end_time = TimeUtils.day_bounds(date_stopped)
+        visits.where(date_stopped: start_time..end_time)
+      end
+
+      def find_patient_id_by_identifier(identifier)
+        PatientIdentifier.find_by(identifier: identifier, identifier_type: 3)&.patient_id
+      end
+
+      def visit_response(visit)
+        visit.attributes.except('identifier', 'full_name').merge(
+          identifier: visit[:identifier],
+          full_name: visit[:full_name]
+        )
+      end
+
+      def full_name_sql
+        <<~SQL.squish
+          CASE
+            WHEN person_name.person_name_id IS NULL THEN NULL
+            WHEN person_name.middle_name IS NULL
+              OR TRIM(person_name.middle_name) = ''
+              OR UPPER(TRIM(person_name.middle_name)) IN ('N/A', 'N\\A', 'NA', 'UNKNOWN')
+              THEN CONCAT_WS(' ', person_name.given_name, person_name.family_name)
+            ELSE CONCAT_WS(' ', person_name.given_name, person_name.middle_name, person_name.family_name)
+          END
+        SQL
+      end
+    end
+  end
 end
