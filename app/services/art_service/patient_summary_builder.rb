@@ -47,6 +47,20 @@ module ArtService
     APPOINTMENT_DATE_CONCEPT   = 'Appointment date'
     MEDICATION_ORDERS_CONCEPT  = 'Medication orders'
 
+    # WHO staging criteria (stored as value_coded under this question concept)
+    WHO_STAGES_CRITERIA_CONCEPT = 'Who stages criteria present'
+
+    PTB_WITHIN_2_YEARS_NAMES = [
+      'Tuberculosis (PTB or EPTB) within the last 2 years',
+      'Pulmonary tuberculosis within the last 2 years',
+      'PTB last 2 years',
+      'Ptb within the past two years',
+      'TB in previous two years'
+    ].freeze
+    EPTB_NAMES          = ['Extrapulmonary tuberculosis (EPTB)', 'EPTB'].freeze
+    PTB_CURRENT_NAMES   = ['Pulmonary tuberculosis (current)', 'Pulmonary TB (current)'].freeze
+    KAPOSIS_NAMES       = ['Kaposis sarcoma', 'Kaposi sarcoma'].freeze
+
     # patient_state.state value for Died
     DIED_STATE = 3
 
@@ -83,6 +97,10 @@ module ArtService
         'weightHistory' => build_weight_history,
         'regimenHistory' => build_regimen_history,
         'latest_viral_load' => latest_viral_load,
+        'pulmonary_tb_within_last_2_years' => staging_condition_present?(PTB_WITHIN_2_YEARS_NAMES),
+        'extrapulmonary_tb'                => staging_condition_present?(EPTB_NAMES),
+        'pulmonary_tb_current'             => staging_condition_present?(PTB_CURRENT_NAMES),
+        'kaposis_sarcoma'                  => staging_condition_present?(KAPOSIS_NAMES),
         'visits' => build_visits
       }
     end
@@ -97,7 +115,8 @@ module ArtService
          PATIENT_PRESENT_CONCEPT, PREGNANT_CONCEPT, BREASTFEEDING_CONCEPT, SIDE_EFFECTS_CONCEPT,
          REFER_TO_CLINICIAN_CONCEPT, APPOINTMENT_DATE_CONCEPT, MEDICATION_ORDERS_CONCEPT,
          HAS_TRANSFER_LETTER_CONCEPT, DATE_ART_LAST_TAKEN_CONCEPT,
-         TB_TREATMENT_START_DATE_CONCEPT, PILLS_BROUGHT_CONCEPT]
+         TB_TREATMENT_START_DATE_CONCEPT, PILLS_BROUGHT_CONCEPT,
+         WHO_STAGES_CRITERIA_CONCEPT]
       )
       @tpt_drug_concept_ids = fetch_concept_ids(TPT_DRUG_CONCEPTS).values
 
@@ -112,6 +131,7 @@ module ArtService
       @tpt_drug_ids = Drug.where(concept_id: @tpt_drug_concept_ids).pluck(:drug_id)
 
       @all_obs                = load_all_obs
+      @staging_criteria       = load_staging_criteria
       @all_orders             = load_all_orders
       @visit_dates            = load_visit_dates
       @all_encounters_by_date = load_all_encounters
@@ -569,6 +589,33 @@ module ArtService
     def truthy_value?(row)
       val = row['value_coded_name'] || row['value_text'] || ''
       val.match?(/yes|true|1/i)
+    end
+
+    def ever_had_obs?(concept_name)
+      concept_id = @concept_id_map[concept_name]
+      return false unless concept_id
+
+      (@all_obs[concept_id] || []).any? { |r| truthy_value?(r) }
+    end
+
+    def staging_condition_present?(concept_names)
+      ids = ConceptName.where(name: concept_names).pluck(:concept_id).uniq
+      ids.any? { |id| @staging_criteria.include?(id) }
+    end
+
+    def load_staging_criteria
+      who_cid = @concept_id_map[WHO_STAGES_CRITERIA_CONCEPT]
+      return Set.new unless who_cid
+
+      ids = ActiveRecord::Base.connection.exec_query(<<~SQL).map { |r| r['value_coded'].to_i }
+        SELECT DISTINCT value_coded
+        FROM obs
+        WHERE person_id  = #{@patient_id}
+          AND concept_id = #{who_cid}
+          AND value_coded IS NOT NULL
+          AND voided = 0
+      SQL
+      Set.new(ids)
     end
 
     def pills_brought_on(date_str)
