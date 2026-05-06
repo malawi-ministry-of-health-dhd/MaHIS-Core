@@ -68,25 +68,16 @@ module NcdService
 
       private
 
-      # Base query: Get all NCD patients for current location
+      # Base query: Get all NCD patients
       def get_patients
         sql = <<-SQL
-          SELECT DISTINCT e.patient_id
-          FROM (
-            SELECT patient_id, location_id,
-                  ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY encounter_datetime DESC) as rn
-            FROM encounter WHERE voided = 0
-          ) e
-          INNER JOIN patient_program pp 
-            ON e.patient_id = pp.patient_id 
-            AND pp.program_id = 32 
-            AND pp.voided = 0
-          WHERE e.rn = 1 AND e.location_id = ?
+          SELECT DISTINCT pp.patient_id 
+          FROM patient_program pp 
+          WHERE pp.program_id = 32 
+          AND pp.voided = 0
         SQL
         
-        Encounter.connection.select_values(
-          ActiveRecord::Base.sanitize_sql([sql, @location_id])
-        )
+        ActiveRecord::Base.connection.select_values(sql)
       end
 
       # Gender counts based on base patient cohort
@@ -109,7 +100,6 @@ module NcdService
         Observation.joins(encounter: :type)
                    .where(person_id: @patient_ids)
                    .where(encounter_type: { name: 'COMPLICATIONS' })
-                   .where(location_id: @location_id)
                    .distinct
                    .count(:person_id)
       end
@@ -311,7 +301,6 @@ module NcdService
           diagnosis_observations = Observation.joins(encounter: :type)
                                               .where(person_id: @patient_ids)
                                               .where(encounter_type: { name: 'DIAGNOSIS' })
-                                              .where(location_id: @location_id)
                                               .where('obs.obs_datetime BETWEEN ? AND ?', 
                                                      start_date.beginning_of_day, 
                                                      end_date.end_of_day)
