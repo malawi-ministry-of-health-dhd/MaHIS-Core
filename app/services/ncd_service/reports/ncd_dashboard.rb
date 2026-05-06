@@ -68,19 +68,26 @@ module NcdService
 
       private
 
-      # Base query: Get all NCD patients
+      # Base query: Get all NCD patients using a robust UNION
+      # This handles cases where patients might be missing explicit patient_program enrollments
+      # but have NCD encounters or an NCD Number assigned.
       def get_patients
-        count = PatientProgram.where(program_id: 32).count
-        Rails.logger.info("================================== NCD PROGRAM 32 COUNT: #{count} ==================================")
+        ncd_type_id = PatientIdentifierType.find_by_name('NCD Number')&.id || 31
         
         sql = <<-SQL
-          SELECT DISTINCT pp.patient_id 
-          FROM patient_program pp 
-          WHERE pp.program_id = 32 
-          AND pp.voided = 0
+          SELECT DISTINCT patient_id
+          FROM (
+            SELECT patient_id FROM patient_program WHERE program_id = 32 AND voided = 0
+            UNION
+            SELECT patient_id FROM patient_identifier WHERE identifier_type = ? AND voided = 0
+            UNION
+            SELECT patient_id FROM encounter WHERE program_id = 32 AND voided = 0
+          ) AS all_ncd_patients
         SQL
         
-        ActiveRecord::Base.connection.select_values(sql)
+        ActiveRecord::Base.connection.select_values(
+          ActiveRecord::Base.sanitize_sql([sql, ncd_type_id])
+        )
       end
 
       # Gender counts based on base patient cohort
