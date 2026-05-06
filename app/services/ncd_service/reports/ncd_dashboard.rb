@@ -15,6 +15,7 @@ module NcdService
       def data
         gender_quarterly_data = gender_quarterly_breakdown
         diagnosis_quarterly_data = diagnosis_quarterly_breakdown
+        pending_data = pending_ncd_data
         
         {
           total_client_registered: @patient_ids.count,
@@ -23,6 +24,10 @@ module NcdService
           total_complications: total_complications,
           total_defaulters: count_defaulters,
           total_pending_dispensations: count_pending_dispensations,
+          total_pending_ncd_numbers: pending_data[:count],
+          pending_ncd_patients: pending_data[:patients],
+          defaulter_alerts: get_defaulter_alerts,
+          top_conditions: get_top_conditions,
           gender_data: {
             categories: gender_quarterly_data[:categories],
             series: [
@@ -138,6 +143,51 @@ module NcdService
         defaulting_patients
       end
 
+      def get_defaulter_alerts
+        return [] if @patient_ids.empty?
+        
+        cutoff_date = Date.current - 60.days
+        cutoff_120 = Date.current - 120.days
+        
+        sql = <<-SQL
+          SELECT o.patient_id, n.given_name, n.family_name, MAX(o.start_date) as last_dispensation
+          FROM orders o
+          INNER JOIN drug_order do ON do.order_id = o.order_id
+          INNER JOIN obs ON obs.order_id = o.order_id
+          INNER JOIN concept_name cn ON cn.concept_id = obs.concept_id AND cn.name = 'AMOUNT DISPENSED'
+          INNER JOIN person_name n ON n.person_id = o.patient_id AND n.voided = 0
+          WHERE o.patient_id IN (?)
+          AND o.voided = 0
+          AND do.quantity > 0
+          AND obs.value_numeric IS NOT NULL
+          GROUP BY o.patient_id
+          HAVING MAX(o.start_date) BETWEEN ? AND ?
+        SQL
+        
+        results = ActiveRecord::Base.connection.select_all(
+          ActiveRecord::Base.sanitize_sql([sql, @patient_ids, cutoff_120, cutoff_date])
+        )
+        
+        alerts = []
+        results.each do |row|
+          # double check no recent dispensation
+          recent = Order.joins(:drug_order).where(patient_id: row['patient_id']).where('start_date > ?', cutoff_date).exists?
+          next if recent
+          
+          last_disp = row['last_dispensation'].to_date
+          diff_days = (Date.current - last_disp).to_i
+          
+          alerts << {
+            id: row['patient_id'],
+            name: "\#{row['given_name']} \#{row['family_name']}".strip.presence || "Unknown Patient",
+            missedCount: 1,
+            timeAgo: "\#{diff_days} days ago"
+          }
+        end
+        
+        alerts.sort_by { |a| -a[:timeAgo].to_i }.first(5)
+      end
+
       # Pending dispensations for base patient cohort
       def count_pending_dispensations
         return 0 if @patient_ids.empty?
@@ -147,6 +197,98 @@ module NcdService
                  .where('drug_order.quantity <= 0')
                  .distinct
                  .count('orders.patient_id')
+      end
+
+      def pending_ncd_data
+        return { count: 0, patients: [] } if @patient_ids.empty?
+        
+        ncd_type_id = PatientIdentifierType.find_by_name('NCD Number')&.id
+        return { count: 0, patients: [] } unless ncd_type_id
+        
+        sql = <<-SQL
+          SELECT p.person_id, n.given_name, n.family_name, p.date_created
+          FROM person p
+          INNER JOIN person_name n ON n.person_id = p.person_id AND n.voided = 0
+          WHERE p.person_id IN (?)
+          AND p.voided = 0
+          AND NOT EXISTS (
+            SELECT 1 FROM patient_identifier pi 
+            WHERE pi.patient_id = p.person_id 
+            AND pi.identifier_type = ? 
+            AND pi.voided = 0
+          )
+          ORDER BY p.date_created DESC
+        SQL
+        
+        results = ActiveRecord::Base.connection.select_all(
+          ActiveRecord::Base.sanitize_sql([sql, @patient_ids, ncd_type_id])
+        )
+        
+        patients = results.map do |row|
+          {
+            id: row['person_id'],
+            name: "\#{row['given_name']} \#{row['family_name']}".strip.presence || "Unknown Patient",
+            date: row['date_created']
+          }
+        end
+        
+        {
+          count: patients.length,
+          patients: patients.first(5)
+        }
+      end
+
+      def get_top_conditions
+        return [] if @patient_ids.empty?
+        
+        sql = <<-SQL
+          SELECT o.value_coded, COUNT(*) as cnt
+          FROM (
+            SELECT obs.person_id, obs.value_coded,
+                   ROW_NUMBER() OVER (PARTITION BY obs.person_id ORDER BY obs.obs_datetime DESC) as rn
+            FROM obs
+            INNER JOIN encounter e ON e.encounter_id = obs.encounter_id AND e.voided = 0
+            INNER JOIN encounter_type et ON et.encounter_type_id = e.encounter_type AND et.name = 'DIAGNOSIS'
+            WHERE obs.voided = 0 AND obs.concept_id = 6542 AND obs.person_id IN (?)
+          ) o
+          WHERE o.rn = 1
+          GROUP BY o.value_coded
+        SQL
+        
+        results = ActiveRecord::Base.connection.select_all(
+          ActiveRecord::Base.sanitize_sql([sql, @patient_ids])
+        )
+        
+        type1 = 0
+        type2 = 0
+        hyper = 0
+        other = 0
+        
+        results.each do |row|
+          val = row['value_coded'].to_i
+          cnt = row['cnt'].to_i
+          if val == 6409
+            type1 += cnt
+          elsif val == 6410
+            type2 += cnt
+          elsif val == 8809 || val == 903
+            hyper += cnt
+          else
+            other += cnt
+          end
+        end
+        
+        total = type1 + type2 + hyper + other
+        return [] if total == 0
+        
+        conditions = [
+          { name: 'Type 2 Diabetes', count: type2, percent: ((type2.to_f / total) * 100).round },
+          { name: 'Hypertension', count: hyper, percent: ((hyper.to_f / total) * 100).round },
+          { name: 'Type 1 Diabetes', count: type1, percent: ((type1.to_f / total) * 100).round },
+          { name: 'Other NCDs', count: other, percent: ((other.to_f / total) * 100).round }
+        ]
+        
+        conditions.sort_by { |c| -c[:count] }
       end
 
       # Quarterly breakdown by diagnosis for base patient cohort
