@@ -148,8 +148,8 @@ Rails.application.routes.draw do
 
       #fhir
       get '/fhir/patients', to: 'fhir#patients'
-      get '/fhir/patient/:id', to: 'fhir#patient'
-      get '/fhir/patient/:id/observations', to: 'fhir#observations'
+      get '/fhir/patient/*id/observations', to: 'fhir#observations'
+      get '/fhir/patient/*id', to: 'fhir#patient'
       
       # Locations
       resources :locations do
