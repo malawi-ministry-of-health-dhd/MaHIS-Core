@@ -249,7 +249,7 @@ module NcdService
             FROM obs
             INNER JOIN encounter e ON e.encounter_id = obs.encounter_id AND e.voided = 0
             INNER JOIN encounter_type et ON et.encounter_type_id = e.encounter_type AND et.name = 'DIAGNOSIS'
-            WHERE obs.voided = 0 AND obs.concept_id = 6542 AND obs.person_id IN (?)
+            WHERE obs.voided = 0 AND obs.concept_id = #{concept_id('Primary diagnosis')} AND obs.person_id IN (?)
           ) o
           WHERE o.rn = 1
           GROUP BY o.value_coded
@@ -267,11 +267,11 @@ module NcdService
         results.each do |row|
           val = row['value_coded'].to_i
           cnt = row['cnt'].to_i
-          if val == 6409
+          if val == concept_id('Type 1 Diabetes')
             type1 += cnt
-          elsif val == 6410
+          elsif val == concept_id('Type 2 Diabetes')
             type2 += cnt
-          elsif val == 8809 || val == 903
+          elsif val == concept_id('Hypertension')
             hyper += cnt
           else
             other += cnt
@@ -314,7 +314,7 @@ module NcdService
                                               .where('obs.obs_datetime BETWEEN ? AND ?', 
                                                      start_date.beginning_of_day, 
                                                      end_date.end_of_day)
-                                              .where(concept_id: 6542) # Primary diagnosis concept
+                                              .where(concept_id: concept_id('Primary diagnosis')) # Primary diagnosis concept
                                               .select('obs.person_id, obs.value_coded, obs.obs_datetime')
           
           # Group by patient and get their diagnosis in this quarter
@@ -323,11 +323,11 @@ module NcdService
             last_diagnosis = observations.max_by(&:obs_datetime)
             
             case last_diagnosis.value_coded
-            when 6409
+            when concept_id('Type 1 Diabetes')
               type_one_patients.add(patient_id)
-            when 6410
+            when concept_id('Type 2 Diabetes')
               type_two_patients.add(patient_id)
-            when 8809, 903
+            when concept_id('Hypertension')
               hypertension_patients.add(patient_id)
             end
           end
@@ -405,6 +405,10 @@ module NcdService
       def format_quarter_label(date)
         quarter_number = ((date.month - 1) / 3) + 1
         "Q#{quarter_number} #{date.year}"
+      end
+
+      def concept_id(name)
+        ConceptName.find_by_name(name)&.concept_id
       end
     end
   end
