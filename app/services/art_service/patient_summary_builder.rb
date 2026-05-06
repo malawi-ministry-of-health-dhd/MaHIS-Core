@@ -59,6 +59,7 @@ module ArtService
     # Dispensing / adherence concepts (for missing visit fields)
     AMOUNT_DISPENSED_CONCEPT = 'Amount dispensed'
     ADHERENCE_CONCEPT        = 'Drug Order Adherence'
+    BMI_CONCEPT              = 'BMI'
 
     # patient_state.state value for Died
     DIED_STATE = 3
@@ -122,7 +123,7 @@ module ArtService
          CONFIRMATORY_HIV_TEST_DATE_CONCEPT, CONFIRMATORY_HIV_TEST_LOCATION_CONCEPT,
          AGREES_TO_FOLLOWUP_CONCEPT, REASON_FOR_ART_ELIGIBILITY_CONCEPT,
          WHO_STAGE_CRITERIA_CONCEPT, INIT_BREASTFEEDING_CONCEPT,
-         AMOUNT_DISPENSED_CONCEPT, ADHERENCE_CONCEPT]
+         AMOUNT_DISPENSED_CONCEPT, ADHERENCE_CONCEPT, BMI_CONCEPT]
       )
       @tpt_drug_concept_ids = fetch_concept_ids(TPT_DRUG_CONCEPTS).values
 
@@ -724,11 +725,7 @@ module ArtService
     end
 
     def bmi_for(obs_on_date)
-      weight = obs_numeric_on(obs_on_date, WEIGHT_CONCEPT)
-      height = obs_numeric_on(obs_on_date, HEIGHT_CONCEPT)
-      return nil unless weight && height && height > 0
-
-      (weight / (height / 100.0)**2).round(1)
+      obs_numeric_on(obs_on_date, BMI_CONCEPT)
     end
 
     def tb_treatment_start_date_on(obs_on_date)
