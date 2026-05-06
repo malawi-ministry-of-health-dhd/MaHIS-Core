@@ -72,8 +72,8 @@ module ArtService
           INNER JOIN patient_program pp ON pp.patient_id = e.patient_id
             AND pp.program_id = 1
             AND pp.voided = 0
-            AND pp.location_id = #{User.current.location_id}
-          INNER JOIN (
+            AND pp.location_id = #{Location.current.location_id}
+          LEFT JOIN (
             SELECT e.patient_id, MAX(o.value_datetime) appointment_date
             FROM encounter e
             INNER JOIN obs o ON o.encounter_id = e.encounter_id AND o.voided = 0 AND o.concept_id = 5096 -- appointment date
@@ -98,7 +98,7 @@ module ArtService
           LEFT JOIN concept_name art_reason ON art_reason.concept_id = e.reason_for_starting_art AND art_reason.voided = 0
           WHERE o.#{report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}cum_outcome = 'Defaulted'
           GROUP BY e.patient_id
-          HAVING (defaulter_date >= DATE('#{@start_date}') AND defaulter_date <= DATE('#{@end_date}')) OR (defaulter_date IS NULL)
+          HAVING (defaulter_date <= DATE('#{@end_date}')) OR (defaulter_date IS NULL)
           ORDER BY e.patient_id, n.date_created DESC;
         SQL
       end
