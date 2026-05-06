@@ -70,6 +70,9 @@ module NcdService
 
       # Base query: Get all NCD patients
       def get_patients
+        count = PatientProgram.where(program_id: 32).count
+        Rails.logger.info("================================== NCD PROGRAM 32 COUNT: #{count} ==================================")
+        
         sql = <<-SQL
           SELECT DISTINCT pp.patient_id 
           FROM patient_program pp 
