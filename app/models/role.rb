@@ -6,6 +6,7 @@ class Role < ApplicationRecord
 
   # include Openmrs
 
+  belongs_to :location, foreign_key: :location_id, primary_key: :location_id, optional: true
   has_many :role_roles, foreign_key: :parent_role # A role has sub roles?
   has_many :role_privileges, foreign_key: :role, dependent: :delete_all
   has_many :privileges, through: :role_privileges, foreign_key: :role

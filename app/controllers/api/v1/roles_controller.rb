@@ -4,7 +4,12 @@ module Api
   module V1
     class RolesController < ApplicationController
       def index
-        roles = paginate(Role.includes(:privileges, :role_privileges, :user_roles))
+        roles_query = Role.includes(:privileges, :role_privileges, :user_roles)
+
+        roles_query = roles_query.where(location_id: params[:location_id])
+                                   .or(roles_query.where(location_id: nil))
+
+        roles = paginate(roles_query)
         render json: roles.as_json(include: { privileges: {}, role_privileges: {}, user_roles: {} })
       end
 
@@ -63,7 +68,7 @@ module Api
       private
 
       def role_params
-        params.permit(:role, :description, :uuid)
+        params.permit(:role, :description, :uuid, :location_id)
       end
     end
   end
