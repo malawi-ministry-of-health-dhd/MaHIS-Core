@@ -179,9 +179,9 @@ module NcdService
           
           alerts << {
             id: row['patient_id'],
-            name: "\#{row['given_name']} \#{row['family_name']}".strip.presence || "Unknown Patient",
+            name: "#{row['given_name']} #{row['family_name']}".strip,
             missedCount: 1,
-            timeAgo: "\#{diff_days} days ago"
+            timeAgo: "#{diff_days} days ago"
           }
         end
         
@@ -227,7 +227,7 @@ module NcdService
         patients = results.map do |row|
           {
             id: row['person_id'],
-            name: "\#{row['given_name']} \#{row['family_name']}".strip.presence || "Unknown Patient",
+            name: "#{row['given_name']} #{row['family_name']}".strip.presence || "Unknown Patient",
             date: row['date_created']
           }
         end
