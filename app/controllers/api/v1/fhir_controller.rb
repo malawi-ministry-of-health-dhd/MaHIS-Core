@@ -1,18 +1,27 @@
 require 'cgi'
+require 'uri'
 
 module Api
   module V1
     class FhirController < ApplicationController
       APP_CONFIG = YAML.safe_load(File.read('config/application.yml'))
       BASE_FHIR_URL = APP_CONFIG['BASE_FHIR_URL'] # change to your HAPI FHIR URL
+      BASE_MEDIATOR_URL = APP_CONFIG['BASE_MEDIATOR_URL']
 
       SYNC_STATUS_TAG = 'ichis-mahis-pending'.freeze
       ICHIS_IDENTIFIER_SYSTEM = APP_CONFIG.fetch('ICHIS_IDENTIFIER_SYSTEM', 'https://ichis.org/ichisGeneratedID').freeze
       DHIS2_TEI_IDENTIFIER_SYSTEM = APP_CONFIG.fetch('DHIS2_TEI_IDENTIFIER_SYSTEM', 'https://dhis2.org/trackedEntityInstance').freeze
+      SEARCH_RESULT_LIMIT = 1_000
 
       def patients
-        response = RestClient.get("#{BASE_FHIR_URL}/Patient", accept: 'application/fhir+json')
-        render json: JSON.parse(response.body)
+        page = normalized_positive_integer(params[:page], 1)
+        per_page = normalized_positive_integer(params[:per_page] || params[:page_size] || params[:count], 10)
+        per_page = [per_page, 100].min
+        search = params[:search].to_s.strip
+
+        bundle = search.present? ? search_patients_bundle(search, page, per_page) : fetch_patient_page_bundle(page, per_page)
+
+        render json: patient_table_response(bundle, page, per_page)
       rescue RestClient::ExceptionWithResponse => e
         render json: { error: e.message, response: e.response }, status: :bad_request
       end
@@ -51,11 +60,57 @@ module Api
         render json: { errors: ["Observations for Patient/#{requested_id} not found"], response: e.response }, status: :not_found
       end
 
+      def mahis_update_status
+        tei = params[:tei].to_s.strip
+        event_ids = params[:event_ids].to_s.split(',').map(&:strip).reject(&:blank?).uniq
+
+        if tei.blank? && event_ids.blank?
+          render json: { error: 'TEI or event_ids is required' }, status: :bad_request
+          return
+        end
+
+        response = RestClient.get(
+          mediator_endpoint('status'),
+          {
+            params: {
+              tei: tei,
+              event_ids: event_ids.join(',')
+            },
+            accept: :json
+          }
+        )
+
+        render json: JSON.parse(response.body)
+      rescue RestClient::ExceptionWithResponse => e
+        render json: {
+          error: 'Unable to fetch MAHIS update status from iCHIS',
+          response: parse_json_response(e.response&.body)
+        }, status: :bad_gateway
+      rescue StandardError => e
+        Rails.logger.error("Unable to fetch MAHIS update status from iCHIS: #{e.class}: #{e.message}")
+        render json: { error: 'Unable to fetch MAHIS update status from iCHIS' }, status: :bad_gateway
+      end
+
       private
+
+      def mediator_endpoint(path)
+        "#{BASE_MEDIATOR_URL.to_s.sub(%r{/*$}, '')}/#{path}"
+      end
+
+      def parse_json_response(body)
+        JSON.parse(body.to_s)
+      rescue JSON::ParserError
+        body.to_s
+      end
 
       def fetch_json(url)
         response = RestClient.get(url, accept: 'application/fhir+json')
         JSON.parse(response.body)
+      end
+
+      def fhir_search_url(resource_type, query)
+        compact_query = query.compact
+        "#{BASE_FHIR_URL}/#{resource_type}?#{URI.encode_www_form(compact_query)}"
       end
 
       def fetch_first_non_empty(urls, allow_empty_fallback: false)
@@ -85,6 +140,134 @@ module Api
 
       def find_patient_bundle(patient_id)
         fetch_first_non_empty(patient_search_urls(patient_id))
+      end
+
+      def normalized_positive_integer(value, fallback)
+        parsed = value.to_i
+        parsed.positive? ? parsed : fallback
+      end
+
+      def fetch_patient_page_bundle(page, per_page)
+        offset = (page - 1) * per_page
+        common_query = {
+          '_count' => per_page,
+          '_offset' => offset,
+          '_sort' => '-_lastUpdated',
+          '_total' => 'accurate'
+        }
+
+        fetch_first_non_empty(
+          [
+            fhir_search_url('Patient', common_query.merge('_tag' => SYNC_STATUS_TAG)),
+            fhir_search_url('Patient', common_query)
+          ],
+          allow_empty_fallback: true
+        )
+      end
+
+      def search_patient_urls(search, limit = SEARCH_RESULT_LIMIT, tag: nil)
+        common_query = {
+          '_count' => limit,
+          '_sort' => '-_lastUpdated',
+          '_total' => 'accurate',
+          '_tag' => tag
+        }
+
+        [
+          fhir_search_url('Patient', common_query.merge('name' => search)),
+          fhir_search_url('Patient', common_query.merge('identifier' => "#{ICHIS_IDENTIFIER_SYSTEM}|#{search}")),
+          fhir_search_url('Patient', common_query.merge('identifier' => "#{DHIS2_TEI_IDENTIFIER_SYSTEM}|#{search}")),
+          fhir_search_url('Patient', common_query.merge('_id' => search))
+        ]
+      end
+
+      def patient_entries_from_urls(urls)
+        urls.flat_map do |url|
+          bundle = fetch_json(url)
+          Array(bundle['entry']).select { |entry| entry.dig('resource', 'resourceType') == 'Patient' }
+        rescue RestClient::ExceptionWithResponse => e
+          Rails.logger.warn("FHIR patient search branch failed: #{e.message}")
+          []
+        end
+      end
+
+      def unique_patient_entries(entries)
+        entries.each_with_object({}) do |entry, memo|
+          resource = entry['resource'] || {}
+          key = resource['id'].presence || entry['fullUrl'].presence
+          next unless key
+
+          memo[key] ||= entry
+        end.values
+      end
+
+      def patient_last_updated(entry)
+        entry.dig('resource', 'meta', 'lastUpdated').to_s
+      end
+
+      def search_patients_bundle(search, page, per_page)
+        tagged_entries = unique_patient_entries(patient_entries_from_urls(search_patient_urls(search, tag: SYNC_STATUS_TAG)))
+        entries = tagged_entries.presence || unique_patient_entries(patient_entries_from_urls(search_patient_urls(search)))
+
+        sorted_entries = entries.sort_by { |entry| patient_last_updated(entry) }.reverse
+        offset = (page - 1) * per_page
+
+        {
+          'resourceType' => 'Bundle',
+          'type' => 'searchset',
+          'total' => sorted_entries.length,
+          'entry' => sorted_entries.slice(offset, per_page) || []
+        }
+      end
+
+      def patient_table_response(bundle, page, per_page)
+        entries = Array(bundle&.dig('entry')).select { |entry| entry.dig('resource', 'resourceType') == 'Patient' }
+        total = (bundle&.dig('total') || entries.length).to_i
+
+        {
+          resourceType: 'ExternalReferralPatientPage',
+          page: page,
+          per_page: per_page,
+          recordsTotal: total,
+          recordsFiltered: total,
+          data: entries.map { |entry| patient_table_row(entry) },
+          bundle: bundle
+        }
+      end
+
+      def patient_table_row(entry)
+        patient = entry['resource'] || {}
+        tei = patient_identifier_value(patient, DHIS2_TEI_IDENTIFIER_SYSTEM)
+        ichis_generated_id = patient_identifier_value(patient, ICHIS_IDENTIFIER_SYSTEM)
+
+        {
+          id: patient['id'],
+          fhirId: patient['id'],
+          fullName: patient_name(patient),
+          gender: patient['gender'],
+          birthDate: patient['birthDate'],
+          tei: tei,
+          ichisGeneratedID: ichis_generated_id,
+          updatedAt: patient.dig('meta', 'lastUpdated'),
+          syncStatus: patient_sync_status(patient),
+          primaryIdentifier: ichis_generated_id.presence || tei.presence || patient['id']
+        }
+      end
+
+      def patient_name(patient)
+        name = Array(patient['name']).first || {}
+        given = Array(name['given']).join(' ')
+        family = name['family'].to_s
+        [given, family].map(&:presence).compact.join(' ').presence || 'Unknown'
+      end
+
+      def patient_identifier_value(patient, system)
+        Array(patient['identifier']).find { |identifier| identifier['system'].to_s == system }&.dig('value')
+      end
+
+      def patient_sync_status(patient)
+        tag = Array(patient.dig('meta', 'tag')).find { |item| item['code'].present? || item['display'].present? }
+        tag&.dig('code') || tag&.dig('display') || 'Unknown'
       end
 
       def extract_patient_id_from_bundle(bundle)
