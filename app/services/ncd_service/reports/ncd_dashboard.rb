@@ -149,6 +149,98 @@ module NcdService
                  .count('orders.patient_id')
       end
 
+      def pending_ncd_data
+        return { count: 0, patients: [] } if @patient_ids.empty?
+        
+        ncd_type_id = PatientIdentifierType.find_by_name('NCD Number')&.id
+        return { count: 0, patients: [] } unless ncd_type_id
+        
+        sql = <<-SQL
+          SELECT p.person_id, n.given_name, n.family_name, p.date_created
+          FROM person p
+          INNER JOIN person_name n ON n.person_id = p.person_id AND n.voided = 0
+          WHERE p.person_id IN (?)
+          AND p.voided = 0
+          AND NOT EXISTS (
+            SELECT 1 FROM patient_identifier pi 
+            WHERE pi.patient_id = p.person_id 
+            AND pi.identifier_type = ? 
+            AND pi.voided = 0
+          )
+          ORDER BY p.date_created DESC
+        SQL
+        
+        results = ActiveRecord::Base.connection.select_all(
+          ActiveRecord::Base.sanitize_sql([sql, @patient_ids, ncd_type_id])
+        )
+        
+        patients = results.map do |row|
+          {
+            id: row['person_id'],
+            name: "#{row['given_name']} #{row['family_name']}".strip.presence || "Unknown Patient",
+            date: row['date_created']
+          }
+        end
+        
+        {
+          count: patients.length,
+          patients: patients.first(5)
+        }
+      end
+
+      def get_top_conditions
+        return [] if @patient_ids.empty?
+        
+        sql = <<-SQL
+          SELECT o.value_coded, COUNT(*) as cnt
+          FROM (
+            SELECT obs.person_id, obs.value_coded,
+                   ROW_NUMBER() OVER (PARTITION BY obs.person_id ORDER BY obs.obs_datetime DESC) as rn
+            FROM obs
+            INNER JOIN encounter e ON e.encounter_id = obs.encounter_id AND e.voided = 0
+            INNER JOIN encounter_type et ON et.encounter_type_id = e.encounter_type AND et.name = 'DIAGNOSIS'
+            WHERE obs.voided = 0 AND obs.concept_id = \#{concept_id('Primary diagnosis')} AND obs.person_id IN (?)
+          ) o
+          WHERE o.rn = 1
+          GROUP BY o.value_coded
+        SQL
+        
+        results = ActiveRecord::Base.connection.select_all(
+          ActiveRecord::Base.sanitize_sql([sql, @patient_ids])
+        )
+        
+        type1 = 0
+        type2 = 0
+        hyper = 0
+        other = 0
+        
+        results.each do |row|
+          val = row['value_coded'].to_i
+          cnt = row['cnt'].to_i
+          if val == concept_id('Type 1 diabetes mellitus')
+            type1 += cnt
+          elsif val == concept_id('Type 2 diabetes mellitus')
+            type2 += cnt
+          elsif val == concept_id('Hypertension')
+            hyper += cnt
+          else
+            other += cnt
+          end
+        end
+        
+        total = type1 + type2 + hyper + other
+        return [] if total == 0
+        
+        conditions = [
+          { name: 'Type 2 Diabetes', count: type2, percent: ((type2.to_f / total) * 100).round },
+          { name: 'Hypertension', count: hyper, percent: ((hyper.to_f / total) * 100).round },
+          { name: 'Type 1 Diabetes', count: type1, percent: ((type1.to_f / total) * 100).round },
+          { name: 'Other NCDs', count: other, percent: ((other.to_f / total) * 100).round }
+        ]
+        
+        conditions.sort_by { |c| -c[:count] }
+      end
+
       # Quarterly breakdown by diagnosis for base patient cohort
       def diagnosis_quarterly_breakdown
         return default_quarterly_structure if @patient_ids.empty?
@@ -182,9 +274,9 @@ module NcdService
             last_diagnosis = observations.max_by(&:obs_datetime)
             
             case last_diagnosis.value_coded
-            when 6409
+            when concept_id('Type 1 diabetes mellitus')
               type_one_patients.add(patient_id)
-            when 6410
+            when concept_id('Type 2 diabetes mellitus')
               type_two_patients.add(patient_id)
             when 8809, 903
               hypertension_patients.add(patient_id)
