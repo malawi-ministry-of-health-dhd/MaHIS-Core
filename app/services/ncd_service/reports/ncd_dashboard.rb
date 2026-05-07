@@ -267,9 +267,9 @@ module NcdService
         results.each do |row|
           val = row['value_coded'].to_i
           cnt = row['cnt'].to_i
-          if val == concept_id('Type 1 Diabetes')
+          if val == concept_id('Type 1 diabetes mellitus')
             type1 += cnt
-          elsif val == concept_id('Type 2 Diabetes')
+          elsif val == concept_id('Type 2 diabetes mellitus')
             type2 += cnt
           elsif val == concept_id('Hypertension')
             hyper += cnt
@@ -323,9 +323,9 @@ module NcdService
             last_diagnosis = observations.max_by(&:obs_datetime)
             
             case last_diagnosis.value_coded
-            when concept_id('Type 1 Diabetes')
+            when concept_id('Type 1 diabetes mellitus')
               type_one_patients.add(patient_id)
-            when concept_id('Type 2 Diabetes')
+            when concept_id('Type 2 diabetes mellitus')
               type_two_patients.add(patient_id)
             when concept_id('Hypertension')
               hypertension_patients.add(patient_id)
