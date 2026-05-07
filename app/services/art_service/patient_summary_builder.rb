@@ -103,6 +103,7 @@ module ArtService
         'current_weight' => latest_obs_numeric(WEIGHT_CONCEPT),
         'current_outcome' => current_outcome,
         'current_regimen' => current_regimen,
+        'tpt_status' => tpt_status_details,
         'tpt_completed' => tpt_completed?,
         'tpt_start_date' => tpt_start_date,
         'tpt_regimen' => tpt_regimen,
@@ -796,6 +797,16 @@ module ArtService
       @on_arvs_state_id ||= Program.find_by_name(HIV_PROGRAM_NAME)
                                    &.state('On antiretrovirals')
                                    &.program_workflow_state_id
+    end
+
+    def tpt_status_details
+      result = ArtService::Reports::Pepfar::TptStatus.new(
+        start_date: @as_of, end_date: @as_of, patient_id: @patient_id
+      ).find_report
+      result.merge('as_of' => Time.current.to_s)
+    rescue StandardError => e
+      Rails.logger.error("PatientSummaryBuilder#tpt_status_details failed for patient #{@patient_id}: #{e.message}")
+      nil
     end
   end
 end
