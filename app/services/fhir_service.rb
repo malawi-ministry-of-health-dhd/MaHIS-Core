@@ -1,6 +1,13 @@
 module FhirService
   class << self
     BASE_MEDIATOR_URL = YAML.safe_load(File.read('config/application.yml'))['BASE_MEDIATOR_URL']
+    ICHIS_EVENT_SOURCE_CONCEPT_NAMES = [
+      'Unspecified Diabetes',
+      'Systolic',
+      'Diastolic',
+      'Waist circumference'
+    ].freeze
+
     def sendEMRIdToMediator(data)
       begin
         response = RestClient.post(
@@ -20,15 +27,15 @@ module FhirService
     end
 
     def sendConfirmedDiagnosisToMediator(patient_id, diagnosis)
-      latest_event_id = Observation.where(concept_id: 11587, person_id: patient_id)
-                            .order(obs_datetime: :desc)
-                            .limit(1)
-                            .pluck(:comments)
-                            .first
-                            
-      return unless latest_event_id.present?
-      data ={ event_id: latest_event_id, diagnosis: diagnosis }
-                  
+      latest_event_id = latest_diagnosis_event_id(patient_id)
+
+      unless latest_event_id.present?
+        Rails.logger.warn("Skipping confirmed diagnosis mediator send for patient #{patient_id}: missing iCHIS event id")
+        return
+      end
+
+      data = { event_id: latest_event_id, diagnosis: diagnosis }
+
       begin
         response = RestClient.post(
           "#{BASE_MEDIATOR_URL}diagnosis",
@@ -43,6 +50,26 @@ module FhirService
       rescue StandardError => e
         puts "Other error: #{e.message}"
         nil
+      end
+    end
+
+    private
+
+    def latest_diagnosis_event_id(patient_id)
+      Observation.where(concept_id: ichis_event_source_concept_ids, person_id: patient_id)
+                 .where.not(comments: [nil, ''])
+                 .order(obs_datetime: :desc, obs_id: :desc)
+                 .limit(1)
+                 .pluck(:comments)
+                 .first
+    end
+
+    def ichis_event_source_concept_ids
+      @ichis_event_source_concept_ids ||= begin
+        concept_ids = ConceptName.where(name: ICHIS_EVENT_SOURCE_CONCEPT_NAMES, voided: 0)
+                                 .distinct
+                                 .pluck(:concept_id)
+        concept_ids.compact.uniq
       end
     end
   end

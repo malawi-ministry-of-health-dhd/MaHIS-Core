@@ -60,6 +60,18 @@ module ArtService
     EPTB_NAMES          = ['Extrapulmonary tuberculosis (EPTB)', 'EPTB'].freeze
     PTB_CURRENT_NAMES   = ['Pulmonary tuberculosis (current)', 'Pulmonary TB (current)'].freeze
     KAPOSIS_NAMES       = ['Kaposis sarcoma', 'Kaposi sarcoma'].freeze
+    # Registration / staging concepts (for missing root fields)
+    CONFIRMATORY_HIV_TEST_DATE_CONCEPT     = 'Confirmatory HIV test date'
+    CONFIRMATORY_HIV_TEST_LOCATION_CONCEPT = 'Confirmatory HIV test location'
+    AGREES_TO_FOLLOWUP_CONCEPT             = 'Agrees to followup'
+    REASON_FOR_ART_ELIGIBILITY_CONCEPT     = 'Reason for ART eligibility'
+    WHO_STAGE_CRITERIA_CONCEPT             = 'Who stages criteria present'
+    INIT_BREASTFEEDING_CONCEPT             = 'Is patient breast feeding'
+
+    # Dispensing / adherence concepts (for missing visit fields)
+    AMOUNT_DISPENSED_CONCEPT = 'Amount dispensed'
+    ADHERENCE_CONCEPT        = 'Drug Order Adherence'
+    BMI_CONCEPT              = 'BMI'
 
     # patient_state.state value for Died
     DIED_STATE = 3
@@ -76,6 +88,14 @@ module ArtService
         'art_start_date' => art_start_date,
         'arv_number' => arv_number,
         'init_pregnant' => init_pregnant?,
+        'init_weight' => init_weight,
+        'init_height' => init_height,
+        'init_breastfeeding' => init_breastfeeding,
+        'hiv_test_date' => hiv_test_date,
+        'hiv_test_location' => hiv_test_location,
+        'agrees_to_followup' => agrees_to_followup,
+        'reason_for_art_eligibility' => reason_for_art_eligibility,
+        'who_stage_criteria' => who_stage_criteria,
         'current_tb_status' => latest_obs_value(TB_STATUS_CONCEPT),
         'current_status_on_tb_treatment' => on_tb_treatment?,
         'current_patient_type' => latest_obs_value(PATIENT_TYPE_CONCEPT),
@@ -116,7 +136,10 @@ module ArtService
          REFER_TO_CLINICIAN_CONCEPT, APPOINTMENT_DATE_CONCEPT, MEDICATION_ORDERS_CONCEPT,
          HAS_TRANSFER_LETTER_CONCEPT, DATE_ART_LAST_TAKEN_CONCEPT,
          TB_TREATMENT_START_DATE_CONCEPT, PILLS_BROUGHT_CONCEPT,
-         WHO_STAGES_CRITERIA_CONCEPT]
+         CONFIRMATORY_HIV_TEST_DATE_CONCEPT, CONFIRMATORY_HIV_TEST_LOCATION_CONCEPT,
+         AGREES_TO_FOLLOWUP_CONCEPT, REASON_FOR_ART_ELIGIBILITY_CONCEPT,
+         WHO_STAGE_CRITERIA_CONCEPT, INIT_BREASTFEEDING_CONCEPT,
+         AMOUNT_DISPENSED_CONCEPT, ADHERENCE_CONCEPT, BMI_CONCEPT]
       )
       @tpt_drug_concept_ids = fetch_concept_ids(TPT_DRUG_CONCEPTS).values
 
@@ -137,6 +160,8 @@ module ArtService
       @all_encounters_by_date = load_all_encounters
       @clinician_obs_dates    = load_clinician_obs_dates
       @pills_brought_by_date  = load_pills_brought
+      @pills_dispensed_by_date = load_pills_dispensed
+      @adherence_by_date      = load_adherence
       @viral_load_results, @viral_load_by_date = load_viral_load_results
     end
 
@@ -262,6 +287,55 @@ module ArtService
       end
     end
 
+    def load_pills_dispensed
+      dispensed_concept_id = @concept_id_map[AMOUNT_DISPENSED_CONCEPT]
+      return {} unless dispensed_concept_id
+
+      rows = ActiveRecord::Base.connection.exec_query(<<~SQL).to_a
+        SELECT DATE(o.obs_datetime) AS obs_date,
+               d.name               AS drug_name,
+               o.value_numeric      AS quantity
+        FROM obs o
+        INNER JOIN orders ord        ON ord.order_id = o.order_id AND ord.voided = 0
+        INNER JOIN drug_order do_tbl ON do_tbl.order_id = ord.order_id
+        INNER JOIN drug d            ON d.drug_id = do_tbl.drug_inventory_id
+        WHERE o.person_id  = #{@patient_id}
+          AND o.voided     = 0
+          AND o.concept_id = #{dispensed_concept_id}
+        ORDER BY o.obs_datetime DESC
+      SQL
+
+      rows.each_with_object(Hash.new { |h, k| h[k] = [] }) do |r, h|
+        h[r['obs_date'].to_s] << { 'name' => r['drug_name'], 'quantity' => r['quantity'] }
+      end
+    end
+
+    def load_adherence
+      adherence_concept_id = @concept_id_map[ADHERENCE_CONCEPT]
+      return {} unless adherence_concept_id
+
+      rows = ActiveRecord::Base.connection.exec_query(<<~SQL).to_a
+        SELECT DATE(o.obs_datetime) AS obs_date,
+               d.name               AS drug_name,
+               o.value_numeric      AS adherence_numeric,
+               o.value_text         AS adherence_text
+        FROM obs o
+        INNER JOIN orders ord        ON ord.order_id = o.order_id AND ord.voided = 0
+        INNER JOIN drug_order do_tbl ON do_tbl.order_id = ord.order_id
+        INNER JOIN drug d            ON d.drug_id = do_tbl.drug_inventory_id
+        WHERE o.person_id  = #{@patient_id}
+          AND o.voided     = 0
+          AND o.concept_id = #{adherence_concept_id}
+        ORDER BY o.obs_datetime DESC
+      SQL
+
+      rows.each_with_object(Hash.new { |h, k| h[k] = [] }) do |r, h|
+        value = r['adherence_numeric'] ||
+                r['adherence_text']&.gsub(/%$/, '')&.then { |v| v.empty? ? nil : v.to_f }
+        h[r['obs_date'].to_s] << { 'drug' => r['drug_name'], 'adherence' => value }
+      end
+    end
+
     def load_viral_load_results
       test_type_id  = ConceptName.find_by(name: TEST_TYPE_CONCEPT)&.concept_id
       hiv_vl_id     = ConceptName.find_by(name: HIV_VIRAL_LOAD_CONCEPT)&.concept_id
@@ -328,6 +402,65 @@ module ArtService
       return false unless first_obs
 
       truthy_value?(first_obs)
+    end
+
+    def init_weight
+      (@all_obs[@concept_id_map[WEIGHT_CONCEPT]] || []).last&.dig('value_numeric')
+    end
+
+    def init_height
+      (@all_obs[@concept_id_map[HEIGHT_CONCEPT]] || []).last&.dig('value_numeric')
+    end
+
+    def init_breastfeeding
+      concept_id = @concept_id_map[INIT_BREASTFEEDING_CONCEPT]
+      return false unless concept_id
+
+      rows = @all_obs[concept_id] || []
+      first_obs = rows.min_by { |r| r['obs_date'] }
+      return false unless first_obs
+
+      truthy_value?(first_obs)
+    end
+
+    def hiv_test_date
+      concept_id = @concept_id_map[CONFIRMATORY_HIV_TEST_DATE_CONCEPT]
+      return nil unless concept_id
+
+      dt = (@all_obs[concept_id] || []).first&.dig('value_datetime')&.to_s
+      dt.presence&.split(' ')&.first
+    end
+
+    def hiv_test_location
+      concept_id = @concept_id_map[CONFIRMATORY_HIV_TEST_LOCATION_CONCEPT]
+      return nil unless concept_id
+
+      (@all_obs[concept_id] || []).first&.dig('value_text').presence
+    end
+
+    def agrees_to_followup
+      concept_id = @concept_id_map[AGREES_TO_FOLLOWUP_CONCEPT]
+      return false unless concept_id
+
+      row = (@all_obs[concept_id] || []).first
+      return false unless row
+
+      truthy_value?(row)
+    end
+
+    def reason_for_art_eligibility
+      concept_id = @concept_id_map[REASON_FOR_ART_ELIGIBILITY_CONCEPT]
+      return nil unless concept_id
+
+      row = (@all_obs[concept_id] || []).first
+      row&.dig('value_coded_name').presence
+    end
+
+    def who_stage_criteria
+      concept_id = @concept_id_map[WHO_STAGE_CRITERIA_CONCEPT]
+      return [] unless concept_id
+
+      (@all_obs[concept_id] || []).filter_map { |r| r['value_coded_name'].presence }.uniq
     end
 
     # ── Current clinical state ───────────────────────────────────────────────
@@ -517,42 +650,49 @@ module ArtService
       outcome_row = ActiveRecord::Base.connection.select_one(
         "SELECT patient_outcome(#{@patient_id}, '#{date_str} 23:59:59') AS outcome"
       )
+      regimen_row = ActiveRecord::Base.connection.select_one(
+        "SELECT patient_current_regimen(#{@patient_id}, '#{date_str} 23:59:59') AS regimen"
+      )
 
       {
-        'weight' => obs_numeric_on(obs_on_date, WEIGHT_CONCEPT),
-        'height' => obs_numeric_on(obs_on_date, HEIGHT_CONCEPT),
-        'outcome' => outcome_row&.dig('outcome'),
-        'drugs' => arv_drugs,
-        'tb_status' => obs_value_on(obs_on_date, TB_STATUS_CONCEPT),
-        'tb_treatment_status' => obs_value_on(obs_on_date, TB_STATUS_CONCEPT)&.match?(/rx/i) || false,
-        'patient_type' => obs_value_on(obs_on_date, PATIENT_TYPE_CONCEPT),
-        'patient_present' => truthy_value_in?(obs_on_date, PATIENT_PRESENT_CONCEPT),
-        'guardian_present' => guardian_present_on?(obs_on_date),
-        'pregnant' => truthy_value_in?(obs_on_date, PREGNANT_CONCEPT),
-        'breastfeeding' => truthy_value_in?(obs_on_date, BREASTFEEDING_CONCEPT),
-        'side_effects' => obs_value_on(obs_on_date, SIDE_EFFECTS_CONCEPT),
-        'other_drugs' => other_drugs.join(', ').presence,
-        'has_reception' => encounter_done_on?(date_str, HIV_RECEPTION_ENCOUNTER),
-        'has_received_arvs_before' => has_received_arvs_before?(date_str),
-        'referred_to_clinician' => referred_to_clinician_on?(obs_on_date),
-        'seen_by_clinician' => @clinician_obs_dates.include?(date_str),
-        'has_treatment_encounter' => encounter_done_on?(date_str, TREATMENT_ENCOUNTER),
-        'next_appointment_date' => appointment_date_on(obs_on_date),
-        'hasHivClinicRegistration' => encounter_done_on?(date_str, HIV_CLINIC_REGISTRATION_ENCOUNTER),
-        'hasHivReception' => encounter_done_on?(date_str, HIV_RECEPTION_ENCOUNTER),
-        'hasVitals' => encounter_done_on?(date_str, VITALS_ENCOUNTER),
-        'hasSymptomScreening' => encounter_done_on?(date_str, SYMPTOM_SCREENING_ENCOUNTER),
-        'hasHivStaging' => encounter_done_on?(date_str, HIV_STAGING_ENCOUNTER),
-        'hasAhdScreening' => encounter_done_on?(date_str, AHD_SCREENING_ENCOUNTER),
-        'hasArtAdherence' => encounter_done_on?(date_str, ART_ADHERENCE_ENCOUNTER),
-        'hasHivClinicConsultation' => encounter_done_on?(date_str, HIV_CLINIC_CONSULT_ENCOUNTER),
-        'hasTreatment' => encounter_done_on?(date_str, TREATMENT_ENCOUNTER),
-        'hasFastTrackAssessment' => encounter_done_on?(date_str, FAST_TRACK_ENCOUNTER),
-        'hasDispensing' => encounter_done_on?(date_str, DISPENSING_ENCOUNTER),
-        'hasAppointment' => encounter_done_on?(date_str, APPOINTMENT_ENCOUNTER),
-        'pillsBroughtToClinic' => pills_brought_on(date_str),
-        'tbTreatmentStartDate' => tb_treatment_start_date_on(obs_on_date),
-        'viral_load' => viral_load_on(date_str)
+        'weight'                    => obs_numeric_on(obs_on_date, WEIGHT_CONCEPT),
+        'height'                    => obs_numeric_on(obs_on_date, HEIGHT_CONCEPT),
+        'bmi'                       => bmi_for(obs_on_date),
+        'outcome'                   => outcome_row&.dig('outcome'),
+        'regimen'                   => regimen_row&.dig('regimen').presence,
+        'drugs'                     => arv_drugs,
+        'tb_status'                 => obs_value_on(obs_on_date, TB_STATUS_CONCEPT),
+        'tb_treatment_status'       => obs_value_on(obs_on_date, TB_STATUS_CONCEPT)&.match?(/rx/i) || false,
+        'patient_type'              => obs_value_on(obs_on_date, PATIENT_TYPE_CONCEPT),
+        'patient_present'           => truthy_value_in?(obs_on_date, PATIENT_PRESENT_CONCEPT),
+        'guardian_present'          => guardian_present_on?(obs_on_date),
+        'pregnant'                  => truthy_value_in?(obs_on_date, PREGNANT_CONCEPT),
+        'breastfeeding'             => truthy_value_in?(obs_on_date, BREASTFEEDING_CONCEPT),
+        'side_effects'              => obs_value_on(obs_on_date, SIDE_EFFECTS_CONCEPT),
+        'other_drugs'               => other_drugs.join(', ').presence,
+        'has_reception'             => encounter_done_on?(date_str, HIV_RECEPTION_ENCOUNTER),
+        'has_received_arvs_before'  => has_received_arvs_before?(date_str),
+        'referred_to_clinician'     => referred_to_clinician_on?(obs_on_date),
+        'seen_by_clinician'         => @clinician_obs_dates.include?(date_str),
+        'has_treatment_encounter'   => encounter_done_on?(date_str, TREATMENT_ENCOUNTER),
+        'next_appointment_date'     => appointment_date_on(obs_on_date),
+        'hasHivClinicRegistration'  => encounter_done_on?(date_str, HIV_CLINIC_REGISTRATION_ENCOUNTER),
+        'hasHivReception'           => encounter_done_on?(date_str, HIV_RECEPTION_ENCOUNTER),
+        'hasVitals'                 => encounter_done_on?(date_str, VITALS_ENCOUNTER),
+        'hasSymptomScreening'       => encounter_done_on?(date_str, SYMPTOM_SCREENING_ENCOUNTER),
+        'hasHivStaging'             => encounter_done_on?(date_str, HIV_STAGING_ENCOUNTER),
+        'hasAhdScreening'           => encounter_done_on?(date_str, AHD_SCREENING_ENCOUNTER),
+        'hasArtAdherence'           => encounter_done_on?(date_str, ART_ADHERENCE_ENCOUNTER),
+        'hasHivClinicConsultation'  => encounter_done_on?(date_str, HIV_CLINIC_CONSULT_ENCOUNTER),
+        'hasTreatment'              => encounter_done_on?(date_str, TREATMENT_ENCOUNTER),
+        'hasFastTrackAssessment'    => encounter_done_on?(date_str, FAST_TRACK_ENCOUNTER),
+        'hasDispensing'             => encounter_done_on?(date_str, DISPENSING_ENCOUNTER),
+        'hasAppointment'            => encounter_done_on?(date_str, APPOINTMENT_ENCOUNTER),
+        'pillsBroughtToClinic'      => pills_brought_on(date_str),
+        'pills_dispensed'           => pills_dispensed_on(date_str),
+        'adherence'                 => adherence_on(date_str),
+        'tbTreatmentStartDate'      => tb_treatment_start_date_on(obs_on_date),
+        'viral_load'                => viral_load_on(date_str)
       }
     end
 
@@ -620,6 +760,18 @@ module ArtService
 
     def pills_brought_on(date_str)
       @pills_brought_by_date[date_str] || []
+    end
+
+    def pills_dispensed_on(date_str)
+      @pills_dispensed_by_date[date_str] || []
+    end
+
+    def adherence_on(date_str)
+      @adherence_by_date[date_str] || []
+    end
+
+    def bmi_for(obs_on_date)
+      obs_numeric_on(obs_on_date, BMI_CONCEPT)
     end
 
     def tb_treatment_start_date_on(obs_on_date)
