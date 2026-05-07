@@ -98,7 +98,7 @@ module ArtService
           LEFT JOIN concept_name art_reason ON art_reason.concept_id = e.reason_for_starting_art AND art_reason.voided = 0
           WHERE o.#{report_type&.downcase == 'pepfar' ? 'pepfar_' : 'moh_'}cum_outcome = 'Defaulted'
           GROUP BY e.patient_id
-          HAVING (defaulter_date <= DATE('#{@end_date}')) OR (defaulter_date IS NULL)
+          HAVING (defaulter_date >= DATE('#{@start_date}') AND defaulter_date <= DATE('#{@end_date}')) OR (defaulter_date IS NULL)
           ORDER BY e.patient_id, n.date_created DESC;
         SQL
       end
