@@ -30,8 +30,8 @@ module FhirService
       sendReferralResultsToMediator(patient_id, diagnosis: diagnosis)
     end
 
-    def sendReferralResultsToMediator(patient_id, diagnosis: nil, treatment_plan: nil, enrolled_in_care: nil)
-      latest_event_id = latest_diagnosis_event_id(patient_id)
+    def sendReferralResultsToMediator(patient_id, diagnosis: nil, treatment_plan: nil, enrolled_in_care: nil, event_id: nil)
+      latest_event_id = event_id.presence || latest_diagnosis_event_id(patient_id)
       unless latest_event_id.present?
         Rails.logger.warn("Skipping referral results mediator send for patient #{patient_id}: missing iCHIS event id")
         return

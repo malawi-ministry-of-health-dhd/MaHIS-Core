@@ -21,20 +21,23 @@ module PatientRecordService
     ].freeze
 
     def save_all_observations(patient_id, record)
-      data = record.dig(:observations)
-      return ok unless data&.any?
+      data = value_for(record, :observations)
+      return send_enrolled_in_care_without_new_observations(patient_id, record) unless data&.any?
 
-      unsaved_items = data.select { |item| item.present? && item[:status] == "unsaved" && normalized_observations(item[:obs]).any? }
-      return ok if unsaved_items.empty?
+      unsaved_items = data.select do |item|
+        item.present? && value_for(item, :status) == "unsaved" && normalized_observations(value_for(item, :obs)).any?
+      end
+      return send_enrolled_in_care_without_new_observations(patient_id, record) if unsaved_items.empty?
 
       collected_errors = []
       sent_confirmed_diagnoses = {}
       sent_enrolled_in_care = false
+      referral_event_id = ichis_referral_event_id(record)
 
       unsaved_items.each do |item|
-        encounter_type = EncounterType.find_by_encounter_type_id(item[:encounter_type])
+        encounter_type = EncounterType.find_by_encounter_type_id(value_for(item, :encounter_type))
         unless encounter_type
-          collected_errors << "Unknown encounter_type id=#{item[:encounter_type]}"
+          collected_errors << "Unknown encounter_type id=#{value_for(item, :encounter_type)}"
           next
         end
 
@@ -46,7 +49,7 @@ module PatientRecordService
             treatment_plan_values_for_event = []
             enrolled_in_care_for_event = referral_enrolled_in_care?(record) && !sent_enrolled_in_care
 
-            normalized_observations(item[:obs]).each do |archetype|
+            normalized_observations(value_for(item, :obs)).each do |archetype|
               begin
                 params = to_permitted_params(archetype)
                 params[:location_id] = record[:location_id]
@@ -75,9 +78,10 @@ module PatientRecordService
                 patient_id,
                 diagnosis: confirmed_diagnoses_for_event,
                 treatment_plan: treatment_plan_values_for_event,
-                enrolled_in_care: enrolled_in_care_for_event ? true : nil
+                enrolled_in_care: enrolled_in_care_for_event ? true : nil,
+                event_id: referral_event_id
               )
-              sent_enrolled_in_care = true if enrolled_in_care_for_event && mediator_response.present?
+              sent_enrolled_in_care = true if enrolled_in_care_for_event && successful_mediator_response?(mediator_response)
             end
           end
         rescue StandardError => e
@@ -145,6 +149,29 @@ module PatientRecordService
 
     def referral_enrolled_in_care?(record)
       ActiveModel::Type::Boolean.new.cast(value_for(record, :send_ichis_enrolled_in_care))
+    end
+
+    def send_enrolled_in_care_without_new_observations(patient_id, record)
+      if referral_enrolled_in_care?(record)
+        FhirService.sendReferralResultsToMediator(
+          patient_id,
+          enrolled_in_care: true,
+          event_id: ichis_referral_event_id(record)
+        )
+      end
+      ok
+    end
+
+    def successful_mediator_response?(response)
+      response&.code.to_i.between?(200, 299)
+    end
+
+    def ichis_referral_event_id(record)
+      direct_event_id = value_for(record, :send_ichis_enrolled_in_care_event_id).to_s.strip
+      return direct_event_id if direct_event_id.present?
+
+      event_ids = value_for(record, :ichisEventIds) || value_for(record, :ichis_event_ids)
+      Array(event_ids).map { |event_id| event_id.to_s.strip }.find(&:present?)
     end
 
     def clear_referral_enrolled_in_care_flag(record)
