@@ -4,9 +4,11 @@
 module PatientRecordService
   class MedicationOrderSaver < BaseSaver
     ENCOUNTER_TYPE_MAPPING = SavePatientRecordService::ENCOUNTER_TYPE_MAPPING
+    NCD_PROGRAM_ID = 32
 
     def save_medication_order(patient_id, record)
       collected_errors = []
+      treatment_plan_values = []
 
       # Standard path: MedicationOrder.unsaved
       orders_unsaved = record.dig(:MedicationOrder, :unsaved) || []
@@ -26,6 +28,7 @@ module PatientRecordService
 
             saved_drug_orders = DrugOrderService.create_drug_orders(encounter: encounter, drug_orders: [order])
             raise "Drug order creation returned empty result for order: #{order.inspect}" if saved_drug_orders.blank?
+            treatment_plan_values.concat(saved_drug_orders.map(&:to_s))
 
             dispensation_result = save_dispensation_data(
               patient_id,
@@ -59,6 +62,7 @@ module PatientRecordService
             drugs = fetch_value(entry, :drugs) || []
             saved_drug_orders = DrugOrderService.create_drug_orders(encounter: encounter, drug_orders: drugs)
             raise "Drug order creation returned empty result" if saved_drug_orders.blank?
+            treatment_plan_values.concat(saved_drug_orders.map(&:to_s))
 
             save_pending_order_obs(encounter, entry)
           end
@@ -67,6 +71,8 @@ module PatientRecordService
           collected_errors << "Offline order entry: #{e.message}"
         end
       end
+
+      send_treatment_plan_to_mediator(patient_id, record, treatment_plan_values)
 
       return ok if collected_errors.empty? && orders_unsaved.empty? && pending_orders.empty?
 
@@ -123,6 +129,18 @@ module PatientRecordService
       else
         build_dispensation_payloads(patient_id, order_id, dispensation_data)
       end
+    end
+
+    def send_treatment_plan_to_mediator(patient_id, record, treatment_plan_values)
+      return unless fetch_value(record, :program_id).to_i == NCD_PROGRAM_ID
+
+      treatment_plan = Array(treatment_plan_values).map(&:to_s).map(&:strip).reject(&:blank?).uniq
+      return if treatment_plan.blank?
+
+      FhirService.sendReferralResultsToMediator(
+        patient_id,
+        treatment_plan: treatment_plan
+      )
     end
 
     def extract_unsaved_dispensations(record)

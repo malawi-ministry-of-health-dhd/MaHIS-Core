@@ -3,6 +3,8 @@
 
 module PatientRecordService
   class PatientIdentityManager < BaseSaver
+    NCD_PROGRAM_ID = 32
+
     def save_person_information(record)
       if record[:personInformation] && record[:saveStatusPersonInformation] == 'pending'
         incoming_identifier = extract_incoming_identifier(record)
@@ -123,16 +125,24 @@ module PatientRecordService
     end
 
     def create_ncd_identifier(patient_id, record)
-        if record[:NcdID] == "-" || record[:unsavedNcdID].present?
-          PatientIdentifierService.create(
-            patient_id:      patient_id,
-            identifier:      record[:unsavedNcdID] || find_next_available_ncd_number(record[:location_id]),
-            identifier_type: 31,
-            location_id:     record[:location_id]
-          )
-        end
+      created_identifier = false
 
-        ok
+      if record[:NcdID] == "-" || record[:unsavedNcdID].present?
+        PatientIdentifierService.create(
+          patient_id:      patient_id,
+          identifier:      record[:unsavedNcdID] || find_next_available_ncd_number(record[:location_id]),
+          identifier_type: 31,
+          location_id:     record[:location_id]
+        )
+        created_identifier = true
+      end
+
+      if created_identifier && record.dig(:otherPersonInformation, :ichisID).present? &&
+         record[:program_id].to_i == NCD_PROGRAM_ID
+        record[:send_ichis_enrolled_in_care] = true
+      end
+
+      ok
     rescue StandardError => e
       log_and_fail("Failed to create NCD identifier", e)
     end

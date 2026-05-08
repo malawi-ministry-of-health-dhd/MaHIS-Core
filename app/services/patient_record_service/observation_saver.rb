@@ -5,7 +5,9 @@ module PatientRecordService
   class ObservationSaver < BaseSaver
     NCD_PROGRAM_ID = 32
     PRIMARY_DIAGNOSIS_CONCEPT_NAME = "primary diagnosis".freeze
+    NOTES_ENCOUNTER_TYPE_NAME = "notes".freeze
     DIABETES_DIAGNOSIS_CONCEPT_NAMES = [
+      "unspecified diabetes",
       "type 1 diabetes mellitus",
       "type 2 diabetes mellitus"
     ].freeze
@@ -27,6 +29,7 @@ module PatientRecordService
 
       collected_errors = []
       sent_confirmed_diagnoses = {}
+      sent_enrolled_in_care = false
 
       unsaved_items.each do |item|
         encounter_type = EncounterType.find_by_encounter_type_id(item[:encounter_type])
@@ -39,6 +42,9 @@ module PatientRecordService
           ActiveRecord::Base.transaction(requires_new: true) do
             encounter_id = create_encounter(patient_id, encounter_type.id, item)
             encounter    = Encounter.find(encounter_id)
+            confirmed_diagnoses_for_event = []
+            treatment_plan_values_for_event = []
+            enrolled_in_care_for_event = referral_enrolled_in_care?(record) && !sent_enrolled_in_care
 
             normalized_observations(item[:obs]).each do |archetype|
               begin
@@ -50,16 +56,28 @@ module PatientRecordService
                 end
 
                 confirmed_diagnosis = confirmed_ncd_diagnosis(record, params)
+                treatment_plan_value = referral_treatment_plan_value(record, encounter_type, params)
                 observation_service.create_observation(encounter, params)
                 if confirmed_diagnosis && !sent_confirmed_diagnoses[confirmed_diagnosis]
-                  FhirService.sendConfirmedDiagnosisToMediator(patient_id, confirmed_diagnosis)
+                  confirmed_diagnoses_for_event << confirmed_diagnosis
                   sent_confirmed_diagnoses[confirmed_diagnosis] = true
                 end
+                treatment_plan_values_for_event << treatment_plan_value if treatment_plan_value.present?
               rescue StandardError => e
                 log_error("Error saving obs for encounter #{encounter_id}", e)
                 collected_errors << "Encounter #{encounter_type.name}, obs #{format_observation_reference(archetype)}: #{e.message}"
                 # continues to next obs
               end
+            end
+
+            if confirmed_diagnoses_for_event.any? || treatment_plan_values_for_event.any? || enrolled_in_care_for_event
+              mediator_response = FhirService.sendReferralResultsToMediator(
+                patient_id,
+                diagnosis: confirmed_diagnoses_for_event,
+                treatment_plan: treatment_plan_values_for_event,
+                enrolled_in_care: enrolled_in_care_for_event ? true : nil
+              )
+              sent_enrolled_in_care = true if enrolled_in_care_for_event && mediator_response.present?
             end
           end
         rescue StandardError => e
@@ -70,6 +88,8 @@ module PatientRecordService
       end
 
       OperationResult.new(success: true, errors: collected_errors)
+    ensure
+      clear_referral_enrolled_in_care_flag(record)
     end
 
     private
@@ -114,6 +134,24 @@ module PatientRecordService
       return "Hypertension" if hypertension_diagnosis?(diagnosis_names)
 
       nil
+    end
+
+    def referral_treatment_plan_value(record, encounter_type, archetype)
+      return nil unless ncd_program?(record)
+      return nil unless normalize_concept_name(encounter_type&.name) == NOTES_ENCOUNTER_TYPE_NAME
+
+      value_for(archetype, :value_text).to_s.squish.presence
+    end
+
+    def referral_enrolled_in_care?(record)
+      ActiveModel::Type::Boolean.new.cast(value_for(record, :send_ichis_enrolled_in_care))
+    end
+
+    def clear_referral_enrolled_in_care_flag(record)
+      return unless record.respond_to?(:delete)
+
+      record.delete(:send_ichis_enrolled_in_care)
+      record.delete('send_ichis_enrolled_in_care')
     end
 
     def ncd_program?(record)

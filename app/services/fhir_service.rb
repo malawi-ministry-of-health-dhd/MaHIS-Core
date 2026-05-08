@@ -27,14 +27,25 @@ module FhirService
     end
 
     def sendConfirmedDiagnosisToMediator(patient_id, diagnosis)
-      latest_event_id = latest_diagnosis_event_id(patient_id)
+      sendReferralResultsToMediator(patient_id, diagnosis: diagnosis)
+    end
 
+    def sendReferralResultsToMediator(patient_id, diagnosis: nil, treatment_plan: nil, enrolled_in_care: nil)
+      latest_event_id = latest_diagnosis_event_id(patient_id)
       unless latest_event_id.present?
-        Rails.logger.warn("Skipping confirmed diagnosis mediator send for patient #{patient_id}: missing iCHIS event id")
+        Rails.logger.warn("Skipping referral results mediator send for patient #{patient_id}: missing iCHIS event id")
         return
       end
 
-      data = { event_id: latest_event_id, diagnosis: diagnosis }
+      diagnoses = Array(diagnosis).map(&:to_s).map(&:strip).reject(&:blank?).uniq
+      treatment_plan_text = normalize_treatment_plan(treatment_plan)
+
+      data = { event_id: latest_event_id }
+      data[:diagnosis] = diagnoses if diagnoses.present?
+      data[:treatment_plan] = treatment_plan_text if treatment_plan_text.present?
+      data[:enrolled_in_care] = boolean_value(enrolled_in_care) unless enrolled_in_care.nil?
+
+      return if data.keys == [:event_id]
 
       begin
         response = RestClient.post(
@@ -45,7 +56,7 @@ module FhirService
         puts "Success: #{response.code}"
         response
       rescue RestClient::ExceptionWithResponse => e
-        puts "Failed to send diagnosis: #{e.response}"
+        puts "Failed to send referral results: #{e.response}"
         e.response
       rescue StandardError => e
         puts "Other error: #{e.message}"
@@ -62,6 +73,14 @@ module FhirService
                  .limit(1)
                  .pluck(:comments)
                  .first
+    end
+
+    def normalize_treatment_plan(treatment_plan)
+      Array(treatment_plan).map(&:to_s).map(&:strip).reject(&:blank?).uniq.join('; ')
+    end
+
+    def boolean_value(value)
+      ActiveModel::Type::Boolean.new.cast(value)
     end
 
     def ichis_event_source_concept_ids
