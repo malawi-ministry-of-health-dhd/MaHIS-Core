@@ -5,6 +5,7 @@ class PatientProgram < VoidableRecord
   self.primary_key = 'patient_program_id'
 
   after_void :after_void
+  after_commit :refresh_mnh_stats_after_commit, on: %i[create update]
   include Locatable
   
   belongs_to :patient
@@ -46,6 +47,17 @@ class PatientProgram < VoidableRecord
 
   def after_void(reason)
     patient_states.each { |row| row.void(reason) }
+    refresh_mnh_stats
+  end
+
+  def refresh_mnh_stats_after_commit
+    refresh_mnh_stats
+  end
+
+  def refresh_mnh_stats
+    Sync::MnhStatsSyncJob.enqueue_for_patient_program(self)
+  rescue StandardError => e
+    Rails.logger.error("PatientProgram##{patient_program_id}: failed to enqueue MNH stats refresh: #{e.class}: #{e.message}")
   end
 
   # Returns patient's current state in program.
