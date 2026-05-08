@@ -70,7 +70,7 @@ module ArtService
 
     # Dispensing / adherence concepts (for missing visit fields)
     AMOUNT_DISPENSED_CONCEPT = 'Amount dispensed'
-    ADHERENCE_CONCEPT        = 'Drug Order Adherence'
+    ADHERENCE_CONCEPT        = 'Drug order adherence'
     BMI_CONCEPT              = 'BMI'
 
     # patient_state.state value for Died
@@ -160,9 +160,9 @@ module ArtService
       @visit_dates            = load_visit_dates
       @all_encounters_by_date = load_all_encounters
       @clinician_obs_dates    = load_clinician_obs_dates
-      @pills_brought_by_date  = load_pills_brought
-      @pills_dispensed_by_date = load_pills_dispensed
-      @adherence_by_date      = load_adherence
+      @pills_brought_by_date       = load_pills_brought
+      @pills_dispensed_by_date     = load_pills_dispensed
+      @adherence_by_date           = load_adherence
       @viral_load_results, @viral_load_by_date = load_viral_load_results
     end
 
@@ -199,6 +199,7 @@ module ArtService
 
       rows = ActiveRecord::Base.connection.exec_query(<<~SQL).to_a
         SELECT DATE(o.start_date)        AS order_date,
+               o.order_id,
                d.name                   AS drug_name,
                do_tbl.drug_inventory_id,
                do_tbl.quantity
@@ -271,6 +272,7 @@ module ArtService
 
       rows = ActiveRecord::Base.connection.exec_query(<<~SQL).to_a
         SELECT DATE(o.obs_datetime) AS obs_date,
+               d.drug_id,
                d.name               AS drug_name,
                o.value_numeric      AS quantity
         FROM obs o
@@ -284,7 +286,7 @@ module ArtService
       SQL
 
       rows.each_with_object(Hash.new { |h, k| h[k] = [] }) do |r, h|
-        h[r['obs_date'].to_s] << { 'name' => r['drug_name'], 'quantity' => r['quantity'] }
+        h[r['obs_date'].to_s] << { 'drug_id' => r['drug_id'], 'name' => r['drug_name'], 'quantity' => r['quantity'] }
       end
     end
 
@@ -317,6 +319,7 @@ module ArtService
 
       rows = ActiveRecord::Base.connection.exec_query(<<~SQL).to_a
         SELECT DATE(o.obs_datetime) AS obs_date,
+               d.drug_id,
                d.name               AS drug_name,
                o.value_numeric      AS adherence_numeric,
                o.value_text         AS adherence_text
@@ -333,7 +336,7 @@ module ArtService
       rows.each_with_object(Hash.new { |h, k| h[k] = [] }) do |r, h|
         value = r['adherence_numeric'] ||
                 r['adherence_text']&.gsub(/%$/, '')&.then { |v| v.empty? ? nil : v.to_f }
-        h[r['obs_date'].to_s] << { 'drug' => r['drug_name'], 'adherence' => value }
+        h[r['obs_date'].to_s] << { 'drug_id' => r['drug_id'], 'drug' => r['drug_name'], 'adherence' => value }
       end
     end
 
@@ -639,11 +642,15 @@ module ArtService
       obs_on_date    = obs_for_date(date_str)
       orders_on_date = @all_orders[date_str] || []
 
+      dispensed_on_date = @pills_dispensed_by_date[date_str] || []
       arv_drugs = orders_on_date.select { |r| @arv_drug_ids.include?(r['drug_inventory_id']) }
                                 .uniq { |r| r['drug_name'] }
                                 .map do |r|
-        { 'drug_id' => r['drug_inventory_id'], 'name' => r['drug_name'],
-          'quantity' => r['quantity'] }
+        dispensed = dispensed_on_date.find { |d| d['name'] == r['drug_name'] }
+        { 'drug_id'            => r['drug_inventory_id'],
+          'name'               => r['drug_name'],
+          'quantity'           => r['quantity'],
+          'quantity_dispensed' => dispensed&.dig('quantity') }
       end
       other_drugs = orders_on_date.select { |r| @tpt_drug_ids.include?(r['drug_inventory_id']) }
                                   .map { |r| r['drug_name'] }.uniq
@@ -691,7 +698,7 @@ module ArtService
         'hasAppointment'            => encounter_done_on?(date_str, APPOINTMENT_ENCOUNTER),
         'pillsBroughtToClinic'      => pills_brought_on(date_str),
         'pills_dispensed'           => pills_dispensed_on(date_str),
-        'adherence'                 => adherence_on(date_str),
+        'adherence'                 => build_drug_adherence(date_str),
         'tbTreatmentStartDate'      => tb_treatment_start_date_on(obs_on_date),
         'viral_load'                => viral_load_on(date_str)
       }
@@ -769,6 +776,42 @@ module ArtService
 
     def adherence_on(date_str)
       @adherence_by_date[date_str] || []
+    end
+
+    def build_drug_adherence(date_str)
+      orders_on_date    = @all_orders[date_str] || []
+      arv_orders        = orders_on_date.select { |r| @arv_drug_ids.include?(r['drug_inventory_id']) }
+                                        .uniq { |r| r['drug_name'] }
+      brought_on_date   = @pills_brought_by_date[date_str] || []
+      adherence_on_date = @adherence_by_date[date_str] || []
+
+      arv_orders.map do |r|
+        name      = r['drug_name']
+        brought   = brought_on_date.find { |b| b['name'] == name }
+        adherence = adherence_on_date.find { |a| a['drug'] == name }
+        pct       = adherence&.dig('adherence')
+
+        {
+          'drug_id'       => r['drug_inventory_id'],
+          'name'          => name,
+          'order_id'      => r['order_id'],
+          'pills_brought' => brought&.dig('quantity'),
+          'adherence'     => pct,
+          'status'        => adherence_status(pct)
+        }
+      end
+    end
+
+    def adherence_status(pct)
+      return nil if pct.nil?
+
+      if pct >= 100
+        'Good'
+      elsif pct >= 95
+        'Acceptable'
+      else
+        'Explore problem'
+      end
     end
 
     def bmi_for(obs_on_date)
