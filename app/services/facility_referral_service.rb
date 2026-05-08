@@ -4,6 +4,7 @@ class FacilityReferralService
   REFERRAL_ENCOUNTER_TYPE_ID = 103
   DEPARTMENT_CONCEPTS = ['Department', 'program id'].freeze
   REFERRAL_FACILITY_CONCEPTS = ['Referral facility', 'facility to'].freeze
+  PRIMARY_REFERRAL_CONCEPTS = (DEPARTMENT_CONCEPTS + REFERRAL_FACILITY_CONCEPTS).freeze
   PROGRAM_DEPARTMENT_NAMES = {
     19 => 'ANC Connect',
     36 => 'Labour and Delivery'
@@ -31,7 +32,8 @@ class FacilityReferralService
     query = filter_by_date_from(query, filters[:date_from])
     query = filter_by_date_to(query, filters[:date_to])
 
-    ActiveRecord::Base.connection.select_all(query.to_sql).to_a
+    rows = ActiveRecord::Base.connection.select_all(query.to_sql).to_a
+    add_other_details(rows)
   end
 
   def base_referrals_query
@@ -158,6 +160,83 @@ class FacilityReferralService
 
   def concept_ids(names)
     ConceptName.where(name: names).pluck(:concept_id).uniq
+  end
+
+  def add_other_details(rows)
+    return rows if rows.blank?
+
+    details = referral_observation_details(rows.map { |row| row['encounter_id'] })
+    details_by_encounter = details.group_by { |detail| detail['encounter_id'] }
+
+    rows.each do |row|
+      row['other_details'] = details_by_encounter.fetch(row['encounter_id'], [])
+    end
+  end
+
+  def referral_observation_details(encounter_ids)
+    excluded_concept_ids = concept_ids(PRIMARY_REFERRAL_CONCEPTS)
+
+    Observation
+      .joins(observation_concept_name_join)
+      .joins(answer_concept_name_join)
+      .where(encounter_id: encounter_ids)
+      .where.not(concept_id: excluded_concept_ids)
+      .order(:encounter_id, :obs_id)
+      .select(
+        'obs.encounter_id',
+        'obs.obs_id',
+        'observation_concept_name.name AS concept_name',
+        detail_value_sql
+      )
+      .map do |observation|
+        {
+          'encounter_id' => observation.encounter_id,
+          'obs_id' => observation.obs_id,
+          'concept_name' => observation.concept_name,
+          'value' => observation.detail_value
+        }
+      end
+  end
+
+  def observation_concept_name_join
+    <<~SQL.squish
+      LEFT JOIN concept_name observation_concept_name
+        ON observation_concept_name.concept_name_id = (
+          SELECT concept_name.concept_name_id
+          FROM concept_name
+          WHERE concept_name.concept_id = obs.concept_id
+            AND concept_name.voided = 0
+          ORDER BY concept_name.locale_preferred DESC, concept_name.concept_name_id ASC
+          LIMIT 1
+        )
+    SQL
+  end
+
+  def answer_concept_name_join
+    <<~SQL.squish
+      LEFT JOIN concept_name answer_concept_name
+        ON answer_concept_name.concept_name_id = (
+          SELECT concept_name.concept_name_id
+          FROM concept_name
+          WHERE concept_name.concept_id = obs.value_coded
+            AND concept_name.voided = 0
+          ORDER BY concept_name.locale_preferred DESC, concept_name.concept_name_id ASC
+          LIMIT 1
+        )
+    SQL
+  end
+
+  def detail_value_sql
+    <<~SQL.squish
+      CASE
+        WHEN obs.value_coded IS NOT NULL THEN answer_concept_name.name
+        WHEN obs.value_text IS NOT NULL THEN obs.value_text
+        WHEN obs.value_numeric IS NOT NULL THEN CAST(obs.value_numeric AS CHAR)
+        WHEN obs.value_datetime IS NOT NULL THEN DATE_FORMAT(obs.value_datetime, '%Y-%m-%d %H:%i:%s')
+        WHEN obs.value_boolean IS NOT NULL THEN IF(obs.value_boolean = 1, 'Yes', 'No')
+        ELSE NULL
+      END AS detail_value
+    SQL
   end
 
   def program_ids_for(program)
