@@ -523,6 +523,9 @@ Rails.application.routes.draw do
 
   get '/api/v1/check_patient_status/:patient_id', to: 'api/v1/visits#check_patient_status'
 
+
+  get '/api/v1/faciliy_referrals', to: 'api/v1/facility_referrals#index'
+
   namespace :api do
     namespace :v1 do
       resources :stages, only: %i[index show create update] do
