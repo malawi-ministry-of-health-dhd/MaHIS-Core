@@ -25,7 +25,8 @@ namespace :sync do
       Sync::DepartmentSyncJob,
       Sync::CustomRegimenIngredientSyncJob,
       Sync::GlobalPropertySyncJob,
-      Sync::UserPropertySyncJob
+      Sync::UserPropertySyncJob,
+      Sync::MnhStatsSyncJob
     ]
 
     jobs.each(&:perform_async)

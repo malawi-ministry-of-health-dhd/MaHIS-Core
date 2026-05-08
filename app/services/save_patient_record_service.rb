@@ -57,6 +57,7 @@ class SavePatientRecordService
     patient_record = build_and_save_patient_record(patient_id, record, operation_results, overall_sync_status)
     ensure_primary_identifier_persisted!(patient_id, patient_record)
     refresh_immunization_dashboard_if_needed(record)
+    refresh_mnh_stats_if_needed(record)
 
     if couchdb_configured?
       patient_record["_id"] = patient_record["ID"]
@@ -263,6 +264,12 @@ class SavePatientRecordService
     ImmunizationReportJob.perform_later(start_date, end_date, location_id)
   rescue StandardError => e
     Rails.logger.error("Failed to queue immunization dashboard refresh: #{e.class}: #{e.message}")
+  end
+
+  def refresh_mnh_stats_if_needed(record)
+    Sync::MnhStatsSyncJob.enqueue_for_patient_record(record)
+  rescue StandardError => e
+    Rails.logger.error("Failed to queue MNH stats refresh: #{e.class}: #{e.message}")
   end
 
   def immunization_record?(record)
