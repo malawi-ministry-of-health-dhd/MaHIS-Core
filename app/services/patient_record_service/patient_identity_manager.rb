@@ -18,12 +18,13 @@ module PatientRecordService
 
         patient_id = patient.patient_id
         identifier = ensure_primary_identifier(patient, incoming_identifier, location_id)
-        other_person_information = record[:otherPersonInformation] || {}
+        other_person_information = record[:otherPersonInformation] || record['otherPersonInformation'] || {}
 
-        create_ids(other_person_information, patient_id, location_id)
+        created_ids = create_ids(other_person_information, patient_id, location_id)
+        mark_ichis_enrolled_in_care(record) if created_ids[:ichis_id_saved]
 
-        if other_person_information[:ichisID].present?
-          tei = other_person_information[:TEI]
+        if other_person_information_value(other_person_information, :ichisID).present?
+          tei = other_person_information_value(other_person_information, :TEI)
           ichis_data = { identifier: identifier, TEI: tei }
           FhirService.sendEMRIdToMediator(ichis_data)
         end
@@ -67,32 +68,40 @@ module PatientRecordService
     end
 
     def create_ids(other_person_information, patient_id, location_id = nil)
-      return if other_person_information.blank?
+      created_ids = { ichis_id_saved: false }
+      return created_ids if other_person_information.blank?
 
-      if other_person_information[:nationalID].present?
+      national_id = other_person_information_value(other_person_information, :nationalID)
+      birth_id = other_person_information_value(other_person_information, :birthID)
+      ichis_id = other_person_information_value(other_person_information, :ichisID)
+
+      if national_id.present?
         PatientIdentifierService.create(
           patient_id: patient_id,
-          identifier: other_person_information[:nationalID],
+          identifier: national_id,
           identifier_type: 28,
           location_id: location_id
         )
       end
-      if other_person_information[:birthID].present?
+      if birth_id.present?
         PatientIdentifierService.create(
           patient_id: patient_id,
-          identifier: other_person_information[:birthID],
+          identifier: birth_id,
           identifier_type: 23,
           location_id: location_id
         )
       end
-      if other_person_information[:ichisID].present?
-        PatientIdentifierService.create(
+      if ichis_id.present?
+        created_ichis_identifier = PatientIdentifierService.create(
           patient_id: patient_id,
-          identifier: other_person_information[:ichisID],
+          identifier: ichis_id,
           identifier_type: 10,
           location_id: location_id
         )
+        created_ids[:ichis_id_saved] = created_ichis_identifier&.persisted?
       end
+
+      created_ids
     end
 
     def validate_ids(national_id, birth_id, _ichis_id)
@@ -125,8 +134,6 @@ module PatientRecordService
     end
 
     def create_ncd_identifier(patient_id, record)
-      created_identifier = false
-
       if record[:NcdID] == "-" || record[:unsavedNcdID].present?
         PatientIdentifierService.create(
           patient_id:      patient_id,
@@ -134,12 +141,6 @@ module PatientRecordService
           identifier_type: 31,
           location_id:     record[:location_id]
         )
-        created_identifier = true
-      end
-
-      if created_identifier && record.dig(:otherPersonInformation, :ichisID).present? &&
-         record[:program_id].to_i == NCD_PROGRAM_ID
-        record[:send_ichis_enrolled_in_care] = true
       end
 
       ok
@@ -220,6 +221,19 @@ module PatientRecordService
 
     def extract_location_id(record)
       record[:location_id].presence || record['location_id'].presence
+    end
+
+    def other_person_information_value(other_person_information, key)
+      return nil unless other_person_information.respond_to?(:[])
+
+      other_person_information[key].presence || other_person_information[key.to_s].presence
+    end
+
+    def mark_ichis_enrolled_in_care(record)
+      program_id = record[:program_id].presence || record['program_id'].presence
+      return unless program_id.to_i == NCD_PROGRAM_ID
+
+      record[:send_ichis_enrolled_in_care] = true
     end
   end
 end
