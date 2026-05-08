@@ -64,6 +64,20 @@ def apply_metadata_compatibility_fixes!(file_path)
   changed = false
 
   concept_map_type_id_type = conn.select_value(<<~SQL)
+    SELECT c.COLUMN_TYPE
+    FROM information_schema.KEY_COLUMN_USAGE k
+    INNER JOIN information_schema.COLUMNS c
+      ON c.TABLE_SCHEMA = k.TABLE_SCHEMA
+     AND c.TABLE_NAME = k.TABLE_NAME
+     AND c.COLUMN_NAME = k.COLUMN_NAME
+    WHERE k.TABLE_SCHEMA = DATABASE()
+      AND k.REFERENCED_TABLE_NAME = 'concept_map_type'
+      AND k.REFERENCED_COLUMN_NAME = 'concept_map_type_id'
+    ORDER BY (k.TABLE_NAME = 'concept_reference_map') DESC, k.TABLE_NAME
+    LIMIT 1
+  SQL
+
+  concept_map_type_id_type ||= conn.select_value(<<~SQL)
     SELECT COLUMN_TYPE
     FROM information_schema.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE()
@@ -76,14 +90,14 @@ def apply_metadata_compatibility_fixes!(file_path)
 
   if concept_map_type_id_type.present?
     updated_sql = sql.gsub(
-      /(`concept_map_type_id`\s+)(?:int(?:\(\d+\))?(?: unsigned)?|bigint(?:\(\d+\))?(?: unsigned)?)(\s+NOT NULL DEFAULT '1',)/i,
-      "\\1#{concept_map_type_id_type}\\2"
+      /(`concept_map_type_id`\s+)(?:int(?:\(\d+\))?(?: unsigned)?|bigint(?:\(\d+\))?(?: unsigned)?)(?=\s)/i,
+      "\\1#{concept_map_type_id_type}"
     )
 
     if updated_sql != sql
       sql = updated_sql
       changed = true
-      puts "Applied metadata compatibility fix: concept_reference_map.concept_map_type_id -> #{concept_map_type_id_type}"
+      puts "Applied metadata compatibility fix: aligned concept_map_type_id column type to #{concept_map_type_id_type}"
     end
   end
 
