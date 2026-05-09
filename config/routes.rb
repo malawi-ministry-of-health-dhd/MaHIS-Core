@@ -79,7 +79,13 @@ Rails.application.routes.draw do
         end)
       end
 
-      resources :roles
+      resources :roles do
+        member do
+          post :add_privilege
+          post :remove_privilege
+        end
+      end
+      resources :privileges
       resources :printer_configurations, only: [:index, :create, :destroy, :update]
 
       # Generate visit number 

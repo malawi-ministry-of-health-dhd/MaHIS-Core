@@ -66,12 +66,12 @@ class User < RetirableRecord
   end
 
   def as_json(options = {})
-    super(options.merge(
+    json = super(options.merge(
       except: %i[password salt secret_question secret_answer
                  authentication_token token_expiry_time],
       methods: %i[current_location],
       include: {
-        roles: { include: {} },
+        roles: { include: { privileges: {} } },
         programs: {},
         person: {
           include: {
@@ -85,6 +85,22 @@ class User < RetirableRecord
         }
       }
     ))
+
+    # If user is a superuser, ensure they have ALL privileges
+    if is_superuser?
+      all_privileges = Privilege.all.map { |p| { privilege: p.privilege, description: p.description, uuid: p.uuid } }
+      json['roles'].each do |role|
+        if role['role']&.downcase&.include?('superuser')
+          role['privileges'] = all_privileges
+        end
+      end
+    end
+
+    json
+  end
+
+  def is_superuser?
+    user_roles.exists?(role: 'Superuser') || global_superuser? || district_superuser? || facility_superuser?
   end
 
   def name
