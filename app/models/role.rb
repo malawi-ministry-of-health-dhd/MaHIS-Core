@@ -13,6 +13,10 @@ class Role < ApplicationRecord
   has_many :user_roles, foreign_key: :role, class_name: 'UserRole'
   has_many :roles, through: :user_roles, foreign_key: :role
 
+  def self.location_scoped?
+    column_names.include?('location_id')
+  end
+
   def self.setup_privileges_for_roles
     privileges = Privilege.all
     Role.all.each { |role| role.privileges << privileges }
