@@ -249,7 +249,7 @@ module NcdService
             FROM obs
             INNER JOIN encounter e ON e.encounter_id = obs.encounter_id AND e.voided = 0
             INNER JOIN encounter_type et ON et.encounter_type_id = e.encounter_type AND et.name = 'DIAGNOSIS'
-            WHERE obs.voided = 0 AND obs.concept_id = #{concept_id('Primary diagnosis')} AND obs.person_id IN (?)
+            WHERE obs.voided = 0 AND obs.concept_id = \#{concept_id('Primary diagnosis')} AND obs.person_id IN (?)
           ) o
           WHERE o.rn = 1
           GROUP BY o.value_coded
@@ -267,9 +267,9 @@ module NcdService
         results.each do |row|
           val = row['value_coded'].to_i
           cnt = row['cnt'].to_i
-          if val == concept_id('Type 1 Diabetes')
+          if val == concept_id('Type 1 diabetes mellitus')
             type1 += cnt
-          elsif val == concept_id('Type 2 Diabetes')
+          elsif val == concept_id('Type 2 diabetes mellitus')
             type2 += cnt
           elsif val == concept_id('Hypertension')
             hyper += cnt
@@ -323,9 +323,9 @@ module NcdService
             last_diagnosis = observations.max_by(&:obs_datetime)
             
             case last_diagnosis.value_coded
-            when concept_id('Type 1 Diabetes')
+            when concept_id('Type 1 diabetes mellitus')
               type_one_patients.add(patient_id)
-            when concept_id('Type 2 Diabetes')
+            when concept_id('Type 2 diabetes mellitus')
               type_two_patients.add(patient_id)
             when concept_id('Hypertension')
               hypertension_patients.add(patient_id)
