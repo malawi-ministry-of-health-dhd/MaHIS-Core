@@ -16,6 +16,8 @@ class SavePatientRecordService
   }.freeze
 
   def create_patient_record(record)
+    strip_derived_patient_fields!(record)
+
     required_fields = extract_required_fields(record)
     return "required fields missing" unless required_fields_present?(required_fields)
 
@@ -54,6 +56,8 @@ class SavePatientRecordService
 
     patient_record = build_and_save_patient_record(patient_id, record, operation_results, overall_sync_status)
     ensure_primary_identifier_persisted!(patient_id, patient_record)
+    refresh_immunization_dashboard_if_needed(record)
+    refresh_mnh_stats_if_needed(record)
 
     if couchdb_configured?
       patient_record["_id"] = patient_record["ID"]
@@ -165,7 +169,8 @@ class SavePatientRecordService
 
       when :save_vaccines, :void_vaccine
         patient_data[:vaccineAdministration] = BuildPatientRecordService.build_vaccine_administration_data(patient_id)
-        patient_data[:vaccineSchedule]       = BuildPatientRecordService.safe_get_vaccine_schedule(person)
+        patient_data[:MedicationOrder]       = BuildPatientRecordService.build_medication_data(patient_id)
+        allowed_encounter_types << get_encounter_id('TREATMENT')
 
       when :save_medication_order, :save_dispensation_data
         patient_data[:MedicationOrder] = BuildPatientRecordService.build_medication_data(patient_id)
@@ -204,6 +209,8 @@ class SavePatientRecordService
       .transform_values { |r| r.errors }
       .as_json
 
+    strip_derived_patient_fields!(patient_data)
+    clear_processed_pending_fields!(patient_data)
     patient_data.as_json
   end
 
@@ -243,5 +250,57 @@ class SavePatientRecordService
     return if saved_identifier.present?
 
     raise "Primary identifier #{identifier} not found in MySQL for patient #{patient_id}"
+  end
+
+  def refresh_immunization_dashboard_if_needed(record)
+    return unless immunization_record?(record)
+
+    location_id = record[:location_id].presence || User.current&.location_id
+    return if location_id.blank?
+
+    today = Date.today
+    start_date = today.beginning_of_year.to_s
+    end_date = today.to_s
+    ImmunizationReportJob.perform_later(start_date, end_date, location_id)
+  rescue StandardError => e
+    Rails.logger.error("Failed to queue immunization dashboard refresh: #{e.class}: #{e.message}")
+  end
+
+  def refresh_mnh_stats_if_needed(record)
+    Sync::MnhStatsSyncJob.enqueue_for_patient_record(record)
+  rescue StandardError => e
+    Rails.logger.error("Failed to queue MNH stats refresh: #{e.class}: #{e.message}")
+  end
+
+  def immunization_record?(record)
+    program_id = immunization_program_id
+    return false if program_id.blank?
+
+    return true if record[:program_id].to_i == program_id
+
+    enrollments = Array(record[:activePrograms]).compact
+    enrollments.any? { |enrollment| enrollment[:program_id].to_i == program_id }
+  end
+
+  def immunization_program_id
+    @immunization_program_id ||= Program.find_by(name: 'IMMUNIZATION PROGRAM')&.program_id
+  end
+
+  def strip_derived_patient_fields!(record)
+    return record unless record.respond_to?(:delete)
+
+    record.delete(:vaccineSchedule)
+    record.delete('vaccineSchedule')
+    record
+  end
+
+  def clear_processed_pending_fields!(record)
+    return record unless record.respond_to?(:delete)
+
+    record.delete(:art_orders_pending)
+    record.delete('art_orders_pending')
+    record.delete(:art_dispensation_pending)
+    record.delete('art_dispensation_pending')
+    record
   end
 end

@@ -90,7 +90,7 @@ class StagesService
     latest_encounter = latest_visit_encounter(stage)
     {
       id: stage.id,
-      location_id: stage.location_id,
+      location_id: stage.location_id.to_s,
       stage: stage.stage,
       status: stage.status,
       identifier: BuildPatientRecordService::PatientIdentifierService.patient_identifier(patient,3),

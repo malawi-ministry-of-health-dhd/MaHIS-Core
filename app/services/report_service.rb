@@ -4,6 +4,7 @@ class ReportService
   ENGINES = {
     'HIV PROGRAM' => ArtService::ReportEngine,
     'ANC PROGRAM' => AncService::ReportEngine,
+    'LABOUR PROGRAM' => LabourService::ReportEngine,
     'OPD PROGRAM' => OpdService::ReportEngine,
     'NCD PROGRAM' => NcdService::ReportEngine,
     'VMMC PROGRAM' => VmmcService::ReportEngine,
@@ -38,6 +39,7 @@ class ReportService
     return report if report
 
     LOGGER.debug("#{name} report not found... Queueing one...")
+    kwargs[:rebuild] = 'true' if @overwrite_mode
     queue_report(name:, type:, start_date:, end_date:, **kwargs)
     nil
   end
@@ -50,8 +52,15 @@ class ReportService
     engine(@program).mahis_dashboard_indicators(date:, **kwargs)
   end
 
-  def dashboard_stats(date)
-    engine(@program).dashboard_stats(date)
+  def dashboard_stats(date, location_id: nil)
+    dashboard_engine = engine(@program)
+    method = dashboard_engine.method(:dashboard_stats)
+
+    if method.parameters.any? { |kind, name| %i[key keyreq].include?(kind) && name == :location_id }
+      dashboard_engine.dashboard_stats(date, location_id: location_id)
+    else
+      dashboard_engine.dashboard_stats(date)
+    end
   end
 
   def dashboard_stats_for_syndromic_statistics(date)

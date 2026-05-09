@@ -169,7 +169,8 @@ class ApplicationController < ActionController::API
   end
 
   def refresh_dashboard
-    ImmunizationReportJob.perform_later(1.year.ago.to_date.to_s, Date.today.to_s, User.current.location_id)
+    today = Date.today
+    ImmunizationReportJob.perform_later(today.beginning_of_year.to_s, today.to_s, User.current.location_id)
   end
 
   def refresh_dashboard_needed?

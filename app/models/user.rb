@@ -17,6 +17,8 @@ class User < RetirableRecord
   has_many :user_programs
   has_many :session_schedule_assignees
   has_many :programs, through: :user_programs # User programs
+  has_many :user_villages
+  has_many :villages, through: :user_villages
   has_many(:names,
            -> { order('person_name.preferred' => 'DESC') },
            class_name: 'PersonName',

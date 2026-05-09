@@ -28,28 +28,26 @@ class NcdActivePatientService
   private
 
   def build_count_query(filters)
+    ncd_type_id = PatientIdentifierType.find_by_name('NCD Number')&.id || 31
     <<-SQL
-      SELECT COUNT(DISTINCT p.patient_id)
+      SELECT COUNT(DISTINCT base_patients.patient_id)
       FROM (
-        SELECT patient_id, location_id, encounter_datetime,
-               ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY encounter_datetime DESC) as rn
-        FROM encounter 
-        WHERE voided = 0
-      ) e
-      INNER JOIN patient_program pp 
-        ON e.patient_id = pp.patient_id 
-        AND pp.program_id = 32 
-        AND pp.voided = 0
-      INNER JOIN patient p ON e.patient_id = p.patient_id
-      INNER JOIN person pe ON p.patient_id = pe.person_id
+        SELECT patient_id FROM patient_program WHERE program_id = 32 AND voided = 0
+        UNION
+        SELECT patient_id FROM patient_identifier WHERE identifier_type = #{ncd_type_id} AND voided = 0
+        UNION
+        SELECT patient_id FROM encounter WHERE program_id = 32 AND voided = 0
+      ) base_patients
+      INNER JOIN patient p ON base_patients.patient_id = p.patient_id
+      INNER JOIN person pe ON p.patient_id = pe.person_id AND pe.voided = 0
       LEFT JOIN person_name pn ON pe.person_id = pn.person_id AND pn.voided = 0
-      WHERE e.rn = 1 
-        AND e.location_id = #{sanitize_number(@location_id)}
+      WHERE 1=1
         #{build_filter_clauses(filters)}
     SQL
   end
 
   def build_data_query(filters, limit, offset)
+    ncd_type_id = PatientIdentifierType.find_by_name('NCD Number')&.id || 31
     <<-SQL
       SELECT 
         p.patient_id,
@@ -101,26 +99,28 @@ class NcdActivePatientService
         base.location_id
       FROM (
         SELECT 
-          e.patient_id,
+          bp.patient_id,
           e.location_id,
           e.encounter_datetime
         FROM (
+          SELECT patient_id FROM patient_program WHERE program_id = 32 AND voided = 0
+          UNION
+          SELECT patient_id FROM patient_identifier WHERE identifier_type = #{ncd_type_id} AND voided = 0
+          UNION
+          SELECT patient_id FROM encounter WHERE program_id = 32 AND voided = 0
+        ) bp
+        INNER JOIN patient p ON bp.patient_id = p.patient_id
+        INNER JOIN person pe ON p.patient_id = pe.person_id AND pe.voided = 0
+        LEFT JOIN person_name pn ON pe.person_id = pn.person_id AND pn.voided = 0
+        LEFT JOIN (
           SELECT patient_id, location_id, encounter_datetime,
                  ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY encounter_datetime DESC) as rn
           FROM encounter 
           WHERE voided = 0
-        ) e
-        INNER JOIN patient_program pp 
-          ON e.patient_id = pp.patient_id 
-          AND pp.program_id = 32 
-          AND pp.voided = 0
-        INNER JOIN patient p ON e.patient_id = p.patient_id
-        INNER JOIN person pe ON p.patient_id = pe.person_id
-        LEFT JOIN person_name pn ON pe.person_id = pn.person_id AND pn.voided = 0
-        WHERE e.rn = 1 
-          AND e.location_id = #{sanitize_number(@location_id)}
+        ) e ON bp.patient_id = e.patient_id AND e.rn = 1
+        WHERE 1=1
           #{build_filter_clauses(filters)}
-        ORDER BY e.encounter_datetime DESC
+        ORDER BY COALESCE(e.encounter_datetime, pe.date_created) DESC
         LIMIT #{sanitize_number(limit)}
         OFFSET #{sanitize_number(offset)}
       ) base

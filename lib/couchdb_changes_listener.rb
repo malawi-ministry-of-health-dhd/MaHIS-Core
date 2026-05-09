@@ -1,6 +1,7 @@
 require 'rest-client'
 require 'json'
 require 'yaml'
+require_relative 'couchdb_url'
 
 class CouchdbChangesListener
   CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
@@ -88,18 +89,37 @@ class CouchdbChangesListener
     Rails.logger.info("[CouchDB Listener] Processing all unprocessed documents in #{db_name}...")
     
     begin
-      unprocessed_docs = fetch_unprocessed_documents
-      
-      if unprocessed_docs.empty?
-        Rails.logger.info("[CouchDB Listener] No unprocessed documents found in #{db_name}")
-        return
+      total_processed = 0
+      total_failed = 0
+
+      loop do
+        unprocessed_docs = fetch_unprocessed_documents
+
+        if unprocessed_docs.empty?
+          Rails.logger.info("[CouchDB Listener] No unprocessed documents found in #{db_name}")
+          break
+        end
+
+        Rails.logger.info("[CouchDB Listener] Found #{unprocessed_docs.length} unprocessed documents in #{db_name}")
+
+        batch_result = { processed: 0, failed: 0, failed_marked: 0 }
+        unprocessed_docs.each_slice(config[:batch_size]) do |batch|
+          result = process_document_batch(batch)
+          batch_result[:processed] += result[:processed]
+          batch_result[:failed] += result[:failed]
+          batch_result[:failed_marked] += result[:failed_marked]
+        end
+
+        total_processed += batch_result[:processed]
+        total_failed += batch_result[:failed]
+
+        if batch_result[:processed].zero? && batch_result[:failed].positive? && batch_result[:failed_marked].zero?
+          Rails.logger.error("[CouchDB Listener] No documents processed and no failures marked in latest pass for #{db_name}; stopping backfill to avoid a tight retry loop")
+          break
+        end
       end
-      
-      Rails.logger.info("[CouchDB Listener] Found #{unprocessed_docs.length} unprocessed documents in #{db_name}")
-      
-      unprocessed_docs.each_slice(config[:batch_size]) do |batch|
-        process_document_batch(batch)
-      end
+
+      Rails.logger.info("[CouchDB Listener] Backfill pass finished for #{db_name}: processed=#{total_processed}, failed=#{total_failed}")
       
     rescue StandardError => e
       Rails.logger.error("[CouchDB Listener] Error processing unprocessed documents in #{db_name}: #{e.message}")
@@ -119,12 +139,8 @@ class CouchdbChangesListener
   end
 
   def listen_to_changes
-    base_uri = URI(config[:couchdb_url])
-    username = base_uri.user || config[:username]
-    password = base_uri.password || config[:password]
-    
-    clean_base_url = "#{base_uri.scheme}://#{base_uri.host}:#{base_uri.port}"
-    url = "#{clean_base_url}/#{db_name}/_changes"
+    username, password = couchdb_credentials
+    url = couchdb_url(db_name, '_changes')
     
     params = {
       feed: 'continuous',
@@ -192,12 +208,8 @@ class CouchdbChangesListener
   end
 
   def fetch_unprocessed_documents
-    base_uri = URI(config[:couchdb_url])
-    username = base_uri.user || config[:username]
-    password = base_uri.password || config[:password]
-    
-    clean_base_url = "#{base_uri.scheme}://#{base_uri.host}:#{base_uri.port}"
-    url = "#{clean_base_url}/#{db_name}/_find"
+    username, password = couchdb_credentials
+    url = couchdb_url(db_name, '_find')
     
     query = {
       selector: {
@@ -205,6 +217,12 @@ class CouchdbChangesListener
           {
             "$or" => [
               { "processed_by_listener" => false },
+            ]
+          },
+          {
+            "$or" => [
+              { "listener_retry_count" => { "$exists" => false } },
+              { "listener_retry_count" => { "$lt" => config[:max_retry_attempts] } }
             ]
           }
         ]
@@ -247,14 +265,23 @@ class CouchdbChangesListener
 
   def process_document_batch(docs)
     Rails.logger.info("[CouchDB Listener] Processing batch of #{docs.length} documents in #{db_name}")
-    
+
+    processed = 0
+    failed = 0
+    failed_marked = 0
+
     docs.each do |doc|
       begin
         process_document(doc)
+        processed += 1
       rescue StandardError => e
+        failed += 1
         Rails.logger.error("[CouchDB Listener] Failed to process doc #{doc['_id']} in #{db_name}: #{e.message}")
+        failed_marked += 1 if mark_processing_failure(doc, e)
       end
     end
+
+    { processed: processed, failed: failed, failed_marked: failed_marked }
   end
 
   def process_document(doc)
@@ -347,15 +374,37 @@ class CouchdbChangesListener
     end
   end
 
+  def mark_processing_failure(doc, error)
+    doc_id = doc['_id']
+    current_doc = fetch_current_document(doc_id)
+    return false unless current_doc
+    return false if current_doc["processed_by_listener"] == true
+
+    current_doc["listener_retry_count"] = current_doc["listener_retry_count"].to_i + 1
+    current_doc["listener_last_error"] = error.message
+    current_doc["listener_failed_at"] = Time.current.iso8601
+    current_doc["processed_by_db"] = db_name
+
+    if current_doc["listener_retry_count"] >= config[:max_retry_attempts]
+      current_doc["listener_dead_letter"] = true
+      Rails.logger.error("[CouchDB Listener] Document #{doc_id} in #{db_name} reached max listener retries")
+    end
+
+    update_couchdb_document_direct(doc_id, current_doc)
+    true
+  rescue RestClient::Conflict, RestClient::PreconditionFailed
+    Rails.logger.warn("[CouchDB Listener] Conflict while marking processing failure for #{doc_id} in #{db_name}")
+    false
+  rescue StandardError => e
+    Rails.logger.error("[CouchDB Listener] Failed to mark processing failure for #{doc_id} in #{db_name}: #{e.message}")
+    false
+  end
+
   def fetch_current_document(doc_id)
     begin
-      base_uri = URI(config[:couchdb_url])
-      username = base_uri.user || config[:username]
-      password = base_uri.password || config[:password]
-      
-      clean_base_url = "#{base_uri.scheme}://#{base_uri.host}:#{base_uri.port}"
+      username, password = couchdb_credentials
       encoded_doc_id = URI.encode_www_form_component(doc_id)
-      fetch_url = "#{clean_base_url}/#{db_name}/#{encoded_doc_id}"
+      fetch_url = couchdb_url(db_name, encoded_doc_id)
       
       resource_options = { headers: { accept: :json } }
       resource_options[:user] = username if username
@@ -379,13 +428,9 @@ class CouchdbChangesListener
   end
 
   def update_couchdb_document_direct(doc_id, document_data)
-    base_uri = URI(config[:couchdb_url])
-    username = base_uri.user || config[:username]
-    password = base_uri.password || config[:password]
-    
-    clean_base_url = "#{base_uri.scheme}://#{base_uri.host}:#{base_uri.port}"
+    username, password = couchdb_credentials
     encoded_doc_id = URI.encode_www_form_component(doc_id)
-    update_url = "#{clean_base_url}/#{db_name}/#{encoded_doc_id}"
+    update_url = couchdb_url(db_name, encoded_doc_id)
     
     resource_options = {
       headers: { content_type: :json, accept: :json }
@@ -436,5 +481,13 @@ class CouchdbChangesListener
         nil
       end
     end
+  end
+
+  def couchdb_credentials
+    CouchdbUrl.credentials(config[:couchdb_url], config[:username], config[:password])
+  end
+
+  def couchdb_url(*segments)
+    CouchdbUrl.join(config[:couchdb_url], *segments, include_credentials: false)
   end
 end

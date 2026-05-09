@@ -33,6 +33,7 @@ module PatientRecordService
             if order_params[:offline_id].present?
               result = save_lab_results(:labResults, patient_id, record, order_params[:offline_id], tests[0][:id])
               collected_errors.concat(result.errors) if result.errors.any?
+              record[:labOrders][:results]&.reject! { |entry| entry[:offline_id] == order_params[:offline_id] }
             end
 
             person_making_request = ConceptName.find_by(name: "Person making request")&.concept_id
@@ -124,14 +125,16 @@ module PatientRecordService
 
       unsaved_data.each do |order_params|
         begin
-          if test_obs_id.blank? && order_params[:offline_id].present?
+          effective_test_id = test_obs_id.presence || order_params[:test_id]
+
+          if effective_test_id.blank? && order_params[:offline_id].present?
             collected_errors << "Skipped result offline_id=#{order_params[:offline_id]}: test_obs_id missing"
             next
           end
 
           encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[data_key])
           encounter_id   = create_encounter(patient_id, encounter_type.id, record)
-          order_params   = order_params.merge(test_id: test_obs_id) if test_obs_id
+          order_params   = order_params.merge(test_id: effective_test_id) if effective_test_id
           lab_results    = order_params.merge(encounter_id: encounter_id)
 
           Lab::ResultsService.create_results(lab_results[:test_id], lab_results)

@@ -4,7 +4,7 @@ class PatientIdentifier < VoidableRecord
   self.table_name = :patient_identifier
   self.primary_key = :patient_identifier_id
 
-  include Locatable
+  # include Locatable
 
   belongs_to(:type, class_name: 'PatientIdentifierType',
                     foreign_key: :identifier_type)
