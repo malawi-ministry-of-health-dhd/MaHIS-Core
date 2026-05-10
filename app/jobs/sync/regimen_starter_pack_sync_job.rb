@@ -81,7 +81,8 @@ module Sync
         'pack_size'             => drug.drug_cms&.pack_size,
         'barcodes'              => drug.barcodes.collect { |barcode| { 'tabs' => barcode.tabs } },
         'regimen_category'      => regimen_category,
-        'frequency'             => frequency
+        'frequency'             => frequency,
+        'drug_type'             => regimen_engine.find_drug_type(drug)
       }
     end
   end
