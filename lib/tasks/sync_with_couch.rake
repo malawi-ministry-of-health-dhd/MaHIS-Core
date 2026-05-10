@@ -28,6 +28,7 @@ namespace :sync do
       Sync::UserPropertySyncJob,
       Sync::MnhStatsSyncJob,
       Sync::RegimenExtraSyncJob,
+      Sync::RegimenStarterPackSyncJob,
       Sync::ArvDrugSyncJob
     ]
 
