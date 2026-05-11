@@ -96,25 +96,14 @@ module Api
 
       def mahis_update_status
         tei = params[:tei].to_s.strip
-        event_ids = params[:event_ids].to_s.split(',').map(&:strip).reject(&:blank?).uniq
+        event_ids = normalize_array_param(params[:event_ids])
 
         if tei.blank? && event_ids.blank?
           render json: { error: 'TEI or event_ids is required' }, status: :bad_request
           return
         end
 
-        response = RestClient.get(
-          mediator_endpoint('status'),
-          {
-            params: {
-              tei: tei,
-              event_ids: event_ids.join(',')
-            },
-            accept: :json
-          }
-        )
-
-        render json: JSON.parse(response.body)
+        render json: fetch_mediator_update_status(tei: tei, event_ids: event_ids)
       rescue RestClient::ExceptionWithResponse => e
         render json: {
           error: 'Unable to fetch MAHIS update status from iCHIS',
@@ -123,6 +112,51 @@ module Api
       rescue StandardError => e
         Rails.logger.error("Unable to fetch MAHIS update status from iCHIS: #{e.class}: #{e.message}")
         render json: { error: 'Unable to fetch MAHIS update status from iCHIS' }, status: :bad_gateway
+      end
+
+      def sync_mahis_update_status
+        patient_id = normalized_positive_integer(params[:patient_id] || params[:patientID], 0)
+        tei = params[:tei].to_s.strip
+        event_ids = normalize_array_param(params[:event_ids])
+
+        if patient_id <= 0
+          render json: { error: 'patient_id is required' }, status: :bad_request
+          return
+        end
+
+        sync_result = ::FhirService.syncReferralStatusForPatient(
+          patient_id: patient_id,
+          tei: tei,
+          event_id: event_ids.first
+        )
+
+        if sync_result.is_a?(Hash) && sync_result[:reason] == 'patient_not_found'
+          render json: { error: 'Patient not found', sync: sync_result }, status: :not_found
+          return
+        end
+
+        status_event_ids = event_ids.presence || [sync_result[:event_id].to_s.strip].reject(&:blank?)
+        status_tei = tei.presence || sync_result[:tei].to_s.strip.presence
+        status_payload =
+          if status_tei.blank? && status_event_ids.blank?
+            nil
+          else
+            fetch_mediator_update_status(tei: status_tei.to_s, event_ids: status_event_ids)
+          end
+
+        render json: {
+          sync: sync_result,
+          status: status_payload,
+          checkedAt: Time.current.iso8601
+        }, status: :ok
+      rescue RestClient::ExceptionWithResponse => e
+        render json: {
+          error: 'Unable to sync MAHIS data to iCHIS',
+          response: parse_json_response(e.response&.body)
+        }, status: :bad_gateway
+      rescue StandardError => e
+        Rails.logger.error("Unable to sync MAHIS data to iCHIS: #{e.class}: #{e.message}")
+        render json: { error: 'Unable to sync MAHIS data to iCHIS' }, status: :bad_gateway
       end
 
       private
@@ -135,6 +169,20 @@ module Api
         JSON.parse(body.to_s)
       rescue JSON::ParserError
         body.to_s
+      end
+
+      def fetch_mediator_update_status(tei:, event_ids:)
+        response = RestClient.get(
+          mediator_endpoint('status'),
+          {
+            params: {
+              tei: tei,
+              event_ids: Array(event_ids).join(',')
+            },
+            accept: :json
+          }
+        )
+        JSON.parse(response.body)
       end
 
       def normalize_array_param(value)

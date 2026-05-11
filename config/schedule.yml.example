@@ -14,6 +14,12 @@ dde_ids_sync_job:
   class: "Sync::DdeIdsSyncJob"
   queue: default
 
+referral_status_retry_job:
+  cron: "*/15 * * * *" # every 15 minutes
+  class: "ReferralStatusRetryJob"
+  queue: default
+  description: "Retries MAHIS -> iCHIS referral status updates for recent referrals"
+
 # notifiable_disease_job:
 #   cron: "* * * * *"  # Every minute
 #   class: "ScriptRunner"
