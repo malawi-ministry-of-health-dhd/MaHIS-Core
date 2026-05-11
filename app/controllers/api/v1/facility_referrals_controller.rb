@@ -14,6 +14,7 @@ module Api
         params.permit(
           :patient_id,
           :program_id,
+          :facility,
           :location_id,
           :date_from,
           :date_to
