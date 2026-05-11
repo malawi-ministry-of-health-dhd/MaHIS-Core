@@ -9,6 +9,8 @@ module Api
       BASE_MEDIATOR_URL = APP_CONFIG['BASE_MEDIATOR_URL']
 
       SYNC_STATUS_TAG = 'ichis-mahis-pending'.freeze
+      IMPORTED_VITALS_TAG_SYSTEM = APP_CONFIG.fetch('FHIR_IMPORTED_VITALS_TAG_SYSTEM', 'http://mahis.gov.mw/fhir/tags').freeze
+      IMPORTED_VITALS_TAG_CODE = APP_CONFIG.fetch('FHIR_IMPORTED_VITALS_TAG_CODE', 'mahis-vitals-imported').freeze
       ICHIS_IDENTIFIER_SYSTEM = APP_CONFIG.fetch('ICHIS_IDENTIFIER_SYSTEM', 'https://ichis.org/ichisGeneratedID').freeze
       DHIS2_TEI_IDENTIFIER_SYSTEM = APP_CONFIG.fetch('DHIS2_TEI_IDENTIFIER_SYSTEM', 'https://dhis2.org/trackedEntityInstance').freeze
       SEARCH_RESULT_LIMIT = 1_000
@@ -55,9 +57,41 @@ module Api
           allow_empty_fallback: true
         )
 
-        render json: bundle
+        render json: filter_imported_referral_vitals(bundle)
       rescue RestClient::ExceptionWithResponse => e
         render json: { errors: ["Observations for Patient/#{requested_id} not found"], response: e.response }, status: :not_found
+      end
+
+      def mark_imported_observations
+        observation_ids = normalize_array_param(params[:observation_ids])
+        if observation_ids.blank?
+          render json: { error: 'observation_ids is required' }, status: :bad_request
+          return
+        end
+
+        response = ::FhirService.markReferralVitalsImportedInMediator(
+          observation_ids: observation_ids,
+          event_ids: normalize_array_param(params[:event_ids]),
+          patient_identifier: params[:patient_identifier].to_s.strip.presence,
+          tei: params[:tei].to_s.strip.presence
+        )
+
+        if mediator_success_response?(response)
+          render json: {
+            status: 'ok',
+            imported_observations_count: observation_ids.length,
+            response: parse_json_response(response&.body)
+          }, status: :ok
+          return
+        end
+
+        render json: {
+          error: 'Unable to mark referral vitals as imported in FHIR',
+          response: parse_json_response(response&.body)
+        }, status: :bad_gateway
+      rescue StandardError => e
+        Rails.logger.error("Unable to mark referral vitals as imported in FHIR: #{e.class}: #{e.message}")
+        render json: { error: 'Unable to mark referral vitals as imported in FHIR' }, status: :bad_gateway
       end
 
       def mahis_update_status
@@ -101,6 +135,18 @@ module Api
         JSON.parse(body.to_s)
       rescue JSON::ParserError
         body.to_s
+      end
+
+      def normalize_array_param(value)
+        Array(value).flat_map { |item| item.is_a?(Array) ? item : item.to_s.split(',') }
+                    .map(&:to_s)
+                    .map(&:strip)
+                    .reject(&:blank?)
+                    .uniq
+      end
+
+      def mediator_success_response?(response)
+        response&.code.to_i.between?(200, 299)
       end
 
       def fetch_json(url)
@@ -278,6 +324,33 @@ module Api
         end
 
         patient_entry&.dig('resource', 'id')
+      end
+
+      def filter_imported_referral_vitals(bundle)
+        return { 'resourceType' => 'Bundle', 'entry' => [] } unless bundle.is_a?(Hash)
+
+        filtered_bundle = bundle.deep_dup
+        entries = Array(filtered_bundle['entry'])
+        filtered_entries = entries.reject { |entry| imported_referral_vital_observation?(entry) }
+        filtered_bundle['entry'] = filtered_entries
+        filtered_bundle['total'] = filtered_entries.length if filtered_bundle.key?('total')
+        filtered_bundle
+      end
+
+      def imported_referral_vital_observation?(entry)
+        resource = entry['resource'] || {}
+        return false unless resource['resourceType'] == 'Observation'
+
+        Array(resource.dig('meta', 'tag')).any? do |tag|
+          tag_code = tag['code'].to_s.strip
+          tag_display = tag['display'].to_s.strip
+          tag_system = tag['system'].to_s.strip
+          next false if tag_code.blank? && tag_display.blank?
+
+          code_matches = [tag_code, tag_display].include?(IMPORTED_VITALS_TAG_CODE)
+          system_matches = tag_system.blank? || tag_system == IMPORTED_VITALS_TAG_SYSTEM
+          code_matches && system_matches
+        end
       end
     end
   end

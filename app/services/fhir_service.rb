@@ -1,6 +1,14 @@
 module FhirService
   class << self
-    BASE_MEDIATOR_URL = YAML.safe_load(File.read('config/application.yml'))['BASE_MEDIATOR_URL']
+    APP_CONFIG = YAML.safe_load(File.read('config/application.yml'))
+    BASE_MEDIATOR_URL = APP_CONFIG['BASE_MEDIATOR_URL']
+    IMPORTED_VITALS_TAG_SYSTEM = APP_CONFIG.fetch('FHIR_IMPORTED_VITALS_TAG_SYSTEM', 'http://mahis.gov.mw/fhir/tags').freeze
+    IMPORTED_VITALS_TAG_CODE = APP_CONFIG.fetch('FHIR_IMPORTED_VITALS_TAG_CODE', 'mahis-vitals-imported').freeze
+    IMPORTED_VITALS_MEDIATOR_ENDPOINTS = [
+      'status/referral_vitals_import',
+      'referral_vitals/import_status',
+      'status/imported_vitals'
+    ].freeze
     ICHIS_EVENT_SOURCE_CONCEPT_NAMES = [
       'Unspecified Diabetes',
       'Systolic',
@@ -10,11 +18,7 @@ module FhirService
 
     def sendEMRIdToMediator(data)
       begin
-        response = RestClient.post(
-          "#{BASE_MEDIATOR_URL}identifier",
-          data.to_json,
-          { content_type: :json, accept: :json }
-        )
+        response = post_to_mediator('identifier', data)
         puts "Success: #{response.code}"
         response
       rescue RestClient::ExceptionWithResponse => e
@@ -48,11 +52,7 @@ module FhirService
       return if data.keys == [:event_id]
 
       begin
-        response = RestClient.post(
-          "#{BASE_MEDIATOR_URL}diagnosis",
-          data.to_json,
-          { content_type: :json, accept: :json }
-        )
+        response = post_to_mediator('diagnosis', data)
         puts "Success: #{response.code}"
         response
       rescue RestClient::ExceptionWithResponse => e
@@ -64,7 +64,58 @@ module FhirService
       end
     end
 
+    def markReferralVitalsImportedInMediator(observation_ids:, event_ids: [], patient_identifier: nil, tei: nil)
+      normalized_observation_ids = normalize_string_array(observation_ids)
+      return nil if normalized_observation_ids.blank?
+
+      payload = {
+        observation_ids: normalized_observation_ids,
+        event_ids: normalize_string_array(event_ids),
+        imported_tag: {
+          system: IMPORTED_VITALS_TAG_SYSTEM,
+          code: IMPORTED_VITALS_TAG_CODE
+        }
+      }
+      payload[:patient_identifier] = patient_identifier.to_s.strip if patient_identifier.present?
+      payload[:tei] = tei.to_s.strip if tei.present?
+
+      last_response = nil
+      IMPORTED_VITALS_MEDIATOR_ENDPOINTS.each do |endpoint|
+        begin
+          response = post_to_mediator(endpoint, payload)
+          return response if response&.code.to_i.between?(200, 299)
+
+          last_response = response
+        rescue RestClient::ExceptionWithResponse => e
+          Rails.logger.warn("Failed to post imported referral vitals to mediator endpoint '#{endpoint}': #{e.response}")
+          last_response = e.response
+          next
+        rescue StandardError => e
+          Rails.logger.warn("Error posting imported referral vitals to mediator endpoint '#{endpoint}': #{e.class}: #{e.message}")
+          next
+        end
+      end
+
+      last_response
+    end
+
     private
+
+    def post_to_mediator(path, data)
+      RestClient.post(
+        mediator_endpoint(path),
+        data.to_json,
+        { content_type: :json, accept: :json }
+      )
+    end
+
+    def mediator_endpoint(path)
+      "#{BASE_MEDIATOR_URL.to_s.sub(%r{/*$}, '')}/#{path.to_s.sub(%r{^/*}, '')}"
+    end
+
+    def normalize_string_array(values)
+      Array(values).map { |value| value.to_s.strip }.reject(&:blank?).uniq
+    end
 
     def latest_diagnosis_event_id(patient_id)
       Observation.where(concept_id: ichis_event_source_concept_ids, person_id: patient_id)
