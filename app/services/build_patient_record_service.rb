@@ -68,6 +68,8 @@ module BuildPatientRecordService
         ID: patient_identifier(patient, 3),
         nationalID: patient_identifier(patient, 28),
         NcdID: patient_identifier(patient, 31),
+        ichisID: patient_identifier(patient, 10),
+        TEI: extract_tei(patient),
         program_id: '',
         provider_id: '',
         patient_identifiers: patient.patient_identifiers.as_json,
@@ -86,8 +88,7 @@ module BuildPatientRecordService
       {
         personInformation: build(person, name, address, patient),
         guardianInformation: build_guardian_data(patient.patient_id),
-        otherPersonInformation: build_other_person_info,
-        vaccineSchedule: []
+        otherPersonInformation: build_other_person_info
       }
     end
 
@@ -96,8 +97,20 @@ module BuildPatientRecordService
         vaccineAdministration: build_vaccine_administration_data(patient_id),
         labOrders: build_lab_orders_data(patient_id),
         MedicationOrder: build_medication_data(patient_id),
-        observations: build_all_observations(patient_id, allowed_encounter_types = nil, status = "saved")
+        observations: build_all_observations(patient_id, allowed_encounter_types = nil, status = "saved"),
+        art_summary: build_art_summary(patient_id)
       }
+    end
+
+    def build_art_summary(patient_id)
+      hiv_program = Program.find_by_name('HIV Program')
+      return {} unless hiv_program
+      return {} unless PatientProgram.exists?(patient_id: patient_id, program_id: hiv_program.program_id)
+
+      ArtService::PatientSummaryBuilder.new(patient_id).build
+    rescue StandardError => e
+      Rails.logger.error("Error building art_summary for patient #{patient_id}: #{e.message}")
+      {}
     end
 
     def build_administrative_data(patient)
@@ -129,6 +142,39 @@ module BuildPatientRecordService
         birthID: '',
         relationshipID: ''
       }
+    end
+
+    def extract_tei(patient)
+      return '' if patient.blank?
+
+      tei_from_person_attribute = begin
+        person = patient.person
+        if person&.association(:person_attributes)&.loaded?
+          person.person_attributes.find do |attribute|
+            %w[TEI trackedEntityInstance].include?(attribute.type&.name)
+          end&.value
+        else
+          person&.person_attributes
+                &.includes(:type)
+                &.find { |attribute| %w[TEI trackedEntityInstance].include?(attribute.type&.name) }
+                &.value
+        end
+      rescue StandardError => e
+        Rails.logger.warn("Failed to fetch TEI from person attributes for patient #{patient.patient_id}: #{e.message}")
+        nil
+      end
+
+      return tei_from_person_attribute if tei_from_person_attribute.present?
+
+      tei_identifier = begin
+        type = PatientIdentifierType.where(name: ['TEI', 'Tracked Entity Instance']).first
+        type.present? ? patient_identifier(patient, type.patient_identifier_type_id) : ''
+      rescue StandardError => e
+        Rails.logger.warn("Failed to fetch TEI from patient identifiers for patient #{patient.patient_id}: #{e.message}")
+        ''
+      end
+
+      tei_identifier.to_s
     end
 
     def build_vaccine_administration_data(patient_id)

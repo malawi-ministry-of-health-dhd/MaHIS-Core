@@ -79,7 +79,13 @@ Rails.application.routes.draw do
         end)
       end
 
-      resources :roles
+      resources :roles do
+        member do
+          post :add_privilege
+          post :remove_privilege
+        end
+      end
+      resources :privileges
       resources :printer_configurations, only: [:index, :create, :destroy, :update]
 
       # Generate visit number 
@@ -148,14 +154,21 @@ Rails.application.routes.draw do
 
       #fhir
       get '/fhir/patients', to: 'fhir#patients'
-      get '/fhir/patient/:id', to: 'fhir#patient'
-      get '/fhir/patient/:id/observations', to: 'fhir#observations'
+      get '/fhir/mahis_update_status', to: 'fhir#mahis_update_status'
+      get '/fhir/patient/*id/observations', to: 'fhir#observations'
+      get '/fhir/patient/*id', to: 'fhir#patient'
       
       # Locations
       resources :locations do
         get('/label', to: redirect do |params, _request|
           "/api/v1/labels/location?location_id=#{params[:location_id]}"
         end)
+
+        member do
+          get :facility_level
+          put :facility_level
+          patch :facility_level
+        end
 
         collection do
           get :districts
@@ -365,6 +378,7 @@ Rails.application.routes.draw do
       post '/reports/encounters' => 'encounters#count'
 
       post '/save_patient_record' => 'patients#save_patient_record'
+      get '/couchdb/config', to: 'couchdb_configurations#show'
       # drugs_cms routes
       get '/drug_cms/search', to: 'drug_cms#search'
       resources :drug_cms, only: %i[index]
@@ -404,6 +418,8 @@ Rails.application.routes.draw do
   get '/api/v1/get_test_types' => 'api/v1/lab_test_types#get_test_types'
 
   get '/api/v1/dashboard_stats' => 'api/v1/reports#index'
+  get '/api/v1/mnh/stats' => 'api/v1/mnh#stats'
+  get '/api/v1/mnh/stat/anc' => 'api/v1/mnh#anc_stats'
   get '/api/v1/mahis_dashboard' => 'api/v1/reports#mahis_dashboard'
   get '/api/v1/mahis_dashboard_indicators' => 'api/v1/reports#mahis_dashboard_indicators'
   get '/api/v1/dashboard_stats_for_syndromic_statistics' => 'api/v1/reports#syndromic_statistics'
@@ -515,6 +531,9 @@ Rails.application.routes.draw do
   get '/api/v1/visits/by_location', to: 'api/v1/visits#get_visits_by_location'
 
   get '/api/v1/check_patient_status/:patient_id', to: 'api/v1/visits#check_patient_status'
+
+
+  get '/api/v1/facility_referrals', to: 'api/v1/facility_referrals#index'
 
   namespace :api do
     namespace :v1 do

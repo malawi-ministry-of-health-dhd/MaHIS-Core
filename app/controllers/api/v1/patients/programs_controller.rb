@@ -86,8 +86,9 @@ module Api
           return unless @immunization_program_created
 
           # Update Immunization Data Cache
-          start_date = 1.year.ago.to_date.to_s
-          end_date = Date.today.to_s
+          today = Date.today
+          start_date = today.beginning_of_year.to_s
+          end_date = today.to_s
 
           location_id = User.current.location_id
 

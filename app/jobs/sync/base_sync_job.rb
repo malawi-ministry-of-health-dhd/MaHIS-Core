@@ -130,7 +130,7 @@ module Sync
 
       while Time.now < deadline
         begin
-          RestClient.get("#{COUCHDB_URL}/_up")
+          RestClient.get(couchdb_url('_up'))
           Sidekiq.logger.info "CouchDB is back up!"
           return true
         rescue Errno::ECONNREFUSED, SocketError
@@ -361,7 +361,7 @@ module Sync
     
     # NEW: Bulk sync to CouchDB using _bulk_docs endpoint
     def bulk_sync_to_couchdb(documents, db_name)
-      db_url = "#{CouchdbSync::COUCHDB_URL}/#{db_name}"
+      db_url = couchdb_url(db_name)
       bulk_url = "#{db_url}/_bulk_docs"
 
       # Defensive dedupe: joins can produce duplicate rows that map to the same _id.
@@ -426,7 +426,7 @@ module Sync
     
     # NEW: Ensure database exists
     def ensure_database_exists(db_name)
-      db_url = "#{COUCHDB_URL}/#{db_name}"
+      db_url = couchdb_url(db_name)
       begin
         RestClient.get(db_url)
       rescue RestClient::NotFound
@@ -541,7 +541,7 @@ module Sync
     
     def get_couchdb_record_count(db_name, document_prefix)
       begin
-        db_url = "#{COUCHDB_URL}/#{db_name}"
+        db_url = couchdb_url(db_name)
         response = RestClient.get(db_url)
         db_info = JSON.parse(response.body)
         
@@ -566,7 +566,7 @@ module Sync
     
     def get_couchdb_type_count(db_name, document_type)
       begin
-        db_url = "#{COUCHDB_URL}/#{db_name}"
+        db_url = couchdb_url(db_name)
         response = RestClient.get(db_url)
         db_info = JSON.parse(response.body)
         
@@ -600,7 +600,7 @@ module Sync
     
     def delete_all_records_by_type_from_couchdb(db_name, document_type, model_name)
       begin
-        db_url = "#{COUCHDB_URL}/#{db_name}"
+        db_url = couchdb_url(db_name)
         
         begin
           RestClient.get(db_url)
@@ -642,7 +642,7 @@ module Sync
     
     def delete_all_records_from_couchdb(db_name, document_prefix, model_name)
       begin
-        db_url = "#{COUCHDB_URL}/#{db_name}"
+        db_url = couchdb_url(db_name)
         
         begin
           RestClient.get(db_url)

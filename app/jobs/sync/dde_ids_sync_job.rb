@@ -53,7 +53,7 @@ module Sync
     
     def get_dde_activated_facilities
       begin
-        facilities_db_url = "#{COUCHDB_URL}/#{FACILITIES_DB_NAME}"
+        facilities_db_url = couchdb_url(FACILITIES_DB_NAME)
         
         # Check if facilities database exists
         begin
@@ -220,7 +220,7 @@ module Sync
     
     def get_facility_unassigned_dde_count(db_name, location_id)
       begin
-        db_url = "#{COUCHDB_URL}/#{db_name}"
+        db_url = couchdb_url(db_name)
         
         # Try to get the database info first
         begin
@@ -268,7 +268,7 @@ module Sync
         "_id" => generate_document_id(npid_data, actual_npid),
         "dde_id" => actual_npid,
         "dde_location_id" => npid_data['dde_location_id'],
-        "location_id" => npid_data['location_id'],
+        "location_id" => npid_data['location_id'].to_s,
         "npid" => actual_npid,
         "assigned" => npid_data.fetch('assigned', false),
         "allocated" => npid_data.fetch('allocated', true),
@@ -287,7 +287,7 @@ module Sync
     
     def clean_assigned_dde_ids(db_name, location_id= nil)
       begin
-        db_url = "#{COUCHDB_URL}/#{db_name}"
+        db_url = couchdb_url(db_name)
         
         # First, check if database exists
         begin
@@ -339,7 +339,7 @@ module Sync
         end
         
         delete_msg = location_id ? "assigned DDE IDs for location #{location_id}" : "assigned DDE IDs for DDE location #{DDE_LOCATION_ID}"
-        perform_bulk_delete("#{COUCHDB_URL}/#{db_name}", docs_to_delete, delete_msg)
+        perform_bulk_delete(couchdb_url(db_name), docs_to_delete, delete_msg)
         
       rescue => e
         error_msg = location_id ? "location #{location_id}" : "DDE location #{DDE_LOCATION_ID}"
