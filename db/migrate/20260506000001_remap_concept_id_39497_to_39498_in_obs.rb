@@ -1,10 +1,10 @@
 class RemapConceptId39497To39498InObs < ActiveRecord::Migration[6.1]
-  BMI_MEASURED_CONCEPT_ID = 39497
+  BMI_MEASURED_CONCEPT_ID = 39_497
 
   def up
     bmi_id = select_value("SELECT concept_id FROM concept_name WHERE name = 'BMI' AND voided = 0 LIMIT 1")
 
-    raise "BMI concept not found" unless bmi_id
+    return unless bmi_id
 
     execute <<-SQL
       UPDATE obs
@@ -17,7 +17,7 @@ class RemapConceptId39497To39498InObs < ActiveRecord::Migration[6.1]
   def down
     bmi_id = select_value("SELECT concept_id FROM concept_name WHERE name = 'BMI' AND voided = 0 LIMIT 1")
 
-    raise "BMI concept not found" unless bmi_id
+    return unless bmi_id
 
     execute <<-SQL
       UPDATE obs
