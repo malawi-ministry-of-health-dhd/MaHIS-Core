@@ -11,6 +11,12 @@ module Api
       SYNC_STATUS_TAG = 'ichis-mahis-pending'.freeze
       IMPORTED_VITALS_TAG_SYSTEM = APP_CONFIG.fetch('FHIR_IMPORTED_VITALS_TAG_SYSTEM', 'http://mahis.gov.mw/fhir/tags').freeze
       IMPORTED_VITALS_TAG_CODE = APP_CONFIG.fetch('FHIR_IMPORTED_VITALS_TAG_CODE', 'mahis-vitals-imported').freeze
+      ICHIS_EVENT_SOURCE_CONCEPT_NAMES = [
+        'Unspecified Diabetes',
+        'Systolic',
+        'Diastolic',
+        'Waist circumference'
+      ].freeze
       ICHIS_IDENTIFIER_SYSTEM = APP_CONFIG.fetch('ICHIS_IDENTIFIER_SYSTEM', 'https://ichis.org/ichisGeneratedID').freeze
       DHIS2_TEI_IDENTIFIER_SYSTEM = APP_CONFIG.fetch('DHIS2_TEI_IDENTIFIER_SYSTEM', 'https://dhis2.org/trackedEntityInstance').freeze
       SEARCH_RESULT_LIMIT = 1_000
@@ -379,10 +385,20 @@ module Api
 
         filtered_bundle = bundle.deep_dup
         entries = Array(filtered_bundle['entry'])
-        filtered_entries = entries.reject { |entry| imported_referral_vital_observation?(entry) }
+        imported_event_ids = imported_referral_event_ids(entries)
+        filtered_entries = entries.reject do |entry|
+          imported_referral_vital_observation?(entry) || imported_referral_vital_by_event?(entry, imported_event_ids)
+        end
         filtered_bundle['entry'] = filtered_entries
         filtered_bundle['total'] = filtered_entries.length if filtered_bundle.key?('total')
         filtered_bundle
+      end
+
+      def imported_referral_vital_by_event?(entry, imported_event_ids)
+        return false if imported_event_ids.blank?
+
+        event_id = referral_event_id_from_entry(entry)
+        event_id.present? && imported_event_ids.include?(event_id)
       end
 
       def imported_referral_vital_observation?(entry)
@@ -399,6 +415,37 @@ module Api
           system_matches = tag_system.blank? || tag_system == IMPORTED_VITALS_TAG_SYSTEM
           code_matches && system_matches
         end
+      end
+
+      def imported_referral_event_ids(entries)
+        event_ids = Array(entries).map { |entry| referral_event_id_from_entry(entry) }.compact.uniq
+        return [] if event_ids.blank?
+
+        source_concept_ids = ichis_event_source_concept_ids
+        return [] if source_concept_ids.blank?
+
+        Observation.where(voided: 0, concept_id: source_concept_ids, comments: event_ids)
+                   .pluck(:comments)
+                   .map(&:to_s)
+                   .map(&:strip)
+                   .reject(&:blank?)
+                   .uniq
+      end
+
+      def referral_event_id_from_entry(entry)
+        observation_id = entry.dig('resource', 'id').to_s.strip
+        return nil if observation_id.blank?
+
+        _, event_id = observation_id.split('-', 3)
+        event_id.to_s.strip.presence
+      end
+
+      def ichis_event_source_concept_ids
+        @ichis_event_source_concept_ids ||= ConceptName.where(name: ICHIS_EVENT_SOURCE_CONCEPT_NAMES, voided: 0)
+                                                       .distinct
+                                                       .pluck(:concept_id)
+                                                       .compact
+                                                       .uniq
       end
     end
   end

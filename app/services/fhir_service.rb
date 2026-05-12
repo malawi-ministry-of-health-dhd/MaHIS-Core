@@ -2,6 +2,8 @@ module FhirService
   class << self
     APP_CONFIG = YAML.safe_load(File.read('config/application.yml'))
     BASE_MEDIATOR_URL = APP_CONFIG['BASE_MEDIATOR_URL']
+    MEDIATOR_OPEN_TIMEOUT_SECONDS = APP_CONFIG.fetch('MEDIATOR_OPEN_TIMEOUT_SECONDS', 2).to_i
+    MEDIATOR_READ_TIMEOUT_SECONDS = APP_CONFIG.fetch('MEDIATOR_READ_TIMEOUT_SECONDS', 6).to_i
     IMPORTED_VITALS_TAG_SYSTEM = APP_CONFIG.fetch('FHIR_IMPORTED_VITALS_TAG_SYSTEM', 'http://mahis.gov.mw/fhir/tags').freeze
     IMPORTED_VITALS_TAG_CODE = APP_CONFIG.fetch('FHIR_IMPORTED_VITALS_TAG_CODE', 'mahis-vitals-imported').freeze
     IMPORTED_VITALS_MEDIATOR_ENDPOINTS = [
@@ -265,7 +267,12 @@ module FhirService
       RestClient.post(
         mediator_endpoint(path),
         data.to_json,
-        { content_type: :json, accept: :json }
+        {
+          content_type: :json,
+          accept: :json,
+          open_timeout: MEDIATOR_OPEN_TIMEOUT_SECONDS,
+          timeout: MEDIATOR_READ_TIMEOUT_SECONDS
+        }
       )
     end
 
