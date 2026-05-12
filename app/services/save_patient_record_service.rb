@@ -134,7 +134,7 @@ class SavePatientRecordService
     latest_encounter = BuildPatientRecordService.find_latest_encounter(patient_id)
 
     patient_data[:encounter_datetime]    = latest_encounter&.encounter_datetime
-    patient_data[:location_id]           = latest_encounter&.location_id
+    patient_data[:location_id]           = latest_encounter.location_id if latest_encounter&.location_id.present?
     patient_data[:ID]                    = BuildPatientRecordService.patient_identifier(patient, 3)
     patient_data[:nationalID]            = BuildPatientRecordService.patient_identifier(patient, 28)
     patient_data[:patientID]             = patient_id

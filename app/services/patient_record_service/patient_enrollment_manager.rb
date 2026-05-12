@@ -8,7 +8,7 @@ module PatientRecordService
       return ok if enrollment.blank?
 
       enrollments        = enrollment.is_a?(Array) ? enrollment : [enrollment]
-      unsaved_enrollments = enrollments.select { |item| item.present? && item[:status] == "unsaved" }
+      unsaved_enrollments = enrollments.select { |item| item.present? && value_for(item, :status) == "unsaved" }
       return ok if unsaved_enrollments.empty?
 
       collected_errors = []
@@ -17,22 +17,31 @@ module PatientRecordService
         unsaved_enrollments.each do |enroll|
           next unless enroll
 
-          if PatientProgram.where(program_id: enroll[:program_id], patient_id: patient_id).exists?
-            Rails.logger.info("Patient #{patient_id} already enrolled in program #{enroll[:program_id]}, skipping")
+          program_id = value_for(enroll, :program_id)
+          
+          if PatientProgram.unscoped.where(
+            program_id: program_id,
+            patient_id: patient_id,
+            voided: 0
+          ).exists?
+            Rails.logger.info(
+              "Patient #{patient_id} already enrolled in program #{program_id}, skipping"
+            )
             next
           end
 
           begin
             PatientProgram.create!(
-              program_id:    enroll[:program_id],
-              date_enrolled: enroll[:date_enrolled] || Time.now,
-              location_id:   enroll[:location_id],
+              program_id:    program_id,
+              date_enrolled: value_for(enroll, :date_enrolled) || Time.now,
               patient_id:    patient_id
             )
-            Rails.logger.info("Successfully enrolled patient #{patient_id} in program #{enroll[:program_id]}")
+            Rails.logger.info(
+              "Successfully enrolled patient #{patient_id} in program #{program_id}"
+            )
           rescue StandardError => e
-            log_error("Failed to enroll patient #{patient_id} in program #{enroll[:program_id]}", e)
-            collected_errors << "Program #{enroll[:program_id]}: #{e.message}"
+            log_error("Failed to enroll patient #{patient_id} in program #{program_id}", e)
+            collected_errors << "Program #{program_id}: #{e.message}"
             # continues to next enrollment
           end
         end
@@ -41,6 +50,36 @@ module PatientRecordService
       OperationResult.new(success: true, errors: collected_errors)
     rescue StandardError => e
       log_and_fail("Failed to create patient enrollment", e)
+    end
+
+    private
+
+    def value_for(object, key)
+      return nil if object.nil?
+
+      if object.respond_to?(:[])
+        value = object[key]
+        return value unless value.nil?
+        value = object[key.to_s]
+        return value unless value.nil?
+      end
+
+      if object.respond_to?(:to_unsafe_h)
+        hash = object.to_unsafe_h
+        return hash[key] unless hash[key].nil?
+        return hash[key.to_s] unless hash[key.to_s].nil?
+      end
+
+      # Avoid calling to_h on unpermitted ActionController::Parameters
+      return nil if defined?(ActionController::Parameters) && object.is_a?(ActionController::Parameters)
+
+      if object.respond_to?(:to_h)
+        hash = object.to_h
+        return hash[key] unless hash[key].nil?
+        return hash[key.to_s] unless hash[key.to_s].nil?
+      end
+
+      nil
     end
   end
 end
