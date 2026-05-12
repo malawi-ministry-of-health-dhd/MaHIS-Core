@@ -58,6 +58,7 @@ class SavePatientRecordService
     ensure_primary_identifier_persisted!(patient_id, patient_record)
     refresh_immunization_dashboard_if_needed(record)
     refresh_mnh_stats_if_needed(record)
+    sync_referral_results_if_needed(patient_id, record)
 
     if couchdb_configured?
       patient_record["_id"] = patient_record["ID"]
@@ -302,5 +303,53 @@ class SavePatientRecordService
     record.delete(:art_dispensation_pending)
     record.delete('art_dispensation_pending')
     record
+  end
+
+  def sync_referral_results_if_needed(patient_id, record)
+    return unless ncd_record?(record)
+
+    patient = Patient.find_by(patient_id: patient_id)
+    tei = referral_tei_for_sync(record, patient)
+    event_id = referral_event_id_for_sync(record)
+
+    sync_result = FhirService.syncReferralStatusForPatient(
+      patient_id: patient_id,
+      tei: tei,
+      event_id: event_id
+    )
+
+    return if sync_result.is_a?(Hash) && sync_result[:success]
+
+    Rails.logger.warn(
+      "Automatic referral status sync did not update for patient #{patient_id}: #{sync_result.inspect}"
+    )
+  rescue StandardError => e
+    Rails.logger.error("Automatic referral status sync failed for patient #{patient_id}: #{e.class}: #{e.message}")
+  end
+
+  def ncd_record?(record)
+    record[:program_id].to_i == 32 || record['program_id'].to_i == 32
+  end
+
+  def referral_tei_for_sync(record, patient)
+    from_record = record[:TEI].presence || record['TEI'].presence
+    return from_record.to_s.strip if from_record.present?
+
+    other_person_information = record[:otherPersonInformation] || record['otherPersonInformation'] || {}
+    if other_person_information.respond_to?(:[])
+      nested_tei = other_person_information[:TEI].presence || other_person_information['TEI'].presence
+      return nested_tei.to_s.strip if nested_tei.present?
+    end
+
+    BuildPatientRecordService.extract_tei(patient).to_s.strip
+  end
+
+  def referral_event_id_for_sync(record)
+    direct_event_id = record[:send_ichis_enrolled_in_care_event_id].to_s.strip.presence ||
+                      record['send_ichis_enrolled_in_care_event_id'].to_s.strip.presence
+    return direct_event_id if direct_event_id.present?
+
+    event_ids = record[:ichisEventIds] || record['ichisEventIds'] || record[:ichis_event_ids] || record['ichis_event_ids']
+    Array(event_ids).map { |event_id| event_id.to_s.strip }.find(&:present?)
   end
 end
