@@ -9,15 +9,22 @@ module PatientRecordService
 
       enrollments        = enrollment.is_a?(Array) ? enrollment : [enrollment]
       unsaved_enrollments = enrollments.select { |item| item.present? && value_for(item, :status) == "unsaved" }
+      unsaved_enrollments = unsaved_enrollments.uniq { |item| value_for(item, :program_id).to_s }
       return ok if unsaved_enrollments.empty?
 
       collected_errors = []
 
       ActiveRecord::Base.transaction do
+        Patient.lock.find(patient_id)
+
         unsaved_enrollments.each do |enroll|
           next unless enroll
 
           program_id = value_for(enroll, :program_id)
+          if program_id.blank?
+            collected_errors << 'Program ID is missing for enrollment'
+            next
+          end
           
           if PatientProgram.unscoped.where(
             program_id: program_id,
@@ -31,13 +38,19 @@ module PatientRecordService
           end
 
           begin
+            location_id = value_for(enroll, :location_id) ||
+                          value_for(record, :location_id) ||
+                          Location.current&.location_id ||
+                          User.current&.location_id
+
             PatientProgram.create!(
               program_id:    program_id,
               date_enrolled: value_for(enroll, :date_enrolled) || Time.now,
+              location_id:   location_id,
               patient_id:    patient_id
             )
             Rails.logger.info(
-              "Successfully enrolled patient #{patient_id} in program #{program_id}"
+              "Successfully enrolled patient #{patient_id} in program #{program_id} at location #{location_id}"
             )
           rescue StandardError => e
             log_error("Failed to enroll patient #{patient_id} in program #{program_id}", e)
