@@ -312,19 +312,10 @@ class SavePatientRecordService
     tei = referral_tei_for_sync(record, patient)
     event_id = referral_event_id_for_sync(record)
 
-    sync_result = FhirService.syncReferralStatusForPatient(
-      patient_id: patient_id,
-      tei: tei,
-      event_id: event_id
-    )
-
-    return if sync_result.is_a?(Hash) && sync_result[:success]
-
-    Rails.logger.warn(
-      "Automatic referral status sync did not update for patient #{patient_id}: #{sync_result.inspect}"
-    )
+    # Offload MAHIS -> iCHIS sync to Sidekiq so patient save path remains fast.
+    ReferralStatusSyncJob.perform_async(patient_id, tei, event_id)
   rescue StandardError => e
-    Rails.logger.error("Automatic referral status sync failed for patient #{patient_id}: #{e.class}: #{e.message}")
+    Rails.logger.error("Failed to enqueue referral status sync for patient #{patient_id}: #{e.class}: #{e.message}")
   end
 
   def ncd_record?(record)

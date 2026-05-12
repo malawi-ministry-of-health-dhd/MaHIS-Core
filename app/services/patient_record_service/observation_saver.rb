@@ -30,9 +30,6 @@ module PatientRecordService
       return send_enrolled_in_care_without_new_observations(patient_id, record) if unsaved_items.empty?
 
       collected_errors = []
-      sent_confirmed_diagnoses = {}
-      sent_enrolled_in_care = false
-      referral_event_id = ichis_referral_event_id(record)
 
       unsaved_items.each do |item|
         encounter_type = EncounterType.find_by_encounter_type_id(value_for(item, :encounter_type))
@@ -45,9 +42,6 @@ module PatientRecordService
           ActiveRecord::Base.transaction(requires_new: true) do
             encounter_id = create_encounter(patient_id, encounter_type.id, item)
             encounter    = Encounter.find(encounter_id)
-            confirmed_diagnoses_for_event = []
-            treatment_plan_values_for_event = []
-            enrolled_in_care_for_event = referral_enrolled_in_care?(record) && !sent_enrolled_in_care
 
             normalized_observations(value_for(item, :obs)).each do |archetype|
               begin
@@ -58,30 +52,12 @@ module PatientRecordService
                   next
                 end
 
-                confirmed_diagnosis = confirmed_ncd_diagnosis(record, params)
-                treatment_plan_value = referral_treatment_plan_value(record, encounter_type, params)
                 observation_service.create_observation(encounter, params)
-                if confirmed_diagnosis && !sent_confirmed_diagnoses[confirmed_diagnosis]
-                  confirmed_diagnoses_for_event << confirmed_diagnosis
-                  sent_confirmed_diagnoses[confirmed_diagnosis] = true
-                end
-                treatment_plan_values_for_event << treatment_plan_value if treatment_plan_value.present?
               rescue StandardError => e
                 log_error("Error saving obs for encounter #{encounter_id}", e)
                 collected_errors << "Encounter #{encounter_type.name}, obs #{format_observation_reference(archetype)}: #{e.message}"
                 # continues to next obs
               end
-            end
-
-            if confirmed_diagnoses_for_event.any? || treatment_plan_values_for_event.any? || enrolled_in_care_for_event
-              mediator_response = FhirService.sendReferralResultsToMediator(
-                patient_id,
-                diagnosis: confirmed_diagnoses_for_event,
-                treatment_plan: treatment_plan_values_for_event,
-                enrolled_in_care: enrolled_in_care_for_event ? true : nil,
-                event_id: referral_event_id
-              )
-              sent_enrolled_in_care = true if enrolled_in_care_for_event && successful_mediator_response?(mediator_response)
             end
           end
         rescue StandardError => e
@@ -152,26 +128,8 @@ module PatientRecordService
     end
 
     def send_enrolled_in_care_without_new_observations(patient_id, record)
-      if referral_enrolled_in_care?(record)
-        FhirService.sendReferralResultsToMediator(
-          patient_id,
-          enrolled_in_care: true,
-          event_id: ichis_referral_event_id(record)
-        )
-      end
+      # Referral sync is handled asynchronously after save in SavePatientRecordService.
       ok
-    end
-
-    def successful_mediator_response?(response)
-      response&.code.to_i.between?(200, 299)
-    end
-
-    def ichis_referral_event_id(record)
-      direct_event_id = value_for(record, :send_ichis_enrolled_in_care_event_id).to_s.strip
-      return direct_event_id if direct_event_id.present?
-
-      event_ids = value_for(record, :ichisEventIds) || value_for(record, :ichis_event_ids)
-      Array(event_ids).map { |event_id| event_id.to_s.strip }.find(&:present?)
     end
 
     def clear_referral_enrolled_in_care_flag(record)

@@ -72,7 +72,7 @@ module PatientRecordService
         end
       end
 
-      send_treatment_plan_to_mediator(patient_id, record, treatment_plan_values)
+      # Referral sync is handled asynchronously after save in SavePatientRecordService.
 
       return ok if collected_errors.empty? && orders_unsaved.empty? && pending_orders.empty?
 

@@ -23,11 +23,7 @@ module PatientRecordService
         created_ids = create_ids(other_person_information, patient_id, location_id)
         mark_ichis_enrolled_in_care(record) if created_ids[:ichis_id_saved]
 
-        if other_person_information_value(other_person_information, :ichisID).present?
-          tei = other_person_information_value(other_person_information, :TEI)
-          ichis_data = { identifier: identifier, TEI: tei }
-          FhirService.sendEMRIdToMediator(ichis_data)
-        end
+        # MAHIS -> iCHIS identifier sync is handled asynchronously after save.
 
         create_encounter(patient_id, 5, record)
 
