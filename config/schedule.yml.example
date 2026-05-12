@@ -18,6 +18,9 @@ referral_status_retry_job:
   cron: "*/15 * * * *" # every 15 minutes
   class: "ReferralStatusRetryJob"
   queue: default
+  args:
+    - 100
+    - 720
   description: "Retries MAHIS -> iCHIS referral status updates for recent referrals"
 
 # notifiable_disease_job:
