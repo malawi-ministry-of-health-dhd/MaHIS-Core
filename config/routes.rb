@@ -155,8 +155,10 @@ Rails.application.routes.draw do
       #fhir
       get '/fhir/patients', to: 'fhir#patients'
       get '/fhir/mahis_update_status', to: 'fhir#mahis_update_status'
+      post '/fhir/mahis_update_status/sync', to: 'fhir#sync_mahis_update_status'
       get '/fhir/patient/*id/observations', to: 'fhir#observations'
       get '/fhir/patient/*id', to: 'fhir#patient'
+      post '/fhir/observations/mark_imported', to: 'fhir#mark_imported_observations'
       
       # Locations
       resources :locations do
