@@ -38,6 +38,7 @@ module Api
         programs = params[:programs]
         villages = params[:villages]
         phone = params[:phone]
+        gender = params[:gender]
 
         return unless validate_roles(roles) & validate_username(username) & validate_location(location_id)
 
@@ -49,7 +50,7 @@ module Api
 
         user = UserService.create_user(
           username:, password:, given_name:,
-          family_name:, roles:, programs:, location_id:, villages:, phone:
+          family_name:, roles:, programs:, location_id:, villages:, phone:, gender:
         )
 
         if user.errors.empty?
