@@ -6,7 +6,7 @@ module MnhService
     include MnhService::LocationScope
 
     LOGGER = Rails.logger
-    ANC_ENROLLMENT_ENCOUNTER_TYPE_ID = 237
+    ANC_ENROLLMENT_ENCOUNTER_TYPE_IDS = [217, 237].freeze
     MIN_ANC_CONTACTS_FOR_4_PLUS = 4
 
     def initialize(program_id = nil, location_id: nil)
@@ -40,7 +40,7 @@ module MnhService
       return 0 if anc_program_id.nil?
 
       @new_and_continuing_anc_clients ||= (
-        anc_enrollment_encounter_type_id.present? ? count_by_anc_enrollment_encounter : count_by_patient_program
+        anc_enrollment_encounter_type_ids.present? ? count_by_anc_enrollment_encounter : count_by_patient_program
       )
     end
 
@@ -138,8 +138,8 @@ module MnhService
       @anc_program_id ||= @program_id.presence || Program.unscoped.find_by(name: 'ANC PROGRAM')&.id
     end
 
-    def anc_enrollment_encounter_type_id
-      @anc_enrollment_encounter_type_id ||= ANC_ENROLLMENT_ENCOUNTER_TYPE_ID
+    def anc_enrollment_encounter_type_ids
+      @anc_enrollment_encounter_type_ids ||= ANC_ENROLLMENT_ENCOUNTER_TYPE_IDS
     end
 
     def concept_id_for(name)
@@ -165,7 +165,7 @@ module MnhService
 
     def count_by_anc_enrollment_encounter
       scoped_encounters_for(anc_program_id)
-        .where(encounter_type: anc_enrollment_encounter_type_id)
+        .where(encounter_type: anc_enrollment_encounter_type_ids)
         .distinct
         .count(:patient_id)
     end
