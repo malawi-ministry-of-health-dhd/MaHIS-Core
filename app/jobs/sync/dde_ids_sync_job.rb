@@ -10,7 +10,7 @@ module Sync
     # Sync DDE IDs to CouchDB for all DDE-activated facilities
     def perform(batch_size = 100)
       db_name = 'dde'
-      program_id = 14 # HIV Program - adjust as needed
+      program_id = 1 # HIV Program - adjust as needed
       
       begin
         dde_service = DdeService.new(program: Program.find(program_id))
@@ -110,7 +110,7 @@ module Sync
         # Convert raw DDE IDs to properly formatted CouchDB documents
         formatted_documents = dde_ids.map { |dde_id| prepare_document(dde_id) }
         
-        sync_array_to_couchdb(formatted_documents, db_name, "DDE IDs for facility #{location_id}", batch_size, 
+        sync_array_to_couchdb(formatted_documents, db_name, "dde_id", batch_size, 
                              progress_interval: 25, rate_limit_interval: 5)
         
         # Verify final count for this facility
@@ -241,11 +241,12 @@ module Sync
         
         # Count unassigned IDs for this facility and location
         # Note: location_id might not exist in older documents, so we check both conditions
+        # Compare as strings because prepare_document stores location_id via .to_s
         unassigned_count = result['rows'].count do |row|
           doc = row['doc']
-          doc['dde_location_id'] == DDE_LOCATION_ID && 
+          doc['dde_location_id'].to_s == DDE_LOCATION_ID.to_s &&
           (doc['status'].nil? || doc['status'].empty? || doc['status'] != 'used') &&
-          (doc['location_id'] == location_id || doc['location_id'].nil?)
+          (doc['location_id'].to_s == location_id.to_s || doc['location_id'].nil?)
         end
         
         return unassigned_count
