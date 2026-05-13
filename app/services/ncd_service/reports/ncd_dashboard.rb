@@ -249,7 +249,7 @@ module NcdService
             FROM obs
             INNER JOIN encounter e ON e.encounter_id = obs.encounter_id AND e.voided = 0
             INNER JOIN encounter_type et ON et.encounter_type_id = e.encounter_type AND et.name = 'DIAGNOSIS'
-            WHERE obs.voided = 0 AND obs.concept_id = \#{concept_id('Primary diagnosis')} AND obs.person_id IN (?)
+            WHERE obs.voided = 0 AND obs.concept_id = #{concept_id('Primary diagnosis')} AND obs.person_id IN (?)
           ) o
           WHERE o.rn = 1
           GROUP BY o.value_coded
