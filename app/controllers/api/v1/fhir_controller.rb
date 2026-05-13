@@ -50,18 +50,19 @@ module Api
 
 
       def observations
-        requested_id = params[:id]
+        requested_id = params[:id].to_s.strip
 
-        patient_bundle = find_patient_bundle(requested_id)
-        resolved_patient_id = extract_patient_id_from_bundle(patient_bundle) || requested_id
+        # Fast path: most callers already provide the FHIR Patient resource id.
+        bundle = observation_bundle_for_subject(requested_id)
 
-        bundle = fetch_first_non_empty(
-          [
-            "#{BASE_FHIR_URL}/Observation?subject=Patient/#{CGI.escape(resolved_patient_id)}&_tag=#{CGI.escape(SYNC_STATUS_TAG)}",
-            "#{BASE_FHIR_URL}/Observation?subject=Patient/#{CGI.escape(resolved_patient_id)}"
-          ],
-          allow_empty_fallback: true
-        )
+        # Fallback path: if no entries, resolve identifier/TEI -> patient id and retry once.
+        unless bundle_has_entries?(bundle)
+          patient_bundle = find_patient_bundle(requested_id)
+          resolved_patient_id = extract_patient_id_from_bundle(patient_bundle).to_s.strip
+          if resolved_patient_id.present? && resolved_patient_id != requested_id
+            bundle = observation_bundle_for_subject(resolved_patient_id)
+          end
+        end
 
         render json: filter_imported_referral_vitals(bundle)
       rescue RestClient::ExceptionWithResponse => e
@@ -378,6 +379,20 @@ module Api
         end
 
         patient_entry&.dig('resource', 'id')
+      end
+
+      def observation_bundle_for_subject(subject_patient_id)
+        fetch_first_non_empty(
+          [
+            "#{BASE_FHIR_URL}/Observation?subject=Patient/#{CGI.escape(subject_patient_id)}&_tag=#{CGI.escape(SYNC_STATUS_TAG)}",
+            "#{BASE_FHIR_URL}/Observation?subject=Patient/#{CGI.escape(subject_patient_id)}"
+          ],
+          allow_empty_fallback: true
+        )
+      end
+
+      def bundle_has_entries?(bundle)
+        bundle.is_a?(Hash) && Array(bundle['entry']).present?
       end
 
       def filter_imported_referral_vitals(bundle)
