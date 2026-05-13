@@ -26,13 +26,24 @@ module PatientRecordService
             next
           end
           
-          if PatientProgram.unscoped.where(
+          date_completed = value_for(enroll, :date_completed)
+
+          active_enrollment = PatientProgram.unscoped.where(
             program_id: program_id,
             patient_id: patient_id,
-            voided: 0
-          ).exists?
+            voided: 0,
+            date_completed: nil
+          ).first
+
+          if active_enrollment && date_completed.present?
+            active_enrollment.update!(date_completed: date_completed, patient_id: patient_id, program_id: program_id)
             Rails.logger.info(
-              "Patient #{patient_id} already enrolled in program #{program_id}, skipping"
+              "Completed enrollment #{active_enrollment.patient_program_id} for patient #{patient_id} in program #{program_id}"
+            )
+            next
+          elsif active_enrollment
+            Rails.logger.info(
+              "Patient #{patient_id} already has an active enrollment in program #{program_id}, skipping"
             )
             next
           end
@@ -43,12 +54,15 @@ module PatientRecordService
                           Location.current&.location_id ||
                           User.current&.location_id
 
-            PatientProgram.create!(
-              program_id:    program_id,
-              date_enrolled: value_for(enroll, :date_enrolled) || Time.now,
-              location_id:   location_id,
-              patient_id:    patient_id
-            )
+            program_attrs = {
+              program_id:     program_id,
+              date_enrolled:  value_for(enroll, :date_enrolled) || Time.now,
+              date_completed: date_completed,
+              location_id:    location_id,
+              patient_id:     patient_id
+            }.compact
+
+            PatientProgram.create!(program_attrs)
             Rails.logger.info(
               "Successfully enrolled patient #{patient_id} in program #{program_id} at location #{location_id}"
             )
