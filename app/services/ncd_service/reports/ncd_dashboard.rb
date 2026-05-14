@@ -2,10 +2,10 @@ module NcdService
   module Reports
     class NcdDashboard
       def self.find_report(start_date:, end_date:, **extra_kwargs)
-        new.find_report(start_date: start_date, end_date: end_date, sections: extra_kwargs[:sections])
+        new.find_report(start_date: start_date, end_date: end_date, sections: extra_kwargs[:sections], **extra_kwargs.except(:sections))
       end
 
-      def find_report(start_date:, end_date:, sections: nil)
+      def find_report(start_date:, end_date:, sections: nil, **_kwargs)
         @start_date = start_date
         @end_date = end_date
         @sections = sections || ['all']
@@ -307,7 +307,7 @@ module NcdService
 
       def diagnosis_quarterly_breakdown
         quarters = {}
-        end_date = @current_date
+        end_date = Date.current
         
         4.times do |i|
           start_date = end_date.beginning_of_quarter
@@ -369,7 +369,7 @@ module NcdService
 
       def gender_quarterly_breakdown
         quarters = {}
-        end_date = @current_date
+        end_date = Date.current
         
         4.times do |i|
           start_date = end_date.beginning_of_quarter
