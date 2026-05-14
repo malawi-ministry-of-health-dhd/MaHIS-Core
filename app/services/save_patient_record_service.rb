@@ -3,6 +3,7 @@
 
 class SavePatientRecordService
   include CouchdbSync
+  NCD_PROGRAM_ID = 32
 
   RequiredFields = Struct.new(:program_id, :provider_id, :location_id, :encounter_datetime)
   PatientIds     = Struct.new(:national_id, :ichis_id, :birth_id)
@@ -306,7 +307,7 @@ class SavePatientRecordService
   end
 
   def sync_referral_results_if_needed(patient_id, record)
-    return unless ncd_record?(record)
+    return unless ncd_record?(patient_id, record)
 
     patient = Patient.find_by(patient_id: patient_id)
     tei = referral_tei_for_sync(record, patient)
@@ -318,8 +319,31 @@ class SavePatientRecordService
     Rails.logger.error("Failed to enqueue referral status sync for patient #{patient_id}: #{e.class}: #{e.message}")
   end
 
-  def ncd_record?(record)
-    record[:program_id].to_i == 32 || record['program_id'].to_i == 32
+  def ncd_record?(patient_id, record)
+    return true if record[:program_id].to_i == NCD_PROGRAM_ID || record['program_id'].to_i == NCD_PROGRAM_ID
+    return true if record_ncd_enrollment?(record)
+    return true if record_ncd_identifier?(record)
+
+    PatientProgram.where(patient_id: patient_id, program_id: NCD_PROGRAM_ID, voided: 0).exists?
+  end
+
+  def record_ncd_enrollment?(record)
+    enrollments = Array(record[:activePrograms] || record['activePrograms']).compact
+    enrollments.any? do |enrollment|
+      program_id = enrollment[:program_id] || enrollment['program_id']
+      program_id.to_i == NCD_PROGRAM_ID
+    end
+  end
+
+  def record_ncd_identifier?(record)
+    ncd_id = record[:NcdID].presence || record['NcdID'].presence
+    return true if ncd_id.present?
+
+    other_person_information = record[:otherPersonInformation] || record['otherPersonInformation'] || {}
+    return false unless other_person_information.respond_to?(:[])
+
+    nested_ncd_id = other_person_information[:NcdID].presence || other_person_information['NcdID'].presence
+    nested_ncd_id.present?
   end
 
   def referral_tei_for_sync(record, patient)

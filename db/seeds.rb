@@ -5,6 +5,8 @@ require 'open-uri'
 require 'fileutils'
 require 'digest/sha1'
 require 'securerandom'
+require 'shellwords'
+require 'tempfile'
 
 if ENV['INITIAL_SETUP']
   puts "\e[31mWARNING: This will wipe out your database. Do you want to continue? (y/N)\e[0m"
@@ -118,6 +120,7 @@ end
 def import_sql_file!(file_path:, username:, password:, host:, port:, database:)
   raise "SQL file not found: #{file_path}" unless File.exist?(file_path)
 
+  import_path = prepare_sql_for_import(file_path)
   command = mysql_import_command(
     username: username,
     password: password,
@@ -126,10 +129,156 @@ def import_sql_file!(file_path:, username:, password:, host:, port:, database:)
     database: database
   )
 
-  return if system(*command, in: file_path.to_s)
+  return if system(*command, in: import_path)
 
   exit_code = $?.respond_to?(:exitstatus) ? $?.exitstatus : 'unknown'
   raise "Import failed for #{File.basename(file_path)} (exit code: #{exit_code})"
+ensure
+  cleanup_prepared_sql_file!(original_path: file_path, prepared_path: import_path)
+end
+
+def import_sql_or_gzip_file!(file_path:, username:, password:, host:, port:, database:)
+  file_path = file_path.to_s
+  raise "SQL file not found: #{file_path}" unless File.exist?(file_path)
+
+  unless File.extname(file_path) == '.gz'
+    return import_sql_file!(
+      file_path: file_path,
+      username: username,
+      password: password,
+      host: host,
+      port: port,
+      database: database
+    )
+  end
+
+  tmp_file = Tempfile.new(['seed_import_', '.sql'], Rails.root.join('tmp'))
+  tmp_file.close
+
+  command = <<~BASH
+    set -o pipefail
+    gunzip -c #{Shellwords.escape(file_path)} > #{Shellwords.escape(tmp_file.path)}
+  BASH
+
+  unless system('bash', '-lc', command)
+    exit_code = $?.respond_to?(:exitstatus) ? $?.exitstatus : 'unknown'
+    raise "Failed to decompress #{File.basename(file_path)} (exit code: #{exit_code})"
+  end
+
+  import_sql_file!(
+    file_path: tmp_file.path,
+    username: username,
+    password: password,
+    host: host,
+    port: port,
+    database: database
+  )
+ensure
+  tmp_file&.unlink if defined?(tmp_file) && tmp_file && File.exist?(tmp_file.path)
+end
+
+def strip_definer_clauses(sql)
+  sql.gsub(/\bDEFINER\s*=\s*`[^`]+`@`[^`]+`\s*/i, '')
+end
+
+def prepare_sql_for_import(file_path)
+  file_path = file_path.to_s
+  sql = File.read(file_path)
+  sanitized_sql = strip_definer_clauses(sql)
+  return file_path if sanitized_sql == sql
+
+  FileUtils.mkdir_p(Rails.root.join('tmp'))
+  sanitized_file = Tempfile.new(['seed_sanitized_', '.sql'], Rails.root.join('tmp'))
+  sanitized_file.write(sanitized_sql)
+  sanitized_file.flush
+  sanitized_file.close
+
+  puts "Sanitized DEFINER clauses for #{File.basename(file_path)}."
+  sanitized_file.path
+end
+
+def cleanup_prepared_sql_file!(original_path:, prepared_path:)
+  return if prepared_path.nil? || prepared_path.to_s.empty?
+  return if original_path.to_s == prepared_path.to_s
+  return unless File.exist?(prepared_path.to_s)
+
+  File.delete(prepared_path.to_s)
+end
+
+def routine_exists?(routine_name)
+  conn = ActiveRecord::Base.connection
+  conn.select_value(<<~SQL).to_i.positive?
+    SELECT COUNT(*)
+    FROM information_schema.ROUTINES
+    WHERE ROUTINE_SCHEMA = DATABASE()
+      AND ROUTINE_NAME = #{conn.quote(routine_name)}
+  SQL
+end
+
+def import_routines_from_skeleton!(skeleton_path:, username:, password:, host:, port:, database:)
+  skeleton_path = skeleton_path.to_s
+  raise "Skeleton SQL file not found: #{skeleton_path}" unless File.exist?(skeleton_path)
+
+  mysql_cmd = Shellwords.join(
+    mysql_import_command(
+      username: username,
+      password: password,
+      host: host,
+      port: port,
+      database: database
+    )
+  )
+
+  command = <<~BASH
+    set -o pipefail
+    gunzip -c #{Shellwords.escape(skeleton_path)} |
+      awk '
+        /^\\/\\*!50003 DROP (FUNCTION|PROCEDURE) IF EXISTS/ {capture=1}
+        capture {print}
+      ' |
+      sed -E 's/DEFINER[[:space:]]*=[[:space:]]*`[^`]+`@`[^`]+`[[:space:]]*//g' |
+      #{mysql_cmd}
+  BASH
+
+  return if system('bash', '-lc', command)
+
+  exit_code = $?.respond_to?(:exitstatus) ? $?.exitstatus : 'unknown'
+  raise "Routine import failed from #{File.basename(skeleton_path)} (exit code: #{exit_code})"
+end
+
+def ensure_required_routines!(username:, password:, host:, port:, database:)
+  required_routines = %w[
+    patient_start_date
+    patient_outcome
+    current_defaulter_date
+  ]
+  missing_routines = required_routines.reject { |routine_name| routine_exists?(routine_name) }
+
+  if missing_routines.empty?
+    puts 'Required SQL routines already present.'
+    return
+  end
+
+  skeleton_path = Rails.root.join('db', 'mahis_skeleton.sql.gz')
+  unless File.exist?(skeleton_path)
+    puts "Missing SQL routines (#{missing_routines.join(', ')}), but #{skeleton_path} was not found."
+    return
+  end
+
+  puts "Missing SQL routines detected (#{missing_routines.join(', ')}). Loading routines from #{skeleton_path}..."
+  import_routines_from_skeleton!(
+    skeleton_path: skeleton_path,
+    username: username,
+    password: password,
+    host: host,
+    port: port,
+    database: database
+  )
+
+  still_missing = required_routines.reject { |routine_name| routine_exists?(routine_name) }
+  return if still_missing.empty?
+
+  raise "Routine bootstrap failed. Missing routines after import: #{still_missing.join(', ')}"
 end
 
 def concept_word_parts(phrase, locale)
@@ -575,6 +724,41 @@ def ensure_bootstrap_users!
   end
 end
 
+local_sql_files = Dir.glob([
+  Rails.root.join('db', 'data', '*.sql').to_s,
+  Rails.root.join('db', 'data', '*.sql.gz').to_s
+]).sort
+
+if local_sql_files.any?
+  local_sql_files.each_with_index do |file_path, idx|
+    puts "Importing local SQL file #{idx + 1}/#{local_sql_files.size}: #{File.basename(file_path)}..."
+
+    next if %w[locations.sql locations.sql.gz].include?(File.basename(file_path)) &&
+            defined?(Location) &&
+            Location.table_exists? &&
+            Location.count.positive?
+
+    import_sql_or_gzip_file!(
+      file_path: file_path,
+      username: username,
+      password: password,
+      host: host,
+      port: port,
+      database: database
+    )
+  end
+else
+  puts 'No additional local .sql files to import in db/data.'
+end
+
+ensure_required_routines!(
+  username: username,
+  password: password,
+  host: host,
+  port: port,
+  database: database
+)
+
 begin
   tmp_file = Rails.root.join('tmp', 'metadata.sql')
 
@@ -593,30 +777,6 @@ begin
   puts 'GitHub metadata import complete.'
 rescue StandardError => e
   raise "Failed to import metadata from GitHub: #{e.message}"
-end
-
-local_sql_files = Dir.glob(Rails.root.join('db', 'data', '*.sql')).sort
-
-if local_sql_files.any?
-  local_sql_files.each_with_index do |file_path, idx|
-    puts "Importing local SQL file #{idx + 1}/#{local_sql_files.size}: #{File.basename(file_path)}..."
-
-    next if File.basename(file_path) == 'locations.sql' &&
-            defined?(Location) &&
-            Location.table_exists? &&
-            Location.count.positive?
-
-    import_sql_file!(
-      file_path: file_path,
-      username: username,
-      password: password,
-      host: host,
-      port: port,
-      database: database
-    )
-  end
-else
-  puts 'No additional local .sql files to import in db/data.'
 end
 
 ensure_facility_level_data!
