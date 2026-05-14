@@ -79,8 +79,6 @@ module NcdService
         program_id = program&.id || 32
         ncd_type_id = PatientIdentifierType.find_by_name('NCD Number')&.id || 31
         
-        Rails.logger.debug "NCD Dashboard: Generating for Program ID #{program_id} and Identifier ID #{ncd_type_id}"
-        
         ActiveRecord::Base.connection.execute("DROP TEMPORARY TABLE IF EXISTS temp_ncd_cohort")
         
         sql = <<-SQL
@@ -98,8 +96,6 @@ module NcdService
         SQL
         
         ActiveRecord::Base.connection.execute(sql)
-        count = ActiveRecord::Base.connection.select_value("SELECT COUNT(*) FROM temp_ncd_cohort").to_i
-        Rails.logger.debug "NCD Dashboard: Found #{count} patients in cohort"
       end
 
       def drop_cohort_table
