@@ -1,19 +1,26 @@
 module NcdService
   module Reports
     class NcdDashboard
-      def find_report(start_date:, end_date:, **extra_kwargs)
-        @sections = extra_kwargs[:sections] || []
+      def self.find_report(start_date:, end_date:, **extra_kwargs)
+        new.find_report(start_date: start_date, end_date: end_date, sections: extra_kwargs[:sections])
+      end
+
+      def find_report(start_date:, end_date:, sections: nil)
+        @start_date = start_date
+        @end_date = end_date
+        @sections = sections || ['all']
         @sections = [@sections] if @sections.is_a?(String)
-        dashboard
+        
+        create_cohort_table
+        data(sections: @sections)
+      ensure
+        drop_cohort_table
       end
 
       def dashboard
         @current_date = Date.current
         @location_id = User.current.location_id
-        create_cohort_table
-        result = data(sections: @sections)
-        drop_cohort_table
-        result
+        find_report(start_date: @current_date, end_date: @current_date)
       end
 
       def data(sections: [])
