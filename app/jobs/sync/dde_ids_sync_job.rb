@@ -10,7 +10,7 @@ module Sync
     # Sync DDE IDs to CouchDB for all DDE-activated facilities
     def perform(batch_size = 100)
       db_name = 'dde'
-      program_id = 1 # HIV Program - adjust as needed
+      program_id = 14 # OPD Program - adjust as needed
       
       begin
         dde_service = DdeService.new(program: Program.find(program_id))
