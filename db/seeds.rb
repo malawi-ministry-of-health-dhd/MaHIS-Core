@@ -3,6 +3,8 @@
 require 'yaml'
 require 'open-uri'
 require 'fileutils'
+require 'digest/sha1'
+require 'securerandom'
 
 if ENV['INITIAL_SETUP']
   puts "\e[31mWARNING: This will wipe out your database. Do you want to continue? (y/N)\e[0m"
@@ -392,6 +394,187 @@ def ensure_facility_level_data!
   SQL
 end
 
+def ensure_last_password_updated!(conn, user_id)
+  return unless conn.table_exists?('user_property')
+
+  exists = conn.select_value(<<~SQL)
+    SELECT COUNT(*)
+    FROM user_property
+    WHERE user_id = #{user_id.to_i}
+      AND property = 'last_password_updated'
+  SQL
+
+  return unless exists.to_i.zero?
+
+  conn.execute <<~SQL
+    INSERT INTO user_property (user_id, property, property_value)
+    VALUES (#{user_id.to_i}, 'last_password_updated', #{conn.quote(Time.now.iso8601)})
+  SQL
+end
+
+def ensure_openmrs_user!(conn:, username:, password:, gender:, location_id:, preferred_user_id: nil, given_name: nil, family_name: nil)
+  existing_user_id = conn.select_value(<<~SQL)
+    SELECT user_id
+    FROM users
+    WHERE username = #{conn.quote(username)}
+    LIMIT 1
+  SQL
+
+  if existing_user_id.present?
+    ensure_last_password_updated!(conn, existing_user_id)
+    return existing_user_id.to_i
+  end
+
+  person_uuid = SecureRandom.uuid
+  conn.execute <<~SQL
+    INSERT INTO person (gender, creator, date_created, voided, uuid)
+    VALUES (#{conn.quote(gender)}, 1, NOW(), 0, #{conn.quote(person_uuid)})
+  SQL
+
+  person_id = conn.select_value(<<~SQL).to_i
+    SELECT person_id
+    FROM person
+    WHERE uuid = #{conn.quote(person_uuid)}
+    LIMIT 1
+  SQL
+
+  if given_name.present? && family_name.present?
+    conn.execute <<~SQL
+      INSERT INTO person_name
+        (person_id, given_name, family_name, preferred, creator, date_created, voided, uuid)
+      VALUES
+        (
+          #{person_id},
+          #{conn.quote(given_name)},
+          #{conn.quote(family_name)},
+          1,
+          1,
+          NOW(),
+          0,
+          UUID()
+        )
+    SQL
+  end
+
+  salt = SecureRandom.base64
+  password_hash = Digest::SHA1.hexdigest("#{password}#{salt}")
+
+  requested_user_id = preferred_user_id.to_i if preferred_user_id.present?
+  use_requested_user_id = requested_user_id.present? &&
+                          conn.select_value("SELECT COUNT(*) FROM users WHERE user_id = #{requested_user_id}").to_i.zero?
+
+  user_id_columns = use_requested_user_id ? 'user_id, ' : ''
+  user_id_values = use_requested_user_id ? "#{requested_user_id}, " : ''
+  location_value = location_id.present? ? conn.quote(location_id.to_s) : 'NULL'
+
+  conn.execute <<~SQL
+    INSERT INTO users
+      (
+        #{user_id_columns}username,
+        password,
+        salt,
+        person_id,
+        creator,
+        date_created,
+        retired,
+        uuid,
+        location_id
+      )
+    VALUES
+      (
+        #{user_id_values}#{conn.quote(username)},
+        #{conn.quote(password_hash)},
+        #{conn.quote(salt)},
+        #{person_id},
+        1,
+        NOW(),
+        0,
+        UUID(),
+        #{location_value}
+      )
+  SQL
+
+  user_id = conn.select_value(<<~SQL).to_i
+    SELECT user_id
+    FROM users
+    WHERE username = #{conn.quote(username)}
+    LIMIT 1
+  SQL
+
+  ensure_last_password_updated!(conn, user_id)
+  user_id
+end
+
+def ensure_bootstrap_users!
+  conn = ActiveRecord::Base.connection
+  required_tables = %w[users person]
+  unless required_tables.all? { |table_name| conn.table_exists?(table_name) }
+    puts 'Skipping default user creation: required tables are missing.'
+    return
+  end
+
+  previous_foreign_key_checks = conn.select_value('SELECT @@FOREIGN_KEY_CHECKS')
+  conn.execute('SET FOREIGN_KEY_CHECKS=0')
+
+  begin
+    location_id = if conn.table_exists?('location')
+                    conn.select_value('SELECT CAST(location_id AS CHAR) FROM location ORDER BY location_id ASC LIMIT 1')
+                  end
+
+    daemon_user_id = ensure_openmrs_user!(
+      conn:,
+      username: 'daemon',
+      password: 'daemon',
+      gender: 'U',
+      location_id:,
+      preferred_user_id: 1
+    )
+
+    admin_user_id = ensure_openmrs_user!(
+      conn:,
+      username: 'admin',
+      password: 'Admin123',
+      gender: 'M',
+      given_name: 'Admin',
+      family_name: 'User',
+      location_id:
+    )
+
+    if conn.table_exists?('role') && conn.table_exists?('user_role')
+      role_names = conn.select_values(<<~SQL)
+        SELECT role
+        FROM role
+        WHERE role IN ('Superuser', 'Global Superuser')
+      SQL
+
+      if role_names.empty?
+        puts 'Skipping admin role assignment: Superuser role not found.'
+      else
+        role_names.each do |role_name|
+          exists = conn.select_value(<<~SQL)
+            SELECT COUNT(*)
+            FROM user_role
+            WHERE user_id = #{admin_user_id}
+              AND role = #{conn.quote(role_name)}
+          SQL
+          next unless exists.to_i.zero?
+
+          conn.execute <<~SQL
+            INSERT INTO user_role (user_id, role)
+            VALUES (#{admin_user_id}, #{conn.quote(role_name)})
+          SQL
+        end
+      end
+    else
+      puts 'Skipping admin role assignment: role tables are missing.'
+    end
+
+    puts "Default users ensured (daemon user_id=#{daemon_user_id}, admin user_id=#{admin_user_id})."
+  ensure
+    conn.execute("SET FOREIGN_KEY_CHECKS=#{previous_foreign_key_checks || 1}")
+  end
+end
+
 begin
   tmp_file = Rails.root.join('tmp', 'metadata.sql')
 
@@ -438,13 +621,7 @@ end
 
 ensure_facility_level_data!
 rebuild_concept_word_index!
-
-if defined?(Role) && defined?(UserRole) && Role.table_exists? && UserRole.table_exists?
-  roles = Role.where(role: ['Superuser', 'Global Superuser'])
-  roles.each { |role| UserRole.find_or_create_by!(user_id: 2, role: role) }
-else
-  puts 'Skipping role assignment: required tables are missing.'
-end
+ensure_bootstrap_users!
 
 puts <<~MSG
   ----------------------------------------
