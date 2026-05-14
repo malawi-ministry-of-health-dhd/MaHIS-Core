@@ -7,6 +7,8 @@ module Api
       APP_CONFIG = YAML.safe_load(File.read('config/application.yml'))
       BASE_FHIR_URL = APP_CONFIG['BASE_FHIR_URL'] # change to your HAPI FHIR URL
       BASE_MEDIATOR_URL = APP_CONFIG['BASE_MEDIATOR_URL']
+      MEDIATOR_OPEN_TIMEOUT_SECONDS = APP_CONFIG.fetch('MEDIATOR_OPEN_TIMEOUT_SECONDS', 2).to_i
+      MEDIATOR_READ_TIMEOUT_SECONDS = APP_CONFIG.fetch('MEDIATOR_READ_TIMEOUT_SECONDS', 6).to_i
 
       SYNC_STATUS_TAG = 'ichis-mahis-pending'.freeze
       IMPORTED_VITALS_TAG_SYSTEM = APP_CONFIG.fetch('FHIR_IMPORTED_VITALS_TAG_SYSTEM', 'http://mahis.gov.mw/fhir/tags').freeze
@@ -179,15 +181,18 @@ module Api
       end
 
       def fetch_mediator_update_status(tei:, event_ids:)
-        response = RestClient.get(
-          mediator_endpoint('status'),
-          {
+        response = RestClient::Request.execute(
+          method: :get,
+          url: mediator_endpoint('status'),
+          headers: {
             params: {
               tei: tei,
               event_ids: Array(event_ids).join(',')
             },
             accept: :json
-          }
+          },
+          open_timeout: MEDIATOR_OPEN_TIMEOUT_SECONDS,
+          timeout: MEDIATOR_READ_TIMEOUT_SECONDS
         )
         JSON.parse(response.body)
       end
