@@ -1,7 +1,9 @@
 module NcdService
   module Reports
     class NcdDashboard
-      def find_report(start_date:, end_date:, **_extra_kwargs)
+      def find_report(start_date:, end_date:, **extra_kwargs)
+        @sections = extra_kwargs[:sections] || []
+        @sections = [@sections] if @sections.is_a?(String)
         dashboard
       end
 
@@ -9,63 +11,65 @@ module NcdService
         @current_date = Date.current
         @location_id = User.current.location_id
         create_cohort_table
-        result = data
+        result = data(sections: @sections)
         drop_cohort_table
         result
       end
 
-      def data
-        gender_quarterly_data = gender_quarterly_breakdown
-        diagnosis_quarterly_data = diagnosis_quarterly_breakdown
-        pending_data = pending_ncd_data
-        
-        {
-          total_client_registered: total_cohort_count,
-          total_male_registered: total_male_registered,
-          total_female_registered: total_female_registered,
-          total_complications: total_complications,
-          total_defaulters: count_defaulters,
-          total_pending_dispensations: count_pending_dispensations,
-          total_pending_ncd_numbers: pending_data[:count],
-          pending_ncd_patients: pending_data[:patients],
-          defaulter_alerts: get_defaulter_alerts,
-          top_conditions: get_top_conditions,
-          gender_data: {
+      def data(sections: [])
+        res = {}
+        all_sections = sections.blank? || sections.include?('all')
+
+        if all_sections || sections.include?('stats')
+          res.merge!({
+            total_client_registered: total_cohort_count,
+            total_male_registered: total_male_registered,
+            total_female_registered: total_female_registered,
+            total_complications: total_complications,
+            total_defaulters: count_defaulters,
+            total_pending_dispensations: count_pending_dispensations
+          })
+        end
+
+        if all_sections || sections.include?('pending_ncd')
+          pending_data = pending_ncd_data
+          res.merge!({
+            total_pending_ncd_numbers: pending_data[:count],
+            pending_ncd_patients: pending_data[:patients]
+          })
+        end
+
+        if all_sections || sections.include?('defaulters')
+          res[:defaulter_alerts] = get_defaulter_alerts
+        end
+
+        if all_sections || sections.include?('top_conditions')
+          res[:top_conditions] = get_top_conditions
+        end
+
+        if all_sections || sections.include?('gender_chart')
+          gender_quarterly_data = gender_quarterly_breakdown
+          res[:gender_data] = {
             categories: gender_quarterly_data[:categories],
             series: [
-              {
-                name: 'Male',
-                data: gender_quarterly_data[:male],
-                group: 'apexcharts-axis-0'
-              },
-              {
-                name: 'Female',
-                data: gender_quarterly_data[:female],
-                group: 'apexcharts-axis-0'
-              }
-            ]
-          },
-          diagnosis_data: {
-            categories: diagnosis_quarterly_data[:categories],
-            series: [
-              {
-                name: 'Type 1 Diabetes',
-                data: diagnosis_quarterly_data[:type_one],
-                group: 'apexcharts-axis-0'
-              },
-              {
-                name: 'Type 2 Diabetes',
-                data: diagnosis_quarterly_data[:type_two],
-                group: 'apexcharts-axis-0'
-              },
-              {
-                name: 'Hypertension',
-                data: diagnosis_quarterly_data[:hypertension],
-                group: 'apexcharts-axis-0'
-              }
+              { name: 'Male', data: gender_quarterly_data[:male], group: 'apexcharts-axis-0' },
+              { name: 'Female', data: gender_quarterly_data[:female], group: 'apexcharts-axis-0' }
             ]
           }
-        }
+        end
+
+        if all_sections || sections.include?('diagnosis_chart')
+          diagnosis_quarterly_data = diagnosis_quarterly_breakdown
+          res[:diagnosis_data] = {
+            categories: diagnosis_quarterly_data[:categories],
+            series: [
+              { name: 'Type 1 Diabetes', data: diagnosis_quarterly_data[:type_one], group: 'apexcharts-axis-0' },
+              { name: 'Type 2 Diabetes', data: diagnosis_quarterly_data[:type_two], group: 'apexcharts-axis-0' },
+              { name: 'Hypertension', data: diagnosis_quarterly_data[:hypertension], group: 'apexcharts-axis-0' }
+            ]
+          }
+        end
+        res
       end
 
       private
