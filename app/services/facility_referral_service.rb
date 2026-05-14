@@ -2,29 +2,36 @@
 
 class FacilityReferralService
   REFERRAL_ENCOUNTER_TYPE_ID = 103 # Referral encounter type ID in OpenMRS
-  DEPARTMENT_CONCEPT_ID = 50_615 
+  DEPARTMENT_CONCEPT_ID = 50_615
   REFERRAL_FACILITY_CONCEPT_ID = 49_528
   PRIMARY_REFERRAL_CONCEPT_IDS = [DEPARTMENT_CONCEPT_ID, REFERRAL_FACILITY_CONCEPT_ID].freeze
+  DEFAULT_LIMIT = 50
+  MAX_LIMIT = 100
   PROGRAM_DEPARTMENT_NAMES = {
     19 => 'ANC Connect',
     36 => 'Labour and Delivery'
   }.freeze
 
   def index(filters)
-    referrals = referral_rows(filters)
-    return [] if referrals.blank?
+    pagination = pagination_params(filters)
+    referrals = referral_rows(filters, pagination)
 
-    details_by_encounter = other_details_by_encounter(referrals.pluck('encounter_id'))
+    if referrals.present?
+      details_by_encounter = other_details_by_encounter(referrals.pluck('encounter_id'))
 
-    referrals.each do |referral|
-      referral['other_details'] = details_by_encounter.fetch(referral['encounter_id'], [])
+      referrals.each do |referral|
+        referral['other_details'] = details_by_encounter.fetch(referral['encounter_id'], [])
+      end
     end
+
+    paginated_response(referrals, pagination)
   end
 
   private
 
-  def referral_rows(filters)
+  def referral_rows(filters, pagination)
     sql = sanitize_sql([base_referral_sql(filters), bind_values(filters)])
+    sql = "#{sql} LIMIT #{pagination[:limit]} OFFSET #{pagination[:offset]}"
 
     ActiveRecord::Base.connection.select_all(sql).to_a.map do |row|
       normalize_referral_row(row)
@@ -134,6 +141,31 @@ class FacilityReferralService
       WHERE #{where_clause(filters)}
       ORDER BY e.encounter_datetime DESC, e.encounter_id DESC
     SQL
+  end
+
+  def paginated_response(referrals, pagination)
+    {
+      data: referrals,
+      count: referrals.length,
+      page: pagination[:page],
+      limit: pagination[:limit],
+      max_limit: MAX_LIMIT
+    }
+  end
+
+  def pagination_params(filters)
+    limit = integer_value(normalized_filter(filters[:limit] || filters[:page_size]))
+    limit = DEFAULT_LIMIT if limit.nil? || limit <= 0
+    limit = [limit, MAX_LIMIT].min
+
+    page = integer_value(normalized_filter(filters[:page]))
+    page = 1 if page.nil? || page <= 0
+
+    {
+      page: page,
+      limit: limit,
+      offset: (page - 1) * limit
+    }
   end
 
   def where_clause(filters)
