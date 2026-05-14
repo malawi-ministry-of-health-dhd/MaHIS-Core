@@ -132,30 +132,47 @@ module FhirService
         status: normalized_tei.present? ? 'missing_identifier' : 'skipped',
         code: nil
       }
-      if normalized_tei.present? && mahis_identifier.present?
-        identifier_sync[:attempted] = true
-        identifier_response = sendEMRIdToMediator(
-          identifier: mahis_identifier,
-          TEI: normalized_tei
-        )
-        identifier_sync[:code] = identifier_response&.code.to_i if identifier_response&.code
-        identifier_sync[:status] = successful_mediator_response?(identifier_response) ? 'updated' : 'error'
-      end
 
       referral_sync = {
         attempted: false,
         status: resolved_event_id.present? ? 'pending' : 'missing_event_id',
         code: nil
       }
+
+      sync_threads = {}
+
+      if normalized_tei.present? && mahis_identifier.present?
+        identifier_sync[:attempted] = true
+        sync_threads[:identifier] = Thread.new do
+          sendEMRIdToMediator(
+            identifier: mahis_identifier,
+            TEI: normalized_tei
+          )
+        end
+      end
+
       if resolved_event_id.present?
         referral_sync[:attempted] = true
-        referral_response = sendReferralResultsToMediator(
-          normalized_patient_id,
-          diagnosis: diagnoses,
-          treatment_plan: treatment_plan,
-          enrolled_in_care: enrolled_in_care,
-          event_id: resolved_event_id
-        )
+        sync_threads[:referral] = Thread.new do
+          sendReferralResultsToMediator(
+            normalized_patient_id,
+            diagnosis: diagnoses,
+            treatment_plan: treatment_plan,
+            enrolled_in_care: enrolled_in_care,
+            event_id: resolved_event_id
+          )
+        end
+      end
+
+      identifier_response = safe_sync_thread_result(sync_threads[:identifier], :identifier, normalized_patient_id)
+      referral_response = safe_sync_thread_result(sync_threads[:referral], :referral, normalized_patient_id)
+
+      if identifier_sync[:attempted]
+        identifier_sync[:code] = identifier_response&.code.to_i if identifier_response&.code
+        identifier_sync[:status] = successful_mediator_response?(identifier_response) ? 'updated' : 'error'
+      end
+
+      if referral_sync[:attempted]
         referral_sync[:code] = referral_response&.code.to_i if referral_response&.code
         referral_sync[:status] = successful_mediator_response?(referral_response) ? 'updated' : 'error'
       end
@@ -312,6 +329,15 @@ module FhirService
 
     def successful_mediator_response?(response)
       response&.code.to_i.between?(200, 299)
+    end
+
+    def safe_sync_thread_result(thread, sync_kind, patient_id)
+      return nil unless thread
+
+      thread.value
+    rescue StandardError => e
+      Rails.logger.error("Referral status #{sync_kind} sync thread failed for patient #{patient_id}: #{e.class}: #{e.message}")
+      nil
     end
 
     def referral_status_candidate_patient_ids(limit:, cutoff_time:)

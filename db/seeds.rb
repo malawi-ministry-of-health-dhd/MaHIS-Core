@@ -235,6 +235,7 @@ def import_routines_from_skeleton!(skeleton_path:, username:, password:, host:, 
       awk '
         /^\\/\\*!50003 DROP (FUNCTION|PROCEDURE) IF EXISTS/ {capture=1}
         capture {print}
+        capture && /^\\/\\*!50003 SET collation_connection[[:space:]]*=[[:space:]]*@saved_col_connection[[:space:]]*\\*\\/[[:space:]]*;/ {capture=0}
       ' |
       sed -E 's/DEFINER[[:space:]]*=[[:space:]]*`[^`]+`@`[^`]+`[[:space:]]*//g' |
       #{mysql_cmd}
