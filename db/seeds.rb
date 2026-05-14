@@ -680,6 +680,14 @@ def ensure_bootstrap_users!
       preferred_user_id: 1
     )
 
+    lab_daemon_user_id = ensure_openmrs_user!(
+      conn:,
+      username: 'lab_daemon',
+      password: 'lab_daemon',
+      gender: 'U',
+      location_id:
+    )
+
     admin_user_id = ensure_openmrs_user!(
       conn:,
       username: 'admin',
@@ -719,7 +727,7 @@ def ensure_bootstrap_users!
       puts 'Skipping admin role assignment: role tables are missing.'
     end
 
-    puts "Default users ensured (daemon user_id=#{daemon_user_id}, admin user_id=#{admin_user_id})."
+    puts "Default users ensured (daemon user_id=#{daemon_user_id}, lab_daemon user_id=#{lab_daemon_user_id}, admin user_id=#{admin_user_id})."
   ensure
     conn.execute("SET FOREIGN_KEY_CHECKS=#{previous_foreign_key_checks || 1}")
   end
