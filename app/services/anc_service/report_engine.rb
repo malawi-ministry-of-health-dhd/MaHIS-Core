@@ -32,6 +32,10 @@ module AncService
       cohort.disaggregated(date, start_date, end_date)
     end
 
+    def dashboard_stats(date = nil, location_id: nil)
+      MnhService::Engine.new.anc_stats(nil, date, location_id: location_id)
+    end
+
     private
 
     def call_report_manager(method, type:, **kwargs)

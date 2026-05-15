@@ -10,16 +10,16 @@ class RegimenService
     @engine = load_engine program_id
   end
 
-  def method_missing(method, **args, &block)
-    Rails.logger.debug "Executing missing method: #{method}. With these arguments: #{args}"
-    return @engine.send(method, **args, &block) if respond_to_missing?(method)
+  def method_missing(method, *args, **kwargs, &block)
+    Rails.logger.debug "Executing missing method: #{method}. With these arguments: #{args} #{kwargs}"
+    return @engine.send(method, *args, **kwargs, &block) if respond_to_missing?(method)
 
-    super(method, **args, &block)
+    super(method, *args, **kwargs, &block)
   end
 
-  def respond_to_missing?(method)
+  def respond_to_missing?(method, include_private = false)
     Rails.logger.debug "Engine responds to #{method}? #{@engine.respond_to?(method)}"
-    @engine.respond_to?(method)
+    @engine.respond_to?(method) || super
   end
 
   private

@@ -12,7 +12,7 @@ FactoryBot.define do
     obs_datetime { Time.now }
 
     factory :obs_appointment do
-      concept do
+      add_attribute(:concept) do
         Concept.joins(:concept_names)
                .where('concept_name.name = ?', 'Appointment Date')
                .first

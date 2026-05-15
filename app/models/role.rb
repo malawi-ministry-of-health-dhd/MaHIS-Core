@@ -6,11 +6,16 @@ class Role < ApplicationRecord
 
   # include Openmrs
 
+  belongs_to :location, foreign_key: :location_id, primary_key: :location_id, optional: true
   has_many :role_roles, foreign_key: :parent_role # A role has sub roles?
   has_many :role_privileges, foreign_key: :role, dependent: :delete_all
   has_many :privileges, through: :role_privileges, foreign_key: :role
   has_many :user_roles, foreign_key: :role, class_name: 'UserRole'
   has_many :roles, through: :user_roles, foreign_key: :role
+
+  def self.location_scoped?
+    column_names.include?('location_id')
+  end
 
   def self.setup_privileges_for_roles
     privileges = Privilege.all

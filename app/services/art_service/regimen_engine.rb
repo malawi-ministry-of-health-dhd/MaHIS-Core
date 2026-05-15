@@ -223,7 +223,8 @@ module ArtService
         pack_size: drug.drug_cms&.pack_size,
         barcodes: drug.barcodes.collect { |barcode| { tabs: barcode.tabs } },
         regimen_category:,
-        frequency:
+        frequency:,
+        drug_type: find_drug_type(drug)
       }
     end
 

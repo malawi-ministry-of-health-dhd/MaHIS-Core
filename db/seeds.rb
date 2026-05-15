@@ -3,6 +3,10 @@
 require 'yaml'
 require 'open-uri'
 require 'fileutils'
+require 'digest/sha1'
+require 'securerandom'
+require 'shellwords'
+require 'tempfile'
 
 if ENV['INITIAL_SETUP']
   puts "\e[31mWARNING: This will wipe out your database. Do you want to continue? (y/N)\e[0m"
@@ -64,6 +68,20 @@ def apply_metadata_compatibility_fixes!(file_path)
   changed = false
 
   concept_map_type_id_type = conn.select_value(<<~SQL)
+    SELECT c.COLUMN_TYPE
+    FROM information_schema.KEY_COLUMN_USAGE k
+    INNER JOIN information_schema.COLUMNS c
+      ON c.TABLE_SCHEMA = k.TABLE_SCHEMA
+     AND c.TABLE_NAME = k.TABLE_NAME
+     AND c.COLUMN_NAME = k.COLUMN_NAME
+    WHERE k.TABLE_SCHEMA = DATABASE()
+      AND k.REFERENCED_TABLE_NAME = 'concept_map_type'
+      AND k.REFERENCED_COLUMN_NAME = 'concept_map_type_id'
+    ORDER BY (k.TABLE_NAME = 'concept_reference_map') DESC, k.TABLE_NAME
+    LIMIT 1
+  SQL
+
+  concept_map_type_id_type ||= conn.select_value(<<~SQL)
     SELECT COLUMN_TYPE
     FROM information_schema.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE()
@@ -76,14 +94,14 @@ def apply_metadata_compatibility_fixes!(file_path)
 
   if concept_map_type_id_type.present?
     updated_sql = sql.gsub(
-      /(`concept_map_type_id`\s+)(?:int(?:\(\d+\))?(?: unsigned)?|bigint(?:\(\d+\))?(?: unsigned)?)(\s+NOT NULL DEFAULT '1',)/i,
-      "\\1#{concept_map_type_id_type}\\2"
+      /(`concept_map_type_id`\s+)(?:int(?:\(\d+\))?(?: unsigned)?|bigint(?:\(\d+\))?(?: unsigned)?)(?=\s)/i,
+      "\\1#{concept_map_type_id_type}"
     )
 
     if updated_sql != sql
       sql = updated_sql
       changed = true
-      puts "Applied metadata compatibility fix: concept_reference_map.concept_map_type_id -> #{concept_map_type_id_type}"
+      puts "Applied metadata compatibility fix: aligned concept_map_type_id column type to #{concept_map_type_id_type}"
     end
   end
 
@@ -102,6 +120,7 @@ end
 def import_sql_file!(file_path:, username:, password:, host:, port:, database:)
   raise "SQL file not found: #{file_path}" unless File.exist?(file_path)
 
+  import_path = prepare_sql_for_import(file_path)
   command = mysql_import_command(
     username: username,
     password: password,
@@ -110,10 +129,157 @@ def import_sql_file!(file_path:, username:, password:, host:, port:, database:)
     database: database
   )
 
-  return if system(*command, in: file_path.to_s)
+  return if system(*command, in: import_path)
 
   exit_code = $?.respond_to?(:exitstatus) ? $?.exitstatus : 'unknown'
   raise "Import failed for #{File.basename(file_path)} (exit code: #{exit_code})"
+ensure
+  cleanup_prepared_sql_file!(original_path: file_path, prepared_path: import_path)
+end
+
+def import_sql_or_gzip_file!(file_path:, username:, password:, host:, port:, database:)
+  file_path = file_path.to_s
+  raise "SQL file not found: #{file_path}" unless File.exist?(file_path)
+
+  unless File.extname(file_path) == '.gz'
+    return import_sql_file!(
+      file_path: file_path,
+      username: username,
+      password: password,
+      host: host,
+      port: port,
+      database: database
+    )
+  end
+
+  tmp_file = Tempfile.new(['seed_import_', '.sql'], Rails.root.join('tmp'))
+  tmp_file.close
+
+  command = <<~BASH
+    set -o pipefail
+    gunzip -c #{Shellwords.escape(file_path)} > #{Shellwords.escape(tmp_file.path)}
+  BASH
+
+  unless system('bash', '-lc', command)
+    exit_code = $?.respond_to?(:exitstatus) ? $?.exitstatus : 'unknown'
+    raise "Failed to decompress #{File.basename(file_path)} (exit code: #{exit_code})"
+  end
+
+  import_sql_file!(
+    file_path: tmp_file.path,
+    username: username,
+    password: password,
+    host: host,
+    port: port,
+    database: database
+  )
+ensure
+  tmp_file&.unlink if defined?(tmp_file) && tmp_file && File.exist?(tmp_file.path)
+end
+
+def strip_definer_clauses(sql)
+  sql.gsub(/\bDEFINER\s*=\s*`[^`]+`@`[^`]+`\s*/i, '')
+end
+
+def prepare_sql_for_import(file_path)
+  file_path = file_path.to_s
+  sql = File.read(file_path)
+  sanitized_sql = strip_definer_clauses(sql)
+  return file_path if sanitized_sql == sql
+
+  FileUtils.mkdir_p(Rails.root.join('tmp'))
+  sanitized_file = Tempfile.new(['seed_sanitized_', '.sql'], Rails.root.join('tmp'))
+  sanitized_file.write(sanitized_sql)
+  sanitized_file.flush
+  sanitized_file.close
+
+  puts "Sanitized DEFINER clauses for #{File.basename(file_path)}."
+  sanitized_file.path
+end
+
+def cleanup_prepared_sql_file!(original_path:, prepared_path:)
+  return if prepared_path.nil? || prepared_path.to_s.empty?
+  return if original_path.to_s == prepared_path.to_s
+  return unless File.exist?(prepared_path.to_s)
+
+  File.delete(prepared_path.to_s)
+end
+
+def routine_exists?(routine_name)
+  conn = ActiveRecord::Base.connection
+  conn.select_value(<<~SQL).to_i.positive?
+    SELECT COUNT(*)
+    FROM information_schema.ROUTINES
+    WHERE ROUTINE_SCHEMA = DATABASE()
+      AND ROUTINE_NAME = #{conn.quote(routine_name)}
+  SQL
+end
+
+def import_routines_from_skeleton!(skeleton_path:, username:, password:, host:, port:, database:)
+  skeleton_path = skeleton_path.to_s
+  raise "Skeleton SQL file not found: #{skeleton_path}" unless File.exist?(skeleton_path)
+
+  mysql_cmd = Shellwords.join(
+    mysql_import_command(
+      username: username,
+      password: password,
+      host: host,
+      port: port,
+      database: database
+    )
+  )
+
+  command = <<~BASH
+    set -o pipefail
+    gunzip -c #{Shellwords.escape(skeleton_path)} |
+      awk '
+        /^\\/\\*!50003 DROP (FUNCTION|PROCEDURE) IF EXISTS/ {capture=1}
+        capture {print}
+        capture && /^\\/\\*!50003 SET collation_connection[[:space:]]*=[[:space:]]*@saved_col_connection[[:space:]]*\\*\\/[[:space:]]*;/ {capture=0}
+      ' |
+      sed -E 's/DEFINER[[:space:]]*=[[:space:]]*`[^`]+`@`[^`]+`[[:space:]]*//g' |
+      #{mysql_cmd}
+  BASH
+
+  return if system('bash', '-lc', command)
+
+  exit_code = $?.respond_to?(:exitstatus) ? $?.exitstatus : 'unknown'
+  raise "Routine import failed from #{File.basename(skeleton_path)} (exit code: #{exit_code})"
+end
+
+def ensure_required_routines!(username:, password:, host:, port:, database:)
+  required_routines = %w[
+    patient_start_date
+    patient_outcome
+    current_defaulter_date
+  ]
+  missing_routines = required_routines.reject { |routine_name| routine_exists?(routine_name) }
+
+  if missing_routines.empty?
+    puts 'Required SQL routines already present.'
+    return
+  end
+
+  skeleton_path = Rails.root.join('db', 'mahis_skeleton.sql.gz')
+  unless File.exist?(skeleton_path)
+    puts "Missing SQL routines (#{missing_routines.join(', ')}), but #{skeleton_path} was not found."
+    return
+  end
+
+  puts "Missing SQL routines detected (#{missing_routines.join(', ')}). Loading routines from #{skeleton_path}..."
+  import_routines_from_skeleton!(
+    skeleton_path: skeleton_path,
+    username: username,
+    password: password,
+    host: host,
+    port: port,
+    database: database
+  )
+
+  still_missing = required_routines.reject { |routine_name| routine_exists?(routine_name) }
+  return if still_missing.empty?
+
+  raise "Routine bootstrap failed. Missing routines after import: #{still_missing.join(', ')}"
 end
 
 def concept_word_parts(phrase, locale)
@@ -378,6 +544,230 @@ def ensure_facility_level_data!
   SQL
 end
 
+def ensure_last_password_updated!(conn, user_id)
+  return unless conn.table_exists?('user_property')
+
+  exists = conn.select_value(<<~SQL)
+    SELECT COUNT(*)
+    FROM user_property
+    WHERE user_id = #{user_id.to_i}
+      AND property = 'last_password_updated'
+  SQL
+
+  return unless exists.to_i.zero?
+
+  conn.execute <<~SQL
+    INSERT INTO user_property (user_id, property, property_value)
+    VALUES (#{user_id.to_i}, 'last_password_updated', #{conn.quote(Time.now.iso8601)})
+  SQL
+end
+
+def ensure_openmrs_user!(conn:, username:, password:, gender:, location_id:, preferred_user_id: nil, given_name: nil, family_name: nil)
+  existing_user_id = conn.select_value(<<~SQL)
+    SELECT user_id
+    FROM users
+    WHERE username = #{conn.quote(username)}
+    LIMIT 1
+  SQL
+
+  if existing_user_id.present?
+    ensure_last_password_updated!(conn, existing_user_id)
+    return existing_user_id.to_i
+  end
+
+  person_uuid = SecureRandom.uuid
+  conn.execute <<~SQL
+    INSERT INTO person (gender, creator, date_created, voided, uuid)
+    VALUES (#{conn.quote(gender)}, 1, NOW(), 0, #{conn.quote(person_uuid)})
+  SQL
+
+  person_id = conn.select_value(<<~SQL).to_i
+    SELECT person_id
+    FROM person
+    WHERE uuid = #{conn.quote(person_uuid)}
+    LIMIT 1
+  SQL
+
+  if given_name.present? && family_name.present?
+    conn.execute <<~SQL
+      INSERT INTO person_name
+        (person_id, given_name, family_name, preferred, creator, date_created, voided, uuid)
+      VALUES
+        (
+          #{person_id},
+          #{conn.quote(given_name)},
+          #{conn.quote(family_name)},
+          1,
+          1,
+          NOW(),
+          0,
+          UUID()
+        )
+    SQL
+  end
+
+  salt = SecureRandom.base64
+  password_hash = Digest::SHA1.hexdigest("#{password}#{salt}")
+
+  requested_user_id = preferred_user_id.to_i if preferred_user_id.present?
+  use_requested_user_id = requested_user_id.present? &&
+                          conn.select_value("SELECT COUNT(*) FROM users WHERE user_id = #{requested_user_id}").to_i.zero?
+
+  user_id_columns = use_requested_user_id ? 'user_id, ' : ''
+  user_id_values = use_requested_user_id ? "#{requested_user_id}, " : ''
+  location_value = location_id.present? ? conn.quote(location_id.to_s) : 'NULL'
+
+  conn.execute <<~SQL
+    INSERT INTO users
+      (
+        #{user_id_columns}username,
+        password,
+        salt,
+        person_id,
+        creator,
+        date_created,
+        retired,
+        uuid,
+        location_id
+      )
+    VALUES
+      (
+        #{user_id_values}#{conn.quote(username)},
+        #{conn.quote(password_hash)},
+        #{conn.quote(salt)},
+        #{person_id},
+        1,
+        NOW(),
+        0,
+        UUID(),
+        #{location_value}
+      )
+  SQL
+
+  user_id = conn.select_value(<<~SQL).to_i
+    SELECT user_id
+    FROM users
+    WHERE username = #{conn.quote(username)}
+    LIMIT 1
+  SQL
+
+  ensure_last_password_updated!(conn, user_id)
+  user_id
+end
+
+def ensure_bootstrap_users!
+  conn = ActiveRecord::Base.connection
+  required_tables = %w[users person]
+  unless required_tables.all? { |table_name| conn.table_exists?(table_name) }
+    puts 'Skipping default user creation: required tables are missing.'
+    return
+  end
+
+  previous_foreign_key_checks = conn.select_value('SELECT @@FOREIGN_KEY_CHECKS')
+  conn.execute('SET FOREIGN_KEY_CHECKS=0')
+
+  begin
+    location_id = if conn.table_exists?('location')
+                    conn.select_value('SELECT CAST(location_id AS CHAR) FROM location ORDER BY location_id ASC LIMIT 1')
+                  end
+
+    daemon_user_id = ensure_openmrs_user!(
+      conn:,
+      username: 'daemon',
+      password: 'daemon',
+      gender: 'U',
+      location_id:,
+      preferred_user_id: 1
+    )
+
+    lab_daemon_user_id = ensure_openmrs_user!(
+      conn:,
+      username: 'lab_daemon',
+      password: 'lab_daemon',
+      gender: 'U',
+      location_id:
+    )
+
+    admin_user_id = ensure_openmrs_user!(
+      conn:,
+      username: 'admin',
+      password: 'Admin123',
+      gender: 'M',
+      given_name: 'Admin',
+      family_name: 'User',
+      location_id:
+    )
+
+    if conn.table_exists?('role') && conn.table_exists?('user_role')
+      role_names = conn.select_values(<<~SQL)
+        SELECT role
+        FROM role
+        WHERE role IN ('Superuser', 'Global Superuser')
+      SQL
+
+      if role_names.empty?
+        puts 'Skipping admin role assignment: Superuser role not found.'
+      else
+        role_names.each do |role_name|
+          exists = conn.select_value(<<~SQL)
+            SELECT COUNT(*)
+            FROM user_role
+            WHERE user_id = #{admin_user_id}
+              AND role = #{conn.quote(role_name)}
+          SQL
+          next unless exists.to_i.zero?
+
+          conn.execute <<~SQL
+            INSERT INTO user_role (user_id, role)
+            VALUES (#{admin_user_id}, #{conn.quote(role_name)})
+          SQL
+        end
+      end
+    else
+      puts 'Skipping admin role assignment: role tables are missing.'
+    end
+
+    puts "Default users ensured (daemon user_id=#{daemon_user_id}, lab_daemon user_id=#{lab_daemon_user_id}, admin user_id=#{admin_user_id})."
+  ensure
+    conn.execute("SET FOREIGN_KEY_CHECKS=#{previous_foreign_key_checks || 1}")
+  end
+end
+
+local_sql_files = Dir.glob([
+  Rails.root.join('db', 'data', '*.sql').to_s,
+  Rails.root.join('db', 'data', '*.sql.gz').to_s
+]).sort
+
+if local_sql_files.any?
+  local_sql_files.each_with_index do |file_path, idx|
+    puts "Importing local SQL file #{idx + 1}/#{local_sql_files.size}: #{File.basename(file_path)}..."
+
+    next if %w[locations.sql locations.sql.gz].include?(File.basename(file_path)) &&
+            defined?(Location) &&
+            Location.table_exists? &&
+            Location.count.positive?
+
+    import_sql_or_gzip_file!(
+      file_path: file_path,
+      username: username,
+      password: password,
+      host: host,
+      port: port,
+      database: database
+    )
+  end
+else
+  puts 'No additional local .sql files to import in db/data.'
+end
+
+ensure_required_routines!(
+  username: username,
+  password: password,
+  host: host,
+  port: port,
+  database: database
+)
+
 begin
   tmp_file = Rails.root.join('tmp', 'metadata.sql')
 
@@ -398,39 +788,9 @@ rescue StandardError => e
   raise "Failed to import metadata from GitHub: #{e.message}"
 end
 
-local_sql_files = Dir.glob(Rails.root.join('db', 'data', '*.sql')).sort
-
-if local_sql_files.any?
-  local_sql_files.each_with_index do |file_path, idx|
-    puts "Importing local SQL file #{idx + 1}/#{local_sql_files.size}: #{File.basename(file_path)}..."
-
-    next if File.basename(file_path) == 'locations.sql' &&
-            defined?(Location) &&
-            Location.table_exists? &&
-            Location.count.positive?
-
-    import_sql_file!(
-      file_path: file_path,
-      username: username,
-      password: password,
-      host: host,
-      port: port,
-      database: database
-    )
-  end
-else
-  puts 'No additional local .sql files to import in db/data.'
-end
-
 ensure_facility_level_data!
 rebuild_concept_word_index!
-
-if defined?(Role) && defined?(UserRole) && Role.table_exists? && UserRole.table_exists?
-  roles = Role.where(role: ['Superuser', 'Global Superuser'])
-  roles.each { |role| UserRole.find_or_create_by!(user_id: 2, role: role) }
-else
-  puts 'Skipping role assignment: required tables are missing.'
-end
+ensure_bootstrap_users!
 
 puts <<~MSG
   ----------------------------------------
