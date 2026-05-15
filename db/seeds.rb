@@ -247,6 +247,71 @@ def import_routines_from_skeleton!(skeleton_path:, username:, password:, host:, 
   raise "Routine import failed from #{File.basename(skeleton_path)} (exit code: #{exit_code})"
 end
 
+def extract_routine_blocks_from_skeleton(skeleton_path:, routine_names:)
+  return [] if routine_names.blank?
+
+  routine_names_downcase = routine_names.map { |name| name.to_s.downcase }.uniq
+  blocks = []
+  current_lines = []
+  capturing = false
+  current_routine = nil
+
+  IO.popen(['gunzip', '-c', skeleton_path.to_s], 'r') do |io|
+    io.each_line do |line|
+      if !capturing
+        match = line.match(%r{^/\*!50003 DROP (FUNCTION|PROCEDURE) IF EXISTS `([^`]+)` \*/;})
+        next unless match
+
+        routine_name = match[2].to_s.downcase
+        next unless routine_names_downcase.include?(routine_name)
+
+        capturing = true
+        current_routine = routine_name
+        current_lines = [line]
+        next
+      end
+
+      current_lines << line
+
+      next unless line.match?(%r{^/\*!50003 SET collation_connection[[:space:]]*=[[:space:]]*@saved_col_connection[[:space:]]*\*/[[:space:]]*;})
+
+      blocks << current_lines.join if current_routine && routine_names_downcase.include?(current_routine)
+      capturing = false
+      current_routine = nil
+      current_lines = []
+    end
+  end
+
+  blocks
+end
+
+def import_targeted_routines_from_skeleton!(skeleton_path:, routine_names:, username:, password:, host:, port:, database:)
+  blocks = extract_routine_blocks_from_skeleton(skeleton_path: skeleton_path, routine_names: routine_names)
+  return if blocks.empty?
+
+  sql = strip_definer_clauses(blocks.join("\n"))
+  return if sql.blank?
+
+  FileUtils.mkdir_p(Rails.root.join('tmp'))
+  tmp_file = Tempfile.new(['targeted_routines_', '.sql'], Rails.root.join('tmp'))
+  tmp_file.write(sql)
+  tmp_file.flush
+  tmp_file.close
+
+  begin
+    import_sql_file!(
+      file_path: tmp_file.path,
+      username: username,
+      password: password,
+      host: host,
+      port: port,
+      database: database
+    )
+  ensure
+    tmp_file.unlink if File.exist?(tmp_file.path)
+  end
+end
+
 def ensure_required_routines!(username:, password:, host:, port:, database:)
   required_routines = %w[
     patient_start_date
@@ -275,6 +340,20 @@ def ensure_required_routines!(username:, password:, host:, port:, database:)
     port: port,
     database: database
   )
+
+  still_missing = required_routines.reject { |routine_name| routine_exists?(routine_name) }
+  if still_missing.any?
+    puts "Routine bootstrap retry: importing missing routines directly (#{still_missing.join(', ')})..."
+    import_targeted_routines_from_skeleton!(
+      skeleton_path: skeleton_path,
+      routine_names: still_missing,
+      username: username,
+      password: password,
+      host: host,
+      port: port,
+      database: database
+    )
+  end
 
   still_missing = required_routines.reject { |routine_name| routine_exists?(routine_name) }
   return if still_missing.empty?
