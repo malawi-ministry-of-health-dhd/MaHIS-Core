@@ -206,13 +206,15 @@ def cleanup_prepared_sql_file!(original_path:, prepared_path:)
 end
 
 def routine_exists?(routine_name)
-  conn = ActiveRecord::Base.connection
-  conn.select_value(<<~SQL).to_i.positive?
-    SELECT COUNT(*)
-    FROM information_schema.ROUTINES
-    WHERE ROUTINE_SCHEMA = DATABASE()
-      AND ROUTINE_NAME = #{conn.quote(routine_name)}
-  SQL
+  ActiveRecord::Base.uncached do
+    conn = ActiveRecord::Base.connection
+    conn.select_value(<<~SQL).to_i.positive?
+      SELECT COUNT(*)
+      FROM information_schema.ROUTINES
+      WHERE ROUTINE_SCHEMA = DATABASE()
+        AND ROUTINE_NAME = #{conn.quote(routine_name)}
+    SQL
+  end
 end
 
 def import_routines_from_skeleton!(skeleton_path:, username:, password:, host:, port:, database:)
