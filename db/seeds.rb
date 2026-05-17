@@ -872,6 +872,7 @@ end
 ensure_facility_level_data!
 rebuild_concept_word_index!
 ensure_bootstrap_users!
+load Rails.root.join('db', 'seeds', 'privileges_seed.rb')
 
 puts <<~MSG
   ----------------------------------------
