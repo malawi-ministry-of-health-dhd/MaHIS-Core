@@ -130,14 +130,35 @@ module PatientRecordService
     end
 
     def create_ncd_identifier(patient_id, record)
-      if record[:NcdID] == "-" || record[:unsavedNcdID].present?
-        PatientIdentifierService.create(
-          patient_id:      patient_id,
-          identifier:      record[:unsavedNcdID] || find_next_available_ncd_number(record[:location_id]),
-          identifier_type: 31,
-          location_id:     record[:location_id]
-        )
+      ncd_id = record[:NcdID].presence || record['NcdID'].presence
+      unsaved_ncd_id = record[:unsavedNcdID].presence || record['unsavedNcdID'].presence
+      location_id = extract_location_id(record)
+      return ok unless ncd_id == "-" || unsaved_ncd_id.present?
+
+      existing_ncd_identifiers = PatientIdentifier.where(patient_id: patient_id, identifier_type: 31)
+                                                 .order(date_created: :desc)
+                                                 .to_a
+      if existing_ncd_identifiers.present?
+        canonical_ncd_identifier = existing_ncd_identifiers.first
+        existing_ncd_identifiers.drop(1).each do |duplicate_ncd_identifier|
+          duplicate_ncd_identifier.void("Duplicate NCD number cleanup by #{User.current.username}")
+        end
+        record[:NcdID] = canonical_ncd_identifier.identifier
+        record['NcdID'] = canonical_ncd_identifier.identifier
+        return ok
       end
+
+      resolved_ncd_identifier = unsaved_ncd_id.to_s.strip
+      resolved_ncd_identifier = find_next_available_ncd_number(location_id) if resolved_ncd_identifier.blank?
+
+      PatientIdentifierService.create(
+        patient_id:      patient_id,
+        identifier:      resolved_ncd_identifier,
+        identifier_type: 31,
+        location_id:     location_id
+      )
+      record[:NcdID] = resolved_ncd_identifier
+      record['NcdID'] = resolved_ncd_identifier
 
       ok
     rescue StandardError => e
