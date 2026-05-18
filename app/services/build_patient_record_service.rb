@@ -210,8 +210,8 @@ module BuildPatientRecordService
 
 
     def fetch_active_programs(patient_id)
-      PatientProgram
-        .where(patient_id: patient_id)
+      PatientProgram.unscoped
+        .where(patient_id: patient_id, voided: 0)
         .includes(:patient_states, program: { concept: :concept_names })
         .map(&:as_json)
     end

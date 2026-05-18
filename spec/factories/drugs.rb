@@ -8,7 +8,7 @@ FactoryBot.define do
     date_created { Time.now }
 
     factory :lacoca_drug do
-      concept do
+      add_attribute(:concept) do
         concept = create(:concept)
         create(:concept_name, concept:)
 

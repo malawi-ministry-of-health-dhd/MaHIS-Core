@@ -553,7 +553,7 @@ module Sync
         response = RestClient.get(view_url)
         result = JSON.parse(response.body)
         
-        return result['total_rows'] || 0
+        return result['rows']&.length || 0
         
       rescue RestClient::NotFound
         Sidekiq.logger.info "CouchDB database '#{db_name}' not found. Will be created during sync."

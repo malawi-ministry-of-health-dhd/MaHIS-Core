@@ -5,7 +5,9 @@ module PatientRecordService
   class ObservationSaver < BaseSaver
     NCD_PROGRAM_ID = 32
     PRIMARY_DIAGNOSIS_CONCEPT_NAME = "primary diagnosis".freeze
+    NOTES_ENCOUNTER_TYPE_NAME = "notes".freeze
     DIABETES_DIAGNOSIS_CONCEPT_NAMES = [
+      "unspecified diabetes",
       "type 1 diabetes mellitus",
       "type 2 diabetes mellitus"
     ].freeze
@@ -19,19 +21,20 @@ module PatientRecordService
     ].freeze
 
     def save_all_observations(patient_id, record)
-      data = record.dig(:observations)
-      return ok unless data&.any?
+      data = value_for(record, :observations)
+      return send_enrolled_in_care_without_new_observations(patient_id, record) unless data&.any?
 
-      unsaved_items = data.select { |item| item.present? && item[:status] == "unsaved" && normalized_observations(item[:obs]).any? }
-      return ok if unsaved_items.empty?
+      unsaved_items = data.select do |item|
+        item.present? && value_for(item, :status) == "unsaved" && normalized_observations(value_for(item, :obs)).any?
+      end
+      return send_enrolled_in_care_without_new_observations(patient_id, record) if unsaved_items.empty?
 
       collected_errors = []
-      sent_confirmed_diagnoses = {}
 
       unsaved_items.each do |item|
-        encounter_type = EncounterType.find_by_encounter_type_id(item[:encounter_type])
+        encounter_type = EncounterType.find_by_encounter_type_id(value_for(item, :encounter_type))
         unless encounter_type
-          collected_errors << "Unknown encounter_type id=#{item[:encounter_type]}"
+          collected_errors << "Unknown encounter_type id=#{value_for(item, :encounter_type)}"
           next
         end
 
@@ -40,7 +43,7 @@ module PatientRecordService
             encounter_id = create_encounter(patient_id, encounter_type.id, item)
             encounter    = Encounter.find(encounter_id)
 
-            normalized_observations(item[:obs]).each do |archetype|
+            normalized_observations(value_for(item, :obs)).each do |archetype|
               begin
                 params = to_permitted_params(archetype)
                 params[:location_id] = record[:location_id]
@@ -49,12 +52,7 @@ module PatientRecordService
                   next
                 end
 
-                confirmed_diagnosis = confirmed_ncd_diagnosis(record, params)
                 observation_service.create_observation(encounter, params)
-                if confirmed_diagnosis && !sent_confirmed_diagnoses[confirmed_diagnosis]
-                  FhirService.sendConfirmedDiagnosisToMediator(patient_id, confirmed_diagnosis)
-                  sent_confirmed_diagnoses[confirmed_diagnosis] = true
-                end
               rescue StandardError => e
                 log_error("Error saving obs for encounter #{encounter_id}", e)
                 collected_errors << "Encounter #{encounter_type.name}, obs #{format_observation_reference(archetype)}: #{e.message}"
@@ -70,6 +68,8 @@ module PatientRecordService
       end
 
       OperationResult.new(success: true, errors: collected_errors)
+    ensure
+      clear_referral_enrolled_in_care_flag(record)
     end
 
     private
@@ -114,6 +114,29 @@ module PatientRecordService
       return "Hypertension" if hypertension_diagnosis?(diagnosis_names)
 
       nil
+    end
+
+    def referral_treatment_plan_value(record, encounter_type, archetype)
+      return nil unless ncd_program?(record)
+      return nil unless normalize_concept_name(encounter_type&.name) == NOTES_ENCOUNTER_TYPE_NAME
+
+      value_for(archetype, :value_text).to_s.squish.presence
+    end
+
+    def referral_enrolled_in_care?(record)
+      ActiveModel::Type::Boolean.new.cast(value_for(record, :send_ichis_enrolled_in_care))
+    end
+
+    def send_enrolled_in_care_without_new_observations(patient_id, record)
+      # Referral sync is handled asynchronously after save in SavePatientRecordService.
+      ok
+    end
+
+    def clear_referral_enrolled_in_care_flag(record)
+      return unless record.respond_to?(:delete)
+
+      record.delete(:send_ichis_enrolled_in_care)
+      record.delete('send_ichis_enrolled_in_care')
     end
 
     def ncd_program?(record)

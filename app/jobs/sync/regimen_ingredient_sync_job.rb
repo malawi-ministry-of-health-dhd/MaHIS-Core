@@ -60,7 +60,8 @@ module Sync
             'pack_size'             => drug[:pack_size],
             'barcodes'              => drug[:barcodes],
             'regimen_category'      => drug[:regimen_category],
-            'frequency'             => drug[:frequency]
+            'frequency'             => drug[:frequency],
+            'drug_type'             => drug[:drug_type]
           }
         end
       end

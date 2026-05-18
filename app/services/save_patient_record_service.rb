@@ -3,6 +3,7 @@
 
 class SavePatientRecordService
   include CouchdbSync
+  NCD_PROGRAM_ID = 32
 
   RequiredFields = Struct.new(:program_id, :provider_id, :location_id, :encounter_datetime)
   PatientIds     = Struct.new(:national_id, :ichis_id, :birth_id)
@@ -57,6 +58,8 @@ class SavePatientRecordService
     patient_record = build_and_save_patient_record(patient_id, record, operation_results, overall_sync_status)
     ensure_primary_identifier_persisted!(patient_id, patient_record)
     refresh_immunization_dashboard_if_needed(record)
+    refresh_mnh_stats_if_needed(record)
+    sync_referral_results_if_needed(patient_id, record)
 
     if couchdb_configured?
       patient_record["_id"] = patient_record["ID"]
@@ -133,7 +136,7 @@ class SavePatientRecordService
     latest_encounter = BuildPatientRecordService.find_latest_encounter(patient_id)
 
     patient_data[:encounter_datetime]    = latest_encounter&.encounter_datetime
-    patient_data[:location_id]           = latest_encounter&.location_id
+    patient_data[:location_id]           = latest_encounter.location_id if latest_encounter&.location_id.present?
     patient_data[:ID]                    = BuildPatientRecordService.patient_identifier(patient, 3)
     patient_data[:nationalID]            = BuildPatientRecordService.patient_identifier(patient, 28)
     patient_data[:patientID]             = patient_id
@@ -265,6 +268,12 @@ class SavePatientRecordService
     Rails.logger.error("Failed to queue immunization dashboard refresh: #{e.class}: #{e.message}")
   end
 
+  def refresh_mnh_stats_if_needed(record)
+    Sync::MnhStatsSyncJob.enqueue_for_patient_record(record)
+  rescue StandardError => e
+    Rails.logger.error("Failed to queue MNH stats refresh: #{e.class}: #{e.message}")
+  end
+
   def immunization_record?(record)
     program_id = immunization_program_id
     return false if program_id.blank?
@@ -295,5 +304,67 @@ class SavePatientRecordService
     record.delete(:art_dispensation_pending)
     record.delete('art_dispensation_pending')
     record
+  end
+
+  def sync_referral_results_if_needed(patient_id, record)
+    return unless ncd_record?(patient_id, record)
+
+    patient = Patient.find_by(patient_id: patient_id)
+    tei = referral_tei_for_sync(record, patient)
+    event_id = referral_event_id_for_sync(record)
+
+    # Offload MAHIS -> iCHIS sync to Sidekiq so patient save path remains fast.
+    ReferralStatusSyncJob.perform_async(patient_id, tei, event_id)
+  rescue StandardError => e
+    Rails.logger.error("Failed to enqueue referral status sync for patient #{patient_id}: #{e.class}: #{e.message}")
+  end
+
+  def ncd_record?(patient_id, record)
+    return true if record[:program_id].to_i == NCD_PROGRAM_ID || record['program_id'].to_i == NCD_PROGRAM_ID
+    return true if record_ncd_enrollment?(record)
+    return true if record_ncd_identifier?(record)
+
+    PatientProgram.where(patient_id: patient_id, program_id: NCD_PROGRAM_ID, voided: 0).exists?
+  end
+
+  def record_ncd_enrollment?(record)
+    enrollments = Array(record[:activePrograms] || record['activePrograms']).compact
+    enrollments.any? do |enrollment|
+      program_id = enrollment[:program_id] || enrollment['program_id']
+      program_id.to_i == NCD_PROGRAM_ID
+    end
+  end
+
+  def record_ncd_identifier?(record)
+    ncd_id = record[:NcdID].presence || record['NcdID'].presence
+    return true if ncd_id.present?
+
+    other_person_information = record[:otherPersonInformation] || record['otherPersonInformation'] || {}
+    return false unless other_person_information.respond_to?(:[])
+
+    nested_ncd_id = other_person_information[:NcdID].presence || other_person_information['NcdID'].presence
+    nested_ncd_id.present?
+  end
+
+  def referral_tei_for_sync(record, patient)
+    from_record = record[:TEI].presence || record['TEI'].presence
+    return from_record.to_s.strip if from_record.present?
+
+    other_person_information = record[:otherPersonInformation] || record['otherPersonInformation'] || {}
+    if other_person_information.respond_to?(:[])
+      nested_tei = other_person_information[:TEI].presence || other_person_information['TEI'].presence
+      return nested_tei.to_s.strip if nested_tei.present?
+    end
+
+    BuildPatientRecordService.extract_tei(patient).to_s.strip
+  end
+
+  def referral_event_id_for_sync(record)
+    direct_event_id = record[:send_ichis_enrolled_in_care_event_id].to_s.strip.presence ||
+                      record['send_ichis_enrolled_in_care_event_id'].to_s.strip.presence
+    return direct_event_id if direct_event_id.present?
+
+    event_ids = record[:ichisEventIds] || record['ichisEventIds'] || record[:ichis_event_ids] || record['ichis_event_ids']
+    Array(event_ids).map { |event_id| event_id.to_s.strip }.find(&:present?)
   end
 end

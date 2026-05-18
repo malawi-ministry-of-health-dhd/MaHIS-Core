@@ -21,9 +21,16 @@ namespace :sync do
       Sync::DdeIdsSyncJob,
       Sync::DiagnosisSyncJob,
       Sync::WardSyncJob,
+      Sync::RolesPermissionsSyncJob,
       Sync::RegimenIngredientSyncJob,
       Sync::DepartmentSyncJob,
-      Sync::CustomRegimenIngredientSyncJob
+      Sync::CustomRegimenIngredientSyncJob,
+      Sync::GlobalPropertySyncJob,
+      Sync::UserPropertySyncJob,
+      Sync::MnhStatsSyncJob,
+      Sync::RegimenExtraSyncJob,
+      Sync::RegimenStarterPackSyncJob,
+      Sync::ArvDrugSyncJob
     ]
 
     jobs.each(&:perform_async)

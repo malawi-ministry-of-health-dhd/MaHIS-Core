@@ -19,7 +19,7 @@ class Observation < VoidableRecord
     }
   }.freeze
 
-  
+  after_commit :refresh_mnh_stats_after_commit, on: %i[create update]
   after_void :after_void
   
   self.table_name = :obs
@@ -76,6 +76,8 @@ class Observation < VoidableRecord
   end
 
   def after_void(_reason)
+    refresh_mnh_stats
+
     # HACK: Nullify any attached dispensations
     return if order_id.nil? || concept_id != ConceptName.find_by_name!('Amount dispensed').concept_id
 
@@ -94,6 +96,18 @@ class Observation < VoidableRecord
 
   def name
     ConceptName.find_by_concept_id(concept_id).name
+  end
+
+  def refresh_mnh_stats_after_commit
+    refresh_mnh_stats
+  end
+
+  def refresh_mnh_stats
+    return if encounter.blank?
+
+    Sync::MnhStatsSyncJob.enqueue_for_encounter(encounter)
+  rescue StandardError => e
+    Rails.logger.error("Observation##{obs_id}: failed to enqueue MNH stats refresh: #{e.class}: #{e.message}")
   end
 
   def answer_string(tags = [])
