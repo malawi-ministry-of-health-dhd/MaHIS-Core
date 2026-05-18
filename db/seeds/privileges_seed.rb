@@ -23,6 +23,8 @@ privileges = [
   { privilege: 'View Patients', description: 'Allows viewing patient records' },
   { privilege: 'Add Patients', description: 'Allows registering new patients' },
   { privilege: 'Edit Patients', description: 'Allows editing patient information' },
+  { privilege: 'Search Patients', description: 'Allows searching and locating patient records' },
+  { privilege: 'Activate Visits', description: 'Allows activating patient visits where applicable' },
   { privilege: 'Delete Patients', description: 'Allows voiding patient records' },
 
   # Encounter Management
@@ -44,19 +46,26 @@ privileges = [
   { privilege: 'Delete Orders', description: 'Allows voiding orders' },
 
   # Lab Management
+  { privilege: 'View Lab Orders', description: 'Allows viewing laboratory orders' },
   { privilege: 'View Lab Results', description: 'Allows viewing lab results' },
+  { privilege: 'Enter Laboratory Results', description: 'Allows entering laboratory results' },
   { privilege: 'Add Lab Results', description: 'Allows entering lab results' },
   { privilege: 'Edit Lab Results', description: 'Allows editing lab results' },
   { privilege: 'Delete Lab Results', description: 'Allows voiding lab results' },
 
   # Vitals Management
   { privilege: 'View Vitals', description: 'Allows viewing patient vital signs' },
+  { privilege: 'Capture Vitals', description: 'Allows capturing patient vital signs' },
   { privilege: 'Add Vitals', description: 'Allows recording patient vital signs' },
   { privilege: 'Edit Vitals', description: 'Allows editing patient vital signs' },
+  { privilege: 'Manage Monitoring Charts', description: 'Allows recording and updating patient monitoring charts' },
+  { privilege: 'Support Patient Movement', description: 'Allows supporting patient movement through the OPD workflow' },
   { privilege: 'Delete Vitals', description: 'Allows voiding vital sign records' },
 
   # Medication Management
+  { privilege: 'View Prescriptions', description: 'Allows viewing patient prescriptions' },
   { privilege: 'View Medications', description: 'Allows viewing medication prescriptions' },
+  { privilege: 'Prescribe Treatment', description: 'Allows prescribing treatment for patients' },
   { privilege: 'Add Medications', description: 'Allows prescribing medications' },
   { privilege: 'Edit Medications', description: 'Allows editing medication prescriptions' },
   { privilege: 'Delete Medications', description: 'Allows voiding medication prescriptions' },
@@ -64,9 +73,15 @@ privileges = [
 
   # Diagnosis Management
   { privilege: 'View Diagnoses', description: 'Allows viewing patient diagnoses' },
+  { privilege: 'Conduct Clinical Assessment', description: 'Allows conducting clinical assessment for patients' },
+  { privilege: 'Record Diagnosis', description: 'Allows recording patient diagnosis' },
   { privilege: 'Add Diagnoses', description: 'Allows recording patient diagnoses' },
   { privilege: 'Edit Diagnoses', description: 'Allows editing patient diagnoses' },
   { privilege: 'Delete Diagnoses', description: 'Allows voiding patient diagnoses' },
+
+  # Investigation and Outcome Management
+  { privilege: 'Order Investigations', description: 'Allows ordering patient investigations' },
+  { privilege: 'Record Patient Outcomes', description: 'Allows recording patient outcomes' },
 
   # Treatment Plan Management
   { privilege: 'View Treatment Plans', description: 'Allows viewing treatment plans' },
