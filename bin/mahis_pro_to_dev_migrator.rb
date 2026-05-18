@@ -757,9 +757,9 @@ module MahisProToDevMigrator
 
     records.each do |record|
       source_location_value = normalize_location_code(record[:location_id])
-      next if source_location_value.blank?
-
       source_code = source_location_codes[record.object_id]
+      next if source_location_value.blank? && source_code.blank?
+
       if source_code.blank?
         record[:location_id] = nil if numeric_location_value?(source_location_value)
         UNMAPPED_LOCATION_CODES[source_location_value] += 1
@@ -796,7 +796,7 @@ module MahisProToDevMigrator
 
   def source_location_code_for_record(record)
     source_location_value = normalize_location_code(record[:location_id])
-    return nil if source_location_value.blank?
+    return source_user_location_code(record[:creator]) if source_location_value.blank?
     return source_location_value unless numeric_location_value?(source_location_value)
     return FIXED_SOURCE_LOCATION_CODE_MAPPINGS[source_location_value] if FIXED_SOURCE_LOCATION_CODE_MAPPINGS.key?(source_location_value)
 
