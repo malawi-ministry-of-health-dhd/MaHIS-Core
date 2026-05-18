@@ -58,9 +58,9 @@ class User < RetirableRecord
   def managed_location_ids
     return nil if global_superuser?
 
-    ids = [location_id]
+    ids = [location_id.to_i]
     if district_superuser?
-      ids += Location.where(parent_location: location_id).pluck(:location_id)
+      ids += Location.where(parent_location: location_id).pluck(:location_id).map(&:to_i)
     end
     ids.compact.uniq
   end
