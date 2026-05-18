@@ -96,41 +96,30 @@ module Api
         login_params, error = required_params required: %i[username password]
         return render json: login_params, status: :bad_request if error
 
-        api_key = UserService.login(login_params[:username], login_params[:password])
+        user = UserService.authenticate_credentials(login_params[:username], login_params[:password])
         
-        if api_key.nil?
+        if user.nil?
           render json: { errors: ['Invalid user or password'] }, status: :unauthorized
         else
-          user = User.find_by(username: login_params[:username])
-          facility_level = user ? facility_level_for_location(user.location_id) : nil
-          
-          if user
-            # Check if this is first time login BEFORE updating
-            # Check both existence and that the value is not blank
-            existing_property = UserProperty.find_by(
-              property: 'last_login_time',
-              user_id: user.user_id
-            )
-            
-            is_first_time = existing_property.nil? || existing_property.property_value.blank?
-            
-            # Update or create the last_login_time property
-            property = UserProperty.find_or_initialize_by(
-              property: 'last_login_time',
-              user_id: user.user_id
-            )
-            
-            property.property_value = Time.current.iso8601
-            property.save
-            
-            render json: { 
-              authorization: api_key,
-              facility_level: facility_level,
-              first_time_login: is_first_time,
-              password_needs_update: password_needs_update?(user.user_id)
-            }
+          password_response = LoginResponseService.build(user, nil, mark_login: false)
+          if password_change_required?(password_response)
+            return render json: LoginResponseService.build(user, UserService.new_authentication_token(user))
+          end
+
+          if PasskeyAuthenticationService.required_for?(user)
+            passkey_challenge = PasskeyAuthenticationService.authentication_options(user)
+            render json: {
+              passkey_authentication_required: true,
+              passkey_session: passkey_challenge[:session_token],
+              public_key: passkey_challenge[:options]
+            }, status: :accepted
           else
-            render json: { authorization: api_key, facility_level: facility_level }
+            passkey_challenge = PasskeyAuthenticationService.registration_options(user)
+            render json: {
+              passkey_registration_required: true,
+              passkey_session: passkey_challenge[:session_token],
+              public_key: passkey_challenge[:options]
+            }, status: :accepted
           end
         end
       end
@@ -230,6 +219,14 @@ module Api
       end
 
       private
+
+      def login_response(user, api_key)
+        LoginResponseService.build(user, api_key)
+      end
+
+      def password_change_required?(login_response)
+        login_response[:first_time_login] || login_response[:password_needs_update]
+      end
 
       def validate_roles(roles)
         if roles && !roles.respond_to?(:each)

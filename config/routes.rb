@@ -39,6 +39,8 @@ Rails.application.routes.draw do
       resources :appointments
       resources :dispensations, only: %i[index create destroy]
       get '/check_username', to: 'users#check_username_exist'
+      post '/auth/passkeys/register', to: 'passkeys#register'
+      post '/auth/passkeys/authenticate', to: 'passkeys#authenticate'
       resources :users do
         post '/activate', to: 'users#activate'
         post '/deactivate', to: 'users#deactivate'

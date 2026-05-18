@@ -17,6 +17,8 @@ class User < RetirableRecord
   has_many :user_programs
   has_many :session_schedule_assignees
   has_many :programs, through: :user_programs # User programs
+  has_many :passkey_credentials, class_name: 'UserPasskeyCredential', foreign_key: :user_id, dependent: :destroy
+  has_many :passkey_challenges, foreign_key: :user_id, dependent: :destroy
   has_many :user_villages
   has_many :villages, through: :user_villages
   has_many(:names,
