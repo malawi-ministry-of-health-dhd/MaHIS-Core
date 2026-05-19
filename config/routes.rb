@@ -36,6 +36,14 @@ Rails.application.routes.draw do
       resources :internal_sections, only: %i[index show create update destroy]
       resources :data_cleaning_supervisions, only: %i[index show create update destroy]
       resources :data_verification, only: %i[index]
+      resources :beds, only: %i[index show create update destroy]
+      resources :bed_allocations, path: 'bed-allocations', only: %i[index show create] do
+        member do
+          patch :release
+          patch :transfer
+          patch :discharge
+        end
+      end
       resources :appointments
       resources :dispensations, only: %i[index create destroy]
       get '/check_username', to: 'users#check_username_exist'
