@@ -41,7 +41,7 @@ class BedAllocation < VoidableRecord
   scope :for_bed, ->(bed_id) { where(bed_id: bed_id) }
 
   def active?
-    allocation_status == ACTIVE_STATUS && released_at.nil? && !voided?
+    allocation_status == ACTIVE_STATUS && released_at.nil? && !voided
   end
 
   def release!(released_at:, release_reason:, changed_by:)
@@ -61,11 +61,12 @@ class BedAllocation < VoidableRecord
     )
   end
 
-  def discharge!(released_at:, changed_by:)
+  def discharge!(released_at:, changed_by:, release_reason: nil)
     update_release_state!(
       status: DISCHARGED_STATUS,
       released_at: released_at,
-      changed_by: changed_by
+      changed_by: changed_by,
+      release_reason: release_reason
     )
   end
 
@@ -101,7 +102,7 @@ class BedAllocation < VoidableRecord
   end
 
   def active_allocation?
-    allocation_status == ACTIVE_STATUS && released_at.nil? && !voided?
+    allocation_status == ACTIVE_STATUS && released_at.nil? && !voided
   end
 
   def bed_available_for_active_allocation
