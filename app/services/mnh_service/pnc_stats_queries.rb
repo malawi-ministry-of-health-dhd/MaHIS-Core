@@ -7,10 +7,17 @@ module MnhService
 
     LOGGER = Rails.logger
 
-    def initialize(program_id = nil, date = nil, location_id: nil)
+    def initialize(program_id = nil, date = nil, location_id: nil, start_date: nil, end_date: nil)
       @program_id = program_id
-      @date = date.respond_to?(:to_date) ? date.to_date : date
       @location_id = location_id
+      if start_date.present? || end_date.present?
+        @start_date = parse_date(start_date)
+        @end_date   = parse_date(end_date)
+      elsif date.present?
+        parsed = parse_date(date)
+        @start_date = parsed
+        @end_date   = parsed
+      end
     end
 
     def stats_hash
@@ -94,6 +101,15 @@ module MnhService
 
     private
 
+    def parse_date(value)
+      return nil if value.blank?
+      return value.to_date if value.respond_to?(:to_date) && !value.is_a?(String)
+
+      Date.parse(value.to_s)
+    rescue ArgumentError, TypeError
+      nil
+    end
+
     def percentage_of(count, total)
       total.to_i.zero? ? 0.0 : (count.to_f / total * 100).round(2)
     end
@@ -108,24 +124,26 @@ module MnhService
       @concept_ids_by_name[name] ||= ConceptName.unscoped.find_by(name: name)&.concept_id
     end
 
+    def concept_ids_for(*names)
+      names.flatten.filter_map { |n| concept_id_for(n) }.uniq
+    end
+
     def immunisation_given_concept_id
       @immunisation_given_concept_id ||= concept_id_for('Immunisation given')
     end
 
-    def bcg_concept_id
-      @bcg_concept_id ||= concept_id_for('BCG')
+    # Resolve both 'BCG' and 'bcg' to handle case variation in concept names
+    def bcg_concept_ids
+      @bcg_concept_ids ||= concept_ids_for('BCG', 'bcg')
     end
 
-    def polio_0_concept_id
-      @polio_0_concept_id ||= concept_id_for('Polio 0')
+    # Resolve 'Polio 0', 'Polio', and 'polio' to handle name variation
+    def polio_concept_ids
+      @polio_concept_ids ||= concept_ids_for('Polio 0', 'Polio', 'polio')
     end
 
-    def mother_hiv_positive_concept_id
-      @mother_hiv_positive_concept_id ||= concept_id_for('Mother HIV positive')
-    end
-
-    def yes_concept_id
-      @yes_concept_id ||= concept_id_for('Yes')
+    def mother_hiv_status_concept_id
+      @mother_hiv_status_concept_id ||= concept_id_for('Mother HIV Status')
     end
 
     def postnatal_check_period_concept_id
@@ -136,6 +154,10 @@ module MnhService
       @three_to_seven_days_concept_id ||= concept_id_for('3-7 days')
     end
 
+    def up_to_48hrs_concept_id
+      @up_to_48hrs_concept_id ||= concept_id_for('Up to 48 hrs or before discharge')
+    end
+
     def breast_feeding_concept_id
       @breast_feeding_concept_id ||= concept_id_for('Breast feeding')
     end
@@ -144,41 +166,43 @@ module MnhService
       @breastfed_exclusively_concept_id ||= concept_id_for('Breastfed exclusively')
     end
 
-    def pnc_obs_scope
-      scope = scoped_observations_for(pnc_program_id)
-
-      if @date.present?
-        scope = scope.where(
-          'encounter.encounter_datetime >= ? AND encounter.encounter_datetime <= ?',
-          @date.beginning_of_day,
-          @date.end_of_day
-        )
+    def apply_date_scope(scope, datetime_column = 'encounter.encounter_datetime')
+      if @start_date.present? && @end_date.present?
+        scope.where("#{datetime_column} >= ? AND #{datetime_column} <= ?",
+                    @start_date.beginning_of_day, @end_date.end_of_day)
+      elsif @start_date.present?
+        scope.where("#{datetime_column} >= ?", @start_date.beginning_of_day)
+      elsif @end_date.present?
+        scope.where("#{datetime_column} <= ?", @end_date.end_of_day)
+      else
+        scope
       end
-      scope
+    end
+
+    def pnc_obs_scope
+      apply_date_scope(scoped_observations_for(pnc_program_id))
     end
 
     def pnc_encounter_scope
-      scope = scoped_encounters_for(pnc_program_id)
-      scope = scope.where(encounter_datetime: @date.beginning_of_day..@date.end_of_day) if @date.present?
-      scope
+      apply_date_scope(scoped_encounters_for(pnc_program_id), 'encounter_datetime')
     end
 
     def count_babies_receiving_bcg
-      return 0 if immunisation_given_concept_id.nil? || bcg_concept_id.nil?
+      return 0 if immunisation_given_concept_id.nil? || bcg_concept_ids.empty?
 
       pnc_obs_scope
         .where(concept_id: immunisation_given_concept_id)
-        .where(value_coded: bcg_concept_id)
+        .where(value_coded: bcg_concept_ids)
         .distinct
         .count(:person_id)
     end
 
     def count_babies_receiving_polio_0
-      return 0 if immunisation_given_concept_id.nil? || polio_0_concept_id.nil?
+      return 0 if immunisation_given_concept_id.nil? || polio_concept_ids.empty?
 
       pnc_obs_scope
         .where(concept_id: immunisation_given_concept_id)
-        .where(value_coded: polio_0_concept_id)
+        .where(value_coded: polio_concept_ids)
         .distinct
         .count(:person_id)
     end
@@ -194,11 +218,12 @@ module MnhService
     end
 
     def count_mothers_hiv_positive
-      return 0 if mother_hiv_positive_concept_id.nil? || yes_concept_id.nil?
+      return 0 if mother_hiv_status_concept_id.nil?
 
+      # Frontend saves 'Mother HIV Status' concept with value_text 'positive'
       pnc_obs_scope
-        .where(concept_id: mother_hiv_positive_concept_id)
-        .where(value_coded: yes_concept_id)
+        .where(concept_id: mother_hiv_status_concept_id)
+        .where('LOWER(obs.value_text) = ?', 'positive')
         .distinct
         .count(:person_id)
     end
@@ -208,11 +233,15 @@ module MnhService
     end
 
     def count_mothers_checked_within_seven_days
-      return 0 if postnatal_check_period_concept_id.nil? || three_to_seven_days_concept_id.nil?
+      return 0 if postnatal_check_period_concept_id.nil?
+
+      # Include both 'Up to 48 hrs or before discharge' and '3-7 days' as within-7-days checks
+      valid_concept_ids = [three_to_seven_days_concept_id, up_to_48hrs_concept_id].compact
+      return 0 if valid_concept_ids.empty?
 
       pnc_obs_scope
         .where(concept_id: postnatal_check_period_concept_id)
-        .where(value_coded: three_to_seven_days_concept_id)
+        .where(value_coded: valid_concept_ids)
         .distinct
         .count(:person_id)
     end
