@@ -12,7 +12,7 @@ class BedManagementService
   ].freeze
 
   def create_bed(params, current_user)
-    now = Time.current
+    now = Time.now
     bed = Bed.new(filtered_params(params, BED_EDITABLE_FIELDS))
     bed.uuid = SecureRandom.uuid
     bed.creator = user_id_for(current_user)
@@ -27,7 +27,7 @@ class BedManagementService
   def update_bed(bed, params, current_user)
     bed.assign_attributes(filtered_params(params, BED_EDITABLE_FIELDS))
     bed.changed_by = user_id_for(current_user)
-    bed.date_changed = Time.current
+    bed.date_changed = Time.now
 
     bed.save!
     bed
@@ -39,7 +39,7 @@ class BedManagementService
     bed.assign_attributes(
       retired: true,
       retired_by: user_id_for(current_user),
-      date_retired: Time.current,
+      date_retired: Time.now,
       retire_reason: retire_reason
     )
 
@@ -56,7 +56,7 @@ class BedManagementService
       ensure_bed_available!(bed)
       ensure_patient_available!(patient.patient_id)
 
-      now = Time.current
+      now = Time.now
       BedAllocation.create!(
         uuid: SecureRandom.uuid,
         bed_id: bed.bed_id,
@@ -76,7 +76,7 @@ class BedManagementService
     ensure_allocation_active!(allocation)
 
     allocation.release!(
-      released_at: Time.current,
+      released_at: Time.now,
       release_reason: release_reason,
       changed_by: current_user
     )
@@ -91,7 +91,7 @@ class BedManagementService
       lock_patient!(current_allocation.patient_id)
       ensure_bed_available!(new_bed)
 
-      released_at = Time.current
+      released_at = Time.now
       current_allocation.transfer!(released_at: released_at, changed_by: current_user)
       ensure_patient_available!(current_allocation.patient_id)
 
@@ -113,7 +113,7 @@ class BedManagementService
     ensure_allocation_active!(allocation)
 
     allocation.discharge!(
-      released_at: Time.current,
+      released_at: Time.now,
       changed_by: current_user,
       release_reason: reason
     )

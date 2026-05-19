@@ -72,7 +72,7 @@ class BedAllocation < VoidableRecord
 
   def cancel!(void_reason:, voided_by:)
     transaction do
-      now = Time.current
+      now = Time.now
       user_id = user_id_for(voided_by)
 
       self.allocation_status = CANCELLED_STATUS
@@ -85,6 +85,8 @@ class BedAllocation < VoidableRecord
 
       save!
     end
+
+    self
   end
 
   private
@@ -95,10 +97,12 @@ class BedAllocation < VoidableRecord
       self.released_at = released_at
       self.release_reason = release_reason if release_reason.present?
       self.changed_by = user_id_for(changed_by)
-      self.date_changed = Time.current
+      self.date_changed = Time.now
 
       save!
     end
+
+    self
   end
 
   def active_allocation?
