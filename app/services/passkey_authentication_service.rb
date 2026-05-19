@@ -62,7 +62,6 @@ module PasskeyAuthenticationService
       challenge = find_challenge!(session_token, PasskeyChallenge::AUTHENTICATION)
       webauthn_credential = WebAuthn::Credential.from_get(credential)
       stored_credential = challenge.user.passkey_credentials.active.find_by!(webauthn_id: webauthn_credential.id)
-
       webauthn_credential.verify(
         challenge.challenge,
         public_key: stored_credential.public_key,

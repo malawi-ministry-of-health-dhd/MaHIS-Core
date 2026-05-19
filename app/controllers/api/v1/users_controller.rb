@@ -106,20 +106,24 @@ module Api
             return render json: LoginResponseService.build(user, UserService.new_authentication_token(user))
           end
 
-          if PasskeyAuthenticationService.required_for?(user)
-            passkey_challenge = PasskeyAuthenticationService.authentication_options(user)
-            render json: {
-              passkey_authentication_required: true,
-              passkey_session: passkey_challenge[:session_token],
-              public_key: passkey_challenge[:options]
-            }, status: :accepted
+          if extra_security_login_enabled?(user)
+            if PasskeyAuthenticationService.required_for?(user)
+              passkey_challenge = PasskeyAuthenticationService.authentication_options(user)
+              render json: {
+                passkey_authentication_required: true,
+                passkey_session: passkey_challenge[:session_token],
+                public_key: passkey_challenge[:options]
+              }, status: :accepted
+            else
+              passkey_challenge = PasskeyAuthenticationService.registration_options(user)
+              render json: {
+                passkey_registration_required: true,
+                passkey_session: passkey_challenge[:session_token],
+                public_key: passkey_challenge[:options]
+              }, status: :accepted
+            end
           else
-            passkey_challenge = PasskeyAuthenticationService.registration_options(user)
-            render json: {
-              passkey_registration_required: true,
-              passkey_session: passkey_challenge[:session_token],
-              public_key: passkey_challenge[:options]
-            }, status: :accepted
+            render json: LoginResponseService.build(user, UserService.new_authentication_token(user)), status: :ok
           end
         end
       end
@@ -226,6 +230,11 @@ module Api
 
       def password_change_required?(login_response)
         login_response[:first_time_login] || login_response[:password_needs_update]
+      end
+
+      def extra_security_login_enabled?(user)
+        property = UserProperty.find_by(user_id: user.id, property: 'extra_security_login')
+        property&.property_value&.downcase == 'true'
       end
 
       def validate_roles(roles)
