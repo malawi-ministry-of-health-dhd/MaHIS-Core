@@ -7,16 +7,16 @@ module Api
 
       def index
         allocations = filtered_allocations
-        render json: paginate(allocations).map { |allocation| serialize_allocation(allocation) }
+        render json: paginate(allocations).map { |allocation| response_builder.allocation(allocation) }
       end
 
       def show
-        render json: serialize_allocation(@allocation)
+        render json: response_builder.allocation(@allocation)
       end
 
       def create
         allocation = service.allocate_bed(allocation_params, User.current)
-        render json: serialize_allocation(allocation), status: :created
+        render json: response_builder.allocation(allocation), status: :created
       rescue NotFoundError, InvalidParameterError => e
         render_service_error(e)
       rescue ActiveRecord::RecordInvalid => e
@@ -25,7 +25,7 @@ module Api
 
       def release
         allocation = service.release_bed(@allocation, params.require(:release_reason), User.current)
-        render json: serialize_allocation(allocation)
+        render json: response_builder.allocation(allocation)
       rescue ActionController::ParameterMissing => e
         render json: { errors: [e.message] }, status: :unprocessable_entity
       rescue InvalidParameterError => e
@@ -36,7 +36,7 @@ module Api
 
       def transfer
         allocation = service.transfer_patient(@allocation, params.require(:new_bed_id), User.current, params[:reason])
-        render json: serialize_allocation(allocation), status: :created
+        render json: response_builder.allocation(allocation), status: :created
       rescue ActionController::ParameterMissing => e
         render json: { errors: [e.message] }, status: :unprocessable_entity
       rescue NotFoundError, InvalidParameterError => e
@@ -47,7 +47,7 @@ module Api
 
       def discharge
         allocation = service.discharge_patient_from_bed(@allocation, User.current, params.require(:reason))
-        render json: serialize_allocation(allocation)
+        render json: response_builder.allocation(allocation)
       rescue ActionController::ParameterMissing => e
         render json: { errors: [e.message] }, status: :unprocessable_entity
       rescue InvalidParameterError => e
@@ -85,50 +85,8 @@ module Api
         @service ||= BedManagementService.new
       end
 
-      def serialize_allocation(allocation)
-        {
-          bed_allocation_id: allocation.bed_allocation_id,
-          uuid: allocation.uuid,
-          bed_id: allocation.bed_id,
-          patient_id: allocation.patient_id,
-          visit_id: allocation.visit_id,
-          allocated_at: allocation.allocated_at,
-          released_at: allocation.released_at,
-          allocation_status: allocation.allocation_status,
-          allocation_reason: allocation.allocation_reason,
-          release_reason: allocation.release_reason,
-          notes: allocation.notes,
-          bed: serialize_bed(allocation.bed),
-          patient: serialize_patient(allocation.patient),
-          voided: allocation.voided
-        }
-      end
-
-      def serialize_bed(bed)
-        return nil unless bed
-
-        {
-          bed_id: bed.bed_id,
-          uuid: bed.uuid,
-          bed_number: bed.bed_number,
-          bed_label: bed.bed_label,
-          location_id: bed.location_id,
-          facility_id: bed.facility_id,
-          bed_status: bed.bed_status,
-          bed_type: bed.bed_type,
-          retired: bed.retired
-        }
-      end
-
-      def serialize_patient(patient)
-        return nil unless patient
-
-        {
-          patient_id: patient.patient_id,
-          name: patient.name,
-          gender: patient.gender,
-          identifier: patient.patient_identifiers.order(date_created: :desc).first&.identifier
-        }
+      def response_builder
+        BedManagementResponseBuilder
       end
 
       def render_validation_error(record)

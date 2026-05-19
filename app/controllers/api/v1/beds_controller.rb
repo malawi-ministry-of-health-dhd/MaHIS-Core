@@ -7,30 +7,30 @@ module Api
 
       def index
         beds = filtered_beds
-        render json: paginate(beds).map { |bed| serialize_bed(bed) }
+        render json: paginate(beds).map { |bed| response_builder.bed(bed) }
       end
 
       def show
-        render json: serialize_bed(@bed)
+        render json: response_builder.bed(@bed)
       end
 
       def create
         bed = service.create_bed(bed_params, User.current)
-        render json: serialize_bed(bed), status: :created
+        render json: response_builder.bed(bed), status: :created
       rescue ActiveRecord::RecordInvalid => e
         render_validation_error(e.record)
       end
 
       def update
         bed = service.update_bed(@bed, bed_params, User.current)
-        render json: serialize_bed(bed)
+        render json: response_builder.bed(bed)
       rescue ActiveRecord::RecordInvalid => e
         render_validation_error(e.record)
       end
 
       def destroy
         bed = service.retire_bed(@bed, params.require(:retire_reason), User.current)
-        render json: serialize_bed(bed)
+        render json: response_builder.bed(bed)
       rescue ActionController::ParameterMissing => e
         render json: { errors: [e.message] }, status: :unprocessable_entity
       rescue InvalidParameterError => e
@@ -81,53 +81,8 @@ module Api
         @service ||= BedManagementService.new
       end
 
-      def serialize_bed(bed)
-        allocation = bed.current_allocation
-        {
-          bed_id: bed.bed_id,
-          uuid: bed.uuid,
-          bed_number: bed.bed_number,
-          bed_label: bed.bed_label,
-          location_id: bed.location_id,
-          facility_id: bed.facility_id,
-          bed_status: bed.bed_status,
-          bed_type: bed.bed_type,
-          description: bed.description,
-          occupancy_status: allocation.present? ? 'OCCUPIED' : 'UNOCCUPIED',
-          current_allocation: allocation ? serialize_allocation(allocation, include_bed: false) : nil,
-          current_patient: allocation ? serialize_patient(allocation.patient) : nil,
-          retired: bed.retired
-        }
-      end
-
-      def serialize_allocation(allocation, include_bed: true)
-        data = {
-          bed_allocation_id: allocation.bed_allocation_id,
-          uuid: allocation.uuid,
-          bed_id: allocation.bed_id,
-          patient_id: allocation.patient_id,
-          visit_id: allocation.visit_id,
-          allocated_at: allocation.allocated_at,
-          released_at: allocation.released_at,
-          allocation_status: allocation.allocation_status,
-          allocation_reason: allocation.allocation_reason,
-          release_reason: allocation.release_reason,
-          notes: allocation.notes,
-          voided: allocation.voided
-        }
-        data[:bed] = serialize_bed(allocation.bed) if include_bed && allocation.bed
-        data
-      end
-
-      def serialize_patient(patient)
-        return nil unless patient
-
-        {
-          patient_id: patient.patient_id,
-          name: patient.name,
-          gender: patient.gender,
-          identifier: patient.patient_identifiers.order(date_created: :desc).first&.identifier
-        }
+      def response_builder
+        BedManagementResponseBuilder
       end
 
       def render_validation_error(record)
