@@ -48,29 +48,28 @@ class BedManagementService
   end
 
   def allocate_bed(params, current_user)
-    bed = find_bed!(param_value(params, :bed_id))
-    patient = find_patient!(param_value(params, :patient_id))
-    visit = find_visit!(param_value(params, :visit_id))
+    BedAllocation.transaction do
+      bed = lock_bed!(param_value(params, :bed_id))
+      patient = lock_patient!(param_value(params, :patient_id))
+      visit = find_visit!(param_value(params, :visit_id))
 
-    ensure_bed_available!(bed)
-    ensure_patient_available!(patient.patient_id)
+      ensure_bed_available!(bed)
+      ensure_patient_available!(patient.patient_id)
 
-    now = Time.current
-    allocation = BedAllocation.new(
-      uuid: SecureRandom.uuid,
-      bed_id: bed.bed_id,
-      patient_id: patient.patient_id,
-      visit_id: visit&.visit_id,
-      allocated_at: param_value(params, :allocated_at) || now,
-      allocation_status: BedAllocation::ACTIVE_STATUS,
-      allocation_reason: param_value(params, :allocation_reason),
-      notes: param_value(params, :notes),
-      creator: user_id_for(current_user),
-      date_created: now
-    )
-
-    allocation.save!
-    allocation
+      now = Time.current
+      BedAllocation.create!(
+        uuid: SecureRandom.uuid,
+        bed_id: bed.bed_id,
+        patient_id: patient.patient_id,
+        visit_id: visit&.visit_id,
+        allocated_at: param_value(params, :allocated_at) || now,
+        allocation_status: BedAllocation::ACTIVE_STATUS,
+        allocation_reason: param_value(params, :allocation_reason),
+        notes: param_value(params, :notes),
+        creator: user_id_for(current_user),
+        date_created: now
+      )
+    end
   end
 
   def release_bed(allocation, release_reason, current_user)
@@ -84,13 +83,17 @@ class BedManagementService
   end
 
   def transfer_patient(current_allocation, new_bed_id, current_user, reason)
-    ensure_allocation_active!(current_allocation)
-    new_bed = find_bed!(new_bed_id)
-    ensure_bed_available!(new_bed)
-
     BedAllocation.transaction do
+      current_allocation = lock_allocation!(current_allocation)
+      ensure_allocation_active!(current_allocation)
+
+      new_bed = lock_bed!(new_bed_id)
+      lock_patient!(current_allocation.patient_id)
+      ensure_bed_available!(new_bed)
+
       released_at = Time.current
       current_allocation.transfer!(released_at: released_at, changed_by: current_user)
+      ensure_patient_available!(current_allocation.patient_id)
 
       BedAllocation.create!(
         uuid: SecureRandom.uuid,
@@ -136,14 +139,14 @@ class BedManagementService
     user_or_id
   end
 
-  def find_bed!(bed_id)
-    Bed.unscoped.find_by(bed_id: bed_id).tap do |bed|
+  def lock_bed!(bed_id)
+    Bed.unscoped.lock.find_by(bed_id: bed_id).tap do |bed|
       raise NotFoundError, 'bed_not_found' if bed.blank?
     end
   end
 
-  def find_patient!(patient_id)
-    Patient.find_by(patient_id: patient_id).tap do |patient|
+  def lock_patient!(patient_id)
+    Patient.lock.find_by(patient_id: patient_id).tap do |patient|
       raise NotFoundError, 'patient_not_found' if patient.blank?
     end
   end
@@ -159,17 +162,31 @@ class BedManagementService
   def ensure_bed_available!(bed)
     raise InvalidParameterError, 'bed_retired' if bed.retired?
     raise InvalidParameterError, 'bed_not_active' unless bed.bed_status == Bed::ACTIVE_STATUS
-    raise InvalidParameterError, 'bed_already_occupied' if bed.occupied?
+    raise InvalidParameterError, 'bed_already_occupied' if active_allocation_for_bed?(bed.bed_id)
   end
 
   def ensure_patient_available!(patient_id)
-    return unless BedAllocation.active.for_patient(patient_id).exists?
+    return unless active_allocation_for_patient?(patient_id)
 
     raise InvalidParameterError, 'patient_already_allocated'
   end
 
   def ensure_allocation_active!(allocation)
     raise InvalidParameterError, 'allocation_not_active' unless allocation&.active?
+  end
+
+  def lock_allocation!(allocation)
+    BedAllocation.unscoped.lock.find_by(bed_allocation_id: allocation&.bed_allocation_id).tap do |locked_allocation|
+      raise NotFoundError, 'allocation_not_found' if locked_allocation.blank?
+    end
+  end
+
+  def active_allocation_for_bed?(bed_id)
+    BedAllocation.unscoped.active.for_bed(bed_id).exists?
+  end
+
+  def active_allocation_for_patient?(patient_id)
+    BedAllocation.unscoped.active.for_patient(patient_id).exists?
   end
 
   def transfer_reason(current_allocation, new_bed, reason)
