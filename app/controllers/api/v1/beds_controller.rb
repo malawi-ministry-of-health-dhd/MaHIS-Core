@@ -44,11 +44,20 @@ module Api
       def filtered_beds
         beds = include_retired? ? Bed.unscoped : Bed.not_retired
         beds = beds.where(location_id: params[:location_id]) if params[:location_id].present?
+        beds = beds.where(location_id: child_location_ids) if parent_location_id.present?
         beds = beds.where(facility_id: params[:facility_id]) if params[:facility_id].present?
         beds = beds.where(bed_status: params[:bed_status]) if params[:bed_status].present?
         beds = beds.where(bed_type: params[:bed_type]) if params[:bed_type].present?
         beds = apply_occupancy_filter(beds)
         beds.order(:location_id, :bed_number)
+      end
+
+      def parent_location_id
+        params[:parent_location_id].presence || params[:parent_id].presence
+      end
+
+      def child_location_ids
+        Location.where(parent_location: parent_location_id, retired: false).select(:location_id)
       end
 
       def apply_occupancy_filter(beds)
