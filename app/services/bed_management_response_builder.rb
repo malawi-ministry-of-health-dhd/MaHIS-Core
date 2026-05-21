@@ -13,7 +13,7 @@ class BedManagementResponseBuilder
         uuid: bed.uuid,
         bed_number: bed.bed_number,
         bed_label: bed.bed_label,
-        location_id: bed.location_id,
+        section_id: bed.section_id,
         facility_id: bed.facility_id,
         bed_status: bed.bed_status,
         bed_type: bed.bed_type,

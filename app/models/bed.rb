@@ -8,7 +8,7 @@ class Bed < RetirableRecord
   BED_STATUSES = %w[ACTIVE INACTIVE MAINTENANCE BLOCKED].freeze
   BED_TYPES = %w[GENERAL MATERNITY ICU ISOLATION PEDIATRIC EMERGENCY].freeze
 
-  belongs_to :location, foreign_key: :location_id, primary_key: :location_id
+  belongs_to :section, class_name: 'Location', foreign_key: :section_id, primary_key: :location_id
   belongs_to :creator_user, -> { unscope(where: %i[deactivated_on location_id]) },
              class_name: 'User', foreign_key: :creator, primary_key: :user_id
   belongs_to :changed_by_user, -> { unscope(where: %i[deactivated_on location_id]) },
@@ -22,14 +22,14 @@ class Bed < RetirableRecord
                              inverse_of: :bed
 
   validates :uuid, presence: true, uniqueness: true
-  validates :bed_number, presence: true, uniqueness: { scope: :location_id }
-  validates :location_id, :bed_status, :creator, presence: true
+  validates :bed_number, presence: true, uniqueness: { scope: :section_id }
+  validates :section_id, :bed_status, :creator, presence: true
   validates :bed_status, inclusion: { in: BED_STATUSES }
   validates :bed_type, inclusion: { in: BED_TYPES }, allow_nil: true
 
   scope :not_retired, -> { where(retired: false) }
   scope :active, -> { not_retired.where(bed_status: ACTIVE_STATUS) }
-  scope :for_location, ->(location_id) { where(location_id: location_id) }
+  scope :for_section, ->(section_id) { where(section_id: section_id) }
   scope :available_for_allocation, lambda {
     active.where.not(
       bed_id: BedAllocation.active_current.select(:bed_id)

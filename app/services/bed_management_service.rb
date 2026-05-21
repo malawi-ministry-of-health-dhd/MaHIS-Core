@@ -4,7 +4,7 @@ class BedManagementService
   BED_EDITABLE_FIELDS = %i[
     bed_number
     bed_label
-    location_id
+    section_id
     facility_id
     bed_status
     bed_type

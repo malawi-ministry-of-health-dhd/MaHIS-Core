@@ -41,7 +41,7 @@ RSpec.describe Api::V1::BedsController, type: :controller do
     end
 
     it 'returns beds assigned to child locations of the parent location' do
-      get :index, params: { parent_location_id: parent_location.location_id, paginate: 'false' }
+      get :index, params: { parent_section_id: parent_location.location_id, paginate: 'false' }
 
       bed_ids = JSON.parse(response.body).pluck('bed_id')
 
@@ -60,11 +60,11 @@ RSpec.describe Api::V1::BedsController, type: :controller do
       )
     end
 
-    def create_bed(bed_number, location_id)
+    def create_bed(bed_number, section_id)
       Bed.create!(
         uuid: SecureRandom.uuid,
         bed_number: bed_number,
-        location_id: location_id,
+        section_id: section_id,
         bed_status: Bed::ACTIVE_STATUS,
         creator: creator_id,
         date_created: now,
