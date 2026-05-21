@@ -45,7 +45,7 @@ module Api
         beds = include_retired? ? Bed.unscoped : Bed.not_retired
         beds = beds.where(section_id: params[:section_id]) if params[:section_id].present?
         beds = beds.where(section_id: child_section_ids) if parent_section_id.present?
-        beds = beds.where(facility_id: params[:facility_id]) if params[:facility_id].present?
+        beds = beds.where(location_id: params[:location_id]) if params[:location_id].present?
         beds = beds.where(bed_status: params[:bed_status]) if params[:bed_status].present?
         beds = beds.where(bed_type: params[:bed_type]) if params[:bed_type].present?
         beds = apply_occupancy_filter(beds)
@@ -83,7 +83,7 @@ module Api
       end
 
       def bed_params
-        params.permit(:bed_number, :bed_label, :section_id, :facility_id, :bed_status, :bed_type, :description)
+        params.permit(:bed_number, :bed_label, :section_id, :location_id, :bed_status, :bed_type, :description)
       end
 
       def service

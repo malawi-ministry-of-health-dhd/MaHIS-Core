@@ -9,6 +9,7 @@ class Bed < RetirableRecord
   BED_TYPES = %w[GENERAL MATERNITY ICU ISOLATION PEDIATRIC EMERGENCY].freeze
 
   belongs_to :section, class_name: 'Location', foreign_key: :section_id, primary_key: :location_id
+  belongs_to :location, foreign_key: :location_id, primary_key: :location_id, optional: true
   belongs_to :creator_user, -> { unscope(where: %i[deactivated_on location_id]) },
              class_name: 'User', foreign_key: :creator, primary_key: :user_id
   belongs_to :changed_by_user, -> { unscope(where: %i[deactivated_on location_id]) },

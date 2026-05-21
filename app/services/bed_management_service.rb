@@ -5,7 +5,7 @@ class BedManagementService
     bed_number
     bed_label
     section_id
-    facility_id
+    location_id
     bed_status
     bed_type
     description

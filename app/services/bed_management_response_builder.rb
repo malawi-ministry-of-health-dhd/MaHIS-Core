@@ -14,7 +14,7 @@ class BedManagementResponseBuilder
         bed_number: bed.bed_number,
         bed_label: bed.bed_label,
         section_id: bed.section_id,
-        facility_id: bed.facility_id,
+        location_id: bed.location_id,
         bed_status: bed.bed_status,
         bed_type: bed.bed_type,
         description: bed.description,
