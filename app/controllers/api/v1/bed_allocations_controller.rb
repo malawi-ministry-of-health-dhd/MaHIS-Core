@@ -60,7 +60,11 @@ module Api
 
       def filtered_allocations
         allocations = BedAllocation.unscoped.includes(:bed, :visit, patient: { person: :names })
-        allocations = allocations.joins(:bed).where(bed_mgmt_bed: { location_id: params[:location_id] }) if params[:location_id].present?
+        if params[:location_id].present?
+          child_ids = Location.where(parent_location: params[:location_id]).pluck(:location_id)
+          all_ids = ([params[:location_id].to_i] + child_ids).uniq
+          allocations = allocations.joins(:bed).where(bed_mgmt_bed: { location_id: all_ids })
+        end
         allocations = allocations.for_bed(params[:bed_id]) if params[:bed_id].present?
         allocations = allocations.for_patient(params[:patient_id]) if params[:patient_id].present?
         allocations = allocations.for_visit(params[:visit_id]) if params[:visit_id].present?
