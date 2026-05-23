@@ -5,6 +5,13 @@ class FacilityReferralService
   DEPARTMENT_CONCEPT_ID = 50_615
   REFERRAL_FACILITY_CONCEPT_ID = 49_528
   PRIMARY_REFERRAL_CONCEPT_IDS = [DEPARTMENT_CONCEPT_ID, REFERRAL_FACILITY_CONCEPT_ID].freeze
+  REFERRED_FACILITY_ID_SQL = <<~SQL.squish.freeze
+    COALESCE(referral_facility_numeric.location_id,
+             referral_facility_coded.location_id,
+             referral_facility_text.location_id,
+             CAST(referral_facility_obs.value_numeric AS UNSIGNED),
+             referral_facility_obs.value_coded)
+  SQL
   DEFAULT_LIMIT = 50
   MAX_LIMIT = 100
   PROGRAM_DEPARTMENT_NAMES = {
@@ -69,11 +76,7 @@ class FacilityReferralService
                  CAST(department_obs.value_numeric AS CHAR)) AS referred_department,
         department_obs.value_coded AS referred_program_coded,
         referral_facility_obs.obs_id AS referral_facility_obs_id,
-        COALESCE(referral_facility_numeric.location_id,
-                 referral_facility_coded.location_id,
-                 referral_facility_text.location_id,
-                 CAST(referral_facility_obs.value_numeric AS UNSIGNED),
-                 referral_facility_obs.value_coded) AS referred_facility_id,
+        #{REFERRED_FACILITY_ID_SQL} AS referred_facility_id,
         COALESCE(referral_facility_numeric.name,
                  referral_facility_coded.name,
                  referral_facility_text.name,
@@ -177,10 +180,25 @@ class FacilityReferralService
     clauses << 'e.patient_id = :patient_id' if normalized_filter(filters[:patient_id]).present?
     clauses << program_filter_clause(filters[:program_id]) if normalized_filter(filters[:program_id]).present?
     clauses << facility_filter_clause(facility_filter(filters)) if facility_filter(filters).present?
+    clauses << unresolved_referral_clause
     clauses << 'e.encounter_datetime >= :date_from' if normalized_filter(filters[:date_from]).present?
     clauses << 'e.encounter_datetime <= :date_to' if normalized_filter(filters[:date_to]).present?
 
     clauses.compact.join(' AND ')
+  end
+
+  def unresolved_referral_clause
+    <<~SQL.squish
+      NOT EXISTS (
+        SELECT 1
+        FROM encounter referred_facility_encounter
+        WHERE referred_facility_encounter.patient_id = e.patient_id
+          AND referred_facility_encounter.voided = 0
+          AND referred_facility_encounter.encounter_id <> e.encounter_id
+          AND referred_facility_encounter.encounter_datetime > e.encounter_datetime
+          AND CAST(referred_facility_encounter.location_id AS UNSIGNED) = #{REFERRED_FACILITY_ID_SQL}
+      )
+    SQL
   end
 
   def program_filter_clause(program)

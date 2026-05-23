@@ -6,7 +6,7 @@ module MnhService
     include MnhService::LocationScope
 
     LOGGER = Rails.logger
-    SKILLED_ATTENDANT_VALUE = 'Skilled health worker (Nurse midwife/community midwife assistant/medical assistant/clinical technician/medical doctor'
+    SKILLED_ATTENDANT_VALUE = 'Skilled Health worker ( Nurse/Midwife/Clinician/Medical Doctor)'
 
     OBSTETRIC_COMPLICATION_CONDITIONS = [
       'None',
@@ -15,14 +15,28 @@ module MnhService
       'Eclampsia',
       'Sepsis',
       'Retained placenta',
-      'Perineal tear (2nd, 3rd or 4th degree)',
+      'Perineal tear',
       'Other'
     ].freeze
 
-    def initialize(program_id = nil, date = nil, location_id: nil)
+    REFERRAL_REASON_OPTIONS = [
+      { label: 'ICU advanced monitoring', value_text: 'ICU_ADVANCED_MONITORING' },
+      { label: 'Surgical intervention', value_text: 'SURGICAL_INTERVENTION' },
+      { label: 'Blood transfusion', value_text: 'BLOOD_TRANSFUSION' },
+      { label: 'Specialist consultation', value_text: 'SPECIALIST_CONSULTATION' }
+    ].freeze
+
+    def initialize(program_id = nil, date = nil, location_id: nil, start_date: nil, end_date: nil)
       @program_id = program_id
-      @date = date.respond_to?(:to_date) ? date.to_date : date
       @location_id = location_id
+      if start_date.present? || end_date.present?
+        @start_date = parse_date(start_date)
+        @end_date   = parse_date(end_date)
+      elsif date.present?
+        parsed = parse_date(date)
+        @start_date = parsed
+        @end_date   = parsed
+      end
     end
 
     def stats_hash
@@ -38,7 +52,8 @@ module MnhService
         total_clients_with_obstetric_complications_recorded: total_clients_with_obstetric_complications_recorded,
         caesarean_section_count: caesarean_section_count,
         total_deliveries_with_mode_recorded: total_deliveries_with_mode_recorded,
-        percentage_caesarean_section: percentage_caesarean_section
+        percentage_caesarean_section: percentage_caesarean_section,
+        referral_by_condition: referral_by_condition
       }
       counts = obstetric_complication_counts.transform_keys { |k| "obstetric_complication_#{k}_count".to_sym }
       percentages = obstetric_complication_percentages.transform_keys { |k| "obstetric_complication_#{k}_percentage".to_sym }
@@ -124,7 +139,20 @@ module MnhService
       @total_labour_mothers ||= count_total_labour_mothers
     end
 
+    def referral_by_condition
+      @referral_by_condition ||= build_referral_by_condition
+    end
+
     private
+
+    def parse_date(value)
+      return nil if value.blank?
+      return value.to_date if value.respond_to?(:to_date) && !value.is_a?(String)
+
+      Date.parse(value.to_s)
+    rescue ArgumentError, TypeError
+      nil
+    end
 
     def labour_program_id
       @labour_program_id ||= @program_id.presence ||
@@ -168,27 +196,33 @@ module MnhService
       @caesarean_section_concept_id ||= concept_id_for('Caesarean section')
     end
 
+    def referral_reasons_concept_id
+      @referral_reasons_concept_id ||= concept_id_for('referral reasons')
+    end
+
     def condition_key(value)
       value.downcase.gsub(/[^a-z0-9]+/, '_').gsub(/\A_|_\z/, '')
     end
 
-    def labour_encounter_scope
-      scope = scoped_observations_for(labour_program_id)
-
-      if @date.present?
-        scope = scope.where(
-          'encounter.encounter_datetime >= ? AND encounter.encounter_datetime <= ?',
-          @date.beginning_of_day,
-          @date.end_of_day
-        )
+    def apply_date_scope(scope, datetime_column = 'encounter.encounter_datetime')
+      if @start_date.present? && @end_date.present?
+        scope.where("#{datetime_column} >= ? AND #{datetime_column} <= ?",
+                    @start_date.beginning_of_day, @end_date.end_of_day)
+      elsif @start_date.present?
+        scope.where("#{datetime_column} >= ?", @start_date.beginning_of_day)
+      elsif @end_date.present?
+        scope.where("#{datetime_column} <= ?", @end_date.end_of_day)
+      else
+        scope
       end
-      scope
+    end
+
+    def labour_encounter_scope
+      apply_date_scope(scoped_observations_for(labour_program_id))
     end
 
     def labour_encounters_scope
-      scope = scoped_encounters_for(labour_program_id)
-      scope = scope.where(encounter_datetime: @date.beginning_of_day..@date.end_of_day) if @date.present?
-      scope
+      apply_date_scope(scoped_encounters_for(labour_program_id), 'encounter_datetime')
     end
 
     def count_total_labour_mothers
@@ -292,6 +326,20 @@ module MnhService
                                       .where('obs.value_coded = ?', concept_id)
                                       .distinct
                                       .count(:person_id)
+      end
+    end
+
+    def build_referral_by_condition
+      return [] if referral_reasons_concept_id.nil?
+
+      total = total_labour_mothers
+      REFERRAL_REASON_OPTIONS.map do |option|
+        count = labour_encounter_scope
+                .where(concept_id: referral_reasons_concept_id)
+                .where('obs.value_text = ?', option[:value_text])
+                .distinct
+                .count(:person_id)
+        { label: option[:label], percentage: percentage_of(count, total) }
       end
     end
   end
