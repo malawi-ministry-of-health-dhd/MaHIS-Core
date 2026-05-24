@@ -9,7 +9,7 @@ module Sync
     
     private
     def get_required_columns
-      [:district_id, :location_id, :name]
+      [:district_id, :location_id, :name, :parent_location]
     end
     
     def prepare_document(district)
