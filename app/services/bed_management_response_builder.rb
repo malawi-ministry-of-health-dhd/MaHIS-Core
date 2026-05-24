@@ -26,6 +26,8 @@ class BedManagementResponseBuilder
     end
 
     def allocation(allocation)
+      person_name = allocation.patient&.person&.names&.max_by(&:date_created)
+
       {
         bed_allocation_id: allocation.bed_allocation_id,
         uuid: allocation.uuid,
@@ -38,7 +40,13 @@ class BedManagementResponseBuilder
         allocation_reason: allocation.allocation_reason,
         release_reason: allocation.release_reason,
         notes: allocation.notes,
-        voided: allocation.voided
+        voided: allocation.voided,
+        given_name: person_name&.given_name,
+        family_name: person_name&.family_name,
+        bed_number: allocation.bed&.bed_number,
+        ward_name: allocation.bed&.location&.name,
+        ward_location_id: allocation.bed&.location_id,
+        visit_date_started: allocation.visit&.date_started
       }
     end
 
