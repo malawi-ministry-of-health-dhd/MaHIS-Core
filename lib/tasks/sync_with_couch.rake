@@ -18,6 +18,7 @@ namespace :sync do
       Sync::RelationshipTypeSyncJob,
       Sync::TraditionalAuthoritySyncJob,
       Sync::VillageSyncJob,
+      Sync::LocationSyncJob,
       Sync::DdeIdsSyncJob,
       Sync::DiagnosisSyncJob,
       Sync::WardSyncJob,
@@ -30,7 +31,8 @@ namespace :sync do
       Sync::MnhStatsSyncJob,
       Sync::RegimenExtraSyncJob,
       Sync::RegimenStarterPackSyncJob,
-      Sync::ArvDrugSyncJob
+      Sync::ArvDrugSyncJob,
+      Sync::BedSyncJob
     ]
 
     jobs.each(&:perform_async)
