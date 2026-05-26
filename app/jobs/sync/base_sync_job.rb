@@ -371,6 +371,10 @@ module Sync
         Sidekiq.logger.warn "Bulk sync de-duplicated #{duplicate_count} duplicate documents for #{db_name}"
       end
 
+      unique_documents = normalize_search_documents(unique_documents, db_name)
+      PatientRecordSearchFields.ensure_couchdb_indexes!(db_url, logger: Sidekiq.logger) if db_name.to_s == PatientRecordSearchFields::PATIENT_RECORD_DB
+      ReferenceDataSearchFields.ensure_couchdb_indexes!(db_url, db_name, logger: Sidekiq.logger)
+
       # Fetch existing _revs to avoid conflicts
       existing_revs = fetch_existing_revs(unique_documents, db_url)
 
@@ -397,6 +401,15 @@ module Sync
       rescue RestClient::Exception, SocketError => e
         retries += 1
         retries <= 2 ? (sleep(0.1 * retries); retry) : { success: false, errors: ["Bulk sync failed: #{e.message}"] }
+      end
+    end
+
+    def normalize_search_documents(documents, db_name)
+      documents.map do |doc|
+        normalized_doc = doc.deep_dup
+        PatientRecordSearchFields.normalize_if_patient_record!(normalized_doc, db_name)
+        ReferenceDataSearchFields.normalize_if_supported!(normalized_doc, db_name)
+        normalized_doc
       end
     end
 
@@ -427,12 +440,17 @@ module Sync
     # NEW: Ensure database exists
     def ensure_database_exists(db_name)
       db_url = couchdb_url(db_name)
+      created = false
       begin
         RestClient.get(db_url)
       rescue RestClient::NotFound
         RestClient.put(db_url, {}.to_json, { content_type: :json })
         Sidekiq.logger.info "Created CouchDB database: #{db_name}"
+        created = true
       end
+
+      PatientRecordSearchFields.ensure_couchdb_indexes!(db_url, logger: Sidekiq.logger, force: created) if db_name.to_s == PatientRecordSearchFields::PATIENT_RECORD_DB
+      ReferenceDataSearchFields.ensure_couchdb_indexes!(db_url, db_name, logger: Sidekiq.logger, force: created)
     end
     
     # NEW: Optimize query by selecting only needed columns

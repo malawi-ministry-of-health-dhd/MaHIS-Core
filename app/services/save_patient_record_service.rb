@@ -213,6 +213,7 @@ class SavePatientRecordService
 
     strip_derived_patient_fields!(patient_data)
     clear_processed_pending_fields!(patient_data)
+    PatientRecordSearchFields.normalize!(patient_data)
     patient_data.as_json
   end
 
