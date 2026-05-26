@@ -47,13 +47,15 @@ module BuildPatientRecordService
       person = patient.person
       latest_encounter = find_latest_encounter(patient.patient_id)
       
-      {
+      record = {
         **build_basic_info(patient, latest_encounter),
         **build_personal_data(person, patient),
         **build_clinical_data(patient.patient_id),
         **build_administrative_data(patient),
         **build_status_fields
       }
+
+      PatientRecordSearchFields.normalize!(record)
     end
 
     def find_latest_encounter(patient_id)

@@ -41,6 +41,7 @@ module Api
         gender = params[:gender]
 
         return unless validate_roles(roles) & validate_username(username) & validate_location(location_id)
+        return unless validate_role_permissions(roles)
 
         # added this as a seperate return to prevent multiple redirects in case more than one validation fails
         return if programs && !validate_programs(programs)
@@ -70,6 +71,7 @@ module Api
         update_params[:programs] = params[:programs].map(&:to_i) if params.key?(:programs)
 
         return unless validate_roles(update_params[:roles])
+        return unless validate_role_permissions(update_params[:roles])
 
         if update_params[:location_id] && !validate_location(update_params[:location_id])
           return
@@ -241,6 +243,23 @@ module Api
         if roles && !roles.respond_to?(:each)
           render json: ['`roles` must be an array'], status: :bad_request
           return false
+        end
+
+        true
+      end
+
+      PROTECTED_ROLES = %w[Superuser Global\ Superuser District\ Superuser Facility\ Superuser].freeze
+
+      def validate_role_permissions(roles)
+        return true if roles.blank?
+
+        roles.each do |role|
+          next unless PROTECTED_ROLES.any? { |pr| pr.casecmp(role.to_s).zero? }
+
+          unless User.current.global_superuser?
+            render json: { errors: ["You are not authorised to assign the '#{role}' role"] }, status: :forbidden
+            return false
+          end
         end
 
         true
