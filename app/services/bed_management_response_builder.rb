@@ -27,6 +27,8 @@ class BedManagementResponseBuilder
 
     def allocation(allocation)
       person_name = allocation.patient&.person&.names&.max_by(&:date_created)
+      section = allocation.bed&.section
+      ward = section&.parent || allocation.bed&.location
 
       {
         bed_allocation_id: allocation.bed_allocation_id,
@@ -44,8 +46,10 @@ class BedManagementResponseBuilder
         given_name: person_name&.given_name,
         family_name: person_name&.family_name,
         bed_number: allocation.bed&.bed_number,
-        ward_name: allocation.bed&.location&.name,
-        ward_location_id: allocation.bed&.location_id,
+        section_name: section&.name,
+        section_location_id: section&.location_id,
+        ward_name: ward&.name,
+        ward_location_id: ward&.location_id,
         visit_date_started: allocation.visit&.date_started
       }
     end
