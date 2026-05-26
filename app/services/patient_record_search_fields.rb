@@ -8,7 +8,6 @@ module PatientRecordSearchFields
     { name: 'idx_ncd_id', fields: ['NcdID'] },
     { name: 'idx_national_id', fields: ['nationalID'] },
     { name: 'idx_ichis_id', fields: ['ichisID'] },
-    { name: 'idx_tei', fields: ['TEI'] },
     { name: 'idx_given_name_search', fields: ['given_name_search'] },
     { name: 'idx_family_name_search', fields: ['family_name_search'] },
     { name: 'idx_full_name_search', fields: ['full_name_search'] },
