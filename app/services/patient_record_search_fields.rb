@@ -4,7 +4,6 @@ module PatientRecordSearchFields
   PATIENT_RECORD_DB = 'patients_records'
 
   COUCHDB_INDEXES = [
-    { name: 'idx_patient_id', fields: ['patientID'] },
     { name: 'idx_patient_identifier', fields: ['ID'] },
     { name: 'idx_ncd_id', fields: ['NcdID'] },
     { name: 'idx_national_id', fields: ['nationalID'] },
