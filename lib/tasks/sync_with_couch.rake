@@ -25,6 +25,7 @@ namespace :sync do
       Sync::RolesPermissionsSyncJob,
       Sync::RegimenIngredientSyncJob,
       Sync::DepartmentSyncJob,
+      Sync::SectionSyncJob,
       Sync::CustomRegimenIngredientSyncJob,
       Sync::GlobalPropertySyncJob,
       Sync::UserPropertySyncJob,
