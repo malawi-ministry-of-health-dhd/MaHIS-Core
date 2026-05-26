@@ -1,0 +1,87 @@
+class RenameBedLocationIdToSectionId < ActiveRecord::Migration[8.1]
+  def up
+    return unless table_exists?(:bed_mgmt_bed)
+
+    remove_bed_location_foreign_key
+    remove_bed_location_indexes
+
+    rename_column :bed_mgmt_bed, :location_id, :section_id if column_exists?(:bed_mgmt_bed, :location_id)
+
+    add_bed_section_indexes
+    add_bed_section_foreign_key
+  end
+
+  def down
+    return unless table_exists?(:bed_mgmt_bed)
+
+    remove_bed_section_foreign_key
+    remove_bed_section_indexes
+
+    rename_column :bed_mgmt_bed, :section_id, :location_id if column_exists?(:bed_mgmt_bed, :section_id)
+
+    add_bed_location_indexes
+    add_bed_location_foreign_key
+  end
+
+  private
+
+  def remove_bed_location_foreign_key
+    return unless foreign_key_exists?(:bed_mgmt_bed, :location, column: :location_id)
+
+    remove_foreign_key :bed_mgmt_bed, column: :location_id
+  end
+
+  def remove_bed_location_indexes
+    remove_index :bed_mgmt_bed, name: 'idx_bed_mgmt_bed_location_number' if index_exists?(
+      :bed_mgmt_bed, %i[location_id bed_number], name: 'idx_bed_mgmt_bed_location_number'
+    )
+    remove_index :bed_mgmt_bed, name: 'idx_bed_mgmt_bed_location_status' if index_exists?(
+      :bed_mgmt_bed, %i[location_id bed_status retired], name: 'idx_bed_mgmt_bed_location_status'
+    )
+  end
+
+  def add_bed_section_indexes
+    unless index_exists?(:bed_mgmt_bed, %i[section_id bed_number], name: 'idx_bed_mgmt_bed_section_number')
+      add_index :bed_mgmt_bed, %i[section_id bed_number], unique: true, name: 'idx_bed_mgmt_bed_section_number'
+    end
+    unless index_exists?(:bed_mgmt_bed, %i[section_id bed_status retired], name: 'idx_bed_mgmt_bed_section_status')
+      add_index :bed_mgmt_bed, %i[section_id bed_status retired], name: 'idx_bed_mgmt_bed_section_status'
+    end
+  end
+
+  def add_bed_section_foreign_key
+    return if foreign_key_exists?(:bed_mgmt_bed, :location, column: :section_id)
+
+    add_foreign_key :bed_mgmt_bed, :location, column: :section_id, primary_key: :location_id
+  end
+
+  def remove_bed_section_foreign_key
+    return unless foreign_key_exists?(:bed_mgmt_bed, :location, column: :section_id)
+
+    remove_foreign_key :bed_mgmt_bed, column: :section_id
+  end
+
+  def remove_bed_section_indexes
+    remove_index :bed_mgmt_bed, name: 'idx_bed_mgmt_bed_section_number' if index_exists?(
+      :bed_mgmt_bed, %i[section_id bed_number], name: 'idx_bed_mgmt_bed_section_number'
+    )
+    remove_index :bed_mgmt_bed, name: 'idx_bed_mgmt_bed_section_status' if index_exists?(
+      :bed_mgmt_bed, %i[section_id bed_status retired], name: 'idx_bed_mgmt_bed_section_status'
+    )
+  end
+
+  def add_bed_location_indexes
+    unless index_exists?(:bed_mgmt_bed, %i[location_id bed_number], name: 'idx_bed_mgmt_bed_location_number')
+      add_index :bed_mgmt_bed, %i[location_id bed_number], unique: true, name: 'idx_bed_mgmt_bed_location_number'
+    end
+    unless index_exists?(:bed_mgmt_bed, %i[location_id bed_status retired], name: 'idx_bed_mgmt_bed_location_status')
+      add_index :bed_mgmt_bed, %i[location_id bed_status retired], name: 'idx_bed_mgmt_bed_location_status'
+    end
+  end
+
+  def add_bed_location_foreign_key
+    return if foreign_key_exists?(:bed_mgmt_bed, :location, column: :location_id)
+
+    add_foreign_key :bed_mgmt_bed, :location, column: :location_id, primary_key: :location_id
+  end
+end
