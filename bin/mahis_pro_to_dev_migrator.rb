@@ -49,6 +49,7 @@ module MahisProToDevMigrator
   SKIPPED_RECORDS_FILE = Rails.root.join('log', "mahis_pro_to_dev_skipped_records_#{Time.now.strftime('%Y%m%d_%H%M%S')}.json")
 
   USER_ID_CACHE = {}
+  MIGRATED_USER_ID_CACHE = {}
   PERSON_ID_CACHE = {}
   ENCOUNTER_ID_CACHE = {}
   ORDER_ID_CACHE = {}
@@ -68,7 +69,7 @@ module MahisProToDevMigrator
     User PatientIdentifier PatientProgram Encounter Observation PharmacyBatch PharmacyBatchItemReallocation
   ].freeze
   NON_RESET_MODELS = %w[
-    Patient DrugOrder LimsAcknowledgementStatus Pharmacies PharmacyBatch PharmacyBatchItem
+    Patient DrugOrder GlobalProperty UserRole UserProperty LimsAcknowledgementStatus Pharmacies PharmacyBatch PharmacyBatchItem
     PharmacyBatchItemReallocation PharmacyBatchVvm PharmacyStockBalance PharmacyStockVerification Pharmacy
   ].freeze
   BUILT_IN_CONCEPT_NAME_ALIASES = {
@@ -118,6 +119,7 @@ module MahisProToDevMigrator
     end
 
     migrate_users
+    migrate_user_access_and_configuration
     migration_groups.each_with_index do |group, index|
       group_started_at = Time.now
       group_inserted = 0
@@ -511,6 +513,17 @@ module MahisProToDevMigrator
     }, reset_primary_key: true)
   end
 
+  def migrate_user_access_and_configuration
+    populate_records('global_property', GlobalProperty, {}, reset_primary_key: false)
+    populate_records('user_role', UserRole, {
+      user_id: :get_migrated_user_ids
+    }, reset_primary_key: false)
+    populate_records('user_programs', UserProgram, {
+      user_id: :get_migrated_user_ids,
+      program_id: :get_program_ids_by_name
+    })
+  end
+
   def migration_groups
     [
       [
@@ -675,6 +688,7 @@ module MahisProToDevMigrator
       source_batch_size = records.length
       records.each(&:symbolize_keys!)
       records = rewrite_location_ids(records, target_model)
+      records = prepare_global_properties(records) if target_model.to_s == 'GlobalProperty'
       records = apply_dependency_mappings(records, dependencies)
       records = clear_deferred_foreign_keys(records, target_model)
       records = reject_existing_records(records, target_model)
@@ -779,6 +793,60 @@ module MahisProToDevMigrator
       end
     end
     records
+  end
+
+  def prepare_global_properties(records)
+    return records if records.empty?
+    return records unless column_names(TARGET_DB, 'global_property').include?('location_id')
+
+    source_location_values = records.filter_map { |record| normalize_location_code(record[:location_id]) }
+    source_location_values.concat(
+      records.filter_map do |record|
+        normalize_location_code(record[:property_value]) if record[:property].to_s == 'current_health_center_id'
+      end
+    )
+    source_location_values.uniq!
+
+    numeric_source_location_ids = source_location_values.select { |value| numeric_location_value?(value) }
+    source_location_id_map = target_location_ids_by_source_location_id(numeric_source_location_ids)
+    fixed_source_codes = numeric_source_location_ids.filter_map { |value| FIXED_SOURCE_LOCATION_CODE_MAPPINGS[value] }
+    facility_codes = source_location_values.reject { |value| numeric_location_value?(value) }
+    ensure_location_id_cache((facility_codes + fixed_source_codes).uniq)
+    fallback_location_id = target_location_id || records.filter_map do |record|
+      next unless record[:property].to_s == 'current_health_center_id'
+
+      mapped_global_property_location_id(record[:property_value], source_location_id_map)
+    end.first
+
+    records.each do |record|
+      record[:location_id] = mapped_global_property_location_id(record[:location_id], source_location_id_map)
+      record[:location_id] = fallback_location_id.to_s if record[:location_id].blank? && fallback_location_id
+
+      next unless record[:property].to_s == 'current_health_center_id'
+      next if record[:property_value].blank?
+
+      mapped_property_value = mapped_global_property_location_id(record[:property_value], source_location_id_map)
+      record[:property_value] = mapped_property_value if mapped_property_value.present?
+    end
+
+    records
+  end
+
+  def mapped_global_property_location_id(value, source_location_id_map)
+    source_value = normalize_location_code(value)
+    return nil if source_value.blank?
+    return source_value if PRESERVE_LOCATION_IDS
+
+    mapped_location_id = if numeric_location_value?(source_value)
+                           fixed_source_code = FIXED_SOURCE_LOCATION_CODE_MAPPINGS[source_value]
+                           source_location_id_map[source_value] || LOCATION_ID_CACHE[fixed_source_code]
+                         else
+                           LOCATION_ID_CACHE[source_value]
+                         end
+
+    mapped_location_id ||= target_location_id
+    UNMAPPED_LOCATION_CODES[source_value] += 1 if mapped_location_id.blank?
+    mapped_location_id&.to_s
   end
 
   def ensure_location_id_cache(source_location_values)
@@ -896,6 +964,10 @@ module MahisProToDevMigrator
     value.to_s.strip.presence
   end
 
+  def normalized_record_location_id(record)
+    normalize_location_code(record[:location_id])
+  end
+
   def clear_deferred_foreign_keys(records, target_model)
     case target_model.to_s
     when 'Observation'
@@ -931,6 +1003,19 @@ module MahisProToDevMigrator
       keys = target_model.unscoped.where(user_id: records.map { |record| record[:user_id] }.compact)
                          .pluck(:user_id, :program_id).to_set
       records.reject { |record| keys.include?([record[:user_id], record[:program_id]]) }
+    when 'GlobalProperty'
+      properties = records.map { |record| record[:property] }.compact
+      if column_names(TARGET_DB, target_model.table_name).include?('location_id')
+        locations = records.map { |record| normalized_record_location_id(record) }.uniq
+        keys = target_model.unscoped.where(property: properties, location_id: locations)
+                           .pluck(:property, :location_id)
+                           .map { |property, location_id| [property, normalize_location_code(location_id)] }
+                           .to_set
+        records.reject { |record| keys.include?([record[:property], normalized_record_location_id(record)]) }
+      else
+        existing_properties = target_model.unscoped.where(property: properties).pluck(:property).to_set
+        records.reject { |record| existing_properties.include?(record[:property]) }
+      end
     else
       if records.first.key?(:uuid)
         existing_uuids = target_model.unscoped.where(uuid: records.map { |record| record[:uuid] }.compact).pluck(:uuid).to_set
@@ -961,6 +1046,12 @@ module MahisProToDevMigrator
                       %i[order_id]
                     when 'LimsAcknowledgementStatus'
                       %i[order_id test]
+                    when 'UserRole'
+                      %i[user_id role]
+                    when 'UserProgram'
+                      %i[user_id program_id]
+                    when 'GlobalProperty'
+                      %i[property]
                     else
                       []
                     end
@@ -1052,6 +1143,35 @@ module MahisProToDevMigrator
       track_skipped('users', record, "#{key} could not be mapped") if record[key].blank?
     end
     records
+  end
+
+  def get_migrated_user_ids(records, key)
+    source_ids = records.map { |record| record[key].to_i if record[key].present? }.compact.uniq
+    return records if source_ids.empty?
+
+    missing_ids = source_ids.reject { |source_id| MIGRATED_USER_ID_CACHE.key?(source_id) }
+    if missing_ids.any?
+      source_rows = select_source_rows('users', "#{q('user_id')} IN (#{missing_ids.join(',')})", nil, nil, User)
+      source_uuid_by_id = source_rows.index_by { |row| row['user_id'].to_i }.transform_values { |row| row['uuid'] }
+      target_ids_by_uuid = User.unscoped.where(uuid: source_uuid_by_id.values.compact).pluck(:uuid, :user_id).to_h
+
+      missing_ids.each do |source_id|
+        MIGRATED_USER_ID_CACHE[source_id] = target_ids_by_uuid[source_uuid_by_id[source_id]]
+      end
+    end
+
+    records.reject do |record|
+      next false if record[key].blank?
+
+      source_id = record[key].to_i
+      record[key] = MIGRATED_USER_ID_CACHE[source_id]
+      if record[key].blank?
+        track_skipped('user_mapping', record, "#{key}=#{source_id} could not be mapped to a migrated user")
+        true
+      else
+        false
+      end
+    end
   end
 
   def new_user_id(source_user_id)
