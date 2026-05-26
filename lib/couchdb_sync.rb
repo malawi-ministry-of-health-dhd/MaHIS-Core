@@ -18,8 +18,10 @@ module CouchdbSync
 
   def ensure_db_exists(db_name)
     RestClient.put(couchdb_url(db_name), '')
+    true
   rescue RestClient::PreconditionFailed
     # Database already exists
+    false
   end
 
   def couchdb_url(*segments)
@@ -30,7 +32,11 @@ module CouchdbSync
     return unless couchdb_configured?
     return if skip_couchdb_sync?
 
-    ensure_db_exists(db_name)
+    created = ensure_db_exists(db_name)
+    db_url = couchdb_url(db_name)
+    PatientRecordSearchFields.ensure_couchdb_indexes!(db_url, logger: Rails.logger, force: created) if db_name.to_s == PatientRecordSearchFields::PATIENT_RECORD_DB
+    ReferenceDataSearchFields.ensure_couchdb_indexes!(db_url, db_name, logger: Rails.logger, force: created)
+
     encoded_doc_id = URI.encode_www_form_component(doc_id.to_s)
     doc_url = couchdb_url(db_name, encoded_doc_id)
 
@@ -38,6 +44,8 @@ module CouchdbSync
 
     begin
       payload = doc_data.deep_dup
+      PatientRecordSearchFields.normalize_if_patient_record!(payload, db_name)
+      ReferenceDataSearchFields.normalize_if_supported!(payload, db_name)
 
       # If updating, fetch latest _rev.
       begin
