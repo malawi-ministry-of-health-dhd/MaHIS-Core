@@ -24,13 +24,15 @@ namespace :sync do
       Sync::RolesPermissionsSyncJob,
       Sync::RegimenIngredientSyncJob,
       Sync::DepartmentSyncJob,
+      Sync::SectionSyncJob,
       Sync::CustomRegimenIngredientSyncJob,
       Sync::GlobalPropertySyncJob,
       Sync::UserPropertySyncJob,
       Sync::MnhStatsSyncJob,
       Sync::RegimenExtraSyncJob,
       Sync::RegimenStarterPackSyncJob,
-      Sync::ArvDrugSyncJob
+      Sync::ArvDrugSyncJob,
+      Sync::BedSyncJob
     ]
 
     # Fresh run: clear any stale progress so the bars start from zero.
