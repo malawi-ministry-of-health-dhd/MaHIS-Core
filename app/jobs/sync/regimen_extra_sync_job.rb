@@ -4,7 +4,7 @@ module Sync
   class RegimenExtraSyncJob < BaseSyncJob
     DB_NAME = 'regimen_extras'
 
-    def perform(_batch_size = DEFAULT_BULK_BATCH_SIZE)
+    def perform(batch_size = DEFAULT_BULK_BATCH_SIZE)
       engine = ArtService::RegimenEngine.new(program: Program.find_by_name('HIV Program'))
       bands  = weight_bands
 
@@ -21,15 +21,19 @@ module Sync
         }
       end
 
-      ensure_database_exists(DB_NAME)
-      documents.each do |doc|
-        sync_to_couchdb(doc, DB_NAME, doc['_id'])
-      end
-
-      Sidekiq.logger.info "Synced #{documents.size} regimen extra band documents to CouchDB '#{DB_NAME}'"
+      sync_array_to_couchdb(documents, DB_NAME, 'regimen_extra', batch_size)
     end
 
     private
+
+    # The array helper passes already-built documents straight through.
+    def prepare_document(document)
+      document
+    end
+
+    def generate_document_id(document)
+      document['_id']
+    end
 
     def weight_bands
       ActiveRecord::Base.connection.exec_query(<<~SQL).map { |r| [r['min_weight'], r['max_weight']] }.uniq

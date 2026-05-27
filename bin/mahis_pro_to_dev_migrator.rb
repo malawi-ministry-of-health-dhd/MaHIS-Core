@@ -518,6 +518,9 @@ module MahisProToDevMigrator
     populate_records('user_role', UserRole, {
       user_id: :get_migrated_user_ids
     }, reset_primary_key: false)
+    populate_records('user_property', UserProperty, {
+      user_id: :get_migrated_user_ids
+    }, reset_primary_key: false)
     populate_records('user_programs', UserProgram, {
       user_id: :get_migrated_user_ids,
       program_id: :get_program_ids_by_name
@@ -797,7 +800,9 @@ module MahisProToDevMigrator
 
   def prepare_global_properties(records)
     return records if records.empty?
-    return records unless column_names(TARGET_DB, 'global_property').include?('location_id')
+
+    records = discard_global_property_surrogate_keys(records)
+    return deduplicate_global_properties(records) unless column_names(TARGET_DB, 'global_property').include?('location_id')
 
     source_location_values = records.filter_map { |record| normalize_location_code(record[:location_id]) }
     source_location_values.concat(
@@ -829,7 +834,41 @@ module MahisProToDevMigrator
       record[:property_value] = mapped_property_value if mapped_property_value.present?
     end
 
+    deduplicate_global_properties(records)
+  end
+
+  def discard_global_property_surrogate_keys(records)
+    primary_key = primary_key_column(TARGET_DB, 'global_property')
+    surrogate_columns = %i[id global_property_id]
+    surrogate_columns << primary_key.to_sym if primary_key.present? && primary_key != 'property'
+
+    surrogate_columns.uniq.each do |column|
+      records.each { |record| record.delete(column) }
+    end
     records
+  end
+
+  def deduplicate_global_properties(records)
+    seen_keys = Set.new
+    location_scoped_key = global_property_location_scoped_key?
+
+    records.reject do |record|
+      key = if location_scoped_key
+              [record[:property], normalized_record_location_id(record)]
+            else
+              record[:property]
+            end
+
+      duplicate = seen_keys.include?(key)
+      seen_keys << key unless duplicate
+      track_skipped('global_property', record, 'duplicate global property in source batch') if duplicate
+      duplicate
+    end
+  end
+
+  def global_property_location_scoped_key?
+    column_names(TARGET_DB, 'global_property').include?('location_id') &&
+      primary_key_column(TARGET_DB, 'global_property') != 'property'
   end
 
   def mapped_global_property_location_id(value, source_location_id_map)
@@ -1005,7 +1044,7 @@ module MahisProToDevMigrator
       records.reject { |record| keys.include?([record[:user_id], record[:program_id]]) }
     when 'GlobalProperty'
       properties = records.map { |record| record[:property] }.compact
-      if column_names(TARGET_DB, target_model.table_name).include?('location_id')
+      if global_property_location_scoped_key?
         locations = records.map { |record| normalized_record_location_id(record) }.uniq
         keys = target_model.unscoped.where(property: properties, location_id: locations)
                            .pluck(:property, :location_id)
@@ -1048,6 +1087,8 @@ module MahisProToDevMigrator
                       %i[order_id test]
                     when 'UserRole'
                       %i[user_id role]
+                    when 'UserProperty'
+                      %i[user_id property]
                     when 'UserProgram'
                       %i[user_id program_id]
                     when 'GlobalProperty'
