@@ -101,14 +101,24 @@ module Sync
       normalized_date = normalize_date(date)
       rows = build_stats_rows(normalized_date, location_id, program_key)
 
-      return Sidekiq.logger.info('MnhStatsSyncJob: no MNH stats to sync') if rows.empty?
+      SyncProgress.start(DB_NAME, rows.length)
+
+      if rows.empty?
+        SyncProgress.finish(DB_NAME)
+        return Sidekiq.logger.info('MnhStatsSyncJob: no MNH stats to sync')
+      end
 
       ensure_database_exists(DB_NAME)
 
       result = sync_rows(rows, batch_size)
       log_result(result, rows.length)
 
-      raise "MNH stats sync failed with #{result[:errors].length} errors" if result[:errors].any?
+      if result[:errors].any?
+        SyncProgress.fail(DB_NAME, "#{result[:errors].length} errors")
+        raise "MNH stats sync failed with #{result[:errors].length} errors"
+      end
+
+      SyncProgress.finish(DB_NAME)
     end
 
     private
@@ -151,9 +161,12 @@ module Sync
 
     def sync_rows(rows, batch_size)
       errors = []
+      processed = 0
       rows.each_slice(normalize_batch_size(batch_size)) do |batch|
         result = bulk_sync_to_couchdb(batch, DB_NAME)
         errors.concat(result[:errors]) if result[:errors].any?
+        processed += batch.size
+        SyncProgress.set(DB_NAME, processed)
       end
 
       { success: errors.empty?, errors: errors }
@@ -178,11 +191,52 @@ module Sync
     end
 
     def locations(location_id = nil)
+      activated_ids = dde_activated_location_ids
+      if activated_ids.empty?
+        Sidekiq.logger.info('MnhStatsSyncJob: no DDE-activated facilities found; skipping MNH stats')
+        return Location.none
+      end
+
       scope = Location.unscoped
                       .where(retired: [0, false])
+                      .where(location_id: activated_ids)
                       .select(:location_id, :name)
                       .order(:location_id)
-      location_id.present? ? scope.where(location_id: location_id) : scope.where.not(city_village: [nil, ''])
+      location_id.present? ? scope.where(location_id: location_id) : scope
+    end
+
+    # location_ids of facilities flagged dde_activated in the CouchDB facilities DB.
+    def dde_activated_location_ids
+      return @dde_activated_location_ids if defined?(@dde_activated_location_ids)
+
+      @dde_activated_location_ids = fetch_dde_activated_location_ids
+    end
+
+    def fetch_dde_activated_location_ids
+      db_url = couchdb_url('facilities')
+      selector = { '$or' => [{ 'dde_activated' => true }, { 'dde_activated' => 'true' }] }
+      ids = []
+      bookmark = nil
+
+      loop do
+        query = { selector: selector, fields: ['location_id'], limit: 1000 }
+        query[:bookmark] = bookmark if bookmark
+
+        response = RestClient.post("#{db_url}/_find", query.to_json, content_type: :json, accept: :json)
+        body = JSON.parse(response.body)
+        docs = body['docs'] || []
+        ids.concat(docs.map { |doc| doc['location_id'] })
+        bookmark = body['bookmark']
+        break if docs.size < 1000
+      end
+
+      ids.compact.map { |value| value.to_s.to_i }.uniq
+    rescue RestClient::NotFound
+      Sidekiq.logger.warn("MnhStatsSyncJob: facilities DB not found; treating no facilities as DDE-activated")
+      []
+    rescue StandardError => e
+      Sidekiq.logger.error("MnhStatsSyncJob: failed to load DDE-activated facilities: #{e.class}: #{e.message}")
+      []
     end
 
     def normalize_date(date)

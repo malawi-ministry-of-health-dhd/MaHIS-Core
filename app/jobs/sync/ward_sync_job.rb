@@ -26,10 +26,10 @@ module Sync
         "latitude" => ward.latitude,
         "longitude" => ward.longitude,
         "county_district" => ward.county_district,
-        "neighborhood_cell" => ward.neighborhood_cell,
-        "region" => ward.region,
-        "subregion" => ward.subregion,
-        "township_division" => ward.township_division,
+        "address3" => ward.address3,
+        "address4" => ward.address4,
+        "address5" => ward.address5,
+        "address6" => ward.address6,
         "parent_location" => ward.parent_location,
       }
     end
