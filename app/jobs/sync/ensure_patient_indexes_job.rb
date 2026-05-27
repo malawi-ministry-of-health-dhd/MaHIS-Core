@@ -71,6 +71,7 @@ module Sync
 
       db_url = couchdb_url(PatientRecordSearchFields::PATIENT_RECORD_DB)
       PatientRecordSearchFields.ensure_couchdb_indexes!(db_url, logger: Sidekiq.logger, force: true)
+      SyncProgress.finish('patients_records')
       Sidekiq.logger.info('EnsurePatientIndexesJob: patient search indexes ensured after bulk sync completion')
     end
   end

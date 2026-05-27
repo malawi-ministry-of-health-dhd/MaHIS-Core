@@ -26,10 +26,10 @@ module Sync
         "latitude" => department.latitude,
         "longitude" => department.longitude,
         "county_district" => department.county_district,
-        "neighborhood_cell" => department.neighborhood_cell,
-        "region" => department.region,
-        "subregion" => department.subregion,
-        "township_division" => department.township_division,
+        "address3" => department.address3,
+        "address4" => department.address4,
+        "address5" => department.address5,
+        "address6" => department.address6,
         "parent_location" => department.parent_location,
       }
     end

@@ -63,7 +63,8 @@ module Sync
       # Sync all patient records in one bulk operation to CouchDB
       if patient_records.any?
         bulk_sync_patients_to_couchdb(patient_records)
-        
+        SyncProgress.increment('patients_records', patient_records.count)
+
         duration = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_time
         records_per_sec = duration.positive? ? (patient_records.count / duration).round(2) : patient_records.count
         Sidekiq.logger.info("Successfully synced #{patient_records.count} patient records in #{duration.round(2)}s (#{records_per_sec} patients/sec)")
