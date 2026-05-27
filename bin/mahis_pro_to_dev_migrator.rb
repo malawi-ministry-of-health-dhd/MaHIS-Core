@@ -518,6 +518,9 @@ module MahisProToDevMigrator
     populate_records('user_role', UserRole, {
       user_id: :get_migrated_user_ids
     }, reset_primary_key: false)
+    populate_records('user_property', UserProperty, {
+      user_id: :get_migrated_user_ids
+    }, reset_primary_key: false)
     populate_records('user_programs', UserProgram, {
       user_id: :get_migrated_user_ids,
       program_id: :get_program_ids_by_name
@@ -1084,6 +1087,8 @@ module MahisProToDevMigrator
                       %i[order_id test]
                     when 'UserRole'
                       %i[user_id role]
+                    when 'UserProperty'
+                      %i[user_id property]
                     when 'UserProgram'
                       %i[user_id program_id]
                     when 'GlobalProperty'
