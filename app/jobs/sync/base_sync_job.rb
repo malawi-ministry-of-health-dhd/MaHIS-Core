@@ -360,7 +360,7 @@ module Sync
     end
     
     # NEW: Bulk sync to CouchDB using _bulk_docs endpoint
-    def bulk_sync_to_couchdb(documents, db_name)
+    def bulk_sync_to_couchdb(documents, db_name, manage_indexes: true)
       db_url = couchdb_url(db_name)
       bulk_url = "#{db_url}/_bulk_docs"
 
@@ -372,8 +372,10 @@ module Sync
       end
 
       unique_documents = normalize_search_documents(unique_documents, db_name)
-      PatientRecordSearchFields.ensure_couchdb_indexes!(db_url, logger: Sidekiq.logger) if db_name.to_s == PatientRecordSearchFields::PATIENT_RECORD_DB
-      ReferenceDataSearchFields.ensure_couchdb_indexes!(db_url, db_name, logger: Sidekiq.logger)
+      if manage_indexes
+        PatientRecordSearchFields.ensure_couchdb_indexes!(db_url, logger: Sidekiq.logger) if db_name.to_s == PatientRecordSearchFields::PATIENT_RECORD_DB
+        ReferenceDataSearchFields.ensure_couchdb_indexes!(db_url, db_name, logger: Sidekiq.logger)
+      end
 
       # Fetch existing _revs to avoid conflicts
       existing_revs = fetch_existing_revs(unique_documents, db_url)
@@ -437,17 +439,53 @@ module Sync
       doc.merge("_id" => doc_id)
     end
     
+    # Transient CouchDB connection errors worth retrying. CouchDB closing the
+    # socket mid-request surfaces as RestClient::ServerBrokeConnection (wrapping
+    # an EOFError), which is exactly what happens when the server is restarting
+    # or saturated. A 404 is NOT transient and must propagate.
+    COUCHDB_TRANSIENT_ERRORS = [
+      RestClient::ServerBrokeConnection,
+      RestClient::Exceptions::OpenTimeout,
+      RestClient::Exceptions::ReadTimeout,
+      RestClient::RequestTimeout,
+      RestClient::BadGateway,
+      RestClient::ServiceUnavailable,
+      RestClient::GatewayTimeout,
+      Errno::ECONNREFUSED,
+      Errno::ECONNRESET,
+      Errno::EPIPE,
+      SocketError,
+      EOFError
+    ].freeze
+
+    def with_couchdb_retries(max_attempts: 5, base_delay: 0.5)
+      attempt = 0
+      begin
+        yield
+      rescue *COUCHDB_TRANSIENT_ERRORS => e
+        attempt += 1
+        raise if attempt >= max_attempts
+
+        delay = base_delay * (2**(attempt - 1))
+        Sidekiq.logger.warn("CouchDB transient error (attempt #{attempt}/#{max_attempts}): #{e.class}: #{e.message}; retrying in #{delay}s")
+        sleep(delay)
+        retry
+      end
+    end
+
     # NEW: Ensure database exists
-    def ensure_database_exists(db_name)
+    def ensure_database_exists(db_name, manage_indexes: true)
       db_url = couchdb_url(db_name)
       created = false
       begin
-        RestClient.get(db_url)
+        with_couchdb_retries { RestClient.get(db_url) }
       rescue RestClient::NotFound
-        RestClient.put(db_url, {}.to_json, { content_type: :json })
+        with_couchdb_retries { RestClient.put(db_url, {}.to_json, { content_type: :json }) }
         Sidekiq.logger.info "Created CouchDB database: #{db_name}"
         created = true
       end
+
+      return unless manage_indexes
 
       PatientRecordSearchFields.ensure_couchdb_indexes!(db_url, logger: Sidekiq.logger, force: created) if db_name.to_s == PatientRecordSearchFields::PATIENT_RECORD_DB
       ReferenceDataSearchFields.ensure_couchdb_indexes!(db_url, db_name, logger: Sidekiq.logger, force: created)

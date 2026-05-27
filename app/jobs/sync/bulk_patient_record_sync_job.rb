@@ -94,15 +94,19 @@ module Sync
     
     def bulk_sync_patients_to_couchdb(patient_records)
       db_name = 'patients_records'
-      ensure_database_exists(db_name)
-      
+      # Skip index management on the write path: with indexes live, CouchDB's
+      # background indexer rebuilds all of them after every batch across every
+      # parallel job, which saturates CPU and crash-loops the server. Indexes
+      # are built once after the fan-out drains (see EnsurePatientIndexesJob).
+      ensure_database_exists(db_name, manage_indexes: false)
+
       # Prepare documents with _id for bulk operation
       documents = patient_records.map do |record|
         prepare_bulk_document(record)
       end
-      
+
       # Use bulk sync from BaseSyncJob
-      bulk_result = bulk_sync_to_couchdb(documents, db_name)
+      bulk_result = bulk_sync_to_couchdb(documents, db_name, manage_indexes: false)
       
       if bulk_result[:errors].any?
         Sidekiq.logger.error("Bulk sync had #{bulk_result[:errors].length} errors")

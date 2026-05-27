@@ -25,6 +25,10 @@ module Sync
 
       location_msg = location_id.present? ? "for location #{location_id}" : "for ALL locations"
       Rails.logger.info("Queued #{total_jobs} bulk sync jobs for #{total_patients} patients #{location_msg} (#{normalized_batch_size} patients per job)")
+
+      # Bulk jobs skip index creation; build the patient search indexes once the
+      # fan-out has drained so CouchDB indexes a single time over the full dataset.
+      EnsurePatientIndexesJob.perform_async
     end
 
     private
