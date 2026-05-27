@@ -18,7 +18,6 @@ namespace :sync do
       Sync::RelationshipTypeSyncJob,
       Sync::TraditionalAuthoritySyncJob,
       Sync::VillageSyncJob,
-      Sync::LocationSyncJob,
       Sync::DdeIdsSyncJob,
       Sync::DiagnosisSyncJob,
       Sync::WardSyncJob,
