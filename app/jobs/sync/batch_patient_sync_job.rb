@@ -15,7 +15,7 @@ module Sync
         Rails.logger.info("Starting batch patient sync for ALL locations")
       end
 
-      since_date ||= CouchdbPatientService.get_latest_encounter_date_changed
+      since_date = default_since_date(location_id) if since_date.blank?
       parsed_since_date = parse_since_date(since_date)
       normalized_batch_size = normalize_batch_size(batch_size)
 
@@ -51,6 +51,27 @@ module Sync
     rescue ArgumentError, TypeError
       Rails.logger.warn("Invalid since_date '#{since_date}', defaulting to full sync")
       nil
+    end
+
+    def default_since_date(location_id)
+      return CouchdbPatientService.get_latest_encounter_date_changed if location_id.present?
+
+      mysql_count = Patient.count
+      couchdb_count = CouchdbPatientService.patient_record_count
+
+      if couchdb_count.nil?
+        Rails.logger.warn('Could not compare MySQL and CouchDB patient counts; falling back to incremental patient sync')
+        return CouchdbPatientService.get_latest_encounter_date_changed
+      end
+
+      if couchdb_count != mysql_count
+        Rails.logger.warn(
+          "patients_records count mismatch detected (MySQL active patients: #{mysql_count}, CouchDB docs: #{couchdb_count}); running full patient sync"
+        )
+        return nil
+      end
+
+      CouchdbPatientService.get_latest_encounter_date_changed
     end
 
     def patient_sync_scope(location_id, parsed_since_date)
@@ -125,7 +146,7 @@ module Sync
     end
 
     def next_patient_batch(last_patient_id, patient_fetch_size)
-      Patient.unscoped.where('patient.patient_id > ?', last_patient_id)
+      Patient.where('patient.patient_id > ?', last_patient_id)
              .reorder(nil)
              .order(patient_id: :asc)
              .limit(patient_fetch_size)
