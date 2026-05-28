@@ -21,6 +21,7 @@ namespace :sync do
       Sync::DdeIdsSyncJob,
       Sync::DiagnosisSyncJob,
       Sync::WardSyncJob,
+      Sync::SectionSyncJob,
       Sync::RolesPermissionsSyncJob,
       Sync::RegimenIngredientSyncJob,
       Sync::DepartmentSyncJob,
