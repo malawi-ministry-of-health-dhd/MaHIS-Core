@@ -88,6 +88,10 @@ Rails.application.routes.draw do
       end
 
       resources :roles do
+        collection do
+          post :sync_superuser_privileges
+        end
+
         member do
           post :add_privilege
           post :remove_privilege
