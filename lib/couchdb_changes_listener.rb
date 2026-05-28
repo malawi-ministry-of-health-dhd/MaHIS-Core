@@ -342,22 +342,28 @@ class CouchdbChangesListener
       
       if processed_data.present?
         cleaned_data = clean_for_json(processed_data)
-        
+
         if cleaned_data.is_a?(Hash)
           cleaned_data.each do |key, value|
-            next if key.to_s.start_with?('_') || 
-                   key.to_s == 'processed_by_listener' || 
+            next if key.to_s.start_with?('_') ||
+                   key.to_s == 'processed_by_listener' ||
                    key.to_s == 'listener_processed_at' ||
                    key.to_s == 'processed_data' ||
                    key.to_s == 'processed_by_db'
             updated_doc[key.to_s] = value
           end
         end
-        
+
         Rails.logger.info("[CouchDB Listener] Adding processed data to CouchDB document #{doc_id} in #{db_name}")
       end
-      
-      update_couchdb_document_direct(doc_id, updated_doc)
+
+      canonical_id = canonical_doc_id(updated_doc)
+
+      if canonical_id.present? && canonical_id != doc_id
+        rename_couchdb_document(doc_id, canonical_id, updated_doc)
+      else
+        update_couchdb_document_direct(doc_id, updated_doc)
+      end
       
     rescue RestClient::Conflict, RestClient::PreconditionFailed => e
       Rails.logger.warn("[CouchDB Listener] Conflict on attempt #{attempt} for #{doc_id} in #{db_name}, retrying...")
@@ -431,25 +437,102 @@ class CouchdbChangesListener
     username, password = couchdb_credentials
     encoded_doc_id = URI.encode_www_form_component(doc_id)
     update_url = couchdb_url(db_name, encoded_doc_id)
-    
+
     resource_options = {
       headers: { content_type: :json, accept: :json }
     }
     resource_options[:user] = username if username
     resource_options[:password] = password if password
-    
+
     resource = RestClient::Resource.new(update_url, resource_options)
-    
+
     Rails.logger.debug("[CouchDB Listener] Updating document #{doc_id} in #{db_name} with revision #{document_data['_rev']}")
-    
+
     response = resource.put(document_data.to_json)
-    
+
     if response.code == 201 || response.code == 200
       response_data = JSON.parse(response.body)
       Rails.logger.info("[CouchDB Listener] Successfully updated CouchDB document: #{doc_id} in #{db_name}, new rev: #{response_data['rev']}")
     else
       Rails.logger.error("[CouchDB Listener] Unexpected response code #{response.code} when updating document: #{doc_id} in #{db_name}")
     end
+  end
+
+  # CouchDB doc ids are immutable, but the canonical identifier for patient
+  # documents (the type-3 'National id') can change after the doc is first
+  # written — for example when DDE re-links a patient or a merge runs. When
+  # that happens we rewrite the document under the canonical id so `_id`
+  # stays aligned with the `ID` field consumers read.
+  def canonical_doc_id(updated_doc)
+    return nil unless db_name == 'patients_records'
+
+    identifier = updated_doc['ID'] || updated_doc[:ID]
+    identifier.to_s.strip.presence
+  end
+
+  def rename_couchdb_document(old_id, new_id, document_data)
+    Rails.logger.info("[CouchDB Listener] Renaming document #{old_id} -> #{new_id} in #{db_name}")
+
+    if fetch_current_document(new_id)
+      Rails.logger.error(
+        "[CouchDB Listener] Cannot rename #{old_id} -> #{new_id} in #{db_name}: target id already exists. Updating old doc in place."
+      )
+      update_couchdb_document_direct(old_id, document_data)
+      return
+    end
+
+    new_doc = document_data.reject { |key, _| key.to_s == '_id' || key.to_s == '_rev' }
+    new_doc['_id'] = new_id
+
+    create_couchdb_document_direct(new_id, new_doc)
+
+    old_doc_rev = document_data['_rev']
+    delete_couchdb_document_direct(old_id, old_doc_rev) if old_doc_rev.present?
+  rescue RestClient::Conflict => e
+    Rails.logger.warn("[CouchDB Listener] Conflict renaming #{old_id} -> #{new_id} in #{db_name}: #{e.message}. Will retry via update_couchdb_with_retry.")
+    raise
+  rescue StandardError => e
+    Rails.logger.error("[CouchDB Listener] Failed to rename #{old_id} -> #{new_id} in #{db_name}: #{e.message}. Falling back to in-place update.")
+    update_couchdb_document_direct(old_id, document_data)
+  end
+
+  def create_couchdb_document_direct(doc_id, document_data)
+    username, password = couchdb_credentials
+    encoded_doc_id = URI.encode_www_form_component(doc_id)
+    create_url = couchdb_url(db_name, encoded_doc_id)
+
+    resource_options = { headers: { content_type: :json, accept: :json } }
+    resource_options[:user] = username if username
+    resource_options[:password] = password if password
+
+    resource = RestClient::Resource.new(create_url, resource_options)
+    response = resource.put(document_data.to_json)
+
+    if response.code == 201 || response.code == 200
+      response_data = JSON.parse(response.body)
+      Rails.logger.info("[CouchDB Listener] Created CouchDB document: #{doc_id} in #{db_name}, rev: #{response_data['rev']}")
+    else
+      raise "Unexpected response code #{response.code} when creating document: #{doc_id} in #{db_name}"
+    end
+  end
+
+  def delete_couchdb_document_direct(doc_id, rev)
+    username, password = couchdb_credentials
+    encoded_doc_id = URI.encode_www_form_component(doc_id)
+    delete_url = couchdb_url(db_name, "#{encoded_doc_id}?rev=#{rev}")
+
+    resource_options = { headers: { accept: :json } }
+    resource_options[:user] = username if username
+    resource_options[:password] = password if password
+
+    resource = RestClient::Resource.new(delete_url, resource_options)
+    resource.delete
+
+    Rails.logger.info("[CouchDB Listener] Deleted superseded CouchDB document: #{doc_id} in #{db_name}")
+  rescue RestClient::NotFound
+    Rails.logger.info("[CouchDB Listener] Old document #{doc_id} already gone in #{db_name}, nothing to delete")
+  rescue StandardError => e
+    Rails.logger.error("[CouchDB Listener] Failed to delete old document #{doc_id} in #{db_name}: #{e.message}")
   end
 
   def clean_for_json(data)
