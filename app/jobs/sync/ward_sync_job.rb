@@ -3,7 +3,7 @@ module Sync
   class WardSyncJob < BaseSyncJob
     
     # Sync all wards to CouchDB
-    def perform(batch_size = 100)
+    def perform(batch_size = 100, *_unused_args)
       sync_records_to_couchdb(Location, 'wards', batch_size) do |model_class|
         ward_tag = LocationTag.where('LOWER(name) = ?', 'ward').first ||
                    LocationTag.where('name like ?', '%Ward%').first

@@ -27,6 +27,10 @@ module ReferenceDataSearchFields
     'wards' => {
       'name_search' => :name,
       'parent_location_search' => :parent_location
+    },
+    'sections' => {
+      'name_search' => :name,
+      'parent_location_search' => :parent_location
     }
   }.freeze
 
@@ -67,6 +71,13 @@ module ReferenceDataSearchFields
       { name: 'idx_parent_location_name_search', fields: ['parent_location_search', 'name_search'] }
     ],
     'wards' => [
+      { name: 'idx_location_id', fields: ['location_id'] },
+      { name: 'idx_parent_location', fields: ['parent_location'] },
+      { name: 'idx_parent_location_search', fields: ['parent_location_search'] },
+      { name: 'idx_name_search', fields: ['name_search'] },
+      { name: 'idx_parent_location_name_search', fields: ['parent_location_search', 'name_search'] }
+    ],
+    'sections' => [
       { name: 'idx_location_id', fields: ['location_id'] },
       { name: 'idx_parent_location', fields: ['parent_location'] },
       { name: 'idx_parent_location_search', fields: ['parent_location_search'] },
