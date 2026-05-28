@@ -143,6 +143,7 @@ class SavePatientRecordService
     patient_data[:nationalID]            = BuildPatientRecordService.patient_identifier(patient, 28)
     patient_data[:patientID]             = patient_id
     patient_data[:NcdID]                 = BuildPatientRecordService.patient_identifier(patient, 31)
+    patient_data[:patient_identifiers]   = patient.patient_identifiers.as_json
     patient_data[:sync_status]           = overall_sync_status
     patient_data[:otherPersonInformation] = BuildPatientRecordService.build_other_person_info
     patient_data[:visits]                = BuildPatientRecordService.safe_get_visits(patient)
