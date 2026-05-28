@@ -92,6 +92,24 @@ class CouchdbPatientService
       return nil
     end
 
+    def patient_record_count(db_name = PATIENTS_DB)
+      unless couchdb_configured?
+        Rails.logger.warn "CouchDB not configured. Cannot fetch patient record count."
+        return nil
+      end
+
+      ensure_db_exists(db_name)
+
+      response = RestClient.get(couchdb_url(db_name))
+      db_info = JSON.parse(response.body)
+      db_info['doc_count'].to_i - design_doc_count(db_name)
+    rescue RestClient::NotFound
+      0
+    rescue StandardError => e
+      Rails.logger.error "Error querying CouchDB patient record count: #{e.message}"
+      nil
+    end
+
     def create_encounter_date_index(db_name)
       return unless couchdb_configured?
 
@@ -197,6 +215,13 @@ class CouchdbPatientService
     end
 
     private
+
+    def design_doc_count(db_name)
+      response = RestClient.get(couchdb_url(db_name, '_design_docs'))
+      JSON.parse(response.body)['rows'].length
+    rescue StandardError
+      0
+    end
 
     def get_multiple_patients(patient_ids)
       return false unless couchdb_configured?
