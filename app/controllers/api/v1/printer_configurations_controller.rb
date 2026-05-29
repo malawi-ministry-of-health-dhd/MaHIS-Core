@@ -4,7 +4,10 @@ module Api
     class PrinterConfigurationsController < ApplicationController
       # GET /api/v1/printer_configurations
       def index
-        @printer_configurations = CouchdbPrinterService.get_all_printers
+        location_id = params[:location_id].presence || User.current.location_id.to_s
+        @printer_configurations = location_id.present? \
+          ? CouchdbPrinterService.find_by_location(location_id)
+          : CouchdbPrinterService.get_all_printers
         render json: @printer_configurations
       end
 
@@ -59,7 +62,13 @@ module Api
       private
 
       def printer_configurations_params
-        params.require(:printer_configuration).permit(:ip_address, :location_id, :printer_name, :port)
+        # Frontend sends flat JSON (no root key wrapper), so permit directly from params.
+        # Fall back to a nested :printer_configuration key for API clients that wrap the body.
+        if params[:printer_configuration].present?
+          params.require(:printer_configuration).permit(:ip_address, :location_id, :printer_name, :port)
+        else
+          params.permit(:ip_address, :location_id, :printer_name, :port)
+        end
       end
     end
   end
