@@ -28,26 +28,33 @@ class NcdActivePatientService
   private
 
   def build_count_query(filters)
-    ncd_type_id = PatientIdentifierType.find_by_name('NCD Number')&.id || 31
+    location_clause = filters[:location_id].present? ? "AND location_id = #{sanitize_number(filters[:location_id])}" : ""
     <<-SQL
       SELECT COUNT(DISTINCT base_patients.patient_id)
       FROM (
-        SELECT patient_id FROM patient_program WHERE program_id = 32 AND voided = 0
+        SELECT patient_id FROM patient_program WHERE program_id = 32 AND voided = 0 #{location_clause}
         UNION
-        SELECT patient_id FROM patient_identifier WHERE identifier_type = #{ncd_type_id} AND voided = 0
-        UNION
-        SELECT patient_id FROM encounter WHERE program_id = 32 AND voided = 0
+        SELECT patient_id FROM encounter WHERE program_id = 32 AND voided = 0 #{location_clause}
       ) base_patients
       INNER JOIN patient p ON base_patients.patient_id = p.patient_id
       INNER JOIN person pe ON p.patient_id = pe.person_id AND pe.voided = 0
       LEFT JOIN person_name pn ON pe.person_id = pn.person_id AND pn.voided = 0
+      LEFT JOIN (
+        SELECT patient_id, MAX(encounter_datetime) AS last_encounter_datetime
+        FROM encounter
+        WHERE voided = 0 #{location_clause}
+        GROUP BY patient_id
+      ) last_enc ON base_patients.patient_id = last_enc.patient_id
       WHERE 1=1
         #{build_filter_clauses(filters)}
+        #{build_category_clause(filters)}
+        #{build_last_visit_clause(filters, 'last_enc.last_encounter_datetime')}
     SQL
   end
 
   def build_data_query(filters, limit, offset)
     ncd_type_id = PatientIdentifierType.find_by_name('NCD Number')&.id || 31
+    location_clause = filters[:location_id].present? ? "AND location_id = #{sanitize_number(filters[:location_id])}" : ""
     <<-SQL
       SELECT 
         p.patient_id,
@@ -103,11 +110,9 @@ class NcdActivePatientService
           e.location_id,
           e.encounter_datetime
         FROM (
-          SELECT patient_id FROM patient_program WHERE program_id = 32 AND voided = 0
+          SELECT patient_id FROM patient_program WHERE program_id = 32 AND voided = 0 #{location_clause}
           UNION
-          SELECT patient_id FROM patient_identifier WHERE identifier_type = #{ncd_type_id} AND voided = 0
-          UNION
-          SELECT patient_id FROM encounter WHERE program_id = 32 AND voided = 0
+          SELECT patient_id FROM encounter WHERE program_id = 32 AND voided = 0 #{location_clause}
         ) bp
         INNER JOIN patient p ON bp.patient_id = p.patient_id
         INNER JOIN person pe ON p.patient_id = pe.person_id AND pe.voided = 0
@@ -120,6 +125,8 @@ class NcdActivePatientService
         ) e ON bp.patient_id = e.patient_id AND e.rn = 1
         WHERE 1=1
           #{build_filter_clauses(filters)}
+          #{build_category_clause(filters)}
+          #{build_last_visit_clause(filters, 'e.encounter_datetime')}
         ORDER BY COALESCE(e.encounter_datetime, pe.date_created) DESC
         LIMIT #{sanitize_number(limit)}
         OFFSET #{sanitize_number(offset)}
@@ -265,6 +272,58 @@ class NcdActivePatientService
         }
       }
     end.compact.uniq { |attr| attr[:person_attribute_id] }
+  end
+
+  def build_category_clause(filters)
+    category = filters[:category].to_s
+    return "" if category.blank? || category == "active"
+
+    case category
+    when "defaulters"
+      cutoff = (Date.current - 60.days).strftime("%Y-%m-%d")
+      <<~SQL.chomp
+        AND EXISTS (
+          SELECT 1 FROM orders dro INNER JOIN drug_order drdo ON drdo.order_id = dro.order_id
+          WHERE dro.patient_id = pe.person_id AND dro.voided = 0 AND drdo.quantity > 0
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM orders dro2 INNER JOIN drug_order drdo2 ON drdo2.order_id = dro2.order_id
+          WHERE dro2.patient_id = pe.person_id AND dro2.start_date > '#{cutoff}' AND dro2.voided = 0
+        )
+      SQL
+    when "pending_dispensations"
+      <<~SQL.chomp
+        AND EXISTS (
+          SELECT 1 FROM orders dro INNER JOIN drug_order drdo ON drdo.order_id = dro.order_id
+          WHERE dro.patient_id = pe.person_id AND dro.voided = 0 AND drdo.quantity <= 0
+        )
+      SQL
+    when "complications"
+      <<~SQL.chomp
+        AND EXISTS (
+          SELECT 1 FROM encounter ec2
+          INNER JOIN encounter_type et ON et.encounter_type_id = ec2.encounter_type AND et.name = 'COMPLICATIONS'
+          WHERE ec2.patient_id = pe.person_id AND ec2.voided = 0
+        )
+      SQL
+    when "pending_ids"
+      ncd_type_id = PatientIdentifierType.find_by_name("NCD Number")&.id || 31
+      <<~SQL.chomp
+        AND NOT EXISTS (
+          SELECT 1 FROM patient_identifier pi2
+          WHERE pi2.patient_id = pe.person_id AND pi2.identifier_type = #{ncd_type_id.to_i} AND pi2.voided = 0
+        )
+      SQL
+    else
+      ""
+    end
+  end
+
+  def build_last_visit_clause(filters, datetime_col)
+    return "" unless filters[:last_visited_after].present?
+
+    date_str = sanitize_string(filters[:last_visited_after])
+    "AND #{datetime_col} >= '#{date_str}'"
   end
 
   def sanitize_string(value)
