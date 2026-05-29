@@ -40,12 +40,14 @@ module Api
       def sync_superuser_privileges
         return unless authorize_superuser_sync
 
-        sync_result = Role.sync_superuser_privileges!(location_id: sync_location_id)
+        superuser_result = Role.sync_superuser_privileges!(location_id: sync_location_id)
+        standard_result  = Role.sync_standard_privileges!
         Sync::RolesPermissionsSyncJob.perform_async
 
         render json: {
-          message: 'Superuser privileges synced successfully',
-          **sync_result
+          message: 'Privileges synced successfully',
+          superuser: superuser_result,
+          standard: standard_result
         }, status: :ok
       rescue StandardError => e
         render json: { errors: [e.message] }, status: :unprocessable_entity

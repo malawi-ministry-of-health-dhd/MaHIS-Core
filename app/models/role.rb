@@ -15,6 +15,87 @@ class Role < ApplicationRecord
   has_many :user_roles, foreign_key: :role, class_name: 'UserRole'
   has_many :roles, through: :user_roles, foreign_key: :role
 
+  STANDARD_ROLE_PRIVILEGES = {
+    'General Registration Clerk' => [
+      'View Patients', 'Add Patients', 'Edit Patients', 'Search Patients',
+      'Activate Visits', 'View Appointments', 'Add Appointments', 'Edit Appointments',
+      'View Programs', 'View Enrollments'
+    ],
+    'Clinician' => [
+      'View Patients', 'Search Patients', 'Activate Visits',
+      'View Encounters', 'Add Encounters', 'Edit Encounters',
+      'View Observations', 'Add Observations', 'Edit Observations',
+      'View Diagnoses', 'Record Diagnosis', 'Add Diagnoses', 'Edit Diagnoses',
+      'Conduct Clinical Assessment', 'View Medications', 'Add Medications',
+      'Edit Medications', 'Prescribe Treatment', 'View Prescriptions',
+      'Order Investigations', 'View Lab Orders', 'View Lab Results', 'View Vitals',
+      'View Consultations', 'Add Consultations', 'Edit Consultations',
+      'View Appointments', 'Add Appointments', 'Edit Appointments',
+      'Record Patient Outcomes', 'View Programs', 'View Enrollments',
+      'Enroll Patients', 'View Reports'
+    ],
+    'Doctor' => [
+      'View Patients', 'Search Patients', 'Activate Visits',
+      'View Encounters', 'Add Encounters', 'Edit Encounters',
+      'View Observations', 'Add Observations', 'Edit Observations',
+      'View Diagnoses', 'Record Diagnosis', 'Add Diagnoses', 'Edit Diagnoses',
+      'Conduct Clinical Assessment', 'View Medications', 'Add Medications',
+      'Edit Medications', 'Prescribe Treatment', 'View Prescriptions',
+      'Order Investigations', 'View Lab Orders', 'View Lab Results', 'View Vitals',
+      'View Consultations', 'Add Consultations', 'Edit Consultations',
+      'View Appointments', 'Add Appointments', 'Edit Appointments',
+      'Record Patient Outcomes', 'View Programs', 'View Enrollments',
+      'Enroll Patients', 'View Reports'
+    ],
+    'Nurse' => [
+      'View Patients', 'Search Patients', 'Activate Visits',
+      'View Encounters', 'Add Encounters',
+      'View Observations', 'Add Observations',
+      'View Vitals', 'Capture Vitals', 'Add Vitals', 'Edit Vitals',
+      'Manage Monitoring Charts', 'Support Patient Movement',
+      'View Diagnoses', 'View Medications',
+      'View Appointments', 'Add Appointments', 'View Programs', 'View Enrollments'
+    ],
+    'Pharmacist' => [
+      'View Patients', 'Search Patients', 'Activate Visits',
+      'View Medications', 'View Prescriptions', 'Dispense Medications',
+      'View Encounters', 'View Orders', 'View Programs'
+    ],
+    'Provider' => [
+      'View Patients', 'Search Patients', 'Activate Visits',
+      'View Encounters', 'Add Encounters',
+      'View Observations', 'Add Observations',
+      'View Vitals', 'View Medications', 'View Programs', 'View Enrollments'
+    ]
+  }.freeze
+
+  def self.sync_standard_privileges!
+    added = 0
+    skipped = 0
+    missing_roles = []
+
+    transaction do
+      STANDARD_ROLE_PRIVILEGES.each do |role_name, privileges|
+        role = find_by(role: role_name)
+        next missing_roles << role_name unless role
+
+        current = RolePrivilege.where(role: role_name).pluck(:privilege)
+        (privileges - current).each do |priv_name|
+          next unless Privilege.exists?(privilege: priv_name)
+
+          rp = RolePrivilege.new
+          rp.write_attribute(:role, role_name)
+          rp.write_attribute(:privilege, priv_name)
+          rp.save!
+          added += 1
+        end
+        skipped += (privileges & current).size
+      end
+    end
+
+    { added_privileges: added, already_existed: skipped, missing_roles: missing_roles }
+  end
+
   def self.location_scoped?
     column_names.include?('location_id')
   end
