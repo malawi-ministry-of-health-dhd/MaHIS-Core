@@ -72,7 +72,7 @@ module PatientRecordService
         end
       end
 
-      send_treatment_plan_to_mediator(patient_id, record, treatment_plan_values)
+      # Referral sync is handled asynchronously after save in SavePatientRecordService.
 
       return ok if collected_errors.empty? && orders_unsaved.empty? && pending_orders.empty?
 
@@ -139,8 +139,17 @@ module PatientRecordService
 
       FhirService.sendReferralResultsToMediator(
         patient_id,
-        treatment_plan: treatment_plan
+        treatment_plan: treatment_plan,
+        event_id: ichis_referral_event_id(record)
       )
+    end
+
+    def ichis_referral_event_id(record)
+      direct_event_id = fetch_value(record, :send_ichis_enrolled_in_care_event_id).to_s.strip
+      return direct_event_id if direct_event_id.present?
+
+      event_ids = fetch_value(record, :ichisEventIds) || fetch_value(record, :ichis_event_ids)
+      Array.wrap(event_ids).map { |event_id| event_id.to_s.strip }.find(&:present?)
     end
 
     def extract_unsaved_dispensations(record)

@@ -7,8 +7,18 @@ module Api
       APP_CONFIG = YAML.safe_load(File.read('config/application.yml'))
       BASE_FHIR_URL = APP_CONFIG['BASE_FHIR_URL'] # change to your HAPI FHIR URL
       BASE_MEDIATOR_URL = APP_CONFIG['BASE_MEDIATOR_URL']
+      MEDIATOR_OPEN_TIMEOUT_SECONDS = APP_CONFIG.fetch('MEDIATOR_OPEN_TIMEOUT_SECONDS', 2).to_i
+      MEDIATOR_READ_TIMEOUT_SECONDS = APP_CONFIG.fetch('MEDIATOR_READ_TIMEOUT_SECONDS', 6).to_i
 
       SYNC_STATUS_TAG = 'ichis-mahis-pending'.freeze
+      IMPORTED_VITALS_TAG_SYSTEM = APP_CONFIG.fetch('FHIR_IMPORTED_VITALS_TAG_SYSTEM', 'http://mahis.gov.mw/fhir/tags').freeze
+      IMPORTED_VITALS_TAG_CODE = APP_CONFIG.fetch('FHIR_IMPORTED_VITALS_TAG_CODE', 'mahis-vitals-imported').freeze
+      ICHIS_EVENT_SOURCE_CONCEPT_NAMES = [
+        'Unspecified Diabetes',
+        'Systolic',
+        'Diastolic',
+        'Waist circumference'
+      ].freeze
       ICHIS_IDENTIFIER_SYSTEM = APP_CONFIG.fetch('ICHIS_IDENTIFIER_SYSTEM', 'https://ichis.org/ichisGeneratedID').freeze
       DHIS2_TEI_IDENTIFIER_SYSTEM = APP_CONFIG.fetch('DHIS2_TEI_IDENTIFIER_SYSTEM', 'https://dhis2.org/trackedEntityInstance').freeze
       SEARCH_RESULT_LIMIT = 1_000
@@ -42,45 +52,67 @@ module Api
 
 
       def observations
-        requested_id = params[:id]
+        requested_id = params[:id].to_s.strip
 
-        patient_bundle = find_patient_bundle(requested_id)
-        resolved_patient_id = extract_patient_id_from_bundle(patient_bundle) || requested_id
+        # Fast path: most callers already provide the FHIR Patient resource id.
+        bundle = observation_bundle_for_subject(requested_id)
 
-        bundle = fetch_first_non_empty(
-          [
-            "#{BASE_FHIR_URL}/Observation?subject=Patient/#{CGI.escape(resolved_patient_id)}&_tag=#{CGI.escape(SYNC_STATUS_TAG)}",
-            "#{BASE_FHIR_URL}/Observation?subject=Patient/#{CGI.escape(resolved_patient_id)}"
-          ],
-          allow_empty_fallback: true
-        )
+        # Fallback path: if no entries, resolve identifier/TEI -> patient id and retry once.
+        unless bundle_has_entries?(bundle)
+          patient_bundle = find_patient_bundle(requested_id)
+          resolved_patient_id = extract_patient_id_from_bundle(patient_bundle).to_s.strip
+          if resolved_patient_id.present? && resolved_patient_id != requested_id
+            bundle = observation_bundle_for_subject(resolved_patient_id)
+          end
+        end
 
-        render json: bundle
+        render json: filter_imported_referral_vitals(bundle)
       rescue RestClient::ExceptionWithResponse => e
         render json: { errors: ["Observations for Patient/#{requested_id} not found"], response: e.response }, status: :not_found
       end
 
+      def mark_imported_observations
+        observation_ids = normalize_array_param(params[:observation_ids])
+        if observation_ids.blank?
+          render json: { error: 'observation_ids is required' }, status: :bad_request
+          return
+        end
+
+        response = ::FhirService.markReferralVitalsImportedInMediator(
+          observation_ids: observation_ids,
+          event_ids: normalize_array_param(params[:event_ids]),
+          patient_identifier: params[:patient_identifier].to_s.strip.presence,
+          tei: params[:tei].to_s.strip.presence
+        )
+
+        if mediator_success_response?(response)
+          render json: {
+            status: 'ok',
+            imported_observations_count: observation_ids.length,
+            response: parse_json_response(response&.body)
+          }, status: :ok
+          return
+        end
+
+        render json: {
+          error: 'Unable to mark referral vitals as imported in FHIR',
+          response: parse_json_response(response&.body)
+        }, status: :bad_gateway
+      rescue StandardError => e
+        Rails.logger.error("Unable to mark referral vitals as imported in FHIR: #{e.class}: #{e.message}")
+        render json: { error: 'Unable to mark referral vitals as imported in FHIR' }, status: :bad_gateway
+      end
+
       def mahis_update_status
         tei = params[:tei].to_s.strip
-        event_ids = params[:event_ids].to_s.split(',').map(&:strip).reject(&:blank?).uniq
+        event_ids = normalize_array_param(params[:event_ids])
 
         if tei.blank? && event_ids.blank?
           render json: { error: 'TEI or event_ids is required' }, status: :bad_request
           return
         end
 
-        response = RestClient.get(
-          mediator_endpoint('status'),
-          {
-            params: {
-              tei: tei,
-              event_ids: event_ids.join(',')
-            },
-            accept: :json
-          }
-        )
-
-        render json: JSON.parse(response.body)
+        render json: fetch_mediator_update_status(tei: tei, event_ids: event_ids)
       rescue RestClient::ExceptionWithResponse => e
         render json: {
           error: 'Unable to fetch MAHIS update status from iCHIS',
@@ -89,6 +121,51 @@ module Api
       rescue StandardError => e
         Rails.logger.error("Unable to fetch MAHIS update status from iCHIS: #{e.class}: #{e.message}")
         render json: { error: 'Unable to fetch MAHIS update status from iCHIS' }, status: :bad_gateway
+      end
+
+      def sync_mahis_update_status
+        patient_id = normalized_positive_integer(params[:patient_id] || params[:patientID], 0)
+        tei = params[:tei].to_s.strip
+        event_ids = normalize_array_param(params[:event_ids])
+
+        if patient_id <= 0
+          render json: { error: 'patient_id is required' }, status: :bad_request
+          return
+        end
+
+        sync_result = ::FhirService.syncReferralStatusForPatient(
+          patient_id: patient_id,
+          tei: tei,
+          event_id: event_ids.first
+        )
+
+        if sync_result.is_a?(Hash) && sync_result[:reason] == 'patient_not_found'
+          render json: { error: 'Patient not found', sync: sync_result }, status: :not_found
+          return
+        end
+
+        status_event_ids = event_ids.presence || [sync_result[:event_id].to_s.strip].reject(&:blank?)
+        status_tei = tei.presence || sync_result[:tei].to_s.strip.presence
+        status_payload =
+          if status_tei.blank? && status_event_ids.blank?
+            nil
+          else
+            fetch_mediator_update_status(tei: status_tei.to_s, event_ids: status_event_ids)
+          end
+
+        render json: {
+          sync: sync_result,
+          status: status_payload,
+          checkedAt: Time.current.iso8601
+        }, status: :ok
+      rescue RestClient::ExceptionWithResponse => e
+        render json: {
+          error: 'Unable to sync MAHIS data to iCHIS',
+          response: parse_json_response(e.response&.body)
+        }, status: :bad_gateway
+      rescue StandardError => e
+        Rails.logger.error("Unable to sync MAHIS data to iCHIS: #{e.class}: #{e.message}")
+        render json: { error: 'Unable to sync MAHIS data to iCHIS' }, status: :bad_gateway
       end
 
       private
@@ -101,6 +178,35 @@ module Api
         JSON.parse(body.to_s)
       rescue JSON::ParserError
         body.to_s
+      end
+
+      def fetch_mediator_update_status(tei:, event_ids:)
+        response = RestClient::Request.execute(
+          method: :get,
+          url: mediator_endpoint('status'),
+          headers: {
+            params: {
+              tei: tei,
+              event_ids: Array(event_ids).join(',')
+            },
+            accept: :json
+          },
+          open_timeout: MEDIATOR_OPEN_TIMEOUT_SECONDS,
+          timeout: MEDIATOR_READ_TIMEOUT_SECONDS
+        )
+        JSON.parse(response.body)
+      end
+
+      def normalize_array_param(value)
+        Array(value).flat_map { |item| item.is_a?(Array) ? item : item.to_s.split(',') }
+                    .map(&:to_s)
+                    .map(&:strip)
+                    .reject(&:blank?)
+                    .uniq
+      end
+
+      def mediator_success_response?(response)
+        response&.code.to_i.between?(200, 299)
       end
 
       def fetch_json(url)
@@ -278,6 +384,88 @@ module Api
         end
 
         patient_entry&.dig('resource', 'id')
+      end
+
+      def observation_bundle_for_subject(subject_patient_id)
+        fetch_first_non_empty(
+          [
+            "#{BASE_FHIR_URL}/Observation?subject=Patient/#{CGI.escape(subject_patient_id)}&_tag=#{CGI.escape(SYNC_STATUS_TAG)}",
+            "#{BASE_FHIR_URL}/Observation?subject=Patient/#{CGI.escape(subject_patient_id)}"
+          ],
+          allow_empty_fallback: true
+        )
+      end
+
+      def bundle_has_entries?(bundle)
+        bundle.is_a?(Hash) && Array(bundle['entry']).present?
+      end
+
+      def filter_imported_referral_vitals(bundle)
+        return { 'resourceType' => 'Bundle', 'entry' => [] } unless bundle.is_a?(Hash)
+
+        filtered_bundle = bundle.deep_dup
+        entries = Array(filtered_bundle['entry'])
+        imported_event_ids = imported_referral_event_ids(entries)
+        filtered_entries = entries.reject do |entry|
+          imported_referral_vital_observation?(entry) || imported_referral_vital_by_event?(entry, imported_event_ids)
+        end
+        filtered_bundle['entry'] = filtered_entries
+        filtered_bundle['total'] = filtered_entries.length if filtered_bundle.key?('total')
+        filtered_bundle
+      end
+
+      def imported_referral_vital_by_event?(entry, imported_event_ids)
+        return false if imported_event_ids.blank?
+
+        event_id = referral_event_id_from_entry(entry)
+        event_id.present? && imported_event_ids.include?(event_id)
+      end
+
+      def imported_referral_vital_observation?(entry)
+        resource = entry['resource'] || {}
+        return false unless resource['resourceType'] == 'Observation'
+
+        Array(resource.dig('meta', 'tag')).any? do |tag|
+          tag_code = tag['code'].to_s.strip
+          tag_display = tag['display'].to_s.strip
+          tag_system = tag['system'].to_s.strip
+          next false if tag_code.blank? && tag_display.blank?
+
+          code_matches = [tag_code, tag_display].include?(IMPORTED_VITALS_TAG_CODE)
+          system_matches = tag_system.blank? || tag_system == IMPORTED_VITALS_TAG_SYSTEM
+          code_matches && system_matches
+        end
+      end
+
+      def imported_referral_event_ids(entries)
+        event_ids = Array(entries).map { |entry| referral_event_id_from_entry(entry) }.compact.uniq
+        return [] if event_ids.blank?
+
+        source_concept_ids = ichis_event_source_concept_ids
+        return [] if source_concept_ids.blank?
+
+        Observation.where(voided: 0, concept_id: source_concept_ids, comments: event_ids)
+                   .pluck(:comments)
+                   .map(&:to_s)
+                   .map(&:strip)
+                   .reject(&:blank?)
+                   .uniq
+      end
+
+      def referral_event_id_from_entry(entry)
+        observation_id = entry.dig('resource', 'id').to_s.strip
+        return nil if observation_id.blank?
+
+        _, event_id = observation_id.split('-', 3)
+        event_id.to_s.strip.presence
+      end
+
+      def ichis_event_source_concept_ids
+        @ichis_event_source_concept_ids ||= ConceptName.where(name: ICHIS_EVENT_SOURCE_CONCEPT_NAMES, voided: 0)
+                                                       .distinct
+                                                       .pluck(:concept_id)
+                                                       .compact
+                                                       .uniq
       end
     end
   end

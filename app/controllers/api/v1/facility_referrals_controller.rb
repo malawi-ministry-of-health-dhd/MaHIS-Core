@@ -17,7 +17,10 @@ module Api
           :facility,
           :location_id,
           :date_from,
-          :date_to
+          :date_to,
+          :page,
+          :limit,
+          :page_size
         )
       end
     end

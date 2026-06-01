@@ -9,7 +9,7 @@ module Sync
     
     private
     def get_required_columns
-      [:concept_name_id, :concept_id, :name, :concept_name_type]
+      [:concept_name_id, :concept_id, :name, :concept_name_type, :date_created, :uuid]
     end
     
     def prepare_document(concept_name)

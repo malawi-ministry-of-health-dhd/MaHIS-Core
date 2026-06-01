@@ -37,6 +37,22 @@ module Api
         head :no_content
       end
 
+      def sync_superuser_privileges
+        return unless authorize_superuser_sync
+
+        superuser_result = Role.sync_superuser_privileges!(location_id: sync_location_id)
+        standard_result  = Role.sync_standard_privileges!
+        Sync::RolesPermissionsSyncJob.perform_async
+
+        render json: {
+          message: 'Privileges synced successfully',
+          superuser: superuser_result,
+          standard: standard_result
+        }, status: :ok
+      rescue StandardError => e
+        render json: { errors: [e.message] }, status: :unprocessable_entity
+      end
+
       def add_privilege
         role_name = params[:id]
         privilege_name = params[:privilege]
@@ -74,6 +90,20 @@ module Api
         permitted_params << :location_id if Role.location_scoped?
 
         params.permit(permitted_params)
+      end
+
+      def authorize_superuser_sync
+        user_roles = User.current.roles.pluck(:role).map(&:to_s)
+        return true if user_roles.any? { |role_name| role_name.downcase.include?('superuser') }
+
+        render json: { errors: ['Only a Superuser can sync superuser privileges'] }, status: :forbidden
+        false
+      end
+
+      def sync_location_id
+        return nil unless Role.location_scoped?
+
+        params[:location_id].presence || User.current.location_id
       end
     end
   end

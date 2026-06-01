@@ -3,6 +3,7 @@
 ## Requirements
 
 ### System Requirements
+
 - **Ruby**: ~> 3.2.0
 - **Rails**: ~> 7.0.6
 - **Database**: MySQL/MariaDB
@@ -11,18 +12,21 @@
 - **NPM**: For package management
 
 ### Dependencies
+
 - **Web Server**: Puma (~> 6.3)
 - **Background Jobs**: Sidekiq with Sidekiq-cron
 - **Database Driver**: mysql2 gem
 - **Authentication**: JWT (Json Web Token)
 
 ### 1. Clone the Repository
+
 ```bash
 git clone https://github.com/Kuunika/MaHIS-Core.git mahis_backend
 cd mahis_backend
 ```
 
 ### 2. Install Dependencies
+
 ```bash
 bundle install
 ```
@@ -37,9 +41,9 @@ cp config/application.yml.example config/application.yml
 ```
 
 Edit the configuration files with your settings:
+
 - `config/database.yml` - Database credentials
 - `config/application.yml` - Application settings
-
 
 Edit `config/application.yml` with your application settings.
 
@@ -64,11 +68,13 @@ The `INITIAL_SETUP=true` environment variable ensures proper initialization of t
 rails server
 ```
 
-## OFFLINE 
+## OFFLINE
 
 # sync all records with couchDB
 
-- rails sync:all
+- rails sync:all # enqueue everything + live dashboard
+- rails sync:progress # watch an already-running sync from another terminal
+- WATCH=0 rails sync:all # enqueue only, no dashboard
 
 # Run only one job (e.g. StageSyncJob)
 
@@ -143,6 +149,7 @@ bundle exec rails runner bin/emr_to_mahis_migrator.rb
 ```
 
 The script will:
+
 1. **Validate location** - Automatically map source location to target location
 2. **Prepare database** - Remove constraints that may block migration
 3. **Process tables** - Migrate data in parallel with optimized batch sizes
@@ -185,6 +192,7 @@ The migration automatically determines the target location through:
 #### Cache Management
 
 The migration maintains caches for:
+
 - **User ID mapping** - Maps source user IDs to target IDs
 - **Person ID mapping** - Maps source person IDs to target IDs
 - **Encounter ID mapping** - Maps source encounter IDs to target IDs
@@ -252,7 +260,8 @@ If automatic location detection fails:
 Falling back to manual entry...
 ```
 
-**Solution**: 
+**Solution**:
+
 - Verify facility is in `db/locations_x_facilities.csv`
 - Check facility code attribute exists in location_attributes table
 - Manually enter location ID when prompted
@@ -266,6 +275,7 @@ GC::OutOfMemory: Cannot allocate memory
 ```
 
 **Solution**:
+
 - Reduce batch size by setting smaller values
 - Reduce thread count
 - Add swap space
@@ -278,6 +288,7 @@ MySQL2::Error: Cannot delete or update a parent row: a foreign key constraint fa
 ```
 
 **Solution**: The `prepare_centralized_db` function automatically handles this, but if issues persist:
+
 ```sql
 -- Temporarily disable foreign key checks
 SET FOREIGN_KEY_CHECKS = 0;
@@ -307,6 +318,7 @@ The migration processes tables in this order:
 5. **Configuration**: global_property
 
 Non-reset tables (preserved between migrations):
+
 - Patient, DrugOrder, GlobalProperty, UserRole, UserProperty
 - DrugIngredient, LimsAcknowledgementStatus
 

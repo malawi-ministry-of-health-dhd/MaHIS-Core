@@ -36,6 +36,14 @@ Rails.application.routes.draw do
       resources :internal_sections, only: %i[index show create update destroy]
       resources :data_cleaning_supervisions, only: %i[index show create update destroy]
       resources :data_verification, only: %i[index]
+      resources :beds, only: %i[index show create update destroy]
+      resources :bed_allocations, path: 'bed-allocations', only: %i[index show create] do
+        member do
+          patch :release
+          patch :transfer
+          patch :discharge
+        end
+      end
       resources :appointments
       resources :dispensations, only: %i[index create destroy]
       get '/check_username', to: 'users#check_username_exist'
@@ -80,6 +88,10 @@ Rails.application.routes.draw do
       end
 
       resources :roles do
+        collection do
+          post :sync_superuser_privileges
+        end
+
         member do
           post :add_privilege
           post :remove_privilege
@@ -155,8 +167,10 @@ Rails.application.routes.draw do
       #fhir
       get '/fhir/patients', to: 'fhir#patients'
       get '/fhir/mahis_update_status', to: 'fhir#mahis_update_status'
+      post '/fhir/mahis_update_status/sync', to: 'fhir#sync_mahis_update_status'
       get '/fhir/patient/*id/observations', to: 'fhir#observations'
       get '/fhir/patient/*id', to: 'fhir#patient'
+      post '/fhir/observations/mark_imported', to: 'fhir#mark_imported_observations'
       
       # Locations
       resources :locations do

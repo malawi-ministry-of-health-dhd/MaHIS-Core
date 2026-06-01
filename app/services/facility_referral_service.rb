@@ -2,29 +2,43 @@
 
 class FacilityReferralService
   REFERRAL_ENCOUNTER_TYPE_ID = 103 # Referral encounter type ID in OpenMRS
-  DEPARTMENT_CONCEPT_ID = 50_615 
+  DEPARTMENT_CONCEPT_ID = 50_615
   REFERRAL_FACILITY_CONCEPT_ID = 49_528
   PRIMARY_REFERRAL_CONCEPT_IDS = [DEPARTMENT_CONCEPT_ID, REFERRAL_FACILITY_CONCEPT_ID].freeze
+  REFERRED_FACILITY_ID_SQL = <<~SQL.squish.freeze
+    COALESCE(referral_facility_numeric.location_id,
+             referral_facility_coded.location_id,
+             referral_facility_text.location_id,
+             CAST(referral_facility_obs.value_numeric AS UNSIGNED),
+             referral_facility_obs.value_coded)
+  SQL
+  DEFAULT_LIMIT = 50
+  MAX_LIMIT = 100
   PROGRAM_DEPARTMENT_NAMES = {
     19 => 'ANC Connect',
     36 => 'Labour and Delivery'
   }.freeze
 
   def index(filters)
-    referrals = referral_rows(filters)
-    return [] if referrals.blank?
+    pagination = pagination_params(filters)
+    referrals = referral_rows(filters, pagination)
 
-    details_by_encounter = other_details_by_encounter(referrals.pluck('encounter_id'))
+    if referrals.present?
+      details_by_encounter = other_details_by_encounter(referrals.pluck('encounter_id'))
 
-    referrals.each do |referral|
-      referral['other_details'] = details_by_encounter.fetch(referral['encounter_id'], [])
+      referrals.each do |referral|
+        referral['other_details'] = details_by_encounter.fetch(referral['encounter_id'], [])
+      end
     end
+
+    paginated_response(referrals, pagination)
   end
 
   private
 
-  def referral_rows(filters)
+  def referral_rows(filters, pagination)
     sql = sanitize_sql([base_referral_sql(filters), bind_values(filters)])
+    sql = "#{sql} LIMIT #{pagination[:limit]} OFFSET #{pagination[:offset]}"
 
     ActiveRecord::Base.connection.select_all(sql).to_a.map do |row|
       normalize_referral_row(row)
@@ -62,11 +76,7 @@ class FacilityReferralService
                  CAST(department_obs.value_numeric AS CHAR)) AS referred_department,
         department_obs.value_coded AS referred_program_coded,
         referral_facility_obs.obs_id AS referral_facility_obs_id,
-        COALESCE(referral_facility_numeric.location_id,
-                 referral_facility_coded.location_id,
-                 referral_facility_text.location_id,
-                 CAST(referral_facility_obs.value_numeric AS UNSIGNED),
-                 referral_facility_obs.value_coded) AS referred_facility_id,
+        #{REFERRED_FACILITY_ID_SQL} AS referred_facility_id,
         COALESCE(referral_facility_numeric.name,
                  referral_facility_coded.name,
                  referral_facility_text.name,
@@ -136,6 +146,31 @@ class FacilityReferralService
     SQL
   end
 
+  def paginated_response(referrals, pagination)
+    {
+      data: referrals,
+      count: referrals.length,
+      page: pagination[:page],
+      limit: pagination[:limit],
+      max_limit: MAX_LIMIT
+    }
+  end
+
+  def pagination_params(filters)
+    limit = integer_value(normalized_filter(filters[:limit] || filters[:page_size]))
+    limit = DEFAULT_LIMIT if limit.nil? || limit <= 0
+    limit = [limit, MAX_LIMIT].min
+
+    page = integer_value(normalized_filter(filters[:page]))
+    page = 1 if page.nil? || page <= 0
+
+    {
+      page: page,
+      limit: limit,
+      offset: (page - 1) * limit
+    }
+  end
+
   def where_clause(filters)
     clauses = [
       'e.voided = 0',
@@ -145,10 +180,25 @@ class FacilityReferralService
     clauses << 'e.patient_id = :patient_id' if normalized_filter(filters[:patient_id]).present?
     clauses << program_filter_clause(filters[:program_id]) if normalized_filter(filters[:program_id]).present?
     clauses << facility_filter_clause(facility_filter(filters)) if facility_filter(filters).present?
+    clauses << unresolved_referral_clause
     clauses << 'e.encounter_datetime >= :date_from' if normalized_filter(filters[:date_from]).present?
     clauses << 'e.encounter_datetime <= :date_to' if normalized_filter(filters[:date_to]).present?
 
     clauses.compact.join(' AND ')
+  end
+
+  def unresolved_referral_clause
+    <<~SQL.squish
+      NOT EXISTS (
+        SELECT 1
+        FROM encounter referred_facility_encounter
+        WHERE referred_facility_encounter.patient_id = e.patient_id
+          AND referred_facility_encounter.voided = 0
+          AND referred_facility_encounter.encounter_id <> e.encounter_id
+          AND referred_facility_encounter.encounter_datetime > e.encounter_datetime
+          AND CAST(referred_facility_encounter.location_id AS UNSIGNED) = #{REFERRED_FACILITY_ID_SQL}
+      )
+    SQL
   end
 
   def program_filter_clause(program)

@@ -6,26 +6,23 @@ module Sync
 
     DB_NAME = 'user_properties'
 
-    def perform(_batch_size = nil)
+    def perform(batch_size = DEFAULT_BULK_BATCH_SIZE)
       return unless couchdb_configured?
 
-      ensure_database_exists(DB_NAME)
-
-      rows = build_user_documents
-
-      return Sidekiq.logger.info('UserPropertySyncJob: no records to sync') if rows.empty?
-
-      result = bulk_sync_to_couchdb(rows, DB_NAME)
-
-      if result[:errors].any?
-        Sidekiq.logger.error("UserPropertySyncJob: #{result[:errors].length} errors")
-        result[:errors].first(5).each { |e| Sidekiq.logger.error("  #{e}") }
-      else
-        Sidekiq.logger.info("UserPropertySyncJob: synced #{rows.size} user documents")
-      end
+      documents = build_user_documents
+      sync_array_to_couchdb(documents, DB_NAME, 'user_property', batch_size)
     end
 
     private
+
+    # The array helper passes already-built documents straight through.
+    def prepare_document(document)
+      document
+    end
+
+    def generate_document_id(document)
+      document['_id']
+    end
 
     def build_user_documents
       UserProperty.joins(:user)

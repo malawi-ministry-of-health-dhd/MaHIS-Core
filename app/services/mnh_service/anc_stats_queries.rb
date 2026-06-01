@@ -6,15 +6,23 @@ module MnhService
     include MnhService::LocationScope
 
     LOGGER = Rails.logger
-    ANC_ENROLLMENT_ENCOUNTER_TYPE_ID = 237
+    ANC_ENROLLMENT_ENCOUNTER_TYPE_IDS = [217, 237].freeze
     MIN_ANC_CONTACTS_FOR_4_PLUS = 4
 
-    def initialize(program_id = nil, location_id: nil)
+    def initialize(program_id = nil, date = nil, location_id: nil, start_date: nil, end_date: nil)
       @program_id = program_id
       @location_id = location_id
+      if start_date.present? || end_date.present?
+        @start_date = parse_date(start_date)
+        @end_date   = parse_date(end_date)
+      elsif date.present?
+        parsed = parse_date(date)
+        @start_date = parsed
+        @end_date   = parsed
+      end
     end
 
-    def stats_hash(_date = nil)
+    def stats_hash
       {
         new_and_continuing_anc_clients: new_and_continuing_anc_clients,
         women_with_ultrasound_scanning: women_with_ultrasound_scanning,
@@ -40,7 +48,7 @@ module MnhService
       return 0 if anc_program_id.nil?
 
       @new_and_continuing_anc_clients ||= (
-        anc_enrollment_encounter_type_id.present? ? count_by_anc_enrollment_encounter : count_by_patient_program
+        anc_enrollment_encounter_type_ids.present? ? count_by_anc_enrollment_encounter : count_by_patient_program
       )
     end
 
@@ -126,6 +134,15 @@ module MnhService
 
     private
 
+    def parse_date(value)
+      return nil if value.blank?
+      return value.to_date if value.respond_to?(:to_date) && !value.is_a?(String)
+
+      Date.parse(value.to_s)
+    rescue ArgumentError, TypeError
+      nil
+    end
+
     def percentage_of(count, total)
       total.to_i.zero? ? 0.0 : (count.to_f / total * 100).round(2)
     end
@@ -138,8 +155,8 @@ module MnhService
       @anc_program_id ||= @program_id.presence || Program.unscoped.find_by(name: 'ANC PROGRAM')&.id
     end
 
-    def anc_enrollment_encounter_type_id
-      @anc_enrollment_encounter_type_id ||= ANC_ENROLLMENT_ENCOUNTER_TYPE_ID
+    def anc_enrollment_encounter_type_ids
+      @anc_enrollment_encounter_type_ids ||= ANC_ENROLLMENT_ENCOUNTER_TYPE_IDS
     end
 
     def concept_id_for(name)
@@ -159,13 +176,30 @@ module MnhService
       @positive_concept_ids ||= concept_ids_for('Positive', 'hiv positive')
     end
 
+    def apply_date_scope(scope, datetime_column = 'encounter.encounter_datetime')
+      if @start_date.present? && @end_date.present?
+        scope.where("#{datetime_column} >= ? AND #{datetime_column} <= ?",
+                    @start_date.beginning_of_day, @end_date.end_of_day)
+      elsif @start_date.present?
+        scope.where("#{datetime_column} >= ?", @start_date.beginning_of_day)
+      elsif @end_date.present?
+        scope.where("#{datetime_column} <= ?", @end_date.end_of_day)
+      else
+        scope
+      end
+    end
+
     def anc_encounter_scope
-      scoped_observations_for(anc_program_id)
+      apply_date_scope(scoped_observations_for(anc_program_id))
+    end
+
+    def anc_encounters_scope
+      apply_date_scope(scoped_encounters_for(anc_program_id), 'encounter_datetime')
     end
 
     def count_by_anc_enrollment_encounter
-      scoped_encounters_for(anc_program_id)
-        .where(encounter_type: anc_enrollment_encounter_type_id)
+      anc_encounters_scope
+        .where(encounter_type: anc_enrollment_encounter_type_ids)
         .distinct
         .count(:patient_id)
     end
@@ -173,6 +207,10 @@ module MnhService
     def count_by_patient_program
       scope = PatientProgram.unscoped.where(program_id: anc_program_id, voided: 0)
       scope = scope.where(location_filter) if resolved_location_id.present?
+      # Apply date range to patient program if scoping by date
+      if @start_date.present? || @end_date.present?
+        scope = apply_date_scope(scope, 'date_enrolled')
+      end
       scope.count(:patient_id)
     end
 

@@ -21,17 +21,44 @@ namespace :sync do
       Sync::DdeIdsSyncJob,
       Sync::DiagnosisSyncJob,
       Sync::WardSyncJob,
+      Sync::SectionSyncJob,
       Sync::RolesPermissionsSyncJob,
       Sync::RegimenIngredientSyncJob,
       Sync::DepartmentSyncJob,
+      Sync::SectionSyncJob,
       Sync::CustomRegimenIngredientSyncJob,
       Sync::GlobalPropertySyncJob,
       Sync::UserPropertySyncJob,
-      Sync::MnhStatsSyncJob
+      Sync::MnhStatsSyncJob,
+      Sync::RegimenExtraSyncJob,
+      Sync::RegimenStarterPackSyncJob,
+      Sync::ArvDrugSyncJob,
+      Sync::BedSyncJob
     ]
+
+    # Fresh run: clear any stale progress so the bars start from zero.
+    SyncProgress.reset_all!
 
     jobs.each(&:perform_async)
     puts "✅ Enqueued #{jobs.size} sync jobs in parallel."
+
+    # WATCH=0 (or NO_WATCH=1) just enqueues without the live dashboard.
+    if ENV['WATCH'] == '0' || ENV['NO_WATCH'] == '1'
+      puts 'Run `rails sync:progress` to watch progress.'
+    else
+      puts 'Watching progress (Ctrl-C to stop watching; sync keeps running)...'
+      sleep 1 # give the first jobs a moment to register their totals
+      SyncDashboard.new.watch
+    end
+  end
+
+  desc 'Watch live progress of an in-flight sync (tables + index builds)'
+  task progress: :environment do
+    if SyncProgress.snapshot.empty?
+      puts 'No active sync found. Start one with `rails sync:all`.'
+    else
+      SyncDashboard.new.watch
+    end
   end
 
   desc "Run a specific sync job by name. Example: rails sync:run[StageSyncJob]"
