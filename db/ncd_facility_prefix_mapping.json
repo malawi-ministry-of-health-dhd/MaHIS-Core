@@ -1,0 +1,30 @@
+{
+  "Biwi Health Centre": {
+    "facility_code": "LL041843",
+    "ncd_prefix": "BIWIHC"
+  },
+  "Karonga District Hospital": {
+    "facility_code": "KA150570",
+    "ncd_prefix": "KDH"
+  },
+  "Khombedza Health Centre": {
+    "facility_code": "SA090626",
+    "ncd_prefix": "KHD"
+  },
+  "Malomo Health Centre": {
+    "facility_code": "NT080818",
+    "ncd_prefix": "MHC"
+  },
+  "Nsiyaludzu Health Centre": {
+    "facility_code": "NT121219",
+    "ncd_prefix": "NHC"
+  },
+  "Ntchisi District Hospital": {
+    "facility_code": "NT081226",
+    "ncd_prefix": "NS"
+  },
+  "Salima District Hospital": {
+    "facility_code": "SA091312",
+    "ncd_prefix": "SDH"
+  }
+}

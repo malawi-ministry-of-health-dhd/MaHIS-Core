@@ -439,6 +439,11 @@ module ArtService
         'tabs'
       end
     end
+    # Exposed publicly because RegimenStarterPackSyncJob (and any other
+    # caller hydrating regimen documents for offline use) needs to classify
+    # a drug by its name. The method is a pure function of `drug.name` and
+    # touches no instance state, so widening its visibility is safe.
+    public :find_drug_type
 
     # Checks if it has been explicitly specified that a patient is getting
     # a prescription on the given date.

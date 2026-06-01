@@ -15,7 +15,7 @@ module Sync
   class RegimenStarterPackSyncJob < BaseSyncJob
     DB_NAME = 'regimen_starter_packs'
 
-    def perform(_batch_size = DEFAULT_BULK_BATCH_SIZE)
+    def perform(batch_size = DEFAULT_BULK_BATCH_SIZE)
       hiv_program = Program.find_by_name('HIV Program')
       raise 'HIV Program not found' unless hiv_program
 
@@ -49,15 +49,19 @@ module Sync
 
       Sidekiq.logger.info "Prepared #{documents.size} starter pack documents"
 
-      ensure_database_exists(DB_NAME)
-      
-      # Bulk sync for efficiency
-      bulk_sync_to_couchdb(documents, DB_NAME)
-
-      Sidekiq.logger.info "Successfully synced #{documents.size} regimen starter pack documents to CouchDB '#{DB_NAME}'"
+      sync_array_to_couchdb(documents, DB_NAME, 'regimen', batch_size)
     end
 
     private
+
+    # The array helper passes already-built documents straight through.
+    def prepare_document(document)
+      document
+    end
+
+    def generate_document_id(document)
+      document['_id']
+    end
 
     def hydrate_ingredient(ingredient, regimen_engine)
       drug = ingredient.drug

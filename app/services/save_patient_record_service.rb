@@ -104,7 +104,8 @@ class SavePatientRecordService
       dispensation_saver:     PatientRecordService::DispensationSaver.new,
       observation_saver:      PatientRecordService::ObservationSaver.new,
       void_encounters:        PatientRecordService::VoidEncounters.new,
-      merge_patients_manager: PatientRecordService::MergePatientManager.new
+      merge_patients_manager: PatientRecordService::MergePatientManager.new,
+      void_drug_orders:       PatientRecordService::VoidDrugOrders.new
     }
   end
 
@@ -125,6 +126,7 @@ class SavePatientRecordService
       save_medication_order:  managers[:medication_order_saver].save_medication_order(patient_id, record),
       create_ncd_identifier:  managers[:identity_manager].create_ncd_identifier(patient_id, record),
       save_dispensation_data: managers[:medication_order_saver].save_dispensation_data(patient_id, record),
+      void_drug_orders:       managers[:void_drug_orders].void_drug_orders(patient_id, record),
       save_all_observations:  managers[:observation_saver].save_all_observations(patient_id, record),
       void_encounters:        managers[:void_encounters].void_encounters(record)
     }
@@ -141,6 +143,7 @@ class SavePatientRecordService
     patient_data[:nationalID]            = BuildPatientRecordService.patient_identifier(patient, 28)
     patient_data[:patientID]             = patient_id
     patient_data[:NcdID]                 = BuildPatientRecordService.patient_identifier(patient, 31)
+    patient_data[:patient_identifiers]   = patient.patient_identifiers.as_json
     patient_data[:sync_status]           = overall_sync_status
     patient_data[:otherPersonInformation] = BuildPatientRecordService.build_other_person_info
     patient_data[:visits]                = BuildPatientRecordService.safe_get_visits(patient)
@@ -174,7 +177,7 @@ class SavePatientRecordService
         patient_data[:MedicationOrder]       = BuildPatientRecordService.build_medication_data(patient_id)
         allowed_encounter_types << get_encounter_id('TREATMENT')
 
-      when :save_medication_order, :save_dispensation_data
+      when :save_medication_order, :save_dispensation_data, :void_drug_orders
         patient_data[:MedicationOrder] = BuildPatientRecordService.build_medication_data(patient_id)
         allowed_encounter_types << get_encounter_id('TREATMENT')
 
@@ -213,6 +216,7 @@ class SavePatientRecordService
 
     strip_derived_patient_fields!(patient_data)
     clear_processed_pending_fields!(patient_data)
+    PatientRecordSearchFields.normalize!(patient_data)
     patient_data.as_json
   end
 
@@ -303,6 +307,8 @@ class SavePatientRecordService
     record.delete('art_orders_pending')
     record.delete(:art_dispensation_pending)
     record.delete('art_dispensation_pending')
+    record.delete(:voidedDrugOders)
+    record.delete('voidedDrugOders')
     record
   end
 

@@ -13,8 +13,8 @@ class BedManagementResponseBuilder
         uuid: bed.uuid,
         bed_number: bed.bed_number,
         bed_label: bed.bed_label,
+        section_id: bed.section_id,
         location_id: bed.location_id,
-        facility_id: bed.facility_id,
         bed_status: bed.bed_status,
         bed_type: bed.bed_type,
         description: bed.description,
@@ -26,6 +26,10 @@ class BedManagementResponseBuilder
     end
 
     def allocation(allocation)
+      person_name = allocation.patient&.person&.names&.max_by(&:date_created)
+      section = allocation.bed&.section
+      ward = section&.parent || allocation.bed&.location
+
       {
         bed_allocation_id: allocation.bed_allocation_id,
         uuid: allocation.uuid,
@@ -38,7 +42,15 @@ class BedManagementResponseBuilder
         allocation_reason: allocation.allocation_reason,
         release_reason: allocation.release_reason,
         notes: allocation.notes,
-        voided: allocation.voided
+        voided: allocation.voided,
+        given_name: person_name&.given_name,
+        family_name: person_name&.family_name,
+        bed_number: allocation.bed&.bed_number,
+        section_name: section&.name,
+        section_location_id: section&.location_id,
+        ward_name: ward&.name,
+        ward_location_id: ward&.location_id,
+        visit_date_started: allocation.visit&.date_started
       }
     end
 

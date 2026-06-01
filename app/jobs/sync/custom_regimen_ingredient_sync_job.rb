@@ -4,7 +4,7 @@ module Sync
   class CustomRegimenIngredientSyncJob < BaseSyncJob
     DB_NAME = 'custom_regimen_ingredients'
 
-    def perform(_batch_size = DEFAULT_BULK_BATCH_SIZE)
+    def perform(batch_size = DEFAULT_BULK_BATCH_SIZE)
       engine = ArtService::RegimenEngine.new(program: Program.find_by_name('HIV Program'))
       drugs  = engine.custom_regimen_ingredients
 
@@ -21,10 +21,18 @@ module Sync
         drug.as_json.merge('_id' => "custom_regimen_ingredient_#{drug.drug_id}")
       end.compact
 
-      ensure_database_exists(DB_NAME)
-      documents.each { |doc| sync_to_couchdb(doc, DB_NAME, doc['_id']) }
+      sync_array_to_couchdb(documents, DB_NAME, 'custom_regimen_ingredient', batch_size)
+    end
 
-      Sidekiq.logger.info "Synced #{documents.size} custom regimen ingredient documents to CouchDB '#{DB_NAME}'"
+    private
+
+    # The array helper passes already-built documents straight through.
+    def prepare_document(document)
+      document
+    end
+
+    def generate_document_id(document)
+      document['_id']
     end
   end
 end

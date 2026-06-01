@@ -48,6 +48,7 @@ RSpec.configure do |config|
   # Automatically mark non-passing spec files as pending
   # Only these specs are known to pass - all others will be marked as pending
   PASSING_SPECS = [
+    'beds_controller_spec.rb',
     'report_spec.rb',
     'cohort_builder_spec.rb',
     'medication_order_saver_spec.rb'
