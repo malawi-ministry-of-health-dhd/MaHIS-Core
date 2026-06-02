@@ -5,6 +5,10 @@ module Api
     class ProgramReportsController < ApplicationController
       include ModelUtils
 
+      def cohort_progress
+        render json: CachedReport.tables_progress
+      end
+
       def show
         name = params[:name]
         type, start_date, end_date = parse_report_name(name)

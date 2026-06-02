@@ -59,6 +59,34 @@ class CachedReport
     initialize_and_save_report unless report_saved? && all_temp_tables_are_ok?
   end
 
+  # Returns how many of the 11 cohort temp tables have been populated with data,
+  # expressed as { completed: N, total: 11 }.  Used by the progress endpoint.
+  # Column counts are checked first (DDL) — tables are only "done" when they also
+  # have at least one row, so progress increments as each table is populated.
+  def self.tables_progress
+    location_id = Location.current&.location_id || 'default'
+    tables = TEMP_TABLES_COLUMN_COUNT.keys.map { |base| "#{base}_loc_#{location_id}" }
+
+    # Step 1: find which tables currently exist (safe INFORMATION_SCHEMA check)
+    quoted = tables.map { |t| ActiveRecord::Base.connection.quote(t) }.join(', ')
+    existing = ActiveRecord::Base.connection.select_values(<<~SQL).to_set
+      SELECT table_name FROM INFORMATION_SCHEMA.TABLES
+      WHERE table_schema = DATABASE() AND table_name IN (#{quoted})
+    SQL
+
+    return { completed: 0, total: TEMP_TABLES_COLUMN_COUNT.size } if existing.empty?
+
+    # Step 2: single UNION ALL query — check row existence for each existing table
+    union_sql = existing.map do |t|
+      "SELECT #{ActiveRecord::Base.connection.quote(t)} AS tbl, EXISTS(SELECT 1 FROM `#{t}` LIMIT 1) AS has_rows"
+    end.join("\nUNION ALL\n")
+
+    rows = ActiveRecord::Base.connection.select_all(union_sql)
+    completed = rows.count { |row| row['has_rows'].to_i == 1 }
+
+    { completed: completed, total: TEMP_TABLES_COLUMN_COUNT.size }
+  end
+
   def all_temp_tables_are_ok?
     # Use location-scoped table names to correctly check the actual tables in use
     cols = batch_column_counts(

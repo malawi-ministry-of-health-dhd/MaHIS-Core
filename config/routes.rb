@@ -291,6 +291,7 @@ Rails.application.routes.draw do
         get '/lab_tests/measures' => 'lab_test_types#measures'
         get '/labs/:resource', to: 'lab#dispatch_request'
         get '/patient_state', to: 'patient_states#patient_state'
+        get 'reports/cohort_progress' => 'program_reports#cohort_progress'
         resources :program_reports, path: 'reports'
       end
 
