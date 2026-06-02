@@ -4,14 +4,22 @@ class ReportJob < ApplicationJob
   queue_as :default
 
   def perform(clazzname, kwargs)
-    lock_key = "report_job:running:#{clazzname}:#{kwargs[:location_id]}:#{kwargs[:name]}"
-    lock_ttl = 90 * 60  # 90 minutes in seconds
+    location_id = kwargs[:location_id]
+    name        = kwargs[:name]
 
-    acquired = Sidekiq.redis { |r| r.set(lock_key, 1, nx: true, ex: lock_ttl) }
+    # Execution lock — prevents a stale duplicate job (e.g. Sidekiq retry) from
+    # running concurrently with one that is already in progress.
+    exec_lock_key = "report_job:running:#{clazzname}:#{location_id}:#{name}"
+    lock_ttl      = 90 * 60
+
+    acquired = Sidekiq.redis { |r| r.set(exec_lock_key, 1, nx: true, ex: lock_ttl) }
     unless acquired
-      logger.info("ReportJob: skipping #{clazzname}(#{kwargs[:name]}) — already running")
+      logger.info("ReportJob: skipping #{clazzname}(#{name}) — already running")
       return
     end
+
+    # Reservation key set by queue_report — keep alive while job runs then release.
+    reservation_key = "report_job:reserved:#{clazzname}:#{location_id}"
 
     begin
       logger.debug("Running report job #{clazzname}(#{kwargs})")
@@ -23,7 +31,10 @@ class ReportJob < ApplicationJob
       report_engine = clazz.new
       report_engine.generate_report(**kwargs)
     ensure
-      Sidekiq.redis { |r| r.del(lock_key) }
+      Sidekiq.redis do |r|
+        r.del(exec_lock_key)
+        r.del(reservation_key)
+      end
     end
   end
 end

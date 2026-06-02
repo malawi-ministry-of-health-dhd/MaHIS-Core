@@ -263,10 +263,15 @@ class ReportService
     kwargs[:location_id] = Location.current.location_id
 
     clazzname = engine(@program).class.to_s
-    lock_key = "report_job:running:#{clazzname}:#{kwargs[:location_id]}:#{kwargs[:name]}"
-    already_running = Sidekiq.redis { |r| r.call("EXISTS", lock_key) }.positive?
-    if already_running
-      LOGGER.info("ReportJob: skipping enqueue for #{clazzname}(#{kwargs[:name]}) — already running")
+    # Location-scoped reservation key — prevents any cohort job at this location
+    # from being enqueued while another is already running or reserved.
+    # TTL of 5 minutes covers the enqueue→job-start window; the job sets its own
+    # longer-lived execution lock (name-scoped) inside ReportJob#perform.
+    location_lock_key = "report_job:reserved:#{clazzname}:#{kwargs[:location_id]}"
+    reserved = Sidekiq.redis { |r| r.set(location_lock_key, kwargs[:name].to_s, nx: true, ex: 300) }
+    unless reserved
+      running_for = Sidekiq.redis { |r| r.call("GET", location_lock_key) }
+      LOGGER.info("ReportJob: skipping enqueue for #{clazzname}(#{kwargs[:name]}) — location #{kwargs[:location_id]} already building '#{running_for}'")
       return
     end
 
