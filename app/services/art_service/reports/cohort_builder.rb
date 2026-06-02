@@ -12,6 +12,8 @@ module ArtService
       include ArtTempTablesUtils
       include ArtTempTablesNaming
 
+      attr_accessor :ws_name, :ws_location_id
+
       def initialize(outcomes_definition: 'moh', keep_temp_tables: nil)
         unless %w[moh pepfar].include?(outcomes_definition.downcase)
           raise ArgumentError, "Invalid outcomes_definition `#{outcomes_definition}` expected moh or pepfar"
@@ -71,16 +73,24 @@ module ArtService
         SQL
       end
 
-      def init_temporary_tables(start_date, end_date, occupation, force_rebuild: false)
+      def init_temporary_tables(start_date, end_date, occupation, force_rebuild: false,
+                                  ws_name: nil, ws_location_id: nil)
+        bcast_name     = ws_name || @ws_name
+        bcast_loc      = ws_location_id || @ws_location_id
         shared_loaded = !force_rebuild && shared_cohort_tables_populated?
         prepare_tables(skip_shared: shared_loaded, force_rebuild: force_rebuild)
         unless shared_loaded
           create_location_specific_mysql_functions
           load_temp_other_patient_types(end_date)
+          broadcast_cohort_progress(1, bcast_name, bcast_loc)
           load_temp_register_start_date_table(end_date)
+          broadcast_cohort_progress(2, bcast_name, bcast_loc)
           load_temp_order_details(end_date)
+          broadcast_cohort_progress(3, bcast_name, bcast_loc)
           load_art_start_date(end_date)
+          broadcast_cohort_progress(4, bcast_name, bcast_loc)
           load_data_into_temp_earliest_start_date(end_date.to_date, occupation)
+          broadcast_cohort_progress(5, bcast_name, bcast_loc)
         end
         update_cum_outcome(start_date:, end_date:, force_rebuild:)
       end
@@ -92,10 +102,15 @@ module ArtService
           prepare_tables(force_rebuild: force_rebuild)
           create_location_specific_mysql_functions
           load_temp_other_patient_types(end_date)
+          broadcast_cohort_progress(1)
           load_temp_register_start_date_table(end_date)
+          broadcast_cohort_progress(2)
           load_temp_order_details(end_date)
+          broadcast_cohort_progress(3)
           load_art_start_date(end_date)
+          broadcast_cohort_progress(4)
           load_data_into_temp_earliest_start_date(end_date.to_date, occupation)
+          broadcast_cohort_progress(5)
         end
 
         # create_tmp_patient_table_2(end_date)
@@ -115,6 +130,7 @@ module ArtService
 
         # Batch load patient types (re-initiated, transfer-in)
         batch_load_patient_types(cohort_struct, start_date, end_date, cum_start_date, quarter_start_date)
+        broadcast_cohort_progress(6)
 
         # Pregnant females (all ages)
         load_temp_pregnant_obs(cum_start_date, end_date) unless skip_preparation
@@ -145,6 +161,7 @@ module ArtService
         cohort_struct.cum_initial_non_pregnant_females_all_ages = initial_females_all_ages(cum_start_date, end_date, cohort_struct.cum_non_pregnant_females.map do |a|
                                                                                                                        a['patient_id']
                                                                                                                      end)
+        broadcast_cohort_progress(7)
 
         # Batch load eligibility reasons - single query for WHO stages, pregnant, breastfeeding, etc.
         batch_load_eligibility_reasons(cohort_struct, start_date, end_date, cum_start_date, quarter_start_date)
@@ -222,6 +239,7 @@ module ArtService
           update_tb_status(end_date)
           update_patient_side_effects(end_date)
         end
+        broadcast_cohort_progress(8)
 
         # Total Alive and On ART
         # Unique PatientProgram entries at the current location for those patients with at least one state
@@ -285,6 +303,7 @@ module ArtService
         cohort_struct.seventeen_pa      = filter_prescriptions_by_regimen(prescriptions, '17PA')
         cohort_struct.seventeen_a       = filter_prescriptions_by_regimen(prescriptions, '17A')
         cohort_struct.unknown_regimen   = filter_prescriptions_by_regimen(prescriptions, 'unknown_regimen')
+        broadcast_cohort_progress(9)
 
         # Total patients with side effects:
         # Alive and On ART patients with DRUG INDUCED observations during their last HIV CLINIC CONSULTATION encounter up to the reporting period
@@ -349,10 +368,12 @@ module ArtService
         cohort_struct.newly_initiated_on_ipt = tpt.newly_initiated_on_ipt.select do |hash|
           hash['last_tpt_start_date'].nil?
         end
+        broadcast_cohort_progress(10)
 
         time_ended = Time.now.strftime('%Y-%m-%d %H:%M:%S')
         puts "Started at: #{time_started}. Finished at: #{time_ended}. Total time in minutes: #{(Time.parse(time_ended) - Time.parse(time_started)) / 60}"
         Rails.logger.info "Started at: #{time_started}. Finished at: #{Time.now.strftime('%Y-%m-%d %H:%M:%S')}. Total time in minutes: #{(Time.parse(time_ended) - Time.parse(time_started)) / 60}"
+        broadcast_cohort_progress(11)
         cohort_struct
       end
 
@@ -2327,6 +2348,20 @@ module ArtService
         return false unless pprogram
 
         PatientState.where(patient_program: pprogram, state: 7).exists?
+      end
+
+      def broadcast_cohort_progress(completed, ws_name = nil, ws_location_id = nil)
+        name = ws_name || @ws_name
+        loc  = ws_location_id || @ws_location_id
+        return unless name.present? && loc.present?
+
+        CohortProgressChannel.broadcast_progress(
+          location_id: loc,
+          name: name,
+          completed: completed
+        )
+      rescue StandardError => e
+        Rails.logger.warn("CohortProgressChannel broadcast failed: #{e.message}")
       end
     end
   end

@@ -1,27 +1,13 @@
 class CachedReport
   include ArtTempTablesUtils
 
-  TEMP_TABLES_COLUMN_COUNT = {
-    temp_cohort_members: 12,
-    temp_earliest_start_date: 11,
-    temp_other_patient_types: 1,
-    temp_register_start_date: 2,
-    temp_order_details: 2,
-    temp_art_start_date: 2,
-    temp_patient_tb_status: 2,
-    temp_latest_tb_status: 2,
-    tmp_max_adherence: 2,
-    temp_pregnant_obs: 3,
-    temp_patient_side_effects: 2,
-  }
-
   def initialize(start_date:, end_date:, **kwargs)
     @start_date = start_date.to_date
     @end_date = end_date.to_date
     @org = kwargs[:definition]
-    @rebuild = kwargs[:rebuild]&.casecmp?("true")
+    @rebuild = kwargs[:rebuild]&.casecmp?('true')
     @occupation = kwargs[:occupation]
-    @report_type = @org&.downcase&.match(/pepfar/i) ? "pepfar" : "moh"
+    @report_type = @org&.downcase&.match(/pepfar/i) ? 'pepfar' : 'moh'
     find_or_initialize_cohort
   end
 
@@ -39,17 +25,17 @@ class CachedReport
     Report.create(name: report_name,
                   start_date: @start_date,
                   end_date: @end_date,
-                  type: ReportType.find_by_name("Cohort"),
+                  type: ReportType.find_by_name('Cohort'),
                   creator: User.current.id,
-                  renderer_type: "PDF")
+                  renderer_type: 'PDF')
   end
 
   def truncate_similar_reports
     Report.where(
-      type: ReportType.find_by_name("Cohort"),
+      type: ReportType.find_by_name('Cohort'),
       name: report_name,
       start_date: @start_date,
-      end_date: @end_date,
+      end_date: @end_date
     ).destroy_all
   end
 
@@ -57,34 +43,6 @@ class CachedReport
     initialize_and_save_report if @rebuild
 
     initialize_and_save_report unless report_saved? && all_temp_tables_are_ok?
-  end
-
-  # Returns how many of the 11 cohort temp tables have been populated with data,
-  # expressed as { completed: N, total: 11 }.  Used by the progress endpoint.
-  # Column counts are checked first (DDL) — tables are only "done" when they also
-  # have at least one row, so progress increments as each table is populated.
-  def self.tables_progress
-    location_id = Location.current&.location_id || 'default'
-    tables = TEMP_TABLES_COLUMN_COUNT.keys.map { |base| "#{base}_loc_#{location_id}" }
-
-    # Step 1: find which tables currently exist (safe INFORMATION_SCHEMA check)
-    quoted = tables.map { |t| ActiveRecord::Base.connection.quote(t) }.join(', ')
-    existing = ActiveRecord::Base.connection.select_values(<<~SQL).to_set
-      SELECT table_name FROM INFORMATION_SCHEMA.TABLES
-      WHERE table_schema = DATABASE() AND table_name IN (#{quoted})
-    SQL
-
-    return { completed: 0, total: TEMP_TABLES_COLUMN_COUNT.size } if existing.empty?
-
-    # Step 2: single UNION ALL query — check row existence for each existing table
-    union_sql = existing.map do |t|
-      "SELECT #{ActiveRecord::Base.connection.quote(t)} AS tbl, EXISTS(SELECT 1 FROM `#{t}` LIMIT 1) AS has_rows"
-    end.join("\nUNION ALL\n")
-
-    rows = ActiveRecord::Base.connection.select_all(union_sql)
-    completed = rows.count { |row| row['has_rows'].to_i == 1 }
-
-    { completed: completed, total: TEMP_TABLES_COLUMN_COUNT.size }
   end
 
   def all_temp_tables_are_ok?
@@ -110,7 +68,7 @@ class CachedReport
 
   def report_saved?
     last_saved_report = Report.where(
-      type: ReportType.find_by_name("Cohort"),
+      type: ReportType.find_by_name('Cohort')
     ).last
 
     return false unless last_saved_report.present?

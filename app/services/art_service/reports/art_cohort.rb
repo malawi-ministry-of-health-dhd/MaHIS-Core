@@ -25,6 +25,8 @@ module ArtService
         @cohort_builder = CohortBuilder.new
         @cohort_struct = CohortStruct.new
         @occupation = kwargs[:occupation]
+        @cohort_builder.ws_name = name
+        @cohort_builder.ws_location_id = Location.current&.location_id
       end
 
       def build_report
