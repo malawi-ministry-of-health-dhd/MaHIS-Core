@@ -264,7 +264,7 @@ class ReportService
 
     clazzname = engine(@program).class.to_s
     lock_key = "report_job:running:#{clazzname}:#{kwargs[:location_id]}:#{kwargs[:name]}"
-    already_running = Sidekiq.redis { |r| r.exists?(lock_key) }
+    already_running = Sidekiq.redis { |r| r.call("EXISTS", lock_key) }.positive?
     if already_running
       LOGGER.info("ReportJob: skipping enqueue for #{clazzname}(#{kwargs[:name]}) — already running")
       return
