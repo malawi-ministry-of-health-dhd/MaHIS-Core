@@ -16,28 +16,39 @@ module PatientRecordService
         next unless order
 
         begin
-          ActiveRecord::Base.transaction(requires_new: true) do
-            encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[:treatment])
-            encounter_id   = create_encounter(patient_id, encounter_type.id, record)
-            encounter      = Encounter.find(encounter_id)
+          result = with_operation_guard(
+            patient_id: patient_id,
+            operation_type: 'medication_order.create',
+            payload: order,
+            target_type: 'DrugOrder'
+          ) do
+            ActiveRecord::Base.transaction(requires_new: true) do
+              encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[:treatment])
+              encounter_id   = create_encounter(patient_id, encounter_type.id, record)
+              encounter      = Encounter.find(encounter_id)
 
-            unless encounter.type.name.casecmp?('TREATMENT')
-              Rails.logger.warn("Unexpected encounter type: #{encounter.type.name} for encounter ##{encounter.encounter_id}")
-              next
+              unless encounter.type.name.casecmp?('TREATMENT')
+                Rails.logger.warn("Unexpected encounter type: #{encounter.type.name} for encounter ##{encounter.encounter_id}")
+                next
+              end
+
+              saved_drug_orders = DrugOrderService.create_drug_orders(encounter: encounter, drug_orders: [order])
+              raise "Drug order creation returned empty result for order: #{order.inspect}" if saved_drug_orders.blank?
+              treatment_plan_values.concat(saved_drug_orders.map(&:to_s))
+
+              dispensation_result = save_dispensation_data(
+                patient_id,
+                record,
+                saved_drug_orders[0].order_id,
+                fetch_value(order, :dispensation)
+              )
+              collected_errors.concat(dispensation_result.errors) if dispensation_result.errors.any?
+
+              { target_type: 'DrugOrder', target_id: saved_drug_orders[0].order_id }
             end
-
-            saved_drug_orders = DrugOrderService.create_drug_orders(encounter: encounter, drug_orders: [order])
-            raise "Drug order creation returned empty result for order: #{order.inspect}" if saved_drug_orders.blank?
-            treatment_plan_values.concat(saved_drug_orders.map(&:to_s))
-
-            dispensation_result = save_dispensation_data(
-              patient_id,
-              record,
-              saved_drug_orders[0].order_id,
-              fetch_value(order, :dispensation)
-            )
-            collected_errors.concat(dispensation_result.errors) if dispensation_result.errors.any?
           end
+
+          next if result.skipped?
         rescue StandardError => e
           log_error("Failed to create medication order", e)
           collected_errors << "Order #{order.inspect}: #{e.message}"
@@ -51,21 +62,32 @@ module PatientRecordService
         next unless within_session_day?(entry)
 
         begin
-          ActiveRecord::Base.transaction(requires_new: true) do
-            encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[:treatment])
-            encounter_datetime = parse_encounter_datetime(entry)
-            entry_record = record.merge(encounter_datetime: encounter_datetime)
+          result = with_operation_guard(
+            patient_id: patient_id,
+            operation_type: 'medication_order.pending_create',
+            payload: entry,
+            target_type: 'DrugOrder'
+          ) do
+            ActiveRecord::Base.transaction(requires_new: true) do
+              encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[:treatment])
+              encounter_datetime = parse_encounter_datetime(entry)
+              entry_record = record.merge(encounter_datetime: encounter_datetime)
 
-            encounter_id = create_encounter(patient_id, encounter_type.id, entry_record)
-            encounter    = Encounter.find(encounter_id)
+              encounter_id = create_encounter(patient_id, encounter_type.id, entry_record)
+              encounter    = Encounter.find(encounter_id)
 
-            drugs = fetch_value(entry, :drugs) || []
-            saved_drug_orders = DrugOrderService.create_drug_orders(encounter: encounter, drug_orders: drugs)
-            raise "Drug order creation returned empty result" if saved_drug_orders.blank?
-            treatment_plan_values.concat(saved_drug_orders.map(&:to_s))
+              drugs = fetch_value(entry, :drugs) || []
+              saved_drug_orders = DrugOrderService.create_drug_orders(encounter: encounter, drug_orders: drugs)
+              raise "Drug order creation returned empty result" if saved_drug_orders.blank?
+              treatment_plan_values.concat(saved_drug_orders.map(&:to_s))
 
-            save_pending_order_obs(encounter, entry)
+              save_pending_order_obs(encounter, entry)
+
+              { target_type: 'Encounter', target_id: encounter_id }
+            end
           end
+
+          next if result.skipped?
         rescue StandardError => e
           log_error("Failed to create offline medication order", e)
           collected_errors << "Offline order entry: #{e.message}"
@@ -86,7 +108,21 @@ module PatientRecordService
       permitted_data = build_permitted_data(patient_id, record, order_id, dispensation_data)
       permitted_data&.each do |params|
         begin
-          process_single_dispensation(params, record)
+          result = with_operation_guard(
+            patient_id: params[:patient_id] || patient_id,
+            operation_type: 'dispensation.create',
+            operation_id: params[:operation_id],
+            payload: params,
+            target_type: 'Dispensation'
+          ) do
+            process_single_dispensation(params, record)
+            {
+              target_type: 'Dispensation',
+              target_id: Array.wrap(params[:dispensations]).map { |item| item[:drug_order_id] }.compact.join(',')
+            }
+          end
+
+          next if result.skipped?
         rescue StandardError => e
           log_error("Error processing dispensation", e)
           collected_errors << e.message
@@ -100,14 +136,25 @@ module PatientRecordService
         next unless within_session_day?(entry)
 
         begin
-          orders = fetch_value(entry, :orders) || []
-          orders.each do |order_entry|
-            qty      = fetch_value(order_entry, :quantity).to_i
-            drug_ord = DrugOrder.find_by(order_id: fetch_value(order_entry, :order_id))
-            next unless drug_ord && qty.positive?
+          result = with_operation_guard(
+            patient_id: patient_id,
+            operation_type: 'dispensation.pending_update',
+            payload: entry,
+            target_type: 'DrugOrder'
+          ) do
+            orders = fetch_value(entry, :orders) || []
+            orders.each do |order_entry|
+              qty      = fetch_value(order_entry, :quantity).to_i
+              drug_ord = DrugOrder.find_by(order_id: fetch_value(order_entry, :order_id))
+              next unless drug_ord && qty.positive?
 
-            drug_ord.update!(quantity: qty)
+              drug_ord.update!(quantity: qty)
+            end
+
+            { target_type: 'DrugOrder', target_id: orders.map { |order_entry| fetch_value(order_entry, :order_id) }.compact.join(',') }
           end
+
+          next if result.skipped?
         rescue StandardError => e
           log_error("Failed to process offline dispensation entry", e)
           collected_errors << "Offline dispensation entry: #{e.message}"
@@ -166,6 +213,7 @@ module PatientRecordService
 
       Array.wrap(dispensation_data).compact.map do |dispensation|
         {
+          operation_id:  fetch_value(dispensation, :operation_id) || fetch_value(dispensation, :offline_id),
           provider_id:   fetch_value(dispensation, :provider_id),
           program_id:    fetch_value(dispensation, :program_id),
           patient_id:    patient_id || fetch_value(dispensation, :patient_id),

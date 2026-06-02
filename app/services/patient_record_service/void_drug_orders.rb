@@ -11,7 +11,7 @@ module PatientRecordService
     #
     # Note: the key `voidedDrugOders` is intentionally misspelled to match
     # the frontend convention established by the NCD module.
-    def void_drug_orders(_patient_id, record)
+    def void_drug_orders(patient_id, record)
       unsaved = record.dig(:voidedDrugOders, :unsaved)
       return ok unless unsaved&.any?
 
@@ -24,8 +24,18 @@ module PatientRecordService
           next if drug_order_id.blank?
 
           begin
-            drug_order = DrugOrder.find(drug_order_id)
-            dispensation_service.void_dispensations(drug_order)
+            result = with_operation_guard(
+              patient_id: patient_id,
+              operation_type: 'drug_order.void',
+              payload: void_obj,
+              target_type: 'DrugOrder'
+            ) do
+              drug_order = DrugOrder.find(drug_order_id)
+              dispensation_service.void_dispensations(drug_order)
+              { target_type: 'DrugOrder', target_id: drug_order_id }
+            end
+
+            next if result.skipped?
           rescue ActiveRecord::RecordNotFound
             Rails.logger.warn("[VoidDrugOrders] DrugOrder #{drug_order_id} not found — skipping")
           rescue StandardError => e

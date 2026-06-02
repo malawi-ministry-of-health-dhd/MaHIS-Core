@@ -39,27 +39,38 @@ module PatientRecordService
         end
 
         begin
-          ActiveRecord::Base.transaction(requires_new: true) do
-            encounter_id = create_encounter(patient_id, encounter_type.id, item)
-            encounter    = Encounter.find(encounter_id)
+          result = with_operation_guard(
+            patient_id: patient_id,
+            operation_type: 'observation_encounter.create',
+            payload: item,
+            target_type: 'Encounter'
+          ) do
+            ActiveRecord::Base.transaction(requires_new: true) do
+              encounter_id = create_encounter(patient_id, encounter_type.id, item)
+              encounter    = Encounter.find(encounter_id)
 
-            normalized_observations(value_for(item, :obs)).each do |archetype|
-              begin
-                params = to_permitted_params(archetype)
-                params[:location_id] = record[:location_id]
-                unless observation_value_present?(params)
-                  Rails.logger.warn("Skipping empty observation payload for encounter #{encounter_id}: #{format_observation_reference(params)}")
-                  next
+              normalized_observations(value_for(item, :obs)).each do |archetype|
+                begin
+                  params = to_permitted_params(archetype)
+                  params[:location_id] = record[:location_id]
+                  unless observation_value_present?(params)
+                    Rails.logger.warn("Skipping empty observation payload for encounter #{encounter_id}: #{format_observation_reference(params)}")
+                    next
+                  end
+
+                  observation_service.create_observation(encounter, params)
+                rescue StandardError => e
+                  log_error("Error saving obs for encounter #{encounter_id}", e)
+                  collected_errors << "Encounter #{encounter_type.name}, obs #{format_observation_reference(archetype)}: #{e.message}"
+                  # continues to next obs
                 end
-
-                observation_service.create_observation(encounter, params)
-              rescue StandardError => e
-                log_error("Error saving obs for encounter #{encounter_id}", e)
-                collected_errors << "Encounter #{encounter_type.name}, obs #{format_observation_reference(archetype)}: #{e.message}"
-                # continues to next obs
               end
+
+              { target_type: 'Encounter', target_id: encounter_id }
             end
           end
+
+          next if result.skipped?
         rescue StandardError => e
           log_error("Error creating encounter for type #{encounter_type.name}", e)
           collected_errors << "Encounter #{encounter_type.name}: #{e.message}"

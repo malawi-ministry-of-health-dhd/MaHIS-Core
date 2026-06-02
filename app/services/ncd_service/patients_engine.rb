@@ -26,7 +26,9 @@ class NcdService::PatientsEngine
       raise 'Global property `site_prefix` not set' unless current_ncd_code
 
       type = PatientIdentifierType.find_by_name('NCD Number')
-      current_ncd_number_identifiers = PatientIdentifier.where(identifier_type: type)
+      raise 'Patient identifier type `NCD Number` not found' unless type
+
+      current_ncd_number_identifiers = PatientIdentifier.where(identifier_type: type.patient_identifier_type_id)
 
       unless current_ncd_number_identifiers.nil?
         assigned_ncd_ids = current_ncd_number_identifiers.collect do |identifier|

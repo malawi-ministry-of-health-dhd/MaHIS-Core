@@ -44,8 +44,16 @@ class CouchdbChangesListener
   def start_live_only
     Rails.logger.info("[CouchDB Listener] Connecting to live changes feed for #{db_name}...")
 
+    live_feed_started = false
+
     loop do
       begin
+        if live_feed_started
+          Rails.logger.info("[CouchDB Listener] Catching up unprocessed documents before reconnecting to #{db_name}")
+          process_all_unprocessed_documents
+        end
+
+        live_feed_started = true
         listen_to_changes
       rescue Net::HTTPUnauthorized, Net::HTTPClientError => e
         Rails.logger.error("[CouchDB Listener] Authentication error for #{db_name}: #{e.message}. Reconnecting in #{config[:reconnect_delay]}s...")
@@ -189,6 +197,7 @@ class CouchdbChangesListener
           doc = change["doc"]
           
           next if doc["processed_by_listener"] == true
+          next if listener_retry_exhausted?(doc)
           
           if change["deleted"] == true
             Rails.logger.debug("[CouchDB Listener] Skipping deleted document: #{change['id']} in #{db_name}")
@@ -196,8 +205,8 @@ class CouchdbChangesListener
           end
           
           Rails.logger.debug("[CouchDB Listener] Received change for unprocessed doc: #{change['id']} in #{db_name}")
-          
-          process_all_unprocessed_documents
+
+          process_changed_document(doc)
           
         rescue JSON::ParserError => e
           Rails.logger.warn("[CouchDB Listener] Failed to parse JSON line in #{db_name}: #{line[0..100]}... Error: #{e.message}")
@@ -263,6 +272,10 @@ class CouchdbChangesListener
     end
   end
 
+  def listener_retry_exhausted?(doc)
+    doc["listener_retry_count"].to_i >= config[:max_retry_attempts]
+  end
+
   def process_document_batch(docs)
     Rails.logger.info("[CouchDB Listener] Processing batch of #{docs.length} documents in #{db_name}")
 
@@ -277,11 +290,18 @@ class CouchdbChangesListener
       rescue StandardError => e
         failed += 1
         Rails.logger.error("[CouchDB Listener] Failed to process doc #{doc['_id']} in #{db_name}: #{e.message}")
-        failed_marked += 1 if mark_processing_failure(doc, e)
+        failed_marked += 1 if mark_processing_failure(doc, e, source_rev: doc['_rev'])
       end
     end
 
     { processed: processed, failed: failed, failed_marked: failed_marked }
+  end
+
+  def process_changed_document(doc)
+    process_document(doc)
+  rescue StandardError => e
+    Rails.logger.error("[CouchDB Listener] Failed to process changed doc #{doc&.dig('_id')} in #{db_name}: #{e.message}")
+    mark_processing_failure(doc, e, source_rev: doc&.dig('_rev'))
   end
 
   def process_document(doc)
@@ -313,7 +333,7 @@ class CouchdbChangesListener
         raise "Patient record processing did not return a payload: #{processed_data.inspect}"
       end
       
-      update_couchdb_with_retry(doc_id, processed_data)
+      update_couchdb_with_retry(doc_id, processed_data, source_rev: doc['_rev'])
       
     rescue StandardError => e
       Rails.logger.error("[CouchDB Listener] Failed to process document #{doc_id} in #{db_name}: #{e.message}")
@@ -326,7 +346,7 @@ class CouchdbChangesListener
     Location.unscoped.find_by(location_id: location_id) || Location.current_health_center
   end
 
-  def update_couchdb_with_retry(doc_id, processed_data, attempt = 1)
+  def update_couchdb_with_retry(doc_id, processed_data, attempt = 1, source_rev: nil)
     return if attempt > config[:max_retry_attempts]
     
     begin
@@ -339,6 +359,11 @@ class CouchdbChangesListener
       
       if current_doc["processed_by_listener"] == true
         Rails.logger.debug("[CouchDB Listener] Document #{doc_id} in #{db_name} already marked as processed, skipping update")
+        return
+      end
+
+      if source_rev.present? && current_doc["_rev"] != source_rev
+        Rails.logger.warn("[CouchDB Listener] Document #{doc_id} in #{db_name} changed while processing; skipping stale listener update")
         return
       end
       
@@ -375,23 +400,28 @@ class CouchdbChangesListener
     rescue RestClient::Conflict, RestClient::PreconditionFailed => e
       Rails.logger.warn("[CouchDB Listener] Conflict on attempt #{attempt} for #{doc_id} in #{db_name}, retrying...")
       sleep(0.5 * (2 ** (attempt - 1)))
-      update_couchdb_with_retry(doc_id, processed_data, attempt + 1)
+      update_couchdb_with_retry(doc_id, processed_data, attempt + 1, source_rev: source_rev)
       
     rescue StandardError => e
       Rails.logger.error("[CouchDB Listener] Error updating document #{doc_id} in #{db_name} on attempt #{attempt}: #{e.message}")
       
       if attempt < config[:max_retry_attempts]
         sleep(1)
-        update_couchdb_with_retry(doc_id, processed_data, attempt + 1)
+        update_couchdb_with_retry(doc_id, processed_data, attempt + 1, source_rev: source_rev)
       end
     end
   end
 
-  def mark_processing_failure(doc, error)
+  def mark_processing_failure(doc, error, source_rev: nil)
     doc_id = doc['_id']
     current_doc = fetch_current_document(doc_id)
     return false unless current_doc
     return false if current_doc["processed_by_listener"] == true
+
+    if source_rev.present? && current_doc["_rev"] != source_rev
+      Rails.logger.warn("[CouchDB Listener] Document #{doc_id} in #{db_name} changed while failing; skipping stale failure marker")
+      return false
+    end
 
     current_doc["listener_retry_count"] = current_doc["listener_retry_count"].to_i + 1
     current_doc["listener_last_error"] = error.message
