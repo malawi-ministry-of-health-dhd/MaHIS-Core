@@ -40,6 +40,11 @@ module ArtService
         # 5. load_without_clinical_contact
         # 6. load_defaulters
 
+        def pill_count_concept_id
+          @pill_count_concept_id ||= ConceptName.find_by(name: 'Amount of drug brought to clinic')&.concept_id ||
+            raise('Concept "Amount of drug brought to clinic" not found')
+        end
+
         def program_states(*names)
           ::ProgramWorkflowState.joins(:program_workflow)
                                 .joins(:concept)
@@ -205,11 +210,11 @@ module ArtService
               INNER JOIN #{temp_current_medication(start: start)} cm ON cm.patient_id = ob.person_id AND cm.start_date = DATE(ob.obs_datetime)
               INNER JOIN orders o ON o.order_id = ob.order_id AND o.voided = 0
               INNER JOIN drug_order do ON do.order_id = o.order_id AND do.drug_inventory_id = cm.drug_id
-              WHERE ob.concept_id = 2540 AND ob.voided = 0
+              WHERE ob.concept_id = #{pill_count_concept_id} AND ob.voided = 0
               GROUP BY ob.person_id, cm.drug_id
             ) first_ob ON first_ob.person_id = cm.patient_id AND first_ob.drug_id = cm.drug_id
             LEFT JOIN obs second_ob ON second_ob.person_id = cm.patient_id AND second_ob.concept_id = cm.concept_id AND DATE(second_ob.obs_datetime) = cm.start_date AND second_ob.voided = 0
-            LEFT JOIN obs third_ob ON third_ob.person_id = cm.patient_id AND third_ob.concept_id = 2540 AND third_ob.value_drug = cm.drug_id AND third_ob.voided = 0 AND DATE(third_ob.obs_datetime) = cm.start_date
+            LEFT JOIN obs third_ob ON third_ob.person_id = cm.patient_id AND third_ob.concept_id = #{pill_count_concept_id} AND third_ob.value_drug = cm.drug_id AND third_ob.voided = 0 AND DATE(third_ob.obs_datetime) = cm.start_date
             GROUP BY cm.patient_id, cm.drug_id
             ON DUPLICATE KEY UPDATE pill_count = VALUES(pill_count), expiry_date = VALUES(expiry_date), pepfar_defaulter_date = VALUES(pepfar_defaulter_date), moh_defaulter_date = VALUES(moh_defaulter_date);
           SQL

@@ -311,6 +311,7 @@ module ArtService
         cohort_struct.patients_with_unknown_adhrence = unknown_adherence
 
         # Pregnant and breastfeeding status during Consultaiton
+        load_temp_obs_last_visit(end_date) unless skip_preparation
         cohort_struct.total_pregnant_women = total_pregnant_women(cohort_struct.total_alive_and_on_art, start_date,
                                                                   end_date)
         cohort_struct.total_breastfeeding_women = total_breastfeeding_women(cohort_struct.total_alive_and_on_art,
@@ -1206,71 +1207,33 @@ module ArtService
       end
 
       def total_breastfeeding_women(_patients_list, total_pregnant_women, _start_date, _end_date)
-        total_pregnant_women = if total_pregnant_women.empty?
-                                 [0]
-                               else
-                                 total_pregnant_women.map { |woman| woman['person_id'].to_i }
-                               end
+        pregnant_ids = if total_pregnant_women.empty?
+                         [0]
+                       else
+                         total_pregnant_women.map { |woman| woman['person_id'].to_i }
+                       end
 
-        encounter_types = EncounterType.where(name: ['HIV CLINIC CONSULTATION', 'HIV STAGING'])
-                                       .select(:encounter_type_id)
-
-        breastfeeding_concepts = ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding'])
-                                            .select(:concept_id)
-        yes_concept_id = ConceptName.find_by(name: 'Yes')&.concept_id
+        breastfeeding_concept_ids = ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding'])
+                                               .pluck(:concept_id)
+        return [] if breastfeeding_concept_ids.empty?
 
         ActiveRecord::Base.connection.select_all <<~SQL
-          SELECT obs.person_id, obs.value_coded
-          FROM obs
-          INNER JOIN encounter enc
-            ON enc.encounter_id = obs.encounter_id
-            AND enc.voided = 0
-            AND enc.encounter_type IN (#{encounter_types.to_sql})
-            AND obs.voided = 0 AND obs.concept_id IN (#{breastfeeding_concepts.to_sql})
-          INNER JOIN #{temp_earliest_start_date} e
-            ON e.patient_id = enc.patient_id
-            AND LEFT(e.gender, 1) = 'F'
-            AND e.patient_id NOT IN (#{total_pregnant_women.join(',')})
-          INNER JOIN #{temp_patient_outcomes} tpo
-            ON tpo.patient_id = e.patient_id
-            AND tpo.moh_cum_outcome = 'On antiretrovirals'
-          INNER JOIN #{temp_max_drug_orders} AS max_obs ON max_obs.patient_id = obs.person_id
-            AND DATE(max_obs.start_date) = DATE(obs.obs_datetime)
-          WHERE obs.person_id = e.patient_id
-          GROUP BY obs.person_id
-          HAVING value_coded = #{yes_concept_id}
-          ORDER BY obs.obs_datetime DESC;
+          SELECT t.patient_id AS person_id, t.value_coded
+          FROM #{temp_obs_last_visit} t
+          WHERE t.concept_id IN (#{breastfeeding_concept_ids.join(',')})
+            AND t.patient_id NOT IN (#{pregnant_ids.join(',')})
         SQL
       end
 
       def total_pregnant_women(_patients_list, _start_date, _end_date)
-        encounter_types = EncounterType.where(name: ['HIV CLINIC CONSULTATION', 'HIV STAGING'])
-                                       .select(:encounter_type_id)
-
-        pregnant_concepts = ConceptName.where(name: ['Is patient pregnant?', 'patient pregnant'])
-                                       .select(:concept_id)
-
-        yes_concepts = ConceptName.where(name: 'Yes').select(:concept_id)
+        pregnant_concept_ids = ConceptName.where(name: ['Is patient pregnant?', 'patient pregnant'])
+                                          .pluck(:concept_id)
+        return [] if pregnant_concept_ids.empty?
 
         ActiveRecord::Base.connection.select_all <<~SQL
-          SELECT obs.person_id, obs.value_coded
-          FROM obs obs
-          INNER JOIN encounter enc
-            ON enc.encounter_id = obs.encounter_id
-            AND enc.voided = 0
-            AND enc.encounter_type IN (#{encounter_types.to_sql})
-            AND obs.voided = 0 AND obs.concept_id IN (#{pregnant_concepts.to_sql})
-          INNER JOIN #{temp_earliest_start_date} e
-            ON e.patient_id = enc.patient_id
-            AND LEFT(e.gender, 1) = 'F'
-          INNER JOIN #{temp_patient_outcomes} tpo
-            ON tpo.patient_id = e.patient_id
-            AND tpo.moh_cum_outcome = 'On antiretrovirals'
-          INNER JOIN #{temp_max_drug_orders} AS max_obs ON max_obs.patient_id = obs.person_id
-            AND DATE(max_obs.start_date) = DATE(obs.obs_datetime)
-          GROUP BY obs.person_id
-          HAVING value_coded IN (#{yes_concepts.to_sql})
-          ORDER BY obs.obs_datetime DESC;
+          SELECT t.patient_id AS person_id, t.value_coded
+          FROM #{temp_obs_last_visit} t
+          WHERE t.concept_id IN (#{pregnant_concept_ids.join(',')})
         SQL
       end
 
@@ -1350,9 +1313,9 @@ module ArtService
             AND orders.voided = 0
           WHERE adherence.concept_id = #{drug_order_adherence_concept.concept_id}
             AND ((adherence.value_numeric >= #{MIN_ART_ADHERENCE_THRESHOLD}
-                  OR adherence.value_numeric <= #{MAX_ART_ADHERENCE_THRESHOLD})
+                  AND adherence.value_numeric <= #{MAX_ART_ADHERENCE_THRESHOLD})
                  OR (CAST(adherence.value_text AS SIGNED INTEGER) >= #{MIN_ART_ADHERENCE_THRESHOLD}
-                     OR CAST(adherence.value_text AS SIGNED INTEGER) <= #{MAX_ART_ADHERENCE_THRESHOLD}))
+                     AND CAST(adherence.value_text AS SIGNED INTEGER) <= #{MAX_ART_ADHERENCE_THRESHOLD}))
             AND adherence.voided = 0
           GROUP BY adherence.person_id
         SQL
@@ -1370,21 +1333,23 @@ module ArtService
 
         ActiveRecord::Base.connection.execute <<~SQL
           INSERT INTO #{tmp_max_adherence}
-          SELECT obs.person_id, DATE(MAX(obs.obs_datetime)) AS visit_date
-            FROM obs
+          SELECT tpo.patient_id, DATE(MAX(obs.obs_datetime)) AS visit_date
+            FROM #{temp_patient_outcomes} tpo
+            INNER JOIN #{temp_max_drug_orders} mdo ON mdo.patient_id = tpo.patient_id
+            INNER JOIN obs
+              ON obs.person_id = tpo.patient_id
+              AND obs.concept_id = #{drug_order_adherence_concept.concept_id}
+              AND obs.voided = 0
+              AND obs.obs_datetime >= DATE(mdo.start_date)
+              AND obs.obs_datetime < (DATE(#{end_date}) + INTERVAL 1 DAY)
+              AND (obs.value_numeric IS NOT NULL OR obs.value_text IS NOT NULL)
             INNER JOIN orders
               ON orders.order_id = obs.order_id
               AND orders.concept_id IN (SELECT `concept_set`.`concept_id` FROM `concept_set` WHERE `concept_set`.`concept_set` = #{arv_drugs_concept_id})
               AND orders.order_type_id = 1 -- Drug order
               AND orders.voided = 0
-            INNER JOIN #{temp_patient_outcomes} tpo
-              ON tpo.patient_id = obs.person_id
-              AND moh_cum_outcome = 'On antiretrovirals'
-            WHERE obs.concept_id = #{drug_order_adherence_concept.concept_id}
-              AND obs.obs_datetime < (DATE(#{end_date}) + INTERVAL 1 DAY)
-              AND (obs.value_numeric IS NOT NULL OR obs.value_text IS NOT NULL)
-              AND obs.voided = 0
-            GROUP BY obs.person_id;
+            WHERE tpo.moh_cum_outcome = 'On antiretrovirals'
+            GROUP BY tpo.patient_id;
         SQL
       end
 
@@ -1911,6 +1876,82 @@ module ArtService
           ) t
           WHERE rn = 1;
         SQL
+      end
+
+      # Mirrors BHT's temp_obs_last_visit approach:
+      # Finds the latest Yes obs per female ART patient for pregnant/breastfeeding concepts
+      # within a 2-year lookback window, restricted to HIV clinic encounter types.
+      # This is more permissive than requiring obs on the exact drug-order date.
+      def load_temp_obs_last_visit(end_date)
+        encounter_type_ids = EncounterType.where(name: ['HIV CLINIC CONSULTATION', 'HIV STAGING'])
+                                          .pluck(:encounter_type_id)
+        pregnant_concept_ids = ConceptName.where(name: ['Is patient pregnant?', 'patient pregnant'])
+                                          .pluck(:concept_id)
+        breastfeeding_concept_ids = ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding'])
+                                               .pluck(:concept_id)
+        yes_concept_id = ConceptName.find_by(name: 'Yes')&.concept_id
+
+        all_concept_ids = (pregnant_concept_ids + breastfeeding_concept_ids).uniq
+        return if all_concept_ids.empty? || encounter_type_ids.empty? || yes_concept_id.nil?
+
+        quoted_end = ActiveRecord::Base.connection.quote(end_date.to_s)
+
+        ActiveRecord::Base.connection.execute "DROP TABLE IF EXISTS #{temp_obs_last_visit}"
+        ActiveRecord::Base.connection.execute "DROP TABLE IF EXISTS #{tmp_preg_max_dt}"
+
+        ActiveRecord::Base.connection.execute <<~SQL
+          CREATE TABLE #{temp_obs_last_visit} (
+            patient_id  INT NOT NULL,
+            concept_id  INT NOT NULL,
+            value_coded INT,
+            PRIMARY KEY (patient_id, concept_id)
+          ) ENGINE=InnoDB
+        SQL
+
+        ActiveRecord::Base.connection.execute <<~SQL
+          CREATE TABLE #{tmp_preg_max_dt} (
+            patient_id INT NOT NULL,
+            concept_id INT NOT NULL,
+            max_dt     DATETIME NOT NULL,
+            PRIMARY KEY (patient_id, concept_id)
+          ) ENGINE=MEMORY
+        SQL
+
+        # Step 1: find the latest obs_datetime per (patient, concept) for female ART patients
+        ActiveRecord::Base.connection.execute <<~SQL
+          INSERT INTO #{tmp_preg_max_dt} (patient_id, concept_id, max_dt)
+          SELECT obs.person_id, obs.concept_id, MAX(obs.obs_datetime)
+          FROM #{temp_patient_outcomes} tpo
+          INNER JOIN #{temp_earliest_start_date} e
+            ON e.patient_id = tpo.patient_id
+            AND LEFT(e.gender, 1) = 'F'
+          INNER JOIN obs ON obs.person_id = tpo.patient_id
+            AND obs.concept_id IN (#{all_concept_ids.join(',')})
+            AND obs.voided = 0
+            AND obs.obs_datetime >= DATE(#{quoted_end}) - INTERVAL 2 YEAR
+            AND obs.obs_datetime <= #{quoted_end}
+          WHERE tpo.moh_cum_outcome = 'On antiretrovirals'
+          GROUP BY obs.person_id, obs.concept_id
+        SQL
+
+        # Step 2: fetch Yes obs matching that latest datetime, restricted to clinic encounters
+        ActiveRecord::Base.connection.execute <<~SQL
+          INSERT INTO #{temp_obs_last_visit} (patient_id, concept_id, value_coded)
+          SELECT m.patient_id, o.concept_id, o.value_coded
+          FROM #{tmp_preg_max_dt} m
+          INNER JOIN obs o ON o.person_id = m.patient_id
+            AND o.concept_id = m.concept_id
+            AND o.obs_datetime = m.max_dt
+            AND o.voided = 0
+            AND o.value_coded = #{yes_concept_id}
+          INNER JOIN encounter enc
+            ON enc.encounter_id = o.encounter_id
+            AND enc.voided = 0
+            AND enc.encounter_type IN (#{encounter_type_ids.join(',')})
+          GROUP BY m.patient_id, o.concept_id
+        SQL
+
+        ActiveRecord::Base.connection.execute "DROP TABLE IF EXISTS #{tmp_preg_max_dt}"
       end
 
       def pregnant_females_all_ages(start_date, end_date)
