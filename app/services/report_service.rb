@@ -262,11 +262,19 @@ class ReportService
     kwargs[:user] = User.current.user_id
     kwargs[:location_id] = Location.current.location_id
 
+    clazzname = engine(@program).class.to_s
+    lock_key = "report_job:running:#{clazzname}:#{kwargs[:location_id]}:#{kwargs[:name]}"
+    already_running = Sidekiq.redis { |r| r.exists?(lock_key) }
+    if already_running
+      LOGGER.info("ReportJob: skipping enqueue for #{clazzname}(#{kwargs[:name]}) — already running")
+      return
+    end
+
     LOGGER.debug("Queueing #{kwargs['type']} report: #{kwargs}")
     if @immediate_mode
-      ReportJob.perform_now(engine(@program).class.to_s, **kwargs)
+      ReportJob.perform_now(clazzname, **kwargs)
     else
-      ReportJob.perform_later(engine(@program).class.to_s, **kwargs)
+      ReportJob.perform_later(clazzname, **kwargs)
     end
   end
 end
