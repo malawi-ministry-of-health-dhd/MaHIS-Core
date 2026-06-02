@@ -15,10 +15,10 @@ class CohortProgressChannel < ApplicationCable::Channel
 
   # Convenience class method called by CohortBuilder after each table is loaded.
   # +location_id+ and +name+ are used to target the correct stream.
-  def self.broadcast_progress(location_id:, name:, completed:)
+  def self.broadcast_progress(location_id:, name:, completed:, step: nil)
     ActionCable.server.broadcast(
       "cohort_progress:#{location_id}:#{name}",
-      { completed: completed, total: TOTAL_TABLES }
+      { completed: completed, total: TOTAL_TABLES, step: step }
     )
   end
 end

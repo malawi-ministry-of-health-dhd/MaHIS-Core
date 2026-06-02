@@ -2350,6 +2350,20 @@ module ArtService
         PatientState.where(patient_program: pprogram, state: 7).exists?
       end
 
+      STEP_LABELS = {
+        1  => 'Loading patient types',
+        2  => 'Loading registration dates',
+        3  => 'Loading prescription orders',
+        4  => 'Loading ART start dates',
+        5  => 'Indexing earliest start dates',
+        6  => 'Computing demographics & patient types',
+        7  => 'Computing pregnancy & gender data',
+        8  => 'Computing eligibility & TB status',
+        9  => 'Computing regimen categories',
+        10 => 'Computing side effects & adherence',
+        11 => 'Finalizing report',
+      }.freeze
+
       def broadcast_cohort_progress(completed, ws_name = nil, ws_location_id = nil)
         name = ws_name || @ws_name
         loc  = ws_location_id || @ws_location_id
@@ -2358,7 +2372,8 @@ module ArtService
         CohortProgressChannel.broadcast_progress(
           location_id: loc,
           name: name,
-          completed: completed
+          completed: completed,
+          step: STEP_LABELS[completed]
         )
       rescue StandardError => e
         Rails.logger.warn("CohortProgressChannel broadcast failed: #{e.message}")
