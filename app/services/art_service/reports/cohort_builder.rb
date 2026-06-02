@@ -97,7 +97,12 @@ module ArtService
 
       def build(cohort_struct, start_date, end_date, occupation, force_rebuild: true)
         skip_preparation = !force_rebuild && shared_cohort_tables_populated?
-        unless skip_preparation
+        if skip_preparation
+          # Temp tables are already populated (cached). Fast-forward through
+          # steps 1-5 so the progress ring animates rather than jumping straight
+          # to step 6 — keeps the user engaged while the real SQL work begins.
+          (1..5).each { |step| broadcast_cohort_progress(step, cached: true) }
+        else
           # load_tmp_patient_table(cohort_struct)
           prepare_tables(force_rebuild: force_rebuild)
           create_location_specific_mysql_functions
@@ -2364,16 +2369,19 @@ module ArtService
         11 => 'Finalizing report',
       }.freeze
 
-      def broadcast_cohort_progress(completed, ws_name = nil, ws_location_id = nil)
+      CACHED_STEP_LABELS = STEP_LABELS.transform_values { |v| "Cached: #{v}" }.freeze
+
+      def broadcast_cohort_progress(completed, ws_name = nil, ws_location_id = nil, cached: false)
         name = ws_name || @ws_name
         loc  = ws_location_id || @ws_location_id
         return unless name.present? && loc.present?
 
+        label = cached ? CACHED_STEP_LABELS[completed] : STEP_LABELS[completed]
         CohortProgressChannel.broadcast_progress(
           location_id: loc,
           name: name,
           completed: completed,
-          step: STEP_LABELS[completed]
+          step: label
         )
       rescue StandardError => e
         Rails.logger.warn("CohortProgressChannel broadcast failed: #{e.message}")
