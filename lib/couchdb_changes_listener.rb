@@ -291,13 +291,15 @@ class CouchdbChangesListener
     Rails.logger.info("[CouchDB Listener] Processing document: #{doc_id} in #{db_name}")
     
     begin
+      Location.current = listener_location_for(doc)
+
       if doc["provider_id"].present?
-        User.current = User.find_by(user_id: doc["provider_id"])
+        User.current = User.unscoped.find_by(user_id: doc["provider_id"])
+        Rails.logger.warn("No user found for provider_id #{doc['provider_id']} in CouchDB doc #{doc_id}") unless User.current
       else
         Rails.logger.warn("No user_id found in CouchDB doc")
       end
 
-      Location.current = Location.current_health_center
       begin
         Thread.current['skip_couchdb_sync'] = true
         Thread.current[:skip_couchdb_sync] = true
@@ -317,6 +319,11 @@ class CouchdbChangesListener
       Rails.logger.error("[CouchDB Listener] Failed to process document #{doc_id} in #{db_name}: #{e.message}")
       raise e
     end
+  end
+
+  def listener_location_for(doc)
+    location_id = doc["location_id"].presence || doc[:location_id].presence
+    Location.unscoped.find_by(location_id: location_id) || Location.current_health_center
   end
 
   def update_couchdb_with_retry(doc_id, processed_data, attempt = 1)

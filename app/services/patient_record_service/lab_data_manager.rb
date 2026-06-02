@@ -21,7 +21,7 @@ module PatientRecordService
       collected_errors = []
 
       begin
-        encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[data_key])
+        encounter_type = encounter_type_for!(data_key)
         encounter_id   = create_encounter(patient_id, encounter_type.id, record)
 
         unsaved_data.each do |order_params|
@@ -29,9 +29,11 @@ module PatientRecordService
             order_params  = order_params.merge(encounter_id: encounter_id)
             order         = Lab::OrdersService.order_test(order_params)
             tests         = order.fetch(:tests)
+            first_test    = tests.first
+            raise "Lab order returned no tests for offline_id=#{order_params[:offline_id]}" if first_test.blank?
 
             if order_params[:offline_id].present?
-              result = save_lab_results(:labResults, patient_id, record, order_params[:offline_id], tests[0][:id])
+              result = save_lab_results(:labResults, patient_id, record, order_params[:offline_id], first_test[:id])
               collected_errors.concat(result.errors) if result.errors.any?
               record[:labOrders][:results]&.reject! { |entry| entry[:offline_id] == order_params[:offline_id] }
             end
@@ -49,7 +51,7 @@ module PatientRecordService
             })
             create_observation(encounter_id, {
               concept_id:   test_type,
-              value_coded:  tests[0][:concept_id],
+              value_coded:  first_test[:concept_id],
               obs_datetime: record[:encounter_datetime],
               location_id:  record[:location_id]
             })
@@ -63,7 +65,7 @@ module PatientRecordService
             if order_params[:referral] == "referral"
               create_observation(encounter_id, {
                 concept_id:   refer_to_htc,
-                value_text:   tests[0][:name],
+                value_text:   first_test[:name],
                 order_id:     order.fetch(:order_id),
                 obs_datetime: record[:encounter_datetime],
                 location_id:  record[:location_id]
@@ -85,7 +87,7 @@ module PatientRecordService
     end
 
     def create_observation(encounter_id, params)
-      encounter = Encounter.find(encounter_id)
+      encounter = Encounter.unscoped.find(encounter_id)
       observation_service.create_observation(encounter, params)
     end
 
@@ -168,6 +170,17 @@ module PatientRecordService
 
       record[:labOrders][:voided] = []
       OperationResult.new(success: true, errors: collected_errors)
+    end
+
+    def encounter_type_for!(data_key)
+      encounter_type_name = ENCOUNTER_TYPE_MAPPING[data_key]
+      raise "Encounter type mapping missing for #{data_key}" if encounter_type_name.blank?
+
+      encounter_type = EncounterType.find_by_name(encounter_type_name) ||
+                       EncounterType.unscoped.where('LOWER(name) = ?', encounter_type_name.downcase).first
+      raise "Encounter type #{encounter_type_name} not found" if encounter_type.blank?
+
+      encounter_type
     end
   end
 end
