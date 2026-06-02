@@ -66,7 +66,7 @@ module ArtService
           load_patients_who_stopped_treatment(start:)
           load_patients_without_drug_orders(start:)
           load_patient_calculated_outcomes(start:)
-          load_outcome_using_functions(start:)
+          load_residual_outcomes(start:)
         end
 
         # rubocop:disable Metrics/MethodLength
@@ -298,20 +298,35 @@ module ArtService
           SQL
         end
 
-        # Load defaulters
-        def load_outcome_using_functions(start: false)
-          function_date = start ? "'#{start_date.to_date - 1.day}'" : end_date
+        # Handles patients not classified in steps 1-4.
+        # Patients with drug orders but no valid state within the reporting period
+        # are written as 'Unknown' instead of calling the stored function, which
+        # can incorrectly promote post-period states as active outcomes.
+        def load_residual_outcomes(start: false)
           ActiveRecord::Base.connection.execute <<~SQL
             INSERT INTO #{temp_patient_outcomes(start: start)}
-            SELECT patient_id,
-                   patient_outcome(patient_id, #{function_date}),
-                   current_defaulter_date(patient_id, #{function_date}),
-                   pepfar_patient_outcome(patient_id, #{function_date}),
-                   current_pepfar_defaulter_date(patient_id, #{function_date}),
+            SELECT tesd.patient_id,
+                   CASE
+                     WHEN cs.cum_outcome IN ('Patient died', 'Patient transferred out', 'Treatment stopped') THEN cs.cum_outcome
+                     ELSE 'Unknown'
+                   END AS moh_outcome,
+                   CASE
+                     WHEN cs.cum_outcome IN ('Patient died', 'Patient transferred out', 'Treatment stopped') THEN cs.outcome_date
+                     ELSE NULL
+                   END AS moh_outcome_date,
+                   CASE
+                     WHEN cs.cum_outcome IN ('Patient died', 'Patient transferred out', 'Treatment stopped') THEN cs.cum_outcome
+                     ELSE 'Unknown'
+                   END AS pepfar_outcome,
+                   CASE
+                     WHEN cs.cum_outcome IN ('Patient died', 'Patient transferred out', 'Treatment stopped') THEN cs.outcome_date
+                     ELSE NULL
+                   END AS pepfar_outcome_date,
                    5
-            FROM #{temp_earliest_start_date}
-            WHERE date_enrolled < DATE(#{start ? start_date : end_date}) + INTERVAL 1 DAY
-              AND (patient_id) NOT IN (SELECT patient_id FROM #{temp_patient_outcomes(start: start)} WHERE step IN (1, 2, 3, 4))
+            FROM #{temp_earliest_start_date} tesd
+            LEFT JOIN #{temp_current_state(start: start)} AS cs ON cs.patient_id = tesd.patient_id AND cs.outcomes = 1
+            WHERE tesd.date_enrolled < DATE(#{start ? start_date : end_date}) + INTERVAL 1 DAY
+              AND tesd.patient_id NOT IN (SELECT patient_id FROM #{temp_patient_outcomes(start: start)} WHERE step IN (1, 2, 3, 4))
             ON DUPLICATE KEY UPDATE moh_cum_outcome = VALUES(moh_cum_outcome), moh_outcome_date = VALUES(moh_outcome_date), pepfar_cum_outcome = VALUES(pepfar_cum_outcome), pepfar_outcome_date = VALUES(pepfar_outcome_date), step = VALUES(step)
           SQL
         end
