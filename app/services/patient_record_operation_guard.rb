@@ -87,6 +87,7 @@ class PatientRecordOperationGuard
       raise unless duplicate_receipt_error?(e)
 
       existing_receipt = PatientRecordOperationReceipt.find_by!(
+        patient_id: patient_id,
         operation_type: operation_type,
         operation_id: operation_id
       )
@@ -98,6 +99,7 @@ class PatientRecordOperationGuard
 
       PatientRecordOperationReceipt.transaction do
         receipt = PatientRecordOperationReceipt.lock.find_by!(
+          patient_id: patient_id,
           operation_type: operation_type,
           operation_id: operation_id
         )

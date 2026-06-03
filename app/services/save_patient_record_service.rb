@@ -198,10 +198,11 @@ class SavePatientRecordService
         patient_data[:void_encounters] = []
 
       when :save_all_observations
-        unsaved_encounter_types = patient_data[:observations]
-                                    &.select { |e| e[:status] == "unsaved" }
-                                    &.map    { |e| e[:encounter_type] }
-                                    &.uniq || []
+        unsaved_encounter_types = Array(record_value(patient_data, :observations))
+                                    .select { |e| record_value(e, :status) == "unsaved" }
+                                    .map    { |e| record_value(e, :encounter_type) }
+                                    .compact
+                                    .uniq
         allowed_encounter_types.concat(unsaved_encounter_types)
       end
     end
@@ -228,18 +229,27 @@ class SavePatientRecordService
     allowed_encounter_types = allowed_encounter_types.compact.uniq
     return if allowed_encounter_types.empty?
 
-    original_observations_map = (patient_data[:observations] || [])
+    original_observations_map = Array(record_value(patient_data, :observations))
                                   .each_with_object({}) do |obs, hash|
-                                    hash[obs[:encounter_type]] = obs
+                                    encounter_type = record_value(obs, :encounter_type)
+                                    hash[encounter_type] = obs if encounter_type.present?
                                   end
 
     new_observations = BuildPatientRecordService.build_all_observations(patient_id, allowed_encounter_types)
 
     updated_observations_hash = original_observations_map.merge(
-      new_observations.index_by { |obs| obs[:encounter_type] }
+      new_observations.index_by { |obs| record_value(obs, :encounter_type) }
     )
 
     patient_data[:observations] = updated_observations_hash.values.as_json
+  end
+
+  def record_value(container, key)
+    return nil if container.nil? || !container.respond_to?(:[])
+
+    container[key] || container[key.to_s]
+  rescue TypeError
+    nil
   end
 
   def ensure_primary_identifier_persisted!(patient_id, patient_record)
