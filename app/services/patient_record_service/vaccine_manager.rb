@@ -18,20 +18,31 @@ module PatientRecordService
 
       orders.each do |order|
         begin
-          ActiveRecord::Base.transaction(requires_new: true) do
-            encounter_id = create_encounter(patient_id, encounter_type.id, record)
-            obs = build_drugs_dispensed_observation(order, record)
+          result = with_operation_guard(
+            patient_id: patient_id,
+            operation_type: 'vaccine_order.create',
+            payload: order,
+            target_type: 'Order'
+          ) do
+            ActiveRecord::Base.transaction(requires_new: true) do
+              encounter_id = create_encounter(patient_id, encounter_type.id, record)
+              obs = build_drugs_dispensed_observation(order, record)
 
-            AdministerVaccineService.administer_vaccine(
-              encounter_id, [order], record[:program_id], [obs],
-              record[:provider_id], record[:location_id]
-            )
+              AdministerVaccineService.administer_vaccine(
+                encounter_id, [order], record[:program_id], [obs],
+                record[:provider_id], record[:location_id]
+              )
 
-            saved_order = Order.where(encounter_id: encounter_id, voided: 0).order(order_id: :desc).first
-            raise StandardError, "Vaccine order was not created for #{value_for(order, :drug_name)}" unless saved_order
+              saved_order = Order.where(encounter_id: encounter_id, voided: 0).order(order_id: :desc).first
+              raise StandardError, "Vaccine order was not created for #{value_for(order, :drug_name)}" unless saved_order
 
-            ensure_drugs_dispensed_observation!(encounter_id, order, obs, record, saved_order.order_id)
+              ensure_drugs_dispensed_observation!(encounter_id, order, obs, record, saved_order.order_id)
+
+              { target_type: 'Order', target_id: saved_order.order_id }
+            end
           end
+
+          next if result.skipped?
         rescue StandardError => e
           log_error("Failed to save vaccine order #{order[:drug_name]}", e)
           collected_errors << "Vaccine #{order[:drug_name]}: #{e.message}"
@@ -53,11 +64,21 @@ module PatientRecordService
 
       data.each do |item|
         begin
-          ActiveRecord::Base.transaction(requires_new: true) do
-            order = Order.find(item[:order_id])
-            order.void(item[:reason])
-            Observation.where(order_id: order.id).each { |obs| obs.void(item[:reason]) }
+          result = with_operation_guard(
+            patient_id: _patient_id,
+            operation_type: 'vaccine_order.void',
+            payload: item,
+            target_type: 'Order'
+          ) do
+            ActiveRecord::Base.transaction(requires_new: true) do
+              order = Order.find(item[:order_id])
+              order.void(item[:reason])
+              Observation.where(order_id: order.id).each { |obs| obs.void(item[:reason]) }
+              { target_type: 'Order', target_id: order.order_id }
+            end
           end
+
+          next if result.skipped?
         rescue ActiveRecord::RecordNotFound => e
           log_error("Order not found for void", e)
           collected_errors << "Order #{item[:order_id]}: #{e.message}"

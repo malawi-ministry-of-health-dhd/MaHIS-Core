@@ -21,55 +21,68 @@ module PatientRecordService
       collected_errors = []
 
       begin
-        encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[data_key])
-        encounter_id   = create_encounter(patient_id, encounter_type.id, record)
+        encounter_type = encounter_type_for!(data_key)
+        encounter_id   = nil
 
         unsaved_data.each do |order_params|
           begin
-            order_params  = order_params.merge(encounter_id: encounter_id)
-            order         = Lab::OrdersService.order_test(order_params)
-            tests         = order.fetch(:tests)
+            result = with_operation_guard(
+              patient_id: patient_id,
+              operation_type: 'lab_order.create',
+              payload: order_params,
+              target_type: 'LabOrder'
+            ) do
+              encounter_id ||= create_encounter(patient_id, encounter_type.id, record)
+              order_params  = order_params.merge(encounter_id: encounter_id)
+              order         = Lab::OrdersService.order_test(order_params)
+              tests         = order.fetch(:tests)
+              first_test    = tests.first
+              raise "Lab order returned no tests for offline_id=#{order_params[:offline_id]}" if first_test.blank?
 
-            if order_params[:offline_id].present?
-              result = save_lab_results(:labResults, patient_id, record, order_params[:offline_id], tests[0][:id])
-              collected_errors.concat(result.errors) if result.errors.any?
-              record[:labOrders][:results]&.reject! { |entry| entry[:offline_id] == order_params[:offline_id] }
-            end
+              if order_params[:offline_id].present?
+                result = save_lab_results(:labResults, patient_id, record, order_params[:offline_id], first_test[:id])
+                collected_errors.concat(result.errors) if result.errors.any?
+                record[:labOrders][:results]&.reject! { |entry| entry[:offline_id] == order_params[:offline_id] }
+              end
 
-            person_making_request = ConceptName.find_by(name: "Person making request")&.concept_id
-            test_type             = ConceptName.find_by(name: "Test type")&.concept_id
-            reason_for_test       = ConceptName.find_by(name: "Reason for test")&.concept_id
-            refer_to_htc          = ConceptName.find_by(name: "Refer to HTC")&.concept_id
+              person_making_request = ConceptName.find_by(name: "Person making request")&.concept_id
+              test_type             = ConceptName.find_by(name: "Test type")&.concept_id
+              reason_for_test       = ConceptName.find_by(name: "Reason for test")&.concept_id
+              refer_to_htc          = ConceptName.find_by(name: "Refer to HTC")&.concept_id
 
-            create_observation(encounter_id, {
-              concept_id:     person_making_request,
-              value_text:     order_params[:requesting_clinician],
-              obs_datetime:   record[:encounter_datetime],
-              location_id:    record[:location_id]
-            })
-            create_observation(encounter_id, {
-              concept_id:   test_type,
-              value_coded:  tests[0][:concept_id],
-              obs_datetime: record[:encounter_datetime],
-              location_id:  record[:location_id]
-            })
-            create_observation(encounter_id, {
-              concept_id:   reason_for_test,
-              value_coded:  order_params[:reason_for_test_id],
-              obs_datetime: record[:encounter_datetime],
-              location_id:  record[:location_id]
-            })
-
-            if order_params[:referral] == "referral"
               create_observation(encounter_id, {
-                concept_id:   refer_to_htc,
-                value_text:   tests[0][:name],
-                order_id:     order.fetch(:order_id),
+                concept_id:     person_making_request,
+                value_text:     order_params[:requesting_clinician],
+                obs_datetime:   record[:encounter_datetime],
+                location_id:    record[:location_id]
+              })
+              create_observation(encounter_id, {
+                concept_id:   test_type,
+                value_coded:  first_test[:concept_id],
                 obs_datetime: record[:encounter_datetime],
                 location_id:  record[:location_id]
               })
+              create_observation(encounter_id, {
+                concept_id:   reason_for_test,
+                value_coded:  order_params[:reason_for_test_id],
+                obs_datetime: record[:encounter_datetime],
+                location_id:  record[:location_id]
+              })
+
+              if order_params[:referral] == "referral"
+                create_observation(encounter_id, {
+                  concept_id:   refer_to_htc,
+                  value_text:   first_test[:name],
+                  order_id:     order.fetch(:order_id),
+                  obs_datetime: record[:encounter_datetime],
+                  location_id:  record[:location_id]
+                })
+              end
+
+              order
             end
 
+            next if result.skipped?
           rescue StandardError => e
             log_error("Failed to save lab order for order_params=#{order_params[:offline_id]}", e)
             collected_errors << "Lab order #{order_params[:offline_id]}: #{e.message}"
@@ -85,7 +98,7 @@ module PatientRecordService
     end
 
     def create_observation(encounter_id, params)
-      encounter = Encounter.find(encounter_id)
+      encounter = Encounter.unscoped.find(encounter_id)
       observation_service.create_observation(encounter, params)
     end
 
@@ -125,19 +138,28 @@ module PatientRecordService
 
       unsaved_data.each do |order_params|
         begin
-          effective_test_id = test_obs_id.presence || order_params[:test_id]
+          result = with_operation_guard(
+            patient_id: patient_id,
+            operation_type: 'lab_result.create',
+            payload: order_params,
+            target_type: 'LabResult'
+          ) do
+            effective_test_id = test_obs_id.presence || order_params[:test_id]
 
-          if effective_test_id.blank? && order_params[:offline_id].present?
-            collected_errors << "Skipped result offline_id=#{order_params[:offline_id]}: test_obs_id missing"
-            next
+            if effective_test_id.blank? && order_params[:offline_id].present?
+              collected_errors << "Skipped result offline_id=#{order_params[:offline_id]}: test_obs_id missing"
+              next
+            end
+
+            encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[data_key])
+            encounter_id   = create_encounter(patient_id, encounter_type.id, record)
+            order_params   = order_params.merge(test_id: effective_test_id) if effective_test_id
+            lab_results    = order_params.merge(encounter_id: encounter_id)
+
+            Lab::ResultsService.create_results(lab_results[:test_id], lab_results)
           end
 
-          encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[data_key])
-          encounter_id   = create_encounter(patient_id, encounter_type.id, record)
-          order_params   = order_params.merge(test_id: effective_test_id) if effective_test_id
-          lab_results    = order_params.merge(encounter_id: encounter_id)
-
-          Lab::ResultsService.create_results(lab_results[:test_id], lab_results)
+          next if result.skipped?
         rescue StandardError => e
           log_error("Failed to save lab result offline_id=#{order_params[:offline_id]}", e)
           collected_errors << "Lab result #{order_params[:offline_id]}: #{e.message}"
@@ -158,8 +180,18 @@ module PatientRecordService
 
       data.each do |item|
         begin
-          Lab::OrdersService.void_order(item[:orderId], item[:reason])
-          Lab::VoidOrderJob.perform_later(item[:orderId])
+          result = with_operation_guard(
+            patient_id: _patient_id,
+            operation_type: 'lab_order.void',
+            payload: item,
+            target_type: 'LabOrder'
+          ) do
+            Lab::OrdersService.void_order(item[:orderId], item[:reason])
+            Lab::VoidOrderJob.perform_later(item[:orderId])
+            { target_type: 'LabOrder', target_id: item[:orderId] }
+          end
+
+          next if result.skipped?
         rescue StandardError => e
           log_error("Failed to void lab order #{item[:orderId]}", e)
           collected_errors << "Order #{item[:orderId]}: #{e.message}"
@@ -168,6 +200,17 @@ module PatientRecordService
 
       record[:labOrders][:voided] = []
       OperationResult.new(success: true, errors: collected_errors)
+    end
+
+    def encounter_type_for!(data_key)
+      encounter_type_name = ENCOUNTER_TYPE_MAPPING[data_key]
+      raise "Encounter type mapping missing for #{data_key}" if encounter_type_name.blank?
+
+      encounter_type = EncounterType.find_by_name(encounter_type_name) ||
+                       EncounterType.unscoped.where('LOWER(name) = ?', encounter_type_name.downcase).first
+      raise "Encounter type #{encounter_type_name} not found" if encounter_type.blank?
+
+      encounter_type
     end
   end
 end

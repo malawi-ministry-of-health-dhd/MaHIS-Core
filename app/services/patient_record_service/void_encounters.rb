@@ -19,8 +19,18 @@ module PatientRecordService
         end
 
         begin
-          encounter = Encounter.find(encounter_id)
-          encounter_service.void(encounter, reason)
+          result = with_operation_guard(
+            patient_id: void_request[:patient_id],
+            operation_type: 'encounter.void',
+            payload: void_request,
+            target_type: 'Encounter'
+          ) do
+            encounter = Encounter.find(encounter_id)
+            encounter_service.void(encounter, reason)
+            { target_type: 'Encounter', target_id: encounter_id }
+          end
+
+          next if result.skipped?
         rescue ActiveRecord::RecordNotFound => e
           collected_errors << "Encounter #{encounter_id} not found: #{e.message}"
           Rails.logger.error("Failed to void encounter #{encounter_id}: #{e.message}")

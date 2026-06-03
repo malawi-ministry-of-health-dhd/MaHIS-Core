@@ -6,8 +6,8 @@ module PatientRecordService
     attr_reader :success, :errors
 
     def initialize(success:, errors: [])
-      @success = success
       @errors  = Array(errors).compact
+      @success = success && @errors.empty?
     end
 
     def success? = @success
