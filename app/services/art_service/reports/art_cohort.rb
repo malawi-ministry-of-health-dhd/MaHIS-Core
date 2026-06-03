@@ -72,8 +72,8 @@ module ArtService
           INNER JOIN patient_program pp ON pp.patient_id = e.patient_id
             AND pp.program_id = 1
             AND pp.voided = 0
-            AND pp.location_id = #{User.current.location_id}
-          INNER JOIN (
+            AND pp.location_id = #{Location.current.location_id}
+          LEFT JOIN (
             SELECT e.patient_id, MAX(o.value_datetime) appointment_date
             FROM encounter e
             INNER JOIN obs o ON o.encounter_id = e.encounter_id AND o.voided = 0 AND o.concept_id = 5096 -- appointment date
