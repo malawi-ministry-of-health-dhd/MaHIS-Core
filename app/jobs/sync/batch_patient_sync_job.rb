@@ -64,13 +64,6 @@ module Sync
         return CouchdbPatientService.get_latest_encounter_date_changed
       end
 
-      if couchdb_count != mysql_count
-        Rails.logger.warn(
-          "patients_records count mismatch detected (MySQL active patients: #{mysql_count}, CouchDB docs: #{couchdb_count}); running full patient sync"
-        )
-        return nil
-      end
-
       CouchdbPatientService.get_latest_encounter_date_changed
     end
 

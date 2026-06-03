@@ -47,15 +47,26 @@ module PatientRecordService
       return ok unless record[:saveStatusGuardianInformation] == 'pending'
       return ok unless guardian_info_complete?(record)
 
-      identity_manager = PatientRecordService::PatientIdentityManager.new
-      guardian_data    = identity_manager.create_person(record[:guardianInformation][:unsaved][0])
-      guardian_id      = guardian_data.person_id
+      result = with_operation_guard(
+        patient_id: patient_id,
+        operation_type: 'guardian.create',
+        payload: record.dig(:guardianInformation, :unsaved, 0),
+        target_type: 'Person'
+      ) do
+        identity_manager = PatientRecordService::PatientIdentityManager.new
+        guardian_data    = identity_manager.create_person(record[:guardianInformation][:unsaved][0])
+        guardian_id      = guardian_data.person_id
 
-      create_relation(
-        guardian_id:          guardian_id,
-        relationship_type_id: record[:otherPersonInformation][:relationshipID],
-        person_id:            patient_id
-      )
+        create_relation(
+          guardian_id:          guardian_id,
+          relationship_type_id: record[:otherPersonInformation][:relationshipID],
+          person_id:            patient_id
+        )
+
+        { target_type: 'Person', target_id: guardian_id }
+      end
+
+      return ok if result.skipped?
 
       record[:saveStatusGuardianInformation] = 'complete'
       ok
@@ -112,15 +123,26 @@ module PatientRecordService
       relationship_id = record.dig(:nextOfKinInformation, :relationshipID)
       return ok unless next_of_kin_complete?(next_of_kin, relationship_id)
 
-      identity_manager = PatientRecordService::PatientIdentityManager.new
-      next_of_kin_data = identity_manager.create_person(next_of_kin)
-      next_of_kin_id   = next_of_kin_data.person_id
+      result = with_operation_guard(
+        patient_id: patient_id,
+        operation_type: 'next_of_kin.create',
+        payload: next_of_kin,
+        target_type: 'Person'
+      ) do
+        identity_manager = PatientRecordService::PatientIdentityManager.new
+        next_of_kin_data = identity_manager.create_person(next_of_kin)
+        next_of_kin_id   = next_of_kin_data.person_id
 
-      create_relation(
-        guardian_id:          next_of_kin_id,
-        relationship_type_id: relationship_id,
-        person_id:            patient_id
-      )
+        create_relation(
+          guardian_id:          next_of_kin_id,
+          relationship_type_id: relationship_id,
+          person_id:            patient_id
+        )
+
+        { target_type: 'Person', target_id: next_of_kin_id }
+      end
+
+      return ok if result.skipped?
 
       ok
     rescue StandardError => e

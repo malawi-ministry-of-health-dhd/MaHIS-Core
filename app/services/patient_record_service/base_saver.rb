@@ -28,5 +28,24 @@ module PatientRecordService
       Rails.logger.error("#{message}: #{error.message}")
       Rails.logger.error(error.backtrace.join("\n"))
     end
+
+    def with_operation_guard(patient_id:, operation_type:, payload:, operation_id: nil, target_type: nil, &block)
+      PatientRecordOperationGuard.run!(
+        patient_id: patient_id,
+        operation_type: operation_type,
+        operation_id: operation_id,
+        payload: payload,
+        target_type: target_type,
+        &block
+      )
+    end
+
+    def operation_value_for(container, key)
+      return nil if container.nil? || !container.respond_to?(:[])
+
+      container[key] || container[key.to_s]
+    rescue TypeError
+      nil
+    end
   end
 end

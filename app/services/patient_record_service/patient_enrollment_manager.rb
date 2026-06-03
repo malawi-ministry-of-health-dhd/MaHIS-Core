@@ -10,7 +10,22 @@ module PatientRecordService
 
       ActiveRecord::Base.transaction do
         Patient.lock.find(patient_id)
-        enrollments.each { |enroll| process_enrollment(patient_id, enroll, record, errors) }
+        enrollments.each do |enroll|
+          result = with_operation_guard(
+            patient_id: patient_id,
+            operation_type: 'program_enrollment.upsert',
+            payload: enroll,
+            target_type: 'PatientProgram'
+          ) do
+            process_enrollment(patient_id, enroll, record, errors)
+            {
+              target_type: 'PatientProgram',
+              target_id: find_active_enrollment(patient_id, value_for(enroll, :program_id))&.patient_program_id
+            }
+          end
+
+          next if result.skipped?
+        end
       end
 
       OperationResult.new(success: true, errors: errors)
