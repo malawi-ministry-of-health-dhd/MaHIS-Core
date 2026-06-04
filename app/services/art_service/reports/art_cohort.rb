@@ -21,6 +21,7 @@ module ArtService
         @start_date = start_date
         @end_date = end_date
         @type = type
+        @rebuild = kwargs[:rebuild].to_s.casecmp?('true') || kwargs[:rebuild] == true
         @cohort_builder = CohortBuilder.new
         @cohort_struct = CohortStruct.new
         @occupation = kwargs[:occupation]
@@ -28,12 +29,9 @@ module ArtService
 
       def build_report
         with_lock(lock_file, blocking: false) do
-          @cohort_builder.build(@cohort_struct, @start_date, @end_date, @occupation)
+          @cohort_builder.build(@cohort_struct, @start_date, @end_date, @occupation, force_rebuild: @rebuild)
           clear_drill_down
           save_report
-        ensure
-          # Always cleanup temporary tables after report generation
-          cleanup_tables
         end
       rescue FailedToAcquireLock => e
         Rails.logger.warn("ART#Cohort report is locked by another process: #{e}")
@@ -74,8 +72,8 @@ module ArtService
           INNER JOIN patient_program pp ON pp.patient_id = e.patient_id
             AND pp.program_id = 1
             AND pp.voided = 0
-            AND pp.location_id = #{User.current.location_id}
-          INNER JOIN (
+            AND pp.location_id = #{Location.current.location_id}
+          LEFT JOIN (
             SELECT e.patient_id, MAX(o.value_datetime) appointment_date
             FROM encounter e
             INNER JOIN obs o ON o.encounter_id = e.encounter_id AND o.voided = 0 AND o.concept_id = 5096 -- appointment date

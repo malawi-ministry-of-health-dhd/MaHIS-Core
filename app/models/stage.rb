@@ -4,8 +4,9 @@ class Stage < ApplicationRecord
     belongs_to :location, foreign_key: :location_id, primary_key: :location_id, optional: true
 
     VALID_STAGES = %w[
-      VITALS CONSULTATION LAB DISPENSATION
+      VITALS CONSULTATION LAB DISPENSATION SHORT_STAY
       SCREENING ASSESSMENT TRIAGE DISPOSITION SPECIALTY REGISTRATION
+      PRE_ADMISSION ADMITTED_PATIENTS DRUG_AND_SUNDRIES_ORDERS INWARD_CONSULTATION RADIOLOGY 
     ].freeze
 
     validates :status, inclusion: { in: [true, false], message: "must be true or false" }

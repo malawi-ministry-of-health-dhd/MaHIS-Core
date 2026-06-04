@@ -6,12 +6,24 @@ class VisitService
 
   def create_update_visit(visit_params)
     sync_status = visit_params[:sync_status]
+    operation_type = sync_status == 'update' ? 'visit.close' : 'visit.create'
 
-    if sync_status == 'update'
-      close_visit(visit_params)
-    elsif sync_status == 'create'
-      create_visit(visit_params)
+    result = PatientRecordOperationGuard.run!(
+      patient_id: visit_params[:patient_id],
+      operation_type: operation_type,
+      payload: visit_params,
+      target_type: 'Visit'
+    ) do
+      if sync_status == 'update'
+        close_visit(visit_params)
+      elsif sync_status == 'create'
+        create_visit(visit_params)
+      end
     end
+
+    return skipped_visit_payload(result.receipt, visit_params) if result.skipped?
+
+    result.value
   end
 
 
@@ -137,6 +149,15 @@ class VisitService
       counter.update!(property_value: next_number.to_s)
       next_number
     end
+  end
+
+  private
+
+  def skipped_visit_payload(receipt, visit_params)
+    visit = Visit.find_by(visit_id: receipt&.target_id)
+    return visit.attributes if visit
+
+    visit_params
   end
 
 

@@ -8,6 +8,22 @@ class StagesService
     active_visit = find_active_visit(patient_id)
     raise InvalidParameterError, "No active visit found for patient #{patient_id}" unless active_visit
 
+    result = PatientRecordOperationGuard.run!(
+      patient_id: patient_id,
+      operation_type: 'stage.upsert',
+      payload: stage_params,
+      target_type: 'Stage'
+    ) do
+      create_or_update_stage(patient_id, active_visit, stage_params)
+    end
+
+    return skipped_stage_payload(result.receipt, stage_params) if result.skipped?
+
+    result.value
+  end
+
+  def create_or_update_stage(patient_id, active_visit, stage_params)
+
     location_id = stage_params[:location_id] || User.current.location_id
     stage_name = normalize_stage(stage_params[:stage])
 
@@ -124,6 +140,13 @@ class StagesService
   end
 
   private
+
+  def skipped_stage_payload(receipt, stage_params)
+    stage = Stage.find_by(id: receipt&.target_id)
+    return serialize(stage.reload, latest_encounter_time: Time.current) if stage
+
+    stage_params
+  end
 
   def apply_stage_updates(stage, stage_params)
     stage_name = normalize_stage(stage_params[:stage])

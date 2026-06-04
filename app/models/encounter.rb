@@ -8,6 +8,7 @@ class Encounter < VoidableRecord
 
   # before_save :before_save
   after_create :after_create
+  after_commit :refresh_mnh_stats_after_commit, on: %i[create update]
   after_void :after_void
 
   has_many :observations, dependent: :destroy
@@ -117,6 +118,18 @@ class Encounter < VoidableRecord
     else
       observations.each { |observation| observation.void(reason) }
     end
+
+    refresh_mnh_stats
+  end
+
+  def refresh_mnh_stats_after_commit
+    refresh_mnh_stats
+  end
+
+  def refresh_mnh_stats
+    Sync::MnhStatsSyncJob.enqueue_for_encounter(self)
+  rescue StandardError => e
+    Rails.logger.error("Encounter##{encounter_id}: failed to enqueue MNH stats refresh: #{e.class}: #{e.message}")
   end
 
   def encounter_type_name=(encounter_type_name)

@@ -16,6 +16,8 @@ class SavePatientRecordService
   }.freeze
 
   def create_patient_record(record)
+    strip_derived_patient_fields!(record)
+
     required_fields = extract_required_fields(record)
     return "required fields missing" unless required_fields_present?(required_fields)
 
@@ -34,16 +36,14 @@ class SavePatientRecordService
     operation_results   = {}
 
     begin
-      ActiveRecord::Base.transaction do
-        operation_results = execute_patient_operations(patient_id, record, managers)
+      operation_results = execute_patient_operations(patient_id, record, managers)
 
-        if operation_results.any? { |_k, r| r.failed? }
-          failed_ops = operation_results.select { |_k, r| r.failed? }.keys.join(', ')
-          Rails.logger.error("Failures in: #{failed_ops} for patient #{patient_id}")
-          overall_sync_status = 'partial_failed'
-        else
-          Rails.logger.info("All sub-operations successfully processed for patient #{patient_id}.")
-        end
+      if operation_results.any? { |_k, r| r.failed? }
+        failed_ops = operation_results.select { |_k, r| r.failed? }.keys.join(', ')
+        Rails.logger.error("Failures in: #{failed_ops} for patient #{patient_id}")
+        overall_sync_status = 'partial_failed'
+      else
+        Rails.logger.info("All sub-operations successfully processed for patient #{patient_id}.")
       end
     rescue StandardError => e
       Rails.logger.error("Unhandled error for patient #{patient_id}: #{e.message}")
@@ -54,6 +54,7 @@ class SavePatientRecordService
 
     patient_record = build_and_save_patient_record(patient_id, record, operation_results, overall_sync_status)
     ensure_primary_identifier_persisted!(patient_id, patient_record)
+    enqueue_post_save_side_effects(patient_id, record, operation_results)
 
     if couchdb_configured?
       patient_record["_id"] = patient_record["ID"]
@@ -98,7 +99,8 @@ class SavePatientRecordService
       dispensation_saver:     PatientRecordService::DispensationSaver.new,
       observation_saver:      PatientRecordService::ObservationSaver.new,
       void_encounters:        PatientRecordService::VoidEncounters.new,
-      merge_patients_manager: PatientRecordService::MergePatientManager.new
+      merge_patients_manager: PatientRecordService::MergePatientManager.new,
+      void_drug_orders:       PatientRecordService::VoidDrugOrders.new
     }
   end
 
@@ -119,6 +121,7 @@ class SavePatientRecordService
       save_medication_order:  managers[:medication_order_saver].save_medication_order(patient_id, record),
       create_ncd_identifier:  managers[:identity_manager].create_ncd_identifier(patient_id, record),
       save_dispensation_data: managers[:medication_order_saver].save_dispensation_data(patient_id, record),
+      void_drug_orders:       managers[:void_drug_orders].void_drug_orders(patient_id, record),
       save_all_observations:  managers[:observation_saver].save_all_observations(patient_id, record),
       void_encounters:        managers[:void_encounters].void_encounters(record)
     }
@@ -128,21 +131,30 @@ class SavePatientRecordService
     patient          = BuildPatientRecordService.find_patient(patient_id)
     person           = patient&.person
     latest_encounter = BuildPatientRecordService.find_latest_encounter(patient_id)
+    changed_operation_results = changed_operations(operation_results)
 
     patient_data[:encounter_datetime]    = latest_encounter&.encounter_datetime
-    patient_data[:location_id]           = latest_encounter&.location_id
+    patient_data[:location_id]           = latest_encounter.location_id if latest_encounter&.location_id.present?
     patient_data[:ID]                    = BuildPatientRecordService.patient_identifier(patient, 3)
     patient_data[:nationalID]            = BuildPatientRecordService.patient_identifier(patient, 28)
     patient_data[:patientID]             = patient_id
     patient_data[:NcdID]                 = BuildPatientRecordService.patient_identifier(patient, 31)
+    patient_data[:patient_identifiers]   = patient.patient_identifiers.as_json
     patient_data[:sync_status]           = overall_sync_status
     patient_data[:otherPersonInformation] = BuildPatientRecordService.build_other_person_info
-    patient_data[:visits]                = BuildPatientRecordService.safe_get_visits(patient)
-    patient_data[:activePrograms]        = BuildPatientRecordService.fetch_active_programs(patient.patient_id)
+    patient_data[:visits]                = BuildPatientRecordService.safe_get_visits(patient) if refresh_visit_dates?(patient_data, changed_operation_results)
+
+    # Keep the incoming activePrograms unless enrollment changed or the caller
+    # sent no activePrograms. Fetching it on every save turns lab-only saves into
+    # unnecessary PatientProgram queries and JSON serialization.
+    enroll_program_changed = changed_operation_results[:enroll_program]&.success?
+    if enroll_program_changed || Array(record_value(patient_data, :activePrograms)).blank?
+      patient_data[:activePrograms] = BuildPatientRecordService.fetch_active_programs(patient.patient_id)
+    end
 
     allowed_encounter_types = []
 
-    operation_results.each do |key, result|
+    changed_operation_results.each do |key, result|
       next unless result.success?
 
       case key
@@ -165,9 +177,10 @@ class SavePatientRecordService
 
       when :save_vaccines, :void_vaccine
         patient_data[:vaccineAdministration] = BuildPatientRecordService.build_vaccine_administration_data(patient_id)
-        patient_data[:vaccineSchedule]       = BuildPatientRecordService.safe_get_vaccine_schedule(person)
+        patient_data[:MedicationOrder]       = BuildPatientRecordService.build_medication_data(patient_id)
+        allowed_encounter_types << get_encounter_id('TREATMENT')
 
-      when :save_medication_order, :save_dispensation_data
+      when :save_medication_order, :save_dispensation_data, :void_drug_orders
         patient_data[:MedicationOrder] = BuildPatientRecordService.build_medication_data(patient_id)
         allowed_encounter_types << get_encounter_id('TREATMENT')
 
@@ -188,10 +201,11 @@ class SavePatientRecordService
         patient_data[:void_encounters] = []
 
       when :save_all_observations
-        unsaved_encounter_types = patient_data[:observations]
-                                    &.select { |e| e[:status] == "unsaved" }
-                                    &.map    { |e| e[:encounter_type] }
-                                    &.uniq || []
+        unsaved_encounter_types = Array(record_value(patient_data, :observations))
+                                    .select { |e| record_value(e, :status) == "unsaved" }
+                                    .map    { |e| record_value(e, :encounter_type) }
+                                    .compact
+                                    .uniq
         allowed_encounter_types.concat(unsaved_encounter_types)
       end
     end
@@ -204,6 +218,9 @@ class SavePatientRecordService
       .transform_values { |r| r.errors }
       .as_json
 
+    strip_derived_patient_fields!(patient_data)
+    clear_processed_pending_fields!(patient_data)
+    PatientRecordSearchFields.normalize!(patient_data)
     patient_data.as_json
   end
 
@@ -211,22 +228,62 @@ class SavePatientRecordService
     EncounterType.find_by_name(encounter_type).encounter_type_id
   end
 
+  def changed_operations(operation_results)
+    operation_results.select { |_key, result| operation_changed?(result) }
+  end
+
+  def changed_operation_keys(operation_results)
+    changed_operations(operation_results).keys
+  end
+
+  def operation_changed?(result)
+    return result.changed? if result.respond_to?(:changed?)
+
+    result.success?
+  end
+
+  def refresh_visit_dates?(patient_data, changed_operation_results)
+    return true if record_value(patient_data, :saveStatusPersonInformation) == 'pending'
+
+    visit_affecting_operations = changed_operation_results.keys - %i[
+      create_ncd_identifier
+      create_relationship
+      manage_guardian
+      save_lab_orders_data
+      save_lab_results_data
+      send_sms
+      update_person_info
+      void_lab_order
+    ]
+
+    visit_affecting_operations.any?
+  end
+
   def rebuild_all_observations(patient_id, patient_data, allowed_encounter_types)
     allowed_encounter_types = allowed_encounter_types.compact.uniq
     return if allowed_encounter_types.empty?
 
-    original_observations_map = (patient_data[:observations] || [])
+    original_observations_map = Array(record_value(patient_data, :observations))
                                   .each_with_object({}) do |obs, hash|
-                                    hash[obs[:encounter_type]] = obs
+                                    encounter_type = record_value(obs, :encounter_type)
+                                    hash[encounter_type] = obs if encounter_type.present?
                                   end
 
     new_observations = BuildPatientRecordService.build_all_observations(patient_id, allowed_encounter_types)
 
     updated_observations_hash = original_observations_map.merge(
-      new_observations.index_by { |obs| obs[:encounter_type] }
+      new_observations.index_by { |obs| record_value(obs, :encounter_type) }
     )
 
     patient_data[:observations] = updated_observations_hash.values.as_json
+  end
+
+  def record_value(container, key)
+    return nil if container.nil? || !container.respond_to?(:[])
+
+    container[key] || container[key.to_s]
+  rescue TypeError
+    nil
   end
 
   def ensure_primary_identifier_persisted!(patient_id, patient_record)
@@ -243,5 +300,59 @@ class SavePatientRecordService
     return if saved_identifier.present?
 
     raise "Primary identifier #{identifier} not found in MySQL for patient #{patient_id}"
+  end
+
+  def strip_derived_patient_fields!(record)
+    return record unless record.respond_to?(:delete)
+
+    record.delete(:vaccineSchedule)
+    record.delete('vaccineSchedule')
+    record
+  end
+
+  def clear_processed_pending_fields!(record)
+    return record unless record.respond_to?(:delete)
+
+    record.delete(:art_orders_pending)
+    record.delete('art_orders_pending')
+    record.delete(:art_dispensation_pending)
+    record.delete('art_dispensation_pending')
+    record.delete(:voidedDrugOders)
+    record.delete('voidedDrugOders')
+    record
+  end
+
+  def enqueue_post_save_side_effects(patient_id, record, operation_results)
+    keys = changed_operation_keys(operation_results)
+    return if keys.empty?
+
+    PatientRecordPostSaveSideEffectsJob.perform_later(
+      patient_id,
+      post_save_side_effect_payload(record),
+      keys.map(&:to_s)
+    )
+  rescue StandardError => e
+    Rails.logger.error(
+      "Failed to enqueue patient-record post-save side effects for patient #{patient_id}: #{e.class}: #{e.message}"
+    )
+  end
+
+  def post_save_side_effect_payload(record)
+    {
+      'program_id' => record_value(record, :program_id),
+      'location_id' => record_value(record, :location_id).presence || User.current&.location_id,
+      'encounter_datetime' => record_value(record, :encounter_datetime),
+      'date_enrolled' => record_value(record, :date_enrolled),
+      'activePrograms' => serializable_value(record_value(record, :activePrograms)),
+      'NcdID' => record_value(record, :NcdID),
+      'TEI' => record_value(record, :TEI),
+      'otherPersonInformation' => serializable_value(record_value(record, :otherPersonInformation) || {}),
+      'send_ichis_enrolled_in_care_event_id' => record_value(record, :send_ichis_enrolled_in_care_event_id),
+      'ichisEventIds' => record_value(record, :ichisEventIds) || record_value(record, :ichis_event_ids)
+    }.compact
+  end
+
+  def serializable_value(value)
+    value.respond_to?(:as_json) ? value.as_json : value
   end
 end

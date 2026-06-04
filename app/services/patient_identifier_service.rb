@@ -25,6 +25,9 @@ module PatientIdentifierService
 
     def create(params)
       validate_identifier(params)
+      existing_identifier = existing_identifier_for_patient(params)
+      return existing_identifier if existing_identifier.present?
+
       void_existing_identifier(params)
       create_new_identifier(params)
     end
@@ -81,13 +84,28 @@ module PatientIdentifierService
     def void_existing_identifier(params)
       patient_id = params[:patient_id]
       identifier_type = params[:identifier_type]
-      identifier = PatientIdentifier.find_by(patient_id:, identifier_type:)
-      identifier&.void("Updated to #{params[:identifier]} by #{User.current.username}")
+      identifier_value = params[:identifier].to_s.strip
+
+      PatientIdentifier.where(patient_id:, identifier_type:)
+                       .where.not(identifier: identifier_value)
+                       .find_each do |identifier|
+        identifier.void("Updated to #{identifier_value} by #{User.current.username}")
+      end
+    end
+
+    def existing_identifier_for_patient(params)
+      patient_id = params[:patient_id]
+      identifier_type = params[:identifier_type]
+      identifier_value = params[:identifier].to_s.strip
+      return nil if identifier_value.blank?
+
+      PatientIdentifier.find_by(patient_id:, identifier_type:, identifier: identifier_value)
     end
 
     def create_new_identifier(params)
       identifier = PatientIdentifier.new(params)
-      location_id = Location.current&.location_id ||
+      location_id = params[:location_id].presence ||
+                    Location.current&.location_id ||
                     User.current&.location_id ||
                     Location.current_health_center&.location_id
       raise InvalidParameterError, 'Unable to resolve current location for identifier creation' if location_id.blank?

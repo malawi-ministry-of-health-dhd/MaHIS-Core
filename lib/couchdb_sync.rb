@@ -1,6 +1,7 @@
 require 'rest-client'
 require 'json'
 require 'yaml'
+require_relative 'couchdb_url'
 
 module CouchdbSync
   CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
@@ -16,23 +17,35 @@ module CouchdbSync
   end
 
   def ensure_db_exists(db_name)
-    RestClient.put("#{COUCHDB_URL}/#{db_name}", '')
+    RestClient.put(couchdb_url(db_name), '')
+    true
   rescue RestClient::PreconditionFailed
     # Database already exists
+    false
+  end
+
+  def couchdb_url(*segments)
+    CouchdbUrl.join(COUCHDB_URL, *segments)
   end
 
   def sync_to_couchdb(doc_data, db_name, doc_id)
     return unless couchdb_configured?
     return if skip_couchdb_sync?
 
-    ensure_db_exists(db_name)
+    created = ensure_db_exists(db_name)
+    db_url = couchdb_url(db_name)
+    PatientRecordSearchFields.ensure_couchdb_indexes!(db_url, logger: Rails.logger, force: created) if db_name.to_s == PatientRecordSearchFields::PATIENT_RECORD_DB
+    ReferenceDataSearchFields.ensure_couchdb_indexes!(db_url, db_name, logger: Rails.logger, force: created)
+
     encoded_doc_id = URI.encode_www_form_component(doc_id.to_s)
-    doc_url = "#{COUCHDB_URL}/#{db_name}/#{encoded_doc_id}"
+    doc_url = couchdb_url(db_name, encoded_doc_id)
 
     attempt = 1
 
     begin
       payload = doc_data.deep_dup
+      PatientRecordSearchFields.normalize_if_patient_record!(payload, db_name)
+      ReferenceDataSearchFields.normalize_if_supported!(payload, db_name)
 
       # If updating, fetch latest _rev.
       begin

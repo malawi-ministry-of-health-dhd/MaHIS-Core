@@ -1,6 +1,7 @@
 require 'rest-client'
 require 'json'
 require 'yaml'
+require Rails.root.join('lib', 'couchdb_url').to_s
 
 class CouchdbPrinterService
   CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
@@ -15,7 +16,7 @@ class CouchdbPrinterService
 
     def ensure_db_exists(db_name = PRINTERS_DB)
       if couchdb_configured?
-        RestClient.put("#{COUCHDB_URL}/#{db_name}", '')
+        RestClient.put(couchdb_url(db_name), '')
       end
       true
     rescue RestClient::PreconditionFailed
@@ -25,12 +26,16 @@ class CouchdbPrinterService
       false
     end
 
+    def couchdb_url(*segments)
+      CouchdbUrl.join(COUCHDB_URL, *segments)
+    end
+
     # Get all printer configurations
     def get_all_printers
       ensure_db_exists
       
       response = RestClient.get(
-        "#{COUCHDB_URL}/#{PRINTERS_DB}/_all_docs?include_docs=true"
+        "#{couchdb_url(PRINTERS_DB, '_all_docs')}?include_docs=true"
       )
       
       result = JSON.parse(response.body)
@@ -44,7 +49,7 @@ class CouchdbPrinterService
     def get_printer(printer_id)
       ensure_db_exists
       
-      response = RestClient.get("#{COUCHDB_URL}/#{PRINTERS_DB}/#{printer_id}")
+      response = RestClient.get(couchdb_url(PRINTERS_DB, URI.encode_www_form_component(printer_id.to_s)))
       JSON.parse(response.body)
     rescue RestClient::NotFound
       nil
@@ -62,8 +67,8 @@ class CouchdbPrinterService
 
       ensure_db_exists
       
-      # Generate unique ID if not provided
-      doc_id = printer_data[:id] || SecureRandom.uuid
+      # Accept _id (frontend convention) or id, fall back to a UUID
+      doc_id = printer_data[:_id] || printer_data[:id] || SecureRandom.uuid
       
       doc_data = {
         '_id' => doc_id,
@@ -76,7 +81,7 @@ class CouchdbPrinterService
       }
 
       response = RestClient.put(
-        "#{COUCHDB_URL}/#{PRINTERS_DB}/#{doc_id}",
+        couchdb_url(PRINTERS_DB, URI.encode_www_form_component(doc_id.to_s)),
         doc_data.to_json,
         { content_type: :json, accept: :json }
       )
@@ -99,7 +104,7 @@ class CouchdbPrinterService
       
       # Get existing document to retrieve _rev
       begin
-        existing_doc = RestClient.get("#{COUCHDB_URL}/#{PRINTERS_DB}/#{printer_id}")
+        existing_doc = RestClient.get(couchdb_url(PRINTERS_DB, URI.encode_www_form_component(printer_id.to_s)))
         existing_data = JSON.parse(existing_doc.body)
         
         # Merge updates with existing data
@@ -112,7 +117,7 @@ class CouchdbPrinterService
         })
 
         response = RestClient.put(
-          "#{COUCHDB_URL}/#{PRINTERS_DB}/#{printer_id}",
+          couchdb_url(PRINTERS_DB, URI.encode_www_form_component(printer_id.to_s)),
           doc_data.to_json,
           { content_type: :json, accept: :json }
         )
@@ -138,11 +143,11 @@ class CouchdbPrinterService
       
       # Get existing document to retrieve _rev
       begin
-        existing_doc = RestClient.get("#{COUCHDB_URL}/#{PRINTERS_DB}/#{printer_id}")
+        existing_doc = RestClient.get(couchdb_url(PRINTERS_DB, URI.encode_www_form_component(printer_id.to_s)))
         existing_data = JSON.parse(existing_doc.body)
         
         response = RestClient.delete(
-          "#{COUCHDB_URL}/#{PRINTERS_DB}/#{printer_id}?rev=#{existing_data['_rev']}"
+          "#{couchdb_url(PRINTERS_DB, URI.encode_www_form_component(printer_id.to_s))}?rev=#{URI.encode_www_form_component(existing_data['_rev'])}"
         )
         
         { success: true }
@@ -167,7 +172,7 @@ class CouchdbPrinterService
       }
       
       response = RestClient.post(
-        "#{COUCHDB_URL}/#{PRINTERS_DB}/_find",
+        couchdb_url(PRINTERS_DB, '_find'),
         query.to_json,
         { content_type: :json, accept: :json }
       )
@@ -194,7 +199,7 @@ class CouchdbPrinterService
       }
 
       RestClient.post(
-        "#{COUCHDB_URL}/#{PRINTERS_DB}/_index",
+        couchdb_url(PRINTERS_DB, '_index'),
         index_doc.to_json,
         { content_type: :json, accept: :json }
       )

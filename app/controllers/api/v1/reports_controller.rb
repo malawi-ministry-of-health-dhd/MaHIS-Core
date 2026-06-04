@@ -5,7 +5,7 @@ module Api
     class ReportsController < ApplicationController
       def index
         date = params.require %i[date]
-        stats = service.dashboard_stats(date.first)
+        stats = service.dashboard_stats(date.first, location_id: params[:location_id])
 
         if stats
           render json: stats

@@ -55,10 +55,10 @@ module UserService
     [query, query.count]
   end
 
-  def self.create_user(username:, password:, given_name:, family_name:, roles:, programs:, location_id:, villages:, phone:)
+  def self.create_user(username:, password:, given_name:, family_name:, roles:, programs:, location_id:, villages:, phone:, gender: nil)
 
     person = person_service.create_person(
-      birthdate: nil, birthdate_estimated: false, gender: nil
+      birthdate: nil, birthdate_estimated: false, gender:
     )
     raise UserCreateError, "Person: #{person.errors}" unless person.errors.empty?
 
@@ -82,15 +82,16 @@ module UserService
       location_id:
     )
 
-    roles.each do |rolename|
+    Array(roles).each do |rolename|
       role = Role.find_by(role: rolename)
+      next if role.blank?
 
       UserRole.create(role:, user:)
 
       # For users with HSA roles villages will have to be assigned to them 
       if HSA_ROLES.include?(role.role)
         # Create UserVillage records for each village
-        villages.each do |village_id|
+        Array(villages).each do |village_id|
           UserVillage.create(
             user_id: user.user_id,
             village_id: village_id,

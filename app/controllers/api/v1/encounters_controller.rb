@@ -89,7 +89,7 @@ module Api
             patient: Patient.find(patient_id),
             program: Program.find(program_id),
             visit:,
-            provider: params[:provider_id] ? Person.find(params[:provider_id]) : User.current.person,
+            provider: params[:provider_id] ? User.find(params[:provider_id])&.person : User.current.person,
             encounter_datetime: encounter_datetime
           )
 
@@ -115,7 +115,7 @@ module Api
         encounter = Encounter.find(params[:id])
         type = params[:type_id] && EncounterType.find(params[:type_id])
         patient = params[:patient_id] && Patient.find(params[:patient_id])
-        provider = params[:provider_id] ? Person.find(params[:provider_id]) : User.current.person
+        provider = params[:provider_id] ? User.find(params[:provider_id])&.person : User.current.person
         encounter_datetime = TimeUtils.retro_timestamp(params[:encounter_datetime]&.to_time || Time.now)
 
         encounter_service.update(encounter, type:, patient:,

@@ -5,8 +5,12 @@
 Rails.application.config.after_initialize do
   Rails.logger.info('Initializing lab event subscribers...')
 
+  skip_patient_record_rebuild = -> { Thread.current[:skip_lab_patient_record_rebuild] }
+
   # Subscribe to results created/saved events
   ActiveSupport::Notifications.subscribe('lab.results_created') do |name, _start, _finish, _id, payload|
+    next if skip_patient_record_rebuild.call
+
     Rails.logger.debug("Lab event received: #{name} - Patient: #{payload[:patient_id]}")
 
     RebuildPatientLabDataJob.perform_later(
@@ -24,6 +28,8 @@ Rails.application.config.after_initialize do
   end
 
   ActiveSupport::Notifications.subscribe('lab.results_saved') do |name, _start, _finish, _id, payload|
+    next if skip_patient_record_rebuild.call
+
     Rails.logger.debug("Lab event received: #{name} - Patient: #{payload[:patient_id]}")
 
     RebuildPatientLabDataJob.perform_later(
@@ -42,6 +48,8 @@ Rails.application.config.after_initialize do
 
   # Subscribe to order status changed event
   ActiveSupport::Notifications.subscribe('lab.order_status_changed') do |name, _start, _finish, _id, payload|
+    next if skip_patient_record_rebuild.call
+
     Rails.logger.debug("Lab event received: #{name} - Patient: #{payload[:patient_id]} - Status: #{payload[:new_status]}")
 
     RebuildPatientLabDataJob.perform_later(
@@ -60,6 +68,8 @@ Rails.application.config.after_initialize do
 
   # Subscribe to order created event
   ActiveSupport::Notifications.subscribe('lab.order_created') do |name, _start, _finish, _id, payload|
+    next if skip_patient_record_rebuild.call
+
     Rails.logger.debug("Lab event received: #{name} - Patient: #{payload[:patient_id]}")
 
     RebuildPatientLabDataJob.perform_later(
@@ -77,6 +87,8 @@ Rails.application.config.after_initialize do
 
   # Subscribe to order voided event
   ActiveSupport::Notifications.subscribe('lab.order_voided') do |name, _start, _finish, _id, payload|
+    next if skip_patient_record_rebuild.call
+
     Rails.logger.debug("Lab event received: #{name} - Patient: #{payload[:patient_id]}")
 
     RebuildPatientLabDataJob.perform_later(

@@ -1,6 +1,7 @@
 require 'rest-client'
 require 'json'
 require 'yaml'
+require Rails.root.join('lib', 'couchdb_url').to_s
 
 class CouchdbPatientService
   CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
@@ -15,7 +16,7 @@ class CouchdbPatientService
 
     def ensure_db_exists(db_name = PATIENTS_DB)
       if couchdb_configured?
-        RestClient.put("#{COUCHDB_URL}/#{db_name}", '')
+        RestClient.put(couchdb_url(db_name), '')
       end
       true
     rescue RestClient::PreconditionFailed
@@ -23,6 +24,10 @@ class CouchdbPatientService
     rescue => e
       Rails.logger.error "CouchDB error: #{e.message}"
       false
+    end
+
+    def couchdb_url(*segments)
+      CouchdbUrl.join(COUCHDB_URL, *segments)
     end
 
     def get_patient_record(patient_ids: nil, patient_id: nil)
@@ -64,7 +69,7 @@ class CouchdbPatientService
       }
       
       response = RestClient.post(
-        "#{COUCHDB_URL}/#{db_name}/_find",
+        couchdb_url(db_name, '_find'),
         query.to_json,
         { content_type: :json, accept: :json }
       )
@@ -87,12 +92,30 @@ class CouchdbPatientService
       return nil
     end
 
+    def patient_record_count(db_name = PATIENTS_DB)
+      unless couchdb_configured?
+        Rails.logger.warn "CouchDB not configured. Cannot fetch patient record count."
+        return nil
+      end
+
+      ensure_db_exists(db_name)
+
+      response = RestClient.get(couchdb_url(db_name))
+      db_info = JSON.parse(response.body)
+      db_info['doc_count'].to_i - design_doc_count(db_name)
+    rescue RestClient::NotFound
+      0
+    rescue StandardError => e
+      Rails.logger.error "Error querying CouchDB patient record count: #{e.message}"
+      nil
+    end
+
     def create_encounter_date_index(db_name)
       return unless couchdb_configured?
 
       # Check if the correct index already exists
       begin
-        response = RestClient.get("#{COUCHDB_URL}/#{db_name}/_index")
+        response = RestClient.get(couchdb_url(db_name, '_index'))
         indexes = JSON.parse(response.body)
         
         # Look for an index with the correct field structure
@@ -124,7 +147,7 @@ class CouchdbPatientService
       }
 
       response = RestClient.post(
-        "#{COUCHDB_URL}/#{db_name}/_index",
+        couchdb_url(db_name, '_index'),
         index_doc.to_json,
         { content_type: :json, accept: :json }
       )
@@ -180,7 +203,7 @@ class CouchdbPatientService
       bulk_payload = { docs: docs }.to_json
 
       response = RestClient.post(
-        "#{COUCHDB_URL}/#{PATIENTS_DB}/_bulk_docs",
+        couchdb_url(PATIENTS_DB, '_bulk_docs'),
         bulk_payload,
         { content_type: :json, accept: :json }
       )
@@ -193,13 +216,20 @@ class CouchdbPatientService
 
     private
 
+    def design_doc_count(db_name)
+      response = RestClient.get(couchdb_url(db_name, '_design_docs'))
+      JSON.parse(response.body)['rows'].length
+    rescue StandardError
+      0
+    end
+
     def get_multiple_patients(patient_ids)
       return false unless couchdb_configured?
       # Use CouchDB _all_docs endpoint with keys parameter
       keys_payload = { keys: patient_ids }.to_json
       
       response = RestClient.post(
-        "#{COUCHDB_URL}/#{PATIENTS_DB}/_all_docs?include_docs=true",
+        "#{couchdb_url(PATIENTS_DB, '_all_docs')}?include_docs=true",
         keys_payload,
         { content_type: :json, accept: :json }
       )
@@ -229,7 +259,7 @@ class CouchdbPatientService
           # Try to fetch existing document
           patient_identifier = PatientIdentifier.where(patient_id: patient_id, identifier_type: 3)
           identifier = patient_identifier[0][:identifier]
-          response = RestClient.get("#{COUCHDB_URL}/#{PATIENTS_DB}/#{identifier}")
+          response = RestClient.get(couchdb_url(PATIENTS_DB, URI.encode_www_form_component(identifier.to_s)))
           JSON.parse(response.body)
         rescue RestClient::NotFound
           # Patient doesn't exist, build new record
@@ -268,14 +298,14 @@ class CouchdbPatientService
 
       # Check if document exists to get _rev
       begin
-        existing_doc = RestClient.get("#{COUCHDB_URL}/#{PATIENTS_DB}/#{patient_id}")
+        existing_doc = RestClient.get(couchdb_url(PATIENTS_DB, URI.encode_www_form_component(patient_id.to_s)))
         doc_data['_rev'] = JSON.parse(existing_doc.body)['_rev']
       rescue RestClient::NotFound
         # New document, no _rev needed
       end
 
       RestClient.put(
-        "#{COUCHDB_URL}/#{PATIENTS_DB}/#{patient_id}",
+        couchdb_url(PATIENTS_DB, URI.encode_www_form_component(patient_id.to_s)),
         doc_data.to_json,
         { content_type: :json, accept: :json }
       )
