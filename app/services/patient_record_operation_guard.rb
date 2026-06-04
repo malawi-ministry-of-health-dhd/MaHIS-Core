@@ -176,6 +176,11 @@ class PatientRecordOperationGuard
         return [value.class.name, value.try(:id) || value.try(:order_id) || value.try(:encounter_id)]
       end
 
+      if value.is_a?(Array)
+        target_ids = value.filter_map { |item| target_reference(item, default_target_type).last }.join(',')
+        return [default_target_type, target_ids.presence]
+      end
+
       return [default_target_type, nil] unless value.respond_to?(:[])
 
       target_type = value[:target_type] || value['target_type'] || default_target_type
