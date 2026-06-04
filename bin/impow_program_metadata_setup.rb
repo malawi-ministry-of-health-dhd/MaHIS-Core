@@ -455,6 +455,54 @@ def create_nutrition_concepts
     puts "\n2. Creating Days in NRU concept..."
     create_numeric_concept('Days in NRU', 'Finding', 'days', allow_decimal: false)
 
+    # Create Cold hands concept (Coded, Finding)
+    puts "\n3. Creating Cold hands concept..."
+    create_coded_concept_with_answers('Cold hands', 'Finding', %w[Yes No])
+
+    # Create Radial Pulse concept (Coded, Finding)
+    puts "\n4. Creating Radial Pulse concept..."
+    create_coded_concept_with_answers('Radial Pulse', 'Finding', %w[No Yes])
+
+    # Create Eye Appearance concept (Coded, Finding)
+    puts "\n5. Creating Eye Appearance concept..."
+    create_coded_concept_with_answers('Eye Appearance', 'Finding', %w[Normal Sunken Discharge])
+
+    # Create Ear Condition concept (Coded, Finding)
+    puts "\n6. Creating Ear Condition concept..."
+    create_coded_concept_with_answers('Ear Condition', 'Finding', %w[Normal Discharge])
+
+    # Create Skin Integrity concept (Coded, Finding)
+    puts "\n7. Creating Skin Integrity concept..."
+    create_coded_concept_with_answers('Skin Integrity', 'Finding', ['Healthy', 'Ulcers/Abscesses', 'Raw', 'Peeling'])
+
+    # Create Lymph Nodes Swelling concept (Coded, Finding)
+    puts "\n8. Creating Lymph Nodes Swelling concept..."
+    create_coded_concept_with_answers('Lymph Nodes Swelling', 'Finding', %w[Normal Groin Neck])
+
+    # Create Unsuitable Home Circumstances concept (Boolean, Finding)
+    puts "\n9. Creating Unsuitable Home Circumstances concept..."
+    create_coded_concept_with_answers('Unsuitable Home Circumstances', 'Finding', %w[Yes No])
+
+    # Create Appetite concept (Coded, Finding)
+    puts "\n10. Creating Appetite concept..."
+    create_coded_concept_with_answers('Appetite', 'Finding', %w[Good Poor None])
+
+    # Create Family TB History concept (Coded, Finding)
+    puts "\n11. Creating Family TB History concept..."
+    create_coded_concept_with_answers('Family TB History', 'Finding', %w[No Yes])
+
+    # Create Stools per Day concept (Coded, Finding)
+    puts "\n12. Creating Stools per Day concept..."
+    create_coded_concept_with_answers('Stools per Day', 'Finding', ['1-3', '4-5', '>5'])
+
+    # Create Polio Vaccination concept (Coded, Procedure)
+    puts "\n13. Creating Polio Vaccination concept..."
+    create_coded_concept_with_answers('Polio Vaccination', 'Procedure', %w[Yes No])
+
+    # Create ROTA Vaccination concept (Coded, Procedure)
+    puts "\n14. Creating ROTA Vaccination concept..."
+    create_coded_concept_with_answers('ROTA Vaccination', 'Procedure', %w[Yes No])
+
     puts "\n" + '=' * 80
     puts 'Successfully created nutrition concepts!'
     puts '=' * 80
