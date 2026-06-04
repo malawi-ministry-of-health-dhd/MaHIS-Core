@@ -11,8 +11,12 @@ module PatientRecordService
       @person_service ||= PersonService.new
     end
 
-    def ok
-      OperationResult.ok
+    def ok(changed: false)
+      OperationResult.ok(changed: changed)
+    end
+
+    def changed_ok
+      ok(changed: true)
     end
 
     def fail(*errors)

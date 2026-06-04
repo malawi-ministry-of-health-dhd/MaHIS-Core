@@ -124,7 +124,7 @@ module PatientRecordService
 
       person = Person.find(patient_id)
       person_service.update_person(person, to_permitted_params(record[:personInformation]))
-      ok
+      changed_ok
     rescue StandardError => e
       log_and_fail("Failed to update person information", e)
     end
@@ -149,7 +149,7 @@ module PatientRecordService
         record['NcdID'] = canonical_ncd_identifier.identifier
         record.delete(:needs_ncd_id)
         record.delete('needs_ncd_id')
-        return ok
+        return changed_ok
       end
 
       resolved_ncd_identifier = pending_ncd_id || needs_ncd_id ? "" : unsaved_ncd_id.to_s.strip
@@ -168,7 +168,7 @@ module PatientRecordService
       record.delete(:unsavedNcdID)
       record.delete('unsavedNcdID')
 
-      ok
+      changed_ok
     rescue StandardError => e
       log_and_fail("Failed to create NCD identifier", e)
     end

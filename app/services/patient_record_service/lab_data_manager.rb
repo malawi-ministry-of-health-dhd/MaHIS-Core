@@ -34,7 +34,7 @@ module PatientRecordService
             ) do
               encounter_id ||= create_encounter(patient_id, encounter_type.id, record)
               order_params  = order_params.merge(encounter_id: encounter_id)
-              order         = Lab::OrdersService.order_test(order_params)
+              order         = without_lab_patient_record_rebuild { Lab::OrdersService.order_test(order_params) }
               tests         = order.fetch(:tests)
               first_test    = tests.first
               raise "Lab order returned no tests for offline_id=#{order_params[:offline_id]}" if first_test.blank?
@@ -125,13 +125,14 @@ module PatientRecordService
     end
 
     def save_lab_results(data_type, patient_id, record, offline_id = nil, test_obs_id = nil)
-      unsaved_data = record.dig(:labOrders, :results)
+      lab_orders = operation_value_for(record, :labOrders) || {}
+      unsaved_data = Array.wrap(operation_value_for(lab_orders, :results)).flatten(1).compact
 
-      if offline_id.present? && unsaved_data&.any?
-        unsaved_data = unsaved_data.select { |result| result[:offline_id] == offline_id }
+      if offline_id.present? && unsaved_data.any?
+        unsaved_data = unsaved_data.select { |result| operation_value_for(result, :offline_id) == offline_id }
       end
 
-      return ok unless unsaved_data&.any?
+      return ok unless unsaved_data.any?
 
       data_key         = data_type.to_s.underscore.to_sym
       collected_errors = []
@@ -144,25 +145,27 @@ module PatientRecordService
             payload: order_params,
             target_type: 'LabResult'
           ) do
-            effective_test_id = test_obs_id.presence || order_params[:test_id]
+            effective_test_id = test_obs_id.presence || operation_value_for(order_params, :test_id)
 
-            if effective_test_id.blank? && order_params[:offline_id].present?
-              collected_errors << "Skipped result offline_id=#{order_params[:offline_id]}: test_obs_id missing"
+            if effective_test_id.blank?
+              collected_errors << "Skipped result offline_id=#{operation_value_for(order_params, :offline_id)}: test_id missing"
               next
             end
 
             encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[data_key])
             encounter_id   = create_encounter(patient_id, encounter_type.id, record)
-            order_params   = order_params.merge(test_id: effective_test_id) if effective_test_id
-            lab_results    = order_params.merge(encounter_id: encounter_id)
+            lab_results    = lab_result_payload(order_params, encounter_id)
 
-            Lab::ResultsService.create_results(lab_results[:test_id], lab_results)
+            without_lab_patient_record_rebuild do
+              Lab::ResultsService.create_results(effective_test_id, lab_results, 'user entered')
+            end
           end
 
           next if result.skipped?
         rescue StandardError => e
-          log_error("Failed to save lab result offline_id=#{order_params[:offline_id]}", e)
-          collected_errors << "Lab result #{order_params[:offline_id]}: #{e.message}"
+          result_identifier = operation_value_for(order_params, :offline_id)
+          log_error("Failed to save lab result offline_id=#{result_identifier}", e)
+          collected_errors << "Lab result #{result_identifier}: #{e.message}"
           # continues to next result
         end
       end
@@ -186,7 +189,9 @@ module PatientRecordService
             payload: item,
             target_type: 'LabOrder'
           ) do
-            Lab::OrdersService.void_order(item[:orderId], item[:reason])
+            without_lab_patient_record_rebuild do
+              Lab::OrdersService.void_order(item[:orderId], item[:reason])
+            end
             Lab::VoidOrderJob.perform_later(item[:orderId])
             { target_type: 'LabOrder', target_id: item[:orderId] }
           end
@@ -211,6 +216,43 @@ module PatientRecordService
       raise "Encounter type #{encounter_type_name} not found" if encounter_type.blank?
 
       encounter_type
+    end
+
+    def without_lab_patient_record_rebuild
+      previous = Thread.current[:skip_lab_patient_record_rebuild]
+      Thread.current[:skip_lab_patient_record_rebuild] = true
+      yield
+    ensure
+      Thread.current[:skip_lab_patient_record_rebuild] = previous
+    end
+
+    def lab_result_payload(order_params, encounter_id)
+      params = normalize_lab_result_value(order_params)
+      measures = Array.wrap(operation_value_for(params, :measures)).flatten(1).compact
+      raise "Lab result measures missing for offline_id=#{operation_value_for(params, :offline_id)}" if measures.empty?
+
+      {
+        encounter_id: encounter_id,
+        date: operation_value_for(params, :date),
+        comments: operation_value_for(params, :comments),
+        provider_id: operation_value_for(params, :provider_id),
+        measures: measures.map { |measure| normalize_lab_result_value(measure) }
+      }.compact.with_indifferent_access
+    end
+
+    def normalize_lab_result_value(value)
+      case value
+      when ActionController::Parameters
+        normalize_lab_result_value(value.to_unsafe_h)
+      when Hash
+        value.each_with_object({}.with_indifferent_access) do |(key, nested_value), hash|
+          hash[key] = normalize_lab_result_value(nested_value)
+        end
+      when Array
+        value.map { |nested_value| normalize_lab_result_value(nested_value) }
+      else
+        value
+      end
     end
   end
 end

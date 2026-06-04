@@ -87,6 +87,7 @@ class PatientRecordOperationGuard
       raise unless duplicate_receipt_error?(e)
 
       existing_receipt = PatientRecordOperationReceipt.find_by!(
+        patient_id: patient_id,
         operation_type: operation_type,
         operation_id: operation_id
       )
@@ -98,6 +99,7 @@ class PatientRecordOperationGuard
 
       PatientRecordOperationReceipt.transaction do
         receipt = PatientRecordOperationReceipt.lock.find_by!(
+          patient_id: patient_id,
           operation_type: operation_type,
           operation_id: operation_id
         )
@@ -172,6 +174,11 @@ class PatientRecordOperationGuard
     def target_reference(value, default_target_type)
       if value.respond_to?(:attributes)
         return [value.class.name, value.try(:id) || value.try(:order_id) || value.try(:encounter_id)]
+      end
+
+      if value.is_a?(Array)
+        target_ids = value.filter_map { |item| target_reference(item, default_target_type).last }.join(',')
+        return [default_target_type, target_ids.presence]
       end
 
       return [default_target_type, nil] unless value.respond_to?(:[])

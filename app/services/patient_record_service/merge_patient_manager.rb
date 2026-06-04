@@ -18,7 +18,7 @@ module PatientRecordService
         update_merged_potential_duplicates(primary_patient_ids, secondary_patient_ids_list)
       end
 
-      ok
+      changed_ok
     rescue StandardError => e
       log_and_fail("Failed to merge patients", e)
     end

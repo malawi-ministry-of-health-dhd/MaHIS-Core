@@ -17,7 +17,8 @@ module PatientRecordService
       collected_errors.concat(next_of_kin_result.errors) if next_of_kin_result.errors.any?
 
       overall_success = updated_result.success? || created_result.success? || next_of_kin_result.success?
-      OperationResult.new(success: overall_success, errors: collected_errors)
+      changed = [updated_result, created_result, next_of_kin_result].any?(&:changed?)
+      OperationResult.new(success: overall_success, errors: collected_errors, changed: changed)
     end
 
     def update_guardian_information(patient_id, record)
@@ -38,7 +39,7 @@ module PatientRecordService
         service.create_relationship(person, relationship_type)
       end
 
-      ok
+      changed_ok
     rescue StandardError => e
       log_and_fail("Failed to update guardian information", e)
     end
@@ -69,7 +70,7 @@ module PatientRecordService
       return ok if result.skipped?
 
       record[:saveStatusGuardianInformation] = 'complete'
-      ok
+      changed_ok
     rescue StandardError => e
       log_and_fail("Failed to save guardian information", e)
     end
@@ -78,6 +79,7 @@ module PatientRecordService
       return ok unless record[:relationships].present? && record[:relationships].is_a?(Array)
 
       collected_errors = []
+      created_relationship = false
 
       record[:relationships].each do |relationship|
         unless relationship[:guardianID].present? &&
@@ -107,12 +109,13 @@ module PatientRecordService
             relationship_type_id: relationship[:relationshipID],
             person_id:            patient_id
           )
+          created_relationship = true
         rescue StandardError => e
           collected_errors << "Failed to create relationship guardian=#{relationship[:guardianID]}: #{e.message}"
         end
       end
 
-      OperationResult.new(success: true, errors: collected_errors)
+      OperationResult.new(success: true, errors: collected_errors, changed: created_relationship)
     end
 
     def create_next_of_kin(patient_id, record, initial_guardian_status = nil)
@@ -144,7 +147,7 @@ module PatientRecordService
 
       return ok if result.skipped?
 
-      ok
+      changed_ok
     rescue StandardError => e
       log_and_fail("Failed to save next of kin information", e)
     end
