@@ -319,6 +319,148 @@ def create_nutrition_drugs
   end
 end
 
+# Create a coded concept with multiple choice answers
+# @param concept_name [String] The name of the concept
+# @param concept_class_name [String] The concept class (e.g., 'Procedure', 'Finding')
+# @param answers [Array<String>] Array of answer names (e.g., ['Yes', 'No'])
+# @return [Concept] The created concept or nil if error
+def create_coded_concept_with_answers(concept_name, concept_class_name, answers = [])
+  # Find or create the concept class and datatype
+  concept_class = ConceptClass.find_by(name: concept_class_name)
+  concept_datatype = ConceptDatatype.find_by(name: 'Coded')
+
+  unless concept_class && concept_datatype
+    puts "  ERROR: Could not find ConceptClass '#{concept_class_name}' or ConceptDatatype 'Coded'"
+    return nil
+  end
+
+  # Check if concept already exists
+  existing_concept = Concept.joins(:concept_names).where(concept_names: { name: concept_name }).first
+  if existing_concept
+    puts "  Skipped concept: #{concept_name} (already exists)"
+    return existing_concept
+  end
+
+  # Create the concept
+  concept = Concept.create!(
+    short_name: concept_name,
+    datatype_id: concept_datatype.concept_datatype_id,
+    class_id: concept_class.concept_class_id,
+    is_set: false,
+    creator: User.current.id,
+    date_created: Time.now,
+    uuid: SecureRandom.uuid
+  )
+
+  # Create concept name
+  ConceptName.create!(
+    concept_id: concept.concept_id,
+    name: concept_name,
+    locale: 'en',
+    locale_preferred: true,
+    concept_name_type: 'FULLY_SPECIFIED',
+    creator: User.current.id,
+    date_created: Time.now,
+    uuid: SecureRandom.uuid
+  )
+
+  puts "  Created coded concept: #{concept_name} (#{concept_class_name})"
+
+  concept
+end
+
+# Create a numeric concept with optional units
+# @param concept_name [String] The name of the concept
+# @param concept_class_name [String] The concept class (e.g., 'Finding', 'Test')
+# @param units [String] The units for numeric values (e.g., 'days', 'kg', 'cm')
+# @param allow_decimal [Boolean] Whether to allow decimal values
+# @return [Concept] The created concept or nil if error
+def create_numeric_concept(concept_name, concept_class_name, units = nil, allow_decimal: false)
+  # Find or create the concept class and datatype
+  concept_class = ConceptClass.find_by(name: concept_class_name)
+  concept_datatype = ConceptDatatype.find_by(name: 'Numeric')
+
+  unless concept_class && concept_datatype
+    puts "  ERROR: Could not find ConceptClass '#{concept_class_name}' or ConceptDatatype 'Numeric'"
+    return nil
+  end
+
+  # Check if concept already exists
+  existing_concept = Concept.joins(:concept_names).where(concept_names: { name: concept_name }).first
+  if existing_concept
+    puts "  Skipped concept: #{concept_name} (already exists)"
+    return existing_concept
+  end
+
+  # Create the concept
+  concept = Concept.create!(
+    short_name: concept_name,
+    datatype_id: concept_datatype.concept_datatype_id,
+    class_id: concept_class.concept_class_id,
+    is_set: false,
+    creator: User.current.id,
+    date_created: Time.now,
+    uuid: SecureRandom.uuid
+  )
+
+  # Create concept name
+  ConceptName.create!(
+    concept_id: concept.concept_id,
+    name: concept_name,
+    locale: 'en',
+    locale_preferred: true,
+    concept_name_type: 'FULLY_SPECIFIED',
+    creator: User.current.id,
+    date_created: Time.now,
+    uuid: SecureRandom.uuid
+  )
+
+  # Create concept numeric entry if units are specified
+  unless units
+    puts "  Created numeric concept: #{concept_name} (#{concept_class_name})"
+    return concept
+  end
+
+  ConceptNumeric.create!(
+    concept_id: concept.concept_id,
+    hi_absolute: nil,
+    hi_critical: nil,
+    hi_normal: nil,
+    low_absolute: nil,
+    low_critical: nil,
+    low_normal: nil,
+    units: units,
+    precise: allow_decimal ? 1 : 0
+  )
+  puts "  Created numeric concept: #{concept_name} (#{concept_class_name}, units: #{units})"
+
+  concept
+end
+
+# Create IMPOW nutrition-related concepts
+# This creates:
+# - Pentavalent Vaccination (Coded, Procedure) with Yes/No answers
+# - Days in NRU (Numeric, Finding) with days as units
+def create_nutrition_concepts
+  puts "\n" + '=' * 80
+  puts 'Creating IMPOW Nutrition Concepts...'
+  puts '=' * 80
+
+  ActiveRecord::Base.transaction do
+    # Create Pentavalent Vaccination concept (Coded, Procedure)
+    puts "\n1. Creating Pentavalent Vaccination concept..."
+    create_coded_concept_with_answers('Pentavalent Vaccination', 'Procedure', %w[Yes No])
+
+    # Create Days in NRU concept (Numeric, Finding)
+    puts "\n2. Creating Days in NRU concept..."
+    create_numeric_concept('Days in NRU', 'Finding', 'days', allow_decimal: false)
+
+    puts "\n" + '=' * 80
+    puts 'Successfully created nutrition concepts!'
+    puts '=' * 80
+  end
+end
+
 def run_create_program
   puts 'Creating IMPOW program and related concepts...'
   User.current = User.find_by_username('admin') || User.first
@@ -362,6 +504,7 @@ def run_create_program
       end
     end
   end
+  create_nutrition_concepts
   create_nutrition_drugs
 end
 
