@@ -147,7 +147,13 @@ class SavePatientRecordService
     patient_data[:sync_status]           = overall_sync_status
     patient_data[:otherPersonInformation] = BuildPatientRecordService.build_other_person_info
     patient_data[:visits]                = BuildPatientRecordService.safe_get_visits(patient)
-    patient_data[:activePrograms]        = BuildPatientRecordService.fetch_active_programs(patient.patient_id)
+
+    # Defer fetching activePrograms: if the :enroll_program operation runs it
+    # rebuilds this same field below, so an unconditional fetch here means
+    # one wasted PatientProgram load + as_json walk per save. Only fetch
+    # eagerly when no operation will refresh it.
+    enroll_program_ran = operation_results[:enroll_program]&.success?
+    patient_data[:activePrograms] = BuildPatientRecordService.fetch_active_programs(patient.patient_id) unless enroll_program_ran
 
     allowed_encounter_types = []
 
@@ -292,10 +298,14 @@ class SavePatientRecordService
     program_id = immunization_program_id
     return false if program_id.blank?
 
-    return true if record[:program_id].to_i == program_id
-
-    enrollments = Array(record[:activePrograms]).compact
-    enrollments.any? { |enrollment| enrollment[:program_id].to_i == program_id }
+    # Only refresh the immunization dashboard when the *current* save is
+    # actually against the immunization program. Patients can be enrolled in
+    # many programs at once (Immunization + OPD + NCD + ART + ...), and the
+    # old check would fire the dashboard rebuild on every save for any
+    # multi-program patient — even saves of lab results, drug dispensations,
+    # NCD obs, etc. that have nothing to do with vaccinations. The dashboard
+    # cache only needs refreshing when vaccine data actually changed.
+    record[:program_id].to_i == program_id || record['program_id'].to_i == program_id
   end
 
   def immunization_program_id
