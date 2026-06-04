@@ -324,7 +324,7 @@ end
 # @param concept_class_name [String] The concept class (e.g., 'Procedure', 'Finding')
 # @param answers [Array<String>] Array of answer names (e.g., ['Yes', 'No'])
 # @return [Concept] The created concept or nil if error
-def create_coded_concept_with_answers(concept_name, concept_class_name, answers = [])
+def create_coded_concept_with_answers(concept_name, concept_class_name, _answers = [])
   # Find or create the concept class and datatype
   concept_class = ConceptClass.find_by(name: concept_class_name)
   concept_datatype = ConceptDatatype.find_by(name: 'Coded')
