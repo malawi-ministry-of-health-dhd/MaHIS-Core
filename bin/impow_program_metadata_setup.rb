@@ -437,6 +437,55 @@ def create_numeric_concept(concept_name, concept_class_name, units = nil, allow_
   concept
 end
 
+# Create a text concept
+# @param concept_name [String] The name of the concept
+# @param concept_class_name [String] The concept class (e.g., 'Finding', 'Misc')
+# @return [Concept] The created concept or nil if error
+def create_text_concept(concept_name, concept_class_name)
+  # Find or create the concept class and datatype
+  concept_class = ConceptClass.find_by(name: concept_class_name)
+  concept_datatype = ConceptDatatype.find_by(name: 'Text')
+
+  unless concept_class && concept_datatype
+    puts "  ERROR: Could not find ConceptClass '#{concept_class_name}' or ConceptDatatype 'Text'"
+    return nil
+  end
+
+  # Check if concept already exists
+  existing_concept = Concept.joins(:concept_names).where(concept_names: { name: concept_name }).first
+  if existing_concept
+    puts "  Skipped concept: #{concept_name} (already exists)"
+    return existing_concept
+  end
+
+  # Create the concept
+  concept = Concept.create!(
+    short_name: concept_name,
+    datatype_id: concept_datatype.concept_datatype_id,
+    class_id: concept_class.concept_class_id,
+    is_set: false,
+    creator: User.current.id,
+    date_created: Time.now,
+    uuid: SecureRandom.uuid
+  )
+
+  # Create concept name
+  ConceptName.create!(
+    concept_id: concept.concept_id,
+    name: concept_name,
+    locale: 'en',
+    locale_preferred: true,
+    concept_name_type: 'FULLY_SPECIFIED',
+    creator: User.current.id,
+    date_created: Time.now,
+    uuid: SecureRandom.uuid
+  )
+
+  puts "  Created text concept: #{concept_name} (#{concept_class_name})"
+
+  concept
+end
+
 # Create IMPOW nutrition-related concepts
 # This creates:
 # - Pentavalent Vaccination (Coded, Procedure) with Yes/No answers
@@ -502,6 +551,10 @@ def create_nutrition_concepts
     # Create ROTA Vaccination concept (Coded, Procedure)
     puts "\n14. Creating ROTA Vaccination concept..."
     create_coded_concept_with_answers('ROTA Vaccination', 'Procedure', %w[Yes No])
+
+    # Create Duration of swelling concept (Text, Finding)
+    puts "\n15. Creating Duration of swelling concept..."
+    create_text_concept('Duration of swelling', 'Finding')
 
     puts "\n" + '=' * 80
     puts 'Successfully created nutrition concepts!'
