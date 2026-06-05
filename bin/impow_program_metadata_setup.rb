@@ -556,6 +556,10 @@ def create_nutrition_concepts
     puts "\n15. Creating Duration of swelling concept..."
     create_text_concept('Duration of swelling', 'Finding')
 
+    # Create Appetite test concept (Coded, Test)
+    puts "\n16. Creating Appetite test concept..."
+    create_coded_concept_with_answers('Appetite test', 'Test', [])
+
     puts "\n" + '=' * 80
     puts 'Successfully created nutrition concepts!'
     puts '=' * 80
