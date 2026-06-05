@@ -34,7 +34,8 @@ CONCEPTS_TO_CREATE = [
 
 ENCOUNTER_TYPES_TO_CREATE = [
   { name: 'Triage', description: '' },
-  { name: 'Medical Assessment', description: '' }
+  { name: 'Medical Assessment', description: '' },
+  { name: 'OTS Admission', description: 'Encounter type for admission to Outpatient Therapeutic Services'},
 ]
 
 def create_concept(concept_name, datatype_id: 4, concept_class_id: 11, is_set: false)
