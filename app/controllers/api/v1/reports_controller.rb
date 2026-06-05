@@ -157,6 +157,18 @@ module Api
         render json: stats
       end
 
+      def cohort_report_raw_data
+        start_date = params.require(:start_date).to_date
+        end_date = params.require(:end_date).to_date
+        report = service.cohort_report_raw_data(start_date, end_date, occupation: params[:occupation])
+
+        if report
+          render json: report
+        else
+          render status: :no_content
+        end
+      end
+
       def cohort_report_drill_down
         render json: service.cohort_report_drill_down(params[:id])
       end
