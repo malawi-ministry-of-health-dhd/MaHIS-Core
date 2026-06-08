@@ -532,7 +532,7 @@ def build_hiv_filter_clause(table_name, source_db)
     nil
   when 'orders', 'obs'
     # Use pre-built cache table (O(index_lookup)) instead of inline subquery (O(11M rows * n_batches))
-    "encounter_id IN (SELECT encounter_id FROM harmonized.hiv_enc_ids_cache)"
+    'encounter_id IN (SELECT encounter_id FROM harmonized.hiv_enc_ids_cache)'
   when 'drug_order'
     "order_id IN (SELECT o.order_id FROM #{source_db}.orders o JOIN harmonized.hiv_enc_ids_cache h ON h.encounter_id = o.encounter_id)"
   end
@@ -1005,7 +1005,8 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
       ActiveRecord::Base.connection.select_value(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='harmonized' AND table_name='obs_pending'"
       ).to_i > 0
-    rescue StandardError; false; end
+    rescue StandardError; false
+    end
 
     if pending_exists
       pending_min, pending_max, pending_count = ActiveRecord::Base.connection.select_one(
@@ -1018,7 +1019,7 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
         total_records = pending_count
         puts "📋 obs_pending: #{pending_count} records to migrate (source obs_id #{pending_min}..#{pending_max})"
       else
-        puts "✅ obs_pending is empty — all HIV obs already in target, skipping obs table"
+        puts '✅ obs_pending is empty — all HIV obs already in target, skipping obs table'
         end_table_monitoring(table_name_str, 0)
         return
       end
@@ -1954,7 +1955,7 @@ puts '=' * 80 + "\n"
 if resume_group >= 5
   # Groups 5+ (obs, lims, drug_order) use SQL subquery filters, not in-memory Sets.
   # Skip loading large HIV ID Sets (~1GB RAM) during resume.
-  puts "⏭️  Skipping HIV ID Set loading (Groups 5+ use SQL subquery filters)"
+  puts '⏭️  Skipping HIV ID Set loading (Groups 5+ use SQL subquery filters)'
 else
   load_hiv_patient_ids(source_db)
   load_hiv_encounter_ids(source_db)
@@ -1970,9 +1971,7 @@ create_hiv_encounter_ids_cache(source_db)
 #   - Completely independent of target row counts, obs_id ordering, or other sites' data.
 #   - Rebuilt fresh on every restart so it always reflects current state.
 # Takes ~3-10 minutes for 60M obs but saves time by skipping already-migrated batches entirely.
-if resume_group >= 5
-  build_obs_pending_table(source_db)
-end
+build_obs_pending_table(source_db) if resume_group >= 5
 
 # Clear caches that are no longer needed after a group completes to free memory.
 # Caches are cumulative — without clearing, they balloon across all groups.
