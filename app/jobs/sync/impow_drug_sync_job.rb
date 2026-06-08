@@ -105,7 +105,7 @@ module Sync
 
     def sfp_program_section
       concept_set = ConceptName.find_by(name: 'Supplementary Feeding Services')
-      
+
       {
         'program_name' => 'Supplementary Feeding Services',
         'program_code' => 'SFP',
@@ -122,7 +122,7 @@ module Sync
     def rusf_sfp_section
       concept = ConceptName.find_by(name: 'Ready-to-Use Supplementary Food (RUSF)')
       drug = Drug.find_by(concept_id: concept&.concept_id) if concept
-      
+
       {
         'concept_id' => concept&.concept_id,
         'drug_id' => drug&.drug_id,
@@ -137,7 +137,7 @@ module Sync
     def csb_plus_section
       concept = ConceptName.find_by(name: 'Corn Soy Blend Plus (CSB+)')
       drug = Drug.find_by(concept_id: concept&.concept_id) if concept
-      
+
       {
         'concept_id' => concept&.concept_id,
         'drug_id' => drug&.drug_id,
@@ -152,7 +152,7 @@ module Sync
     def csb_plus_plus_section
       concept = ConceptName.find_by(name: 'Corn Soy Blend Plus Plus (CSB++)')
       drug = Drug.find_by(concept_id: concept&.concept_id) if concept
-      
+
       {
         'concept_id' => concept&.concept_id,
         'drug_id' => drug&.drug_id,
@@ -168,7 +168,7 @@ module Sync
 
     def ots_program_section
       concept_set = ConceptName.find_by(name: 'Outpatient Therapeutic Services')
-      
+
       {
         'program_name' => 'Outpatient Therapeutic Services',
         'program_code' => 'OTS',
@@ -371,7 +371,7 @@ module Sync
 
     def nru_program_section
       concept_set = ConceptName.find_by(name: 'Inpatient Therapeutic Service')
-      
+
       {
         'program_name' => 'Inpatient Therapeutic Service',
         'program_code' => 'NRU',
@@ -388,7 +388,7 @@ module Sync
     def f75_section
       concept = ConceptName.find_by(name: 'Therapeutic Milk')
       drug = Drug.find_by(name: 'F-75 Therapeutic Milk (F75)')
-      
+
       {
         'concept_id' => concept&.concept_id,
         'drug_id' => drug&.drug_id,
@@ -404,7 +404,7 @@ module Sync
     def f100_section
       concept = ConceptName.find_by(name: 'Therapeutic Milk')
       drug = Drug.find_by(name: 'F-100 Therapeutic Milk (F100)')
-      
+
       {
         'concept_id' => concept&.concept_id,
         'drug_id' => drug&.drug_id,
@@ -420,7 +420,7 @@ module Sync
     def rutf_nru_section
       concept = ConceptName.find_by(name: 'Ready-to-Use Therapeutic Food (RUTF)')
       drug = Drug.find_by(concept_id: concept&.concept_id) if concept
-      
+
       {
         'concept_id' => concept&.concept_id,
         'drug_id' => drug&.drug_id,
