@@ -15,7 +15,7 @@ class Drug < ActiveRecord::Base
   has_many :barcodes, class_name: 'DrugOrderBarcode'
   has_many :alternative_names, class_name: 'AlternativeDrugName', foreign_key: 'drug_inventory_id'
   has_many :ntp_regimens, class_name: 'NtpRegimen'
-  has_many :session_schedule_vaccines 
+  has_many :session_schedule_vaccines
 
   def self.find_all_by_concept_set(concept_name)
     concept = ConceptName.where(name: concept_name).select(:concept_id)
@@ -25,6 +25,10 @@ class Drug < ActiveRecord::Base
 
   def self.arv_drugs
     find_all_by_concept_set('Antiretroviral drugs')
+  end
+
+  def self.ots_drugs
+    find_all_by_concept_set('Outpatient Therapeutic Services')
   end
 
   def as_json(options = {})
@@ -71,7 +75,8 @@ class Drug < ActiveRecord::Base
   def self.get_concept_from_name(name)
     concept = ConceptName.find_by(name: name)
     return concept.concept_id if concept.present?
-    ConceptName.find_by(name: name, concept_name_type:'FULLY_SPECIFIED').concept_id
+
+    ConceptName.find_by(name: name, concept_name_type: 'FULLY_SPECIFIED').concept_id
   end
 
   def self.bp_drugs
@@ -94,5 +99,4 @@ class Drug < ActiveRecord::Base
     concepts_placeholders = '(' + (['?'] * concepts.size).join(', ') + ')'
     Drug.where("concept_id in #{concepts_placeholders}", *concepts)
   end
-
 end
