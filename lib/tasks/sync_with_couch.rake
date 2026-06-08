@@ -33,7 +33,8 @@ namespace :sync do
       Sync::RegimenExtraSyncJob,
       Sync::RegimenStarterPackSyncJob,
       Sync::ArvDrugSyncJob,
-      Sync::BedSyncJob
+      Sync::BedSyncJob,
+      Sync::ImpowDrugSyncJob
     ]
 
     # Fresh run: clear any stale progress so the bars start from zero.
