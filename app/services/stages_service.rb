@@ -39,8 +39,12 @@ class StagesService
       )
     end
 
-    if Program.find_by_name("AETC Program").id == stage_params[:program_id]
-      stage.visit_number = VisitService.next_daily_visit_number! 
+    # Assign a daily visit number only once — when the patient first enters a
+    # stage for this visit. It must stay the same as the patient moves through
+    # the queues (screening -> triage -> ...), and the counter resets at
+    # midnight (see VisitService.next_daily_visit_number!).
+    if Program.find_by_name("AETC Program").id == stage_params[:program_id] && stage.visit_number.blank?
+      stage.visit_number = VisitService.next_daily_visit_number!
     end
 
     stage.program_id = stage_params["program_id"]
