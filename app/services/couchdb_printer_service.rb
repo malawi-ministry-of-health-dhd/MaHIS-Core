@@ -67,8 +67,8 @@ class CouchdbPrinterService
 
       ensure_db_exists
       
-      # Generate unique ID if not provided
-      doc_id = printer_data[:id] || SecureRandom.uuid
+      # Accept _id (frontend convention) or id, fall back to a UUID
+      doc_id = printer_data[:_id] || printer_data[:id] || SecureRandom.uuid
       
       doc_data = {
         '_id' => doc_id,

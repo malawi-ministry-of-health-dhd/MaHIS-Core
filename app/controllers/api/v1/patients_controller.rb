@@ -86,7 +86,6 @@ module Api
 
       def save_patient_record
         patient_record = SavePatientRecordService.new.create_patient_record(params[:record])
-        Sync::BatchPatientSyncJob.perform_async
         broadcast_patient_record_saved(patient_record)
         render json: patient_record
       end

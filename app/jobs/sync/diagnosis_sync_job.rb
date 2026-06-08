@@ -16,6 +16,27 @@ module Sync
 
     private
 
+    # Diagnoses use a deterministic "diagnosis_<concept_id>_<code>" id, so the
+    # fast prefix-based count is accurate (the shared type-based count requires a
+    # 'type' field these docs don't have, and reads every doc one-by-one).
+    def check_and_clean_couchdb_if_needed_for_custom(count_query, db_name, data_type_name)
+      source_count = count_query.count
+      couchdb_count = get_couchdb_record_count(db_name, 'diagnosis_')
+      Sidekiq.logger.info "Source #{data_type_name} count: #{source_count}, CouchDB #{data_type_name} count: #{couchdb_count}"
+
+      if source_count == couchdb_count
+        Sidekiq.logger.info 'Diagnoses already in sync. Skipping.'
+        return :skip_sync
+      end
+
+      Sidekiq.logger.warn "Diagnoses count mismatch (source #{source_count}, CouchDB #{couchdb_count}); cleaning and re-syncing."
+      delete_all_records_from_couchdb(db_name, 'diagnosis_', data_type_name)
+      :continue_sync
+    rescue StandardError => e
+      Sidekiq.logger.error "Diagnoses count check failed: #{e.message}; proceeding with sync."
+      :continue_sync
+    end
+
     # Override to bypass find_in_batches (concept_name has no primary key)
     def sync_custom_bulk(query, db_name, batch_size, total_count, data_type_name)
       ensure_database_exists(db_name)
@@ -33,6 +54,7 @@ module Sync
           bulk_result = bulk_sync_to_couchdb(documents, db_name)
 
           processed += batch.size
+          SyncProgress.set(db_name, processed)
           errors.concat(bulk_result[:errors]) if bulk_result[:errors].any?
 
           Sidekiq.logger.info "Synced #{processed}/#{total_count} #{data_type_name.pluralize}"
@@ -74,6 +96,9 @@ module Sync
         .order('concept_name.concept_id')
     end
 
+    # Count must match the document grain: one doc per (concept_id, code), since
+    # the document id is "diagnosis_<concept_id>_<code>". Counting distinct
+    # concept_id alone undercounts and causes a permanent resync loop.
     def get_diagnoses_count_query
       ConceptName.unscoped.from(
         ConceptName
@@ -83,7 +108,7 @@ module Sync
             locale_preferred: 1,
             voided: 0
           )
-          .select('concept_name.concept_id')
+          .select('concept_name.concept_id, concept_map.concept_code AS code')
           .distinct,
         :concept_name
       )

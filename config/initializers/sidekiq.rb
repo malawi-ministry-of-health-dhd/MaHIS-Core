@@ -5,8 +5,8 @@ require 'sidekiq-unique-jobs'
 # Global job defaults
 Sidekiq.default_job_options = {
   'retry' => true,
-  'lock' => :until_executed,
-  'lock_ttl' => 30.minutes.to_i
+  'lock' => :until_and_while_executing,
+  'lock_ttl' => 90.minutes.to_i
 }
 
 Sidekiq.configure_server do |config|

@@ -114,6 +114,17 @@ class PatientService
            .distinct
   end
 
+  # Lab encounter type IDs are referenced in the visit-dates query as an
+  # exclusion list. They almost never change, so cache them per process —
+  # otherwise every call subselects against `encounter_type` again, which
+  # the user's logs showed firing three times per save.
+  def self.lab_encounter_type_ids
+    @lab_encounter_type_ids ||= EncounterType
+      .where(name: ['LAB', 'LAB ORDERS', 'LAB RESULTS'])
+      .pluck(:encounter_type_id)
+      .freeze
+  end
+
   def find_patient_visit_dates(patient, program = nil, include_defaulter_dates = nil, date = nil)
     patient_id = ActiveRecord::Base.connection.quote(patient.id)
     program_id = program ? ActiveRecord::Base.connection.quote(program.id) : nil
@@ -121,13 +132,16 @@ class PatientService
 
     return find_los_visit_dates(patient_id, date) if program_id == '23'
 
+    lab_type_ids = self.class.lab_encounter_type_ids
+    excluded_clause = lab_type_ids.empty? ? '' : "AND encounter_type NOT IN (#{lab_type_ids.join(',')})"
+
     rows = ActiveRecord::Base.connection.select_all <<-SQL
       SELECT DISTINCT DATE(encounter_datetime) AS visit_date
       FROM encounter
       WHERE patient_id = #{patient_id} AND voided = 0 #{if program_id
                                                           "AND program_id = #{program_id}"
                                                         end} AND encounter_datetime < DATE('#{date}') + INTERVAL 1 DAY
-      AND encounter_type NOT IN (#{EncounterType.where(name: ['LAB', 'LAB ORDERS', 'LAB RESULTS']).select(:encounter_type_id).to_sql})
+      #{excluded_clause}
       GROUP BY visit_date
       ORDER BY visit_date DESC
     SQL

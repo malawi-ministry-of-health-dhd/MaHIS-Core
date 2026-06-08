@@ -108,3 +108,6 @@ gem 'sys-memory'
 gem 'sys-proctable'
 
 gem 'roda', '~> 3.100'
+
+# Multi-bar terminal progress display for sync rake tasks
+gem 'tty-progressbar', '~> 0.18'

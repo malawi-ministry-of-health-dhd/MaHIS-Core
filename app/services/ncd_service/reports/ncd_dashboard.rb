@@ -11,6 +11,9 @@ module NcdService
         @sections = sections || ['all']
         @sections = [@sections] if @sections.is_a?(String)
         
+        location_id = _kwargs[:location_id] || User.current&.location_id
+        @location_id = location_id.present? ? location_id.to_i : nil
+        
         create_cohort_table
         data(sections: @sections)
       ensure
@@ -88,17 +91,19 @@ module NcdService
         
         ActiveRecord::Base.connection.execute("DROP TEMPORARY TABLE IF EXISTS temp_ncd_cohort")
         
+        location_clause = @location_id.present? ? "AND location_id = #{@location_id}" : ""
+        
         sql = <<-SQL
           CREATE TEMPORARY TABLE temp_ncd_cohort (
             patient_id INT PRIMARY KEY
           ) AS
           SELECT DISTINCT patient_id
           FROM (
-            SELECT patient_id FROM patient_program WHERE program_id = #{program_id} AND voided = 0
+            SELECT patient_id FROM patient_program WHERE program_id = #{program_id} AND voided = 0 #{location_clause}
             UNION
-            SELECT patient_id FROM patient_identifier WHERE identifier_type = #{ncd_type_id} AND voided = 0
+            SELECT patient_id FROM patient_identifier WHERE identifier_type = #{ncd_type_id} AND voided = 0 #{location_clause}
             UNION
-            SELECT patient_id FROM encounter WHERE program_id = #{program_id} AND voided = 0
+            SELECT patient_id FROM encounter WHERE program_id = #{program_id} AND voided = 0 #{location_clause}
           ) AS all_ncd_patients
         SQL
         

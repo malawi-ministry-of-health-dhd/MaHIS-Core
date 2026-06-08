@@ -3,6 +3,8 @@
 
 module PatientRecordService
   class ObservationSaver < BaseSaver
+    class ObservationEncounterSaveError < StandardError; end
+
     NCD_PROGRAM_ID = 32
     PRIMARY_DIAGNOSIS_CONCEPT_NAME = "primary diagnosis".freeze
     NOTES_ENCOUNTER_TYPE_NAME = "notes".freeze
@@ -18,6 +20,12 @@ module PatientRecordService
     ].freeze
     OBSERVATION_VALUE_KEYS = %i[
       value_boolean value_numeric value_drug value_coded value_datetime value_text
+    ].freeze
+    OBSERVATION_ATTRIBUTE_KEYS = %i[
+      accession_number comments concept_id date_started date_stopped obs_datetime
+      obs_group_id order_id value_boolean value_coded value_coded_name_id
+      value_complex value_datetime value_drug value_group_id value_modifier
+      value_numeric value_text child
     ].freeze
 
     def save_all_observations(patient_id, record)
@@ -39,27 +47,40 @@ module PatientRecordService
         end
 
         begin
-          ActiveRecord::Base.transaction(requires_new: true) do
-            encounter_id = create_encounter(patient_id, encounter_type.id, item)
-            encounter    = Encounter.find(encounter_id)
+          result = with_operation_guard(
+            patient_id: patient_id,
+            operation_type: 'observation_encounter.create',
+            payload: item,
+            target_type: 'Encounter'
+          ) do
+            ActiveRecord::Base.transaction(requires_new: true) do
+              encounter_id = create_encounter(patient_id, encounter_type.id, item)
+              encounter    = Encounter.find(encounter_id)
+              item_errors  = []
 
-            normalized_observations(value_for(item, :obs)).each do |archetype|
-              begin
-                params = to_permitted_params(archetype)
-                params[:location_id] = record[:location_id]
-                unless observation_value_present?(params)
-                  Rails.logger.warn("Skipping empty observation payload for encounter #{encounter_id}: #{format_observation_reference(params)}")
-                  next
+              normalized_observations(value_for(item, :obs)).each do |archetype|
+                begin
+                  params = permitted_observation_params(archetype)
+                  params[:location_id] = value_for(record, :location_id)
+                  unless observation_value_present?(params)
+                    Rails.logger.warn("Skipping empty observation payload for encounter #{encounter_id}: #{format_observation_reference(params)}")
+                    next
+                  end
+
+                  observation_service.create_observation(encounter, params)
+                rescue StandardError => e
+                  log_error("Error saving obs for encounter #{encounter_id}", e)
+                  item_errors << "obs #{format_observation_reference(archetype)}: #{e.message}"
                 end
-
-                observation_service.create_observation(encounter, params)
-              rescue StandardError => e
-                log_error("Error saving obs for encounter #{encounter_id}", e)
-                collected_errors << "Encounter #{encounter_type.name}, obs #{format_observation_reference(archetype)}: #{e.message}"
-                # continues to next obs
               end
+
+              raise ObservationEncounterSaveError, item_errors.join("; ") if item_errors.any?
+
+              { target_type: 'Encounter', target_id: encounter_id }
             end
           end
+
+          next if result.skipped?
         rescue StandardError => e
           log_error("Error creating encounter for type #{encounter_type.name}", e)
           collected_errors << "Encounter #{encounter_type.name}: #{e.message}"
@@ -98,6 +119,23 @@ module PatientRecordService
 
     def observation_value_present?(payload)
       OBSERVATION_VALUE_KEYS.any? { |key| value_for(payload, key).present? }
+    end
+
+    def permitted_observation_params(archetype)
+      source = to_permitted_params(archetype).to_h.with_indifferent_access
+      params = OBSERVATION_ATTRIBUTE_KEYS.each_with_object({}) do |key, permitted|
+        value = source[key]
+        permitted[key] = value unless value.nil?
+      end
+
+      children = source[:child].presence || source[:children].presence
+      if children.present?
+        params[:child] = Array(children).map { |child| permitted_observation_params(child) }
+      else
+        params.delete(:child)
+      end
+
+      params
     end
 
     def confirmed_ncd_diagnosis(record, archetype)

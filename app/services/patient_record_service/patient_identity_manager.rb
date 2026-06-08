@@ -124,7 +124,7 @@ module PatientRecordService
 
       person = Person.find(patient_id)
       person_service.update_person(person, to_permitted_params(record[:personInformation]))
-      ok
+      changed_ok
     rescue StandardError => e
       log_and_fail("Failed to update person information", e)
     end
@@ -132,8 +132,10 @@ module PatientRecordService
     def create_ncd_identifier(patient_id, record)
       ncd_id = record[:NcdID].presence || record['NcdID'].presence
       unsaved_ncd_id = record[:unsavedNcdID].presence || record['unsavedNcdID'].presence
+      needs_ncd_id = truthy?(record[:needs_ncd_id] || record['needs_ncd_id'])
       location_id = extract_location_id(record)
-      return ok unless ncd_id == "-" || unsaved_ncd_id.present?
+      pending_ncd_id = ncd_id.to_s.strip.casecmp?('PENDING')
+      return ok unless ncd_id == "-" || pending_ncd_id || needs_ncd_id || unsaved_ncd_id.present?
 
       existing_ncd_identifiers = PatientIdentifier.where(patient_id: patient_id, identifier_type: 31)
                                                  .order(date_created: :desc)
@@ -145,10 +147,12 @@ module PatientRecordService
         end
         record[:NcdID] = canonical_ncd_identifier.identifier
         record['NcdID'] = canonical_ncd_identifier.identifier
-        return ok
+        record.delete(:needs_ncd_id)
+        record.delete('needs_ncd_id')
+        return changed_ok
       end
 
-      resolved_ncd_identifier = unsaved_ncd_id.to_s.strip
+      resolved_ncd_identifier = pending_ncd_id || needs_ncd_id ? "" : unsaved_ncd_id.to_s.strip
       resolved_ncd_identifier = find_next_available_ncd_number(location_id) if resolved_ncd_identifier.blank?
 
       PatientIdentifierService.create(
@@ -159,8 +163,12 @@ module PatientRecordService
       )
       record[:NcdID] = resolved_ncd_identifier
       record['NcdID'] = resolved_ncd_identifier
+      record.delete(:needs_ncd_id)
+      record.delete('needs_ncd_id')
+      record.delete(:unsavedNcdID)
+      record.delete('unsavedNcdID')
 
-      ok
+      changed_ok
     rescue StandardError => e
       log_and_fail("Failed to create NCD identifier", e)
     end
@@ -170,8 +178,9 @@ module PatientRecordService
       raise 'Global property `site_prefix` not set' unless current_ncd_code
 
       type                           = PatientIdentifierType.find_by_name('NCD Number')
-      current_ncd_number_identifiers = PatientIdentifier.where(identifier_type: type, location_id: location_id)
-      
+      raise 'Patient identifier type `NCD Number` not found' unless type
+
+      current_ncd_number_identifiers = PatientIdentifier.where(identifier_type: type.patient_identifier_type_id)
 
       assigned_ncd_ids = current_ncd_number_identifiers&.filter_map do |identifier|
         Regexp.last_match(1).to_i if identifier.identifier =~ /#{current_ncd_code}-NCD- *(\d+)/
@@ -185,6 +194,10 @@ module PatientRecordService
       end
 
       "#{current_ncd_code}-NCD-#{next_available_number}"
+    end
+
+    def truthy?(value)
+      ActiveModel::Type::Boolean.new.cast(value)
     end
 
     def global_property(name)

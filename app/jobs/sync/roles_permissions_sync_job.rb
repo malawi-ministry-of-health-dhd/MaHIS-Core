@@ -10,7 +10,7 @@ module Sync
     private
 
     def get_required_columns
-      [:uuid, :role, :description, :location_id]
+      [:uuid, :role, :description]
     end
 
     def prepare_document(role)
@@ -19,7 +19,6 @@ module Sync
         "uuid" => role.uuid,
         "name" => role.role,
         "description" => role.description,
-        "location_id" => role.location_id,
         "privileges" => role.privileges.map do |p|
           {
             "name" => p.privilege

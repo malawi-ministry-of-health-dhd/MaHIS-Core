@@ -249,6 +249,8 @@ module Api
       end
 
       PROTECTED_ROLES = %w[Superuser Global\ Superuser District\ Superuser Facility\ Superuser].freeze
+      # Only a Global Superuser may grant these roles
+      GLOBAL_ONLY_ROLES = ['Global Superuser', 'District Superuser'].freeze
 
       def validate_role_permissions(roles)
         return true if roles.blank?
@@ -256,10 +258,16 @@ module Api
         roles.each do |role|
           next unless PROTECTED_ROLES.any? { |pr| pr.casecmp(role.to_s).zero? }
 
-          unless User.current.global_superuser?
-            render json: { errors: ["You are not authorised to assign the '#{role}' role"] }, status: :forbidden
-            return false
+          # Global Superusers may assign any protected role
+          next if User.current.global_superuser?
+
+          # Plain Superusers may assign any protected role except Global Superuser
+          if User.current.is_superuser?
+            next unless GLOBAL_ONLY_ROLES.any? { |gr| gr.casecmp(role.to_s).zero? }
           end
+
+          render json: { errors: ["You are not authorised to assign the '#{role}' role"] }, status: :forbidden
+          return false
         end
 
         true

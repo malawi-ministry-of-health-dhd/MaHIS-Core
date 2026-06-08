@@ -6,40 +6,33 @@ module Sync
 
     DB_NAME = 'global_properties'
 
-    def perform(_batch_size = nil)
+    def perform(batch_size = DEFAULT_BULK_BATCH_SIZE)
       return unless couchdb_configured?
 
-      ensure_database_exists(DB_NAME)
-
-      rows = GlobalProperty.all.map { |gp| prepare_document(gp) }
-
-      return Sidekiq.logger.info('GlobalPropertySyncJob: no records to sync') if rows.empty?
-
-      result = bulk_sync_to_couchdb(rows, DB_NAME)
-
-      if result[:errors].any?
-        Sidekiq.logger.error("GlobalPropertySyncJob: #{result[:errors].length} errors")
-        result[:errors].first(5).each { |e| Sidekiq.logger.error("  #{e}") }
-      else
-        Sidekiq.logger.info("GlobalPropertySyncJob: synced #{rows.size} global properties")
-      end
+      documents = GlobalProperty.all.map { |gp| build_document(gp) }
+      sync_array_to_couchdb(documents, DB_NAME, 'global_property', batch_size)
     end
 
     private
 
-    def prepare_document(gp)
+    # The array helper passes already-built documents straight through.
+    def prepare_document(document)
+      document
+    end
+
+    def generate_document_id(document)
+      document['_id']
+    end
+
+    def build_document(gp)
       {
-        '_id'            => generate_document_id(gp),
+        '_id'            => "global_property_#{gp.uuid}",
         'property'       => gp.property.to_s,
         'property_value' => gp.property_value,
         'description'    => gp.description,
         'location_id'    => gp.location_id,
         'uuid'           => gp.uuid
       }
-    end
-
-    def generate_document_id(gp)
-      "global_property_#{gp.uuid}"
     end
   end
 end
