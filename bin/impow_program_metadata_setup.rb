@@ -561,6 +561,42 @@ def create_nutrition_concepts
     puts "\n16. Creating Appetite test concept..."
     create_coded_concept_with_answers('Appetite test', 'Test', [])
 
+    # Create Fail concept (Misc, N/A)
+    puts "\n17. Creating Fail concept..."
+    fail_concept = create_concept('Fail', datatype_id: 4, concept_class_id: 11, is_set: false)
+    exists = ConceptName.where(concept_id: fail_concept.id, name: 'Fail', concept_name_type: 'FULLY_SPECIFIED').exists?
+    create_concept_name(fail_concept, 'Fail', type: 'FULLY_SPECIFIED') unless exists
+
+    # Create Groin concept (Misc, N/A)
+    puts "\n18. Creating Groin concept..."
+    groin_concept = create_concept('Groin', datatype_id: 4, concept_class_id: 11, is_set: false)
+    exists = ConceptName.where(concept_id: groin_concept.id, name: 'Groin', concept_name_type: 'FULLY_SPECIFIED').exists?
+    create_concept_name(groin_concept, 'Groin', type: 'FULLY_SPECIFIED') unless exists
+
+    # Create Pass concept (Misc, N/A)
+    puts "\n19. Creating Pass concept..."
+    pass_concept = create_concept('Pass', datatype_id: 4, concept_class_id: 11, is_set: false)
+    exists = ConceptName.where(concept_id: pass_concept.id, name: 'Pass', concept_name_type: 'FULLY_SPECIFIED').exists?
+    create_concept_name(pass_concept, 'Pass', type: 'FULLY_SPECIFIED') unless exists
+
+    # Create Raw concept (Misc, N/A)
+    puts "\n20. Creating Raw concept..."
+    raw_concept = create_concept('Raw', datatype_id: 4, concept_class_id: 11, is_set: false)
+    exists = ConceptName.where(concept_id: raw_concept.id, name: 'Raw', concept_name_type: 'FULLY_SPECIFIED').exists?
+    create_concept_name(raw_concept, 'Raw', type: 'FULLY_SPECIFIED') unless exists
+
+    # Create Sore concept (Misc, N/A)
+    puts "\n21. Creating Sore concept..."
+    sore_concept = create_concept('Sore', datatype_id: 4, concept_class_id: 11, is_set: false)
+    exists = ConceptName.where(concept_id: sore_concept.id, name: 'Sore', concept_name_type: 'FULLY_SPECIFIED').exists?
+    create_concept_name(sore_concept, 'Sore', type: 'FULLY_SPECIFIED') unless exists
+
+    # Create Ulcers/Abscesses concept (Misc, N/A)
+    puts "\n22. Creating Ulcers/Abscesses concept..."
+    ulcers_concept = create_concept('Ulcers/Abscesses', datatype_id: 4, concept_class_id: 11, is_set: false)
+    exists = ConceptName.where(concept_id: ulcers_concept.id, name: 'Ulcers/Abscesses', concept_name_type: 'FULLY_SPECIFIED').exists?
+    create_concept_name(ulcers_concept, 'Ulcers/Abscesses', type: 'FULLY_SPECIFIED') unless exists
+
     puts "\n" + '=' * 80
     puts 'Successfully created nutrition concepts!'
     puts '=' * 80
