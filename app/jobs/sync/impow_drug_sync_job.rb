@@ -126,6 +126,7 @@ module Sync
       {
         'concept_id' => concept&.concept_id,
         'drug_id' => drug&.drug_id,
+        'drug_name' => drug&.name,
         'concept_name' => 'Ready-to-Use Supplementary Food (RUSF)',
         'concept_set' => 'Supplementary Feeding Services',
         'units' => 'Sachets',
@@ -141,6 +142,7 @@ module Sync
       {
         'concept_id' => concept&.concept_id,
         'drug_id' => drug&.drug_id,
+        'drug_name' => drug&.name,
         'concept_name' => 'Corn Soy Blend Plus (CSB+)',
         'concept_set' => 'Supplementary Feeding Services',
         'units' => 'g',
@@ -156,6 +158,7 @@ module Sync
       {
         'concept_id' => concept&.concept_id,
         'drug_id' => drug&.drug_id,
+        'drug_name' => drug&.name,
         'concept_name' => 'Corn Soy Blend Plus Plus (CSB++)',
         'concept_set' => 'Supplementary Feeding Services',
         'units' => 'g',
@@ -193,6 +196,7 @@ module Sync
       {
         'concept_id' => concept&.concept_id,
         'drug_id' => drug&.drug_id,
+        'drug_name' => drug&.name,
         'concept_name' => 'Ready-to-Use Therapeutic Food (RUTF)',
         'concept_set' => 'Outpatient Therapeutic Services',
         'units' => 'Sachets',
@@ -220,6 +224,7 @@ module Sync
       {
         'concept_id' => concept&.concept_id,
         'drug_id' => drug&.drug_id,
+        'drug_name' => drug&.name,
         'concept_name' => 'Amoxicillin',
         'concept_set' => 'Outpatient Therapeutic Services',
         'route' => 'Oral',
@@ -271,6 +276,7 @@ module Sync
           'albendazole' => {
             'concept_id' => albendazole_concept&.concept_id,
             'drug_id' => albendazole_drug&.drug_id,
+            'drug_name' => albendazole_drug&.name,
             'concept_name' => 'Albendazole',
             'strength_mg' => 400,
             'age_bands' => format_deworming_age_bands(:albendazole)
@@ -278,6 +284,7 @@ module Sync
           'mebendazole' => {
             'concept_id' => mebendazole_concept&.concept_id,
             'drug_id' => mebendazole_drug&.drug_id,
+            'drug_name' => mebendazole_drug&.name,
             'concept_name' => 'Mebendazole',
             'strength_mg' => 500,
             'age_bands' => format_deworming_age_bands(:mebendazole)
@@ -328,6 +335,7 @@ module Sync
       {
         'concept_id' => concept&.concept_id,
         'drug_id' => drug&.drug_id,
+        'drug_name' => drug&.name,
         'concept_name' => 'Vitamin A',
         'concept_set' => 'Outpatient Therapeutic Services',
         'route' => 'Oral',
@@ -354,8 +362,7 @@ module Sync
 
       {
         'concept_id' => concept&.concept_id,
-        'drug_id' => drug&.drug_id,
-        'concept_name' => 'Measles-Rubella Vaccine',
+        'drug_id' => drug&.drug_id, 'drug_name' => drug&.name, 'concept_name' => 'Measles-Rubella Vaccine',
         'concept_set' => 'Outpatient Therapeutic Services',
         'route' => 'Injection',
         'dosage_form' => 'Vaccine',
@@ -392,6 +399,7 @@ module Sync
       {
         'concept_id' => concept&.concept_id,
         'drug_id' => drug&.drug_id,
+        'drug_name' => drug&.name,
         'concept_name' => 'F-75 Therapeutic Milk (F75)',
         'concept_set' => 'Inpatient Therapeutic Service',
         'units' => 'g',
@@ -408,6 +416,7 @@ module Sync
       {
         'concept_id' => concept&.concept_id,
         'drug_id' => drug&.drug_id,
+        'drug_name' => drug&.name,
         'concept_name' => 'F-100 Therapeutic Milk (F100)',
         'concept_set' => 'Inpatient Therapeutic Service',
         'units' => 'g',
@@ -424,6 +433,7 @@ module Sync
       {
         'concept_id' => concept&.concept_id,
         'drug_id' => drug&.drug_id,
+        'drug_name' => drug&.name,
         'concept_name' => 'Ready-to-Use Therapeutic Food (RUTF)',
         'concept_set' => 'Inpatient Therapeutic Service',
         'units' => 'Sachets',
