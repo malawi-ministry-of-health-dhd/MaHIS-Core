@@ -120,50 +120,41 @@ module Sync
     end
 
     def rusf_sfp_section
-      concept = ConceptName.find_by(name: 'Ready-to-Use Supplementary Food (RUSF)')
-      drug = Drug.find_by(concept_id: concept&.concept_id) if concept
+      concept_name = 'Ready-to-Use Supplementary Food (RUSF)'
+      concept = ConceptName.find_by(name: concept_name)
+      drugs = get_drugs_by_concept_name(concept_name)
 
       {
         'concept_id' => concept&.concept_id,
-        'drug_id' => drug&.drug_id,
-        'drug_name' => drug&.name,
-        'concept_name' => 'Ready-to-Use Supplementary Food (RUSF)',
+        'concept_name' => concept_name,
         'concept_set' => 'Supplementary Feeding Services',
-        'units' => 'Sachets',
-        'route' => 'Oral',
-        'dosage_form' => 'Sachet'
+        'drugs' => drugs
       }
     end
 
     def csb_plus_section
-      concept = ConceptName.find_by(name: 'Corn Soy Blend Plus (CSB+)')
-      drug = Drug.find_by(concept_id: concept&.concept_id) if concept
+      concept_name = 'Corn Soy Blend Plus (CSB+)'
+      concept = ConceptName.find_by(name: concept_name)
+      drugs = get_drugs_by_concept_name(concept_name)
 
       {
         'concept_id' => concept&.concept_id,
-        'drug_id' => drug&.drug_id,
-        'drug_name' => drug&.name,
-        'concept_name' => 'Corn Soy Blend Plus (CSB+)',
+        'concept_name' => concept_name,
         'concept_set' => 'Supplementary Feeding Services',
-        'units' => 'g',
-        'route' => 'Oral',
-        'dosage_form' => 'Powder'
+        'drugs' => drugs
       }
     end
 
     def csb_plus_plus_section
-      concept = ConceptName.find_by(name: 'Corn Soy Blend Plus Plus (CSB++)')
-      drug = Drug.find_by(concept_id: concept&.concept_id) if concept
+      concept_name = 'Corn Soy Blend Plus Plus (CSB++)'
+      concept = ConceptName.find_by(name: concept_name)
+      drugs = get_drugs_by_concept_name(concept_name)
 
       {
         'concept_id' => concept&.concept_id,
-        'drug_id' => drug&.drug_id,
-        'drug_name' => drug&.name,
-        'concept_name' => 'Corn Soy Blend Plus Plus (CSB++)',
+        'concept_name' => concept_name,
         'concept_set' => 'Supplementary Feeding Services',
-        'units' => 'g',
-        'route' => 'Oral',
-        'dosage_form' => 'Powder'
+        'drugs' => drugs
       }
     end
 
@@ -187,21 +178,56 @@ module Sync
       }
     end
 
+    # Helper method to get all drugs for a concept by concept name
+    # Returns array of drug hashes with drug_id, drug_name, and strength
+    def get_drugs_by_concept_name(concept_name)
+      concept = ConceptName.find_by(name: concept_name)
+      return [] unless concept
+
+      Drug.where(concept_id: concept.concept_id).map do |drug|
+        {
+          'drug_id' => drug.drug_id,
+          'drug_name' => drug.name,
+          'strength' => extract_strength(drug.name),
+          'units' => drug.units,
+          'dosage_form' => get_dosage_form_name(drug.dosage_form),
+          'route' => get_route_name(drug.route)
+        }
+      end
+    end
+
+    # Helper method to get dosage form name from concept_id
+    def get_dosage_form_name(dosage_form_concept_id)
+      return nil unless dosage_form_concept_id
+
+      ConceptName.find_by(concept_id: dosage_form_concept_id)&.name
+    end
+
+    # Helper method to get route name from concept_id
+    def get_route_name(route_concept_id)
+      return nil unless route_concept_id
+
+      ConceptName.find_by(concept_id: route_concept_id)&.name
+    end
+
+    # Extract strength from drug name (e.g., "Amoxicillin (500mg tablet)" -> "500mg")
+    def extract_strength(drug_name)
+      match = drug_name.match(/\((\d+\s*(?:mg|g|mcg|IU|iu)).*?\)/i)
+      match ? match[1] : nil
+    end
+
     # ---- RUTF ----------------------------------------------------------
 
     def rutf_section
-      concept = ConceptName.find_by(name: 'Ready-to-Use Therapeutic Food (RUTF)')
-      drug = Drug.find_by(concept_id: concept&.concept_id) if concept
+      concept_name = 'Ready-to-Use Therapeutic Food (RUTF)'
+      concept = ConceptName.find_by(name: concept_name)
+      drugs = get_drugs_by_concept_name(concept_name)
 
       {
         'concept_id' => concept&.concept_id,
-        'drug_id' => drug&.drug_id,
-        'drug_name' => drug&.name,
-        'concept_name' => 'Ready-to-Use Therapeutic Food (RUTF)',
+        'concept_name' => concept_name,
         'concept_set' => 'Outpatient Therapeutic Services',
-        'units' => 'Sachets',
-        'route' => 'Oral',
-        'dosage_form' => 'Sachet',
+        'drugs' => drugs,
         'dose_basis' => '165 kcal/kg/day',
         'note' => 'Dose given per day and per week based on weight band',
         'weight_bands' => Impow::OtsDrugDosageService.all_rutf_weight_bands.map do |band|
@@ -218,18 +244,15 @@ module Sync
     # ---- Amoxicillin ---------------------------------------------------
 
     def amoxicillin_section
-      concept = ConceptName.find_by(name: 'Amoxicillin')
-      drug = Drug.find_by(concept_id: concept&.concept_id) if concept
+      concept_name = 'Amoxicillin'
+      concept = ConceptName.find_by(name: concept_name)
+      drugs = get_drugs_by_concept_name(concept_name)
 
       {
         'concept_id' => concept&.concept_id,
-        'drug_id' => drug&.drug_id,
-        'drug_name' => drug&.name,
-        'concept_name' => 'Amoxicillin',
+        'concept_name' => concept_name,
         'concept_set' => 'Outpatient Therapeutic Services',
-        'route' => 'Oral',
-        'dosage_form' => 'Tablet',
-        'units' => 'tabs',
+        'drugs' => drugs,
         'dose_range_mg_per_kg_per_day' => '25-50',
         'frequency' => 'twice daily',
         'duration_days' => 7,
@@ -251,7 +274,7 @@ module Sync
             'max_kg' => band[:max] == Float::INFINITY ? nil : band[:max],
             'dose_mg' => band[:dose_mg],
             'frequency' => 'twice daily',
-            'drug_name' => band[:drug_name]
+            'recommended_drug_name' => band[:drug_name]
           }
         end
       }
@@ -260,32 +283,31 @@ module Sync
     # ---- Deworming -----------------------------------------------------
 
     def deworming_section
-      albendazole_concept = ConceptName.find_by(name: 'Albendazole')
-      albendazole_drug = Drug.find_by(concept_id: albendazole_concept&.concept_id) if albendazole_concept
+      albendazole_concept_name = 'Albendazole'
+      mebendazole_concept_name = 'Mebendazole'
 
-      mebendazole_concept = ConceptName.find_by(name: 'Mebendazole')
-      mebendazole_drug = Drug.find_by(concept_id: mebendazole_concept&.concept_id) if mebendazole_concept
+      albendazole_concept = ConceptName.find_by(name: albendazole_concept_name)
+      albendazole_drugs = get_drugs_by_concept_name(albendazole_concept_name)
+
+      mebendazole_concept = ConceptName.find_by(name: mebendazole_concept_name)
+      mebendazole_drugs = get_drugs_by_concept_name(mebendazole_concept_name)
 
       {
         'concept_set' => 'Outpatient Therapeutic Services',
         'when_given' => '1 dose at enrollment — all patients',
-        'route' => 'Oral',
-        'dosage_form' => 'Tablet',
         'note' => 'Either Albendazole OR Mebendazole is given, not both',
         'drugs' => {
           'albendazole' => {
             'concept_id' => albendazole_concept&.concept_id,
-            'drug_id' => albendazole_drug&.drug_id,
-            'drug_name' => albendazole_drug&.name,
-            'concept_name' => 'Albendazole',
+            'concept_name' => albendazole_concept_name,
+            'drugs' => albendazole_drugs,
             'strength_mg' => 400,
             'age_bands' => format_deworming_age_bands(:albendazole)
           },
           'mebendazole' => {
             'concept_id' => mebendazole_concept&.concept_id,
-            'drug_id' => mebendazole_drug&.drug_id,
-            'drug_name' => mebendazole_drug&.name,
-            'concept_name' => 'Mebendazole',
+            'concept_name' => mebendazole_concept_name,
+            'drugs' => mebendazole_drugs,
             'strength_mg' => 500,
             'age_bands' => format_deworming_age_bands(:mebendazole)
           }
@@ -329,15 +351,15 @@ module Sync
     # ---- Vitamin A -----------------------------------------------------
 
     def vitamin_a_section
-      concept = ConceptName.find_by(name: 'Vitamin A')
-      drug = Drug.find_by(concept_id: concept&.concept_id) if concept
+      concept_name = 'Vitamin A'
+      concept = ConceptName.find_by(name: concept_name)
+      drugs = get_drugs_by_concept_name(concept_name)
 
       {
         'concept_id' => concept&.concept_id,
-        'drug_id' => drug&.drug_id,
-        'drug_name' => drug&.name,
-        'concept_name' => 'Vitamin A',
+        'concept_name' => concept_name,
         'concept_set' => 'Outpatient Therapeutic Services',
+        'drugs' => drugs,
         'route' => 'Oral',
         'dosage_form' => 'Capsule',
         'units' => 'IU',
@@ -357,15 +379,15 @@ module Sync
     # ---- Measles-Rubella -----------------------------------------------
 
     def measles_rubella_section
-      concept = ConceptName.find_by(name: 'Measles-Rubella Vaccine')
-      drug = Drug.find_by(concept_id: concept&.concept_id) if concept
+      concept_name = 'Measles-Rubella Vaccine'
+      concept = ConceptName.find_by(name: concept_name)
+      drugs = get_drugs_by_concept_name(concept_name)
 
       {
         'concept_id' => concept&.concept_id,
-        'drug_id' => drug&.drug_id, 'drug_name' => drug&.name, 'concept_name' => 'Measles-Rubella Vaccine',
+        'concept_name' => concept_name,
         'concept_set' => 'Outpatient Therapeutic Services',
-        'route' => 'Injection',
-        'dosage_form' => 'Vaccine',
+        'drugs' => drugs,
         'dose' => 1,
         'dose_unit' => 'dose',
         'when_given' => '4th week (4th visit)',
@@ -393,52 +415,67 @@ module Sync
     end
 
     def f75_section
-      concept = ConceptName.find_by(name: 'Therapeutic Milk')
+      concept_name = 'Therapeutic Milk'
+      concept = ConceptName.find_by(name: concept_name)
+      # F-75 is a specific drug name, not just any drug with this concept
       drug = Drug.find_by(name: 'F-75 Therapeutic Milk (F75)')
 
       {
         'concept_id' => concept&.concept_id,
-        'drug_id' => drug&.drug_id,
-        'drug_name' => drug&.name,
         'concept_name' => 'F-75 Therapeutic Milk (F75)',
         'concept_set' => 'Inpatient Therapeutic Service',
-        'units' => 'g',
-        'route' => 'Oral',
-        'dosage_form' => 'Powder',
+        'drugs' => if drug
+                     [{
+                       'drug_id' => drug.drug_id,
+                       'drug_name' => drug.name,
+                       'strength' => extract_strength(drug.name),
+                       'units' => drug.units,
+                       'dosage_form' => get_dosage_form_name(drug.dosage_form),
+                       'route' => get_route_name(drug.route)
+                     }]
+                   else
+                     []
+                   end,
         'description' => 'Low protein therapeutic milk for initial stabilization phase'
       }
     end
 
     def f100_section
-      concept = ConceptName.find_by(name: 'Therapeutic Milk')
+      concept_name = 'Therapeutic Milk'
+      concept = ConceptName.find_by(name: concept_name)
+      # F-100 is a specific drug name, not just any drug with this concept
       drug = Drug.find_by(name: 'F-100 Therapeutic Milk (F100)')
 
       {
         'concept_id' => concept&.concept_id,
-        'drug_id' => drug&.drug_id,
-        'drug_name' => drug&.name,
         'concept_name' => 'F-100 Therapeutic Milk (F100)',
         'concept_set' => 'Inpatient Therapeutic Service',
-        'units' => 'g',
-        'route' => 'Oral',
-        'dosage_form' => 'Powder',
+        'drugs' => if drug
+                     [{
+                       'drug_id' => drug.drug_id,
+                       'drug_name' => drug.name,
+                       'strength' => extract_strength(drug.name),
+                       'units' => drug.units,
+                       'dosage_form' => get_dosage_form_name(drug.dosage_form),
+                       'route' => get_route_name(drug.route)
+                     }]
+                   else
+                     []
+                   end,
         'description' => 'High protein therapeutic milk for transition and rehabilitation phase'
       }
     end
 
     def rutf_nru_section
-      concept = ConceptName.find_by(name: 'Ready-to-Use Therapeutic Food (RUTF)')
-      drug = Drug.find_by(concept_id: concept&.concept_id) if concept
+      concept_name = 'Ready-to-Use Therapeutic Food (RUTF)'
+      concept = ConceptName.find_by(name: concept_name)
+      drugs = get_drugs_by_concept_name(concept_name)
 
       {
         'concept_id' => concept&.concept_id,
-        'drug_id' => drug&.drug_id,
-        'drug_name' => drug&.name,
-        'concept_name' => 'Ready-to-Use Therapeutic Food (RUTF)',
+        'concept_name' => concept_name,
         'concept_set' => 'Inpatient Therapeutic Service',
-        'units' => 'Sachets',
-        'route' => 'Oral',
-        'dosage_form' => 'Sachet',
+        'drugs' => drugs,
         'description' => 'Used during rehabilitation phase in NRU'
       }
     end
