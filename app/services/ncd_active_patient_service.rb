@@ -19,6 +19,12 @@ class NcdActivePatientService
     # Format results
     formatted_results = format_patient_results(raw_results)
 
+    Rails.logger.info "[NcdActivePatientService LOG] filters: #{filters}"
+    Rails.logger.info "[NcdActivePatientService LOG] count_sql: #{count_sql}"
+    Rails.logger.info "[NcdActivePatientService LOG] total_count: #{total_count}"
+    Rails.logger.info "[NcdActivePatientService LOG] data_sql: #{data_sql}"
+    Rails.logger.info "[NcdActivePatientService LOG] returned patient IDs: #{formatted_results.map { |r| r[:patient_id] }}"
+
     {
       count: total_count,
       results: formatted_results

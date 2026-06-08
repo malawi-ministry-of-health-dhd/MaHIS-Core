@@ -222,7 +222,10 @@ module NcdService
           WHERE o.voided = 0
           AND do.quantity <= 0
         SQL
-        ActiveRecord::Base.connection.select_value(sql).to_i
+        count = ActiveRecord::Base.connection.select_value(sql).to_i
+        Rails.logger.info "[NcdDashboard LOG] count_pending_dispensations query: #{sql}"
+        Rails.logger.info "[NcdDashboard LOG] count_pending_dispensations count: #{count}"
+        count
       end
 
       def pending_ncd_data
