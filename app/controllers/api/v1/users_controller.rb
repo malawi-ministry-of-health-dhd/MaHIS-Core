@@ -235,7 +235,7 @@ module Api
       end
 
       def extra_security_login_enabled?(user)
-        property = UserProperty.find_by(user_id: user.id, property: 'extra_security_login')
+        property = UserProperty.find_by(user_id: user.user_id, property: 'extra_security_login')
         property&.property_value&.downcase == 'true'
       end
 

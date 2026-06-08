@@ -7,13 +7,13 @@ module Api
 
       def register
         session_token, credential = params.require(%i[session_token credential])
-        passkey = PasskeyAuthenticationService.register(
+        user = PasskeyAuthenticationService.register(
           session_token:,
           credential: credential.to_unsafe_h,
           nickname: params[:nickname]
         )
 
-        render json: login_response(passkey.user, UserService.new_authentication_token(passkey.user)), status: :ok
+        render json: login_response(user, UserService.new_authentication_token(user)), status: :ok
       rescue ActiveRecord::RecordNotFound, WebAuthn::Error => e
         render json: { errors: [e.message] }, status: :unauthorized
       end
