@@ -601,6 +601,18 @@ def create_nutrition_concepts
     puts "\n23. Creating Cured concept..."
     create_text_concept('Cured', 'Finding')
 
+    # Create Feet concept (Misc, N/A)
+    puts "\n24. Creating Feet concept..."
+    feet_concept = create_concept('Feet', datatype_id: 4, concept_class_id: 11, is_set: false)
+    exists = ConceptName.where(concept_id: feet_concept.id, name: 'Feet', concept_name_type: 'FULLY_SPECIFIED').exists?
+    create_concept_name(feet_concept, 'Feet', type: 'FULLY_SPECIFIED') unless exists
+
+    # Create Exposed concept (Misc, N/A)
+    puts "\n25. Creating Exposed concept..."
+    exposed_concept = create_concept('Exposed', datatype_id: 4, concept_class_id: 11, is_set: false)
+    exists = ConceptName.where(concept_id: exposed_concept.id, name: 'Exposed', concept_name_type: 'FULLY_SPECIFIED').exists?
+    create_concept_name(exposed_concept, 'Exposed', type: 'FULLY_SPECIFIED') unless exists
+
     puts "\n" + '=' * 80
     puts 'Successfully created nutrition concepts!'
     puts '=' * 80
