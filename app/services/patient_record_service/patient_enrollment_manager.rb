@@ -105,13 +105,15 @@ module PatientRecordService
         Rails.logger.info("Created state '#{state_name}' for patient_program #{patient_program.patient_program_id}")
       end
     rescue StandardError => e
-      Rails.logger.error("Failed to process patient states for patient_program #{patient_program&.patient_program_id}: #{e.message}")
+      Rails.logger.error("Failed to process patient states for patient_program #{patient_program&.patient_program_id}: #{e.message}\n#{e.backtrace&.first(5)&.join("\n")}")
+      raise
     end
 
     def close_current_state(patient_program, end_date)
       current_state = PatientState.where(patient_program: patient_program, end_date: nil)
                                   .where('start_date <= ?', end_date)
-                                  .last
+                                  .order(start_date: :desc)
+                                  .first
       return unless current_state
 
       current_state.update!(end_date: end_date)
