@@ -597,6 +597,10 @@ def create_nutrition_concepts
     exists = ConceptName.where(concept_id: ulcers_concept.id, name: 'Ulcers/Abscesses', concept_name_type: 'FULLY_SPECIFIED').exists?
     create_concept_name(ulcers_concept, 'Ulcers/Abscesses', type: 'FULLY_SPECIFIED') unless exists
 
+    # Create Cured concept (Text, Finding)
+    puts "\n23. Creating Cured concept..."
+    create_text_concept('Cured', 'Finding')
+
     puts "\n" + '=' * 80
     puts 'Successfully created nutrition concepts!'
     puts '=' * 80
