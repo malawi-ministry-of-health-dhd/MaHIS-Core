@@ -157,6 +157,7 @@ ActiveRecord::Base.establish_connection(
 )
 puts "✓ Connection pool configured: #{pool_size} connections, #{optimal_thread_count} threads"
 SITE_ID = get_validated_location_id(source_db)
+DEST_DB = ActiveRecord::Base.connection.current_database
 SITE_USER_MAPPING = Rails.root.join('log', "users_mapping_#{SITE_ID}.json")
 File.write(SITE_USER_MAPPING, '{}') unless File.exist?(SITE_USER_MAPPING)
 
@@ -382,7 +383,7 @@ end
 #   - This table records the highest SOURCE obs_id successfully batch-committed for this site.
 def ensure_migration_progress_table
   ActiveRecord::Base.connection.execute(<<~SQL)
-    CREATE TABLE IF NOT EXISTS harmonized.migration_progress (
+    CREATE TABLE IF NOT EXISTS #{DEST_DB}.migration_progress (
       table_name  VARCHAR(64)  NOT NULL,
       last_source_id  BIGINT   NOT NULL DEFAULT 0,
       updated_at  TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -438,7 +439,7 @@ def create_hiv_encounter_ids_cache(source_db)
 
   # Check if the cache table already exists and is populated — skip expensive rebuild on restart.
   existing_count = begin
-    conn.select_value('SELECT COUNT(*) FROM harmonized.hiv_enc_ids_cache').to_i
+    conn.select_value("SELECT COUNT(*) FROM #{DEST_DB}.hiv_enc_ids_cache").to_i
   rescue StandardError
     0
   end
@@ -458,18 +459,18 @@ def create_hiv_encounter_ids_cache(source_db)
 
   puts "\n🔧 Building HIV encounter IDs cache table (#{existing_count} existing vs #{source_count} source)..."
   start = Time.now
-  conn.execute('DROP TABLE IF EXISTS harmonized.hiv_enc_ids_cache')
+  conn.execute("DROP TABLE IF EXISTS #{DEST_DB}.hiv_enc_ids_cache")
   conn.execute(<<~SQL)
-    CREATE TABLE harmonized.hiv_enc_ids_cache (
+    CREATE TABLE #{DEST_DB}.hiv_enc_ids_cache (
       encounter_id INT NOT NULL,
       PRIMARY KEY (encounter_id)
     ) ENGINE=InnoDB ROW_FORMAT=COMPRESSED
   SQL
   conn.execute(<<~SQL)
-    INSERT INTO harmonized.hiv_enc_ids_cache (encounter_id)
+    INSERT INTO #{DEST_DB}.hiv_enc_ids_cache (encounter_id)
     SELECT DISTINCT encounter_id FROM #{source_db}.encounter WHERE program_id = #{HIV_PROGRAM_ID} OR program_id IS NULL
   SQL
-  count = conn.select_value('SELECT COUNT(*) FROM harmonized.hiv_enc_ids_cache').to_i
+  count = conn.select_value("SELECT COUNT(*) FROM #{DEST_DB}.hiv_enc_ids_cache").to_i
   puts "✅ HIV encounter IDs cache ready: #{count} IDs (#{(Time.now - start).round(1)}s)"
 rescue StandardError => e
   puts "⚠️  Could not create hiv_enc_ids_cache: #{e.message} — falling back to inline subquery"
@@ -488,22 +489,22 @@ def build_obs_pending_table(source_db)
   puts "\n🔧 Building obs_pending table (UUID diff: source HIV obs vs target obs)..."
   start = Time.now
 
-  conn.execute('DROP TABLE IF EXISTS harmonized.obs_pending')
+  conn.execute("DROP TABLE IF EXISTS #{DEST_DB}.obs_pending")
   conn.execute(<<~SQL)
-    CREATE TABLE harmonized.obs_pending (
+    CREATE TABLE #{DEST_DB}.obs_pending (
       obs_id INT NOT NULL,
       PRIMARY KEY (obs_id)
     ) ENGINE=InnoDB
   SQL
   conn.execute(<<~SQL)
-    INSERT INTO harmonized.obs_pending (obs_id)
+    INSERT INTO #{DEST_DB}.obs_pending (obs_id)
     SELECT o.obs_id
     FROM #{source_db}.obs o
-    INNER JOIN harmonized.hiv_enc_ids_cache h ON h.encounter_id = o.encounter_id
-    LEFT JOIN harmonized.obs t ON t.uuid = o.uuid
+    INNER JOIN #{DEST_DB}.hiv_enc_ids_cache h ON h.encounter_id = o.encounter_id
+    LEFT JOIN #{DEST_DB}.obs t ON t.uuid = o.uuid
     WHERE t.obs_id IS NULL
   SQL
-  count = conn.select_value('SELECT COUNT(*) FROM harmonized.obs_pending').to_i
+  count = conn.select_value("SELECT COUNT(*) FROM #{DEST_DB}.obs_pending").to_i
   puts "✅ obs_pending ready: #{count} obs still to migrate (#{(Time.now - start).round(1)}s)"
   count
 rescue StandardError => e
@@ -532,9 +533,9 @@ def build_hiv_filter_clause(table_name, source_db)
     nil
   when 'orders', 'obs'
     # Use pre-built cache table (O(index_lookup)) instead of inline subquery (O(11M rows * n_batches))
-    'encounter_id IN (SELECT encounter_id FROM harmonized.hiv_enc_ids_cache)'
+    "encounter_id IN (SELECT encounter_id FROM #{DEST_DB}.hiv_enc_ids_cache)"
   when 'drug_order'
-    "order_id IN (SELECT o.order_id FROM #{source_db}.orders o JOIN harmonized.hiv_enc_ids_cache h ON h.encounter_id = o.encounter_id)"
+    "order_id IN (SELECT o.order_id FROM #{source_db}.orders o JOIN #{DEST_DB}.hiv_enc_ids_cache h ON h.encounter_id = o.encounter_id)"
   end
 end
 
@@ -1003,14 +1004,14 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
   if table_name_str == 'obs'
     pending_exists = begin
       ActiveRecord::Base.connection.select_value(
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='harmonized' AND table_name='obs_pending'"
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='#{DEST_DB}' AND table_name='obs_pending'"
       ).to_i > 0
     rescue StandardError; false
     end
 
     if pending_exists
       pending_min, pending_max, pending_count = ActiveRecord::Base.connection.select_one(
-        'SELECT MIN(obs_id), MAX(obs_id), COUNT(*) FROM harmonized.obs_pending'
+        "SELECT MIN(obs_id), MAX(obs_id), COUNT(*) FROM #{DEST_DB}.obs_pending"
       ).values.map(&:to_i)
 
       if pending_count > 0
@@ -1063,7 +1064,7 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
                     if obs_pending_active
                       # Filter to only the obs_ids in obs_pending (UUID-verified missing records).
                       # obs_pending already incorporates the HIV filter, so no separate hiv_filter needed.
-                      where_clause = "#{column_name} IN (SELECT obs_id FROM harmonized.obs_pending WHERE obs_id >= #{batch_range.first} AND obs_id <= #{batch_range.last})"
+                      where_clause = "#{column_name} IN (SELECT obs_id FROM #{DEST_DB}.obs_pending WHERE obs_id >= #{batch_range.first} AND obs_id <= #{batch_range.last})"
                     else
                       # Standard range + HIV filter path (non-obs tables, or obs without pending table).
                       where_parts = ["#{column_name} >= #{batch_range.first} AND #{column_name} <= #{batch_range.last}"]
@@ -1086,7 +1087,7 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
           batch_end = batch_range.last
           begin
             ActiveRecord::Base.connection.execute(<<~SQL)
-              INSERT INTO harmonized.migration_progress (table_name, last_source_id)
+              INSERT INTO #{DEST_DB}.migration_progress (table_name, last_source_id)
               VALUES ('obs', #{batch_end})
               ON DUPLICATE KEY UPDATE last_source_id = GREATEST(last_source_id, VALUES(last_source_id))
             SQL
