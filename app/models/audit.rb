@@ -26,9 +26,11 @@ class Audit < ApplicationRecord
     when 'update'
       json.map { |key, value| { key => { previous: value[0], current: value[1] } } }
     when 'create'
-      json.map { |key, value| { key => { previous: nil, current: value } } }
+      json.reject { |_, value| value.nil? }
+          .map { |key, value| { key => { previous: nil, current: value } } }
     when 'destroy'
-      json.map { |key, value| { key => { previous: value, current: nil } } }
+      json.reject { |_, value| value.nil? }
+          .map { |key, value| { key => { previous: value, current: nil } } }
     else
       []
     end
