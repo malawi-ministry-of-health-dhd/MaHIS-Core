@@ -18,6 +18,13 @@ module Api
         render json: @audits
       end
 
+      def dates
+        audits = Audit.all
+        audits = audits.where(user_id: params[:user_id]) if params[:user_id]
+        dates = audits.distinct.pluck(Arel.sql("DATE(created_at)")).sort
+        render json: dates
+      end
+
       def filters
         params.permit %i[auditable_type audit_action user_id start_date end_date]
       end
