@@ -14,6 +14,12 @@ module ArtService
 
       attr_accessor :ws_name, :ws_location_id
 
+      # Public wrapper — called by ArtCohort#build_report after save_report so
+      # the frontend receives the completion broadcast only once data is persisted.
+      def broadcast_completion
+        broadcast_cohort_progress(11)
+      end
+
       def initialize(outcomes_definition: 'moh', keep_temp_tables: nil)
         unless %w[moh pepfar].include?(outcomes_definition.downcase)
           raise ArgumentError, "Invalid outcomes_definition `#{outcomes_definition}` expected moh or pepfar"
@@ -381,7 +387,8 @@ module ArtService
         time_ended = Time.now.strftime('%Y-%m-%d %H:%M:%S')
         puts "Started at: #{time_started}. Finished at: #{time_ended}. Total time in minutes: #{(Time.parse(time_ended) - Time.parse(time_started)) / 60}"
         Rails.logger.info "Started at: #{time_started}. Finished at: #{Time.now.strftime('%Y-%m-%d %H:%M:%S')}. Total time in minutes: #{(Time.parse(time_ended) - Time.parse(time_started)) / 60}"
-        broadcast_cohort_progress(11)
+        # Step 11 broadcast is fired by ArtCohort#build_report after save_report
+        # so the frontend only receives the completion signal once data is persisted.
         cohort_struct
       end
 
