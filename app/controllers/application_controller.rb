@@ -33,7 +33,9 @@ class ApplicationController < ActionController::API
   end
 
   def set_audited_user
-    Audited.store[:current_user] = User.current
+    # audited v5.8 calls .try!(:call) on whatever is stored here, so it must
+    # be a Proc — storing the User object directly raises NoMethodError.
+    Audited.store[:current_user] = -> { User.current }
   end
 
   def authenticate
