@@ -6,6 +6,8 @@ class UserRole < ApplicationRecord
 
   include Locatable
 
+  audited
+
   belongs_to :user, foreign_key: :user_id
   belongs_to :role, foreign_key: :role
 end

@@ -2,6 +2,8 @@ class Visit < ApplicationRecord
   self.table_name = 'visit'
   self.primary_key = 'visit_id'
 
+  audited
+
   belongs_to :patient, foreign_key: 'patient_id', primary_key: 'patient_id'
   belongs_to :visit_type, foreign_key: 'visit_type_id', primary_key: 'visit_type_id', optional: true
   belongs_to :location, foreign_key: 'location_id', primary_key: 'location_id', optional: true

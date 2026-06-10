@@ -6,6 +6,8 @@ class Drug < ActiveRecord::Base
   self.table_name = :drug
   self.primary_key = :drug_id
 
+  audited except: %i[retired retire_reason retired_by date_retired]
+
   default_scope { where(retired: 0) }
 
   belongs_to :concept
