@@ -155,6 +155,7 @@ Rails.application.routes.draw do
 
       resources :concepts, only: %i[index show]
 
+      get 'audits/dates' => 'audits#dates'
       resources :audits, only: %i[index]
 
       # OPD

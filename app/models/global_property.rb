@@ -5,4 +5,6 @@ class GlobalProperty < ApplicationRecord
   # self.primary_key = :property
 
   include Locatable
+
+  audited
 end
