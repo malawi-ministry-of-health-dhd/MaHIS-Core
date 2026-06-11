@@ -1,6 +1,14 @@
 namespace :sync do
   desc "Run all sync jobs in parallel"
   task all: :environment do
+    puts 'Checking CouchDB reference-data indexes...'
+    if CouchdbIndexMaintenance.ensure_reference_data!(logger: Rails.logger)
+      puts '✅ CouchDB reference-data indexes verified.'
+    else
+      puts '⚠️  Could not verify every CouchDB reference-data index. Check Rails logs for details.'
+    end
+    puts 'Patient record indexes will be verified after patient sync drains.'
+
     jobs = [
       Sync::BatchPatientSyncJob,
       Sync::FacilitySyncJob,

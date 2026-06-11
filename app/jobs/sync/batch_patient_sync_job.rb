@@ -21,7 +21,11 @@ module Sync
 
       total_patients, total_jobs = sync_patients_in_bulk(location_id, parsed_since_date, normalized_batch_size)
 
-      return if total_patients.zero?
+      if total_patients.zero?
+        Rails.logger.info('No patient records queued; scheduling patient search index verification')
+        EnsurePatientIndexesJob.perform_async
+        return
+      end
 
       # Initialise the progress bar for the patient load; the fan-out jobs each
       # report their share via SyncProgress.increment as they complete.
