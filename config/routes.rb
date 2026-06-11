@@ -47,6 +47,8 @@ Rails.application.routes.draw do
       resources :appointments
       resources :dispensations, only: %i[index create destroy]
       get '/check_username', to: 'users#check_username_exist'
+      post '/auth/passkeys/register', to: 'passkeys#register'
+      post '/auth/passkeys/authenticate', to: 'passkeys#authenticate'
       resources :users do
         post '/activate', to: 'users#activate'
         post '/deactivate', to: 'users#deactivate'
@@ -98,11 +100,11 @@ Rails.application.routes.draw do
         end
       end
       resources :privileges
-      resources :printer_configurations, only: [:index, :create, :destroy, :update]
+      resources :printer_configurations, only: %i[index create destroy update]
 
-      # Generate visit number 
+      # Generate visit number
       get '/generate_visit_number' => 'visits#generate_visit_number'
-      
+
       get '/find_relationships_with_details', to: 'person_relationships#find_relationships_with_details'
       # Patients
       get '/get_patient_record' => 'patients#get_patient_record'
@@ -164,14 +166,14 @@ Rails.application.routes.draw do
       # Totals
       get 'totals' => 'totals#index'
 
-      #fhir
+      # fhir
       get '/fhir/patients', to: 'fhir#patients'
       get '/fhir/mahis_update_status', to: 'fhir#mahis_update_status'
       post '/fhir/mahis_update_status/sync', to: 'fhir#sync_mahis_update_status'
       get '/fhir/patient/*id/observations', to: 'fhir#observations'
       get '/fhir/patient/*id', to: 'fhir#patient'
       post '/fhir/observations/mark_imported', to: 'fhir#mark_imported_observations'
-      
+
       # Locations
       resources :locations do
         get('/label', to: redirect do |params, _request|
@@ -528,7 +530,7 @@ Rails.application.routes.draw do
   get '/api/v1/neonatal/statistics', to: 'api/v1/neonatal#statistics'
   get '/api/v1/neonatal/visit_summary', to: 'api/v1/neonatal#visit_summary'
   get '/api/v1/neonatal/saved_encounters/:patient_id', to: 'api/v1/neonatal#saved_encounters'
-  
+
   # EIR
   get '/api/v1/eir/schedule', to: 'api/v1/vaccine_schedule#vaccine_schedule'
   get '/api/v1/eir/schedule/generic', to: 'api/v1/vaccine_schedule#generic_schedule'
@@ -546,7 +548,6 @@ Rails.application.routes.draw do
 
   get '/api/v1/check_patient_status/:patient_id', to: 'api/v1/visits#check_patient_status'
 
-
   get '/api/v1/facility_referrals', to: 'api/v1/facility_referrals#index'
 
   namespace :api do
@@ -554,7 +555,7 @@ Rails.application.routes.draw do
       resources :stages, only: %i[index show create update] do
         collection do
           get :active_stages
-          put "visit/:visit_id", action: :update_by_visit
+          put 'visit/:visit_id', action: :update_by_visit
         end
       end
     end
@@ -564,7 +565,6 @@ Rails.application.routes.draw do
   get '/api/v1/eir/session_schedule', to: 'api/v1/session_schedule#index'
   delete '/api/v1/eir/session_schedule', to: 'api/v1/session_schedule#destroy'
   put '/api/v1/eir/session_schedule/:id', to: 'api/v1/session_schedule#update'
-
 
   # facility
   namespace :api do

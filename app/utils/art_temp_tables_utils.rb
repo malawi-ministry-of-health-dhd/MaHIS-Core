@@ -56,17 +56,61 @@ module ArtTempTablesUtils
       temp_pregnant_obs, temp_patient_side_effects
     )
 
-    cols[temp_cohort_members]           == 0 ? create_temp_cohort_members_table      : (drop_temp_cohort_members_table      unless cols[temp_cohort_members]           == 12)
-    cols[temp_earliest_start_date]      == 0 ? create_tmp_patient_table              : (drop_tmp_patient_table              unless cols[temp_earliest_start_date]      == 11)
-    cols[temp_other_patient_types]      == 0 ? create_temp_other_patient_types       : (drop_temp_other_patient_types       unless cols[temp_other_patient_types]      == 1)
-    cols[temp_register_start_date]      == 0 ? create_temp_register_start_date_table : (drop_temp_register_start_date_table unless cols[temp_register_start_date]      == 2)
-    cols[temp_order_details]            == 0 ? create_temp_order_details             : (drop_temp_order_details             unless cols[temp_order_details]            == 2)
-    cols[temp_art_start_date]           == 0 ? create_art_start_date                 : (drop_art_start_date                 unless cols[temp_art_start_date]           == 2)
-    cols[temp_patient_tb_status]        == 0 ? create_temp_patient_tb_status         : (drop_temp_patient_tb_status         unless cols[temp_patient_tb_status]        == 2)
-    cols[temp_latest_tb_status]         == 0 ? create_temp_latest_tb_status          : (drop_temp_latest_tb_status          unless cols[temp_latest_tb_status]         == 2)
-    cols[tmp_max_adherence]             == 0 ? create_tmp_max_adherence              : (drop_tmp_max_adherence              unless cols[tmp_max_adherence]             == 2)
-    cols[temp_pregnant_obs]             == 0 ? create_temp_pregnant_obs              : (drop_temp_pregnant_obs              unless cols[temp_pregnant_obs]             == 3)
-    cols[temp_patient_side_effects]     == 0 ? create_temp_patient_side_effects      : (drop_temp_patient_side_effects      unless cols[temp_patient_side_effects]     == 2)
+    if cols[temp_cohort_members] == 0
+      create_temp_cohort_members_table
+    else
+      (drop_temp_cohort_members_table unless cols[temp_cohort_members] == 12)
+    end
+    if cols[temp_earliest_start_date] == 0
+      create_tmp_patient_table
+    else
+      (drop_tmp_patient_table unless cols[temp_earliest_start_date] == 11)
+    end
+    if cols[temp_other_patient_types] == 0
+      create_temp_other_patient_types
+    else
+      (drop_temp_other_patient_types unless cols[temp_other_patient_types] == 1)
+    end
+    if cols[temp_register_start_date] == 0
+      create_temp_register_start_date_table
+    else
+      (drop_temp_register_start_date_table unless cols[temp_register_start_date] == 2)
+    end
+    if cols[temp_order_details] == 0
+      create_temp_order_details
+    else
+      (drop_temp_order_details unless cols[temp_order_details] == 2)
+    end
+    if cols[temp_art_start_date] == 0
+      create_art_start_date
+    else
+      (drop_art_start_date unless cols[temp_art_start_date] == 2)
+    end
+    if cols[temp_patient_tb_status] == 0
+      create_temp_patient_tb_status
+    else
+      (drop_temp_patient_tb_status unless cols[temp_patient_tb_status] == 2)
+    end
+    if cols[temp_latest_tb_status] == 0
+      create_temp_latest_tb_status
+    else
+      (drop_temp_latest_tb_status unless cols[temp_latest_tb_status] == 2)
+    end
+    if cols[tmp_max_adherence] == 0
+      create_tmp_max_adherence
+    else
+      (drop_tmp_max_adherence unless cols[tmp_max_adherence] == 2)
+    end
+    if cols[temp_pregnant_obs] == 0
+      create_temp_pregnant_obs
+    else
+      (drop_temp_pregnant_obs unless cols[temp_pregnant_obs] == 3)
+    end
+    if cols[temp_patient_side_effects] == 0
+      create_temp_patient_side_effects
+    else
+      (drop_temp_patient_side_effects unless cols[temp_patient_side_effects] == 2)
+    end
 
     truncate_cohort_tables
   end
@@ -97,17 +141,29 @@ module ArtTempTablesUtils
       ]
       cols = batch_column_counts(*table_names)
 
-      cols[temp_patient_outcomes(start:)]      == 0 ? create_outcome_table(start:)                : (drop_temp_patient_outcome_table(start:)    unless cols[temp_patient_outcomes(start:)]      == 6)
-      cols[temp_max_drug_orders(start:)]       == 0 ? create_temp_max_drug_orders_table(start:)   : (drop_temp_max_drug_orders_table(start:)    unless cols[temp_max_drug_orders(start:)]       == 3)
-      cols[temp_min_auto_expire_date(start:)]  == 0 ? create_tmp_min_auto_expire_date(start:)     : (drop_tmp_min_auto_expirte_date(start:)     unless cols[temp_min_auto_expire_date(start:)]  == 5)
-      create_temp_max_patient_state(start:)   if cols[temp_max_patient_state(start:)]  == 0
+      if cols[temp_patient_outcomes(start:)] == 0
+        create_outcome_table(start:)
+      else
+        (drop_temp_patient_outcome_table(start:) unless cols[temp_patient_outcomes(start:)] == 6)
+      end
+      if cols[temp_max_drug_orders(start:)] == 0
+        create_temp_max_drug_orders_table(start:)
+      else
+        (drop_temp_max_drug_orders_table(start:) unless cols[temp_max_drug_orders(start:)] == 3)
+      end
+      if cols[temp_min_auto_expire_date(start:)] == 0
+        create_tmp_min_auto_expire_date(start:)
+      else
+        (drop_tmp_min_auto_expirte_date(start:) unless cols[temp_min_auto_expire_date(start:)] == 5)
+      end
+      create_temp_max_patient_state(start:) if cols[temp_max_patient_state(start:)] == 0
       # Use if/elsif so we never drop a table we just created in this same snapshot
       if cols[temp_current_state(start:)]      == 0
         create_temp_current_state(start:)
       elsif cols[temp_current_state(start:)]   != 6
         drop_temp_current_state(start:)
       end
-      create_temp_current_medication(start:)  if cols[temp_current_medication(start:)] == 0
+      create_temp_current_medication(start:) if cols[temp_current_medication(start:)] == 0
     end
   end
 
@@ -500,11 +556,16 @@ module ArtTempTablesUtils
   end
 
   def craete_tmp_current_med_index(start: false)
-    safe_create_index("CREATE INDEX #{temp_index_name('idx_cm_concept', start: start)} ON #{temp_current_medication(start: start)} (concept_id)")
-    safe_create_index("CREATE INDEX #{temp_index_name('idx_cm_drug', start: start)} ON #{temp_current_medication(start: start)} (drug_id)")
-    safe_create_index("CREATE INDEX #{temp_index_name('idx_cm_date', start: start)} ON #{temp_current_medication(start: start)} (start_date)")
-    safe_create_index("CREATE INDEX #{temp_index_name('idx_cm_pepfar', start: start)} ON #{temp_current_medication(start: start)} (pepfar_defaulter_date)")
-    safe_create_index("CREATE INDEX #{temp_index_name('idx_cm_moh', start: start)} ON #{temp_current_medication(start: start)} (moh_defaulter_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_cm_concept',
+                                                      start: start)} ON #{temp_current_medication(start: start)} (concept_id)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_cm_drug',
+                                                      start: start)} ON #{temp_current_medication(start: start)} (drug_id)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_cm_date',
+                                                      start: start)} ON #{temp_current_medication(start: start)} (start_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_cm_pepfar',
+                                                      start: start)} ON #{temp_current_medication(start: start)} (pepfar_defaulter_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_cm_moh',
+                                                      start: start)} ON #{temp_current_medication(start: start)} (moh_defaulter_date)")
   end
 
   def create_temp_current_state(start: false)
@@ -522,10 +583,14 @@ module ArtTempTablesUtils
   end
 
   def create_current_state_index(start: false)
-    safe_create_index("CREATE INDEX #{temp_index_name('idx_state_name', start: start)} ON #{temp_current_state(start: start)} (cum_outcome)")
-    safe_create_index("CREATE INDEX #{temp_index_name('idx_state_id', start: start)} ON #{temp_current_state(start: start)} (state)")
-    safe_create_index("CREATE INDEX #{temp_index_name('idx_state_count', start: start)} ON #{temp_current_state(start: start)} (outcomes)")
-    safe_create_index("CREATE INDEX #{temp_index_name('idx_patient_state_id', start: start)} ON #{temp_current_state(start: start)} (patient_state_id)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_state_name',
+                                                      start: start)} ON #{temp_current_state(start: start)} (cum_outcome)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_state_id',
+                                                      start: start)} ON #{temp_current_state(start: start)} (state)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_state_count',
+                                                      start: start)} ON #{temp_current_state(start: start)} (outcomes)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_patient_state_id',
+                                                      start: start)} ON #{temp_current_state(start: start)} (patient_state_id)")
   end
 
   def create_tmp_min_auto_expire_date(start: false)
@@ -569,11 +634,16 @@ module ArtTempTablesUtils
   end
 
   def create_outcome_indexes(start: false)
-    safe_create_index("CREATE INDEX #{temp_index_name('moh_outcome', start: start)} ON #{temp_patient_outcomes(start: start)} (moh_cum_outcome)")
-    safe_create_index("CREATE INDEX #{temp_index_name('moh_out_date', start: start)} ON #{temp_patient_outcomes(start: start)} (moh_outcome_date)")
-    safe_create_index("CREATE INDEX #{temp_index_name('pepfar_outcome', start: start)} ON #{temp_patient_outcomes(start: start)} (pepfar_cum_outcome)")
-    safe_create_index("CREATE INDEX #{temp_index_name('pepfar_out_date', start: start)} ON #{temp_patient_outcomes(start: start)} (pepfar_outcome_date)")
-    safe_create_index("CREATE INDEX #{temp_index_name('idx_out_step', start: start)} ON #{temp_patient_outcomes(start: start)} (step)")
+    safe_create_index("CREATE INDEX #{temp_index_name('moh_outcome',
+                                                      start: start)} ON #{temp_patient_outcomes(start: start)} (moh_cum_outcome)")
+    safe_create_index("CREATE INDEX #{temp_index_name('moh_out_date',
+                                                      start: start)} ON #{temp_patient_outcomes(start: start)} (moh_outcome_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('pepfar_outcome',
+                                                      start: start)} ON #{temp_patient_outcomes(start: start)} (pepfar_cum_outcome)")
+    safe_create_index("CREATE INDEX #{temp_index_name('pepfar_out_date',
+                                                      start: start)} ON #{temp_patient_outcomes(start: start)} (pepfar_outcome_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_out_step',
+                                                      start: start)} ON #{temp_patient_outcomes(start: start)} (step)")
   end
 
   def drop_temp_max_drug_orders_table(start: false)
@@ -594,8 +664,10 @@ module ArtTempTablesUtils
   end
 
   def create_max_drug_orders_indexes(start: false)
-    safe_create_index("CREATE INDEX #{temp_index_name('idx_max_orders', start: start)} ON #{temp_max_drug_orders(start: start)} (start_date)")
-    safe_create_index("CREATE INDEX #{temp_index_name('idx_max_min_orders', start: start)} ON #{temp_max_drug_orders(start: start)} (min_order_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_max_orders',
+                                                      start: start)} ON #{temp_max_drug_orders(start: start)} (start_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_max_min_orders',
+                                                      start: start)} ON #{temp_max_drug_orders(start: start)} (min_order_date)")
   end
 
   def drop_tmp_min_auto_expirte_date(start: false)
@@ -604,9 +676,12 @@ module ArtTempTablesUtils
   end
 
   def create_min_auto_expire_date_indexes(start: false)
-    safe_create_index("CREATE INDEX #{temp_index_name('idx_min_auto_expire_date', start: start)} ON #{temp_min_auto_expire_date(start: start)} (auto_expire_date)")
-    safe_create_index("CREATE INDEX #{temp_index_name('idx_min_pepfar', start: start)} ON #{temp_min_auto_expire_date(start: start)} (pepfar_defaulter_date)")
-    safe_create_index("CREATE INDEX #{temp_index_name('idx_min_moh', start: start)} ON #{temp_min_auto_expire_date(start: start)} (moh_defaulter_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_min_auto_expire_date',
+                                                      start: start)} ON #{temp_min_auto_expire_date(start: start)} (auto_expire_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_min_pepfar',
+                                                      start: start)} ON #{temp_min_auto_expire_date(start: start)} (pepfar_defaulter_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_min_moh',
+                                                      start: start)} ON #{temp_min_auto_expire_date(start: start)} (moh_defaulter_date)")
   end
 
   def create_temp_max_patient_state(start: false)
@@ -621,7 +696,8 @@ module ArtTempTablesUtils
   end
 
   def create_max_patient_state_indexes(start: false)
-    safe_create_index("CREATE INDEX #{temp_index_name('idx_max_patient_state', start: start)} ON #{temp_max_patient_state(start: start)} (start_date)")
+    safe_create_index("CREATE INDEX #{temp_index_name('idx_max_patient_state',
+                                                      start: start)} ON #{temp_max_patient_state(start: start)} (start_date)")
   end
 
   def update_steps(start: false, portion: false)
@@ -664,7 +740,7 @@ module ArtTempTablesUtils
   # ===================================
   #  Cleanup Methods - Drop Location-Specific Tables
   # ===================================
-  
+
   # Drop all location-specific temporary tables to free up database resources
   # Should be called after report generation completes
   def cleanup_temporary_tables

@@ -241,6 +241,17 @@ module UserService
   end
 
   def self.login(username, password)
+    user = authenticate_credentials(username, password)
+    return nil unless user
+
+    new_authentication_token user
+  rescue StandardError => e
+    Rails.logger.error "Error logging in: #{e}"
+    Rails.logger.error e.backtrace.join("\n")
+    raise e
+  end
+
+  def self.authenticate_credentials(username, password)
     user = User.unscoped.where(username:).first
     return nil unless user
 
@@ -253,11 +264,11 @@ module UserService
     end
     unless user&.active? && \
            (bart_authenticate(user, password) || \
-            new_arch_authenticate(user, password))
+           new_arch_authenticate(user, password))
       return nil
     end
 
-    new_authentication_token user
+    user
   rescue StandardError => e
     Rails.logger.error "Error logging in: #{e}"
     Rails.logger.error e.backtrace.join("\n")

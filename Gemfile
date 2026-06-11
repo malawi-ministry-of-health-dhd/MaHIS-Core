@@ -25,6 +25,9 @@ gem 'puma', '~> 6.3'
 # Use Json Web Token (JWT) for token based authentication
 gem 'jwt'
 
+# WebAuthn/passkey verification for device-bound user authentication
+gem 'webauthn'
+
 # Use the browser gem to get browser information
 gem 'browser'
 
