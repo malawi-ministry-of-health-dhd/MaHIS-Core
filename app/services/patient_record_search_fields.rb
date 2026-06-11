@@ -76,25 +76,15 @@ module PatientRecordSearchFields
   end
 
   def ensure_couchdb_indexes!(db_url, logger: Rails.logger, force: false)
-    return if db_url.blank?
-    return if @indexed_databases[db_url] && !force
-
-    COUCHDB_INDEXES.each do |definition|
-      RestClient.post(
-        "#{db_url}/_index",
-        {
-          type: 'json',
-          name: definition[:name],
-          ddoc: definition[:name],
-          index: { fields: definition[:fields] }
-        }.to_json,
-        { content_type: :json, accept: :json }
-      )
-    rescue StandardError => e
-      logger&.warn("Could not create CouchDB patient search index #{definition[:name]}: #{e.message}")
-    end
-
-    @indexed_databases[db_url] = true
+    CouchdbIndexEnsurer.ensure!(
+      db_url,
+      COUCHDB_INDEXES,
+      cache: @indexed_databases,
+      cache_key: db_url,
+      logger:,
+      force:,
+      label: 'CouchDB patient search'
+    )
   end
 
   def normalize_text(value)
