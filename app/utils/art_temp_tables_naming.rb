@@ -70,6 +70,10 @@ module ArtTempTablesNaming
     temp_table_name('tmp_max_adherence')
   end
 
+  def tmp_first_registration
+    temp_table_name('tmp_first_registration')
+  end
+
   def temp_pregnant_obs
     temp_table_name('temp_pregnant_obs')
   end

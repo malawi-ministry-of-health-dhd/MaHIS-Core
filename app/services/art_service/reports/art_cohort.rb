@@ -34,6 +34,9 @@ module ArtService
           @cohort_builder.build(@cohort_struct, @start_date, @end_date, @occupation, force_rebuild: @rebuild)
           clear_drill_down
           save_report
+          # Broadcast completion AFTER the report is persisted so the frontend's
+          # follow-up requestCohort call finds the saved data immediately.
+          @cohort_builder.broadcast_completion
         end
       rescue FailedToAcquireLock => e
         Rails.logger.warn("ART#Cohort report is locked by another process: #{e}")
