@@ -4,7 +4,7 @@ class PatientRecordOperationReceipt < ApplicationRecord
   STATUSES = %w[processing completed failed].freeze
 
   validates :operation_type, :operation_id, :status, presence: true
-  validates :operation_id, uniqueness: { scope: :operation_type }
+  validates :operation_id, uniqueness: { scope: %i[patient_id operation_type] }
   validates :status, inclusion: { in: STATUSES }
 
   def processing?

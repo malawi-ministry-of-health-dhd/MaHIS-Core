@@ -3,6 +3,8 @@
 
 module PatientRecordService
   class ObservationSaver < BaseSaver
+    class ObservationEncounterSaveError < StandardError; end
+
     NCD_PROGRAM_ID = 32
     PRIMARY_DIAGNOSIS_CONCEPT_NAME = "primary diagnosis".freeze
     NOTES_ENCOUNTER_TYPE_NAME = "notes".freeze
@@ -54,11 +56,12 @@ module PatientRecordService
             ActiveRecord::Base.transaction(requires_new: true) do
               encounter_id = create_encounter(patient_id, encounter_type.id, item)
               encounter    = Encounter.find(encounter_id)
+              item_errors  = []
 
               normalized_observations(value_for(item, :obs)).each do |archetype|
                 begin
                   params = permitted_observation_params(archetype)
-                  params[:location_id] = record[:location_id]
+                  params[:location_id] = value_for(record, :location_id)
                   unless observation_value_present?(params)
                     Rails.logger.warn("Skipping empty observation payload for encounter #{encounter_id}: #{format_observation_reference(params)}")
                     next
@@ -67,10 +70,11 @@ module PatientRecordService
                   observation_service.create_observation(encounter, params)
                 rescue StandardError => e
                   log_error("Error saving obs for encounter #{encounter_id}", e)
-                  collected_errors << "Encounter #{encounter_type.name}, obs #{format_observation_reference(archetype)}: #{e.message}"
-                  # continues to next obs
+                  item_errors << "obs #{format_observation_reference(archetype)}: #{e.message}"
                 end
               end
+
+              raise ObservationEncounterSaveError, item_errors.join("; ") if item_errors.any?
 
               { target_type: 'Encounter', target_id: encounter_id }
             end

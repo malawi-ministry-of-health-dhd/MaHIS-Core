@@ -6,6 +6,7 @@ require 'user_service'
 class ApplicationController < ActionController::API
   # before_action :check_location
   before_action :authenticate
+  before_action :set_audited_user
   # before_action :check_client_version
   after_action  :refresh_dashboard, if: :refresh_dashboard_needed?
   after_action  :refresh_client_details, if: :refresh_client_details_needed?
@@ -29,6 +30,12 @@ class ApplicationController < ActionController::API
   # Required by audited gem
   def current_user
     User.current
+  end
+
+  def set_audited_user
+    # audited v5.8 calls .try!(:call) on whatever is stored here, so it must
+    # be a Proc — storing the User object directly raises NoMethodError.
+    Audited.store[:current_user] = -> { User.current }
   end
 
   def authenticate

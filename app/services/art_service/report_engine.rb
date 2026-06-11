@@ -107,6 +107,18 @@ module ArtService
                             end_date: Date.today).cohort_report_drill_down(id)
     end
 
+    def cohort_report_raw_data(start_date, end_date, **kwargs)
+      occupation = kwargs[:occupation]
+      report_type = ReportType.find_by(name: 'COHORT')
+      return nil unless report_type
+
+      Report.includes(:values)
+            .where(start_date: start_date.to_date, end_date: end_date.to_date,
+                   report_definition_id: report_type.id)
+            .order(date_created: :desc)
+            .first
+    end
+
     def regimen_switch(start_date, end_date, pepfar, **kwargs)
       REPORTS['REGIMEN_SWITCH'].new(start_date: start_date.to_date,
                                     end_date: end_date.to_date, **kwargs)

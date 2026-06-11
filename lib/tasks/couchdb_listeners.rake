@@ -1,9 +1,39 @@
 # lib/tasks/couchdb_listeners.rake
 require Rails.root.join('lib', 'facility_dde_activation_listener').to_s
 
+module CouchdbListenerRakeLogging
+  LISTENER_LOG_TAGS = ['[CouchDB Listener]', '[Facility DDE Listener]'].freeze
+
+  class StdoutLogDevice
+    def write(message)
+      return unless LISTENER_LOG_TAGS.any? { |tag| message.include?(tag) }
+
+      $stdout.write(message)
+      $stdout.flush
+    end
+
+    def close; end
+  end
+
+  module_function
+
+  def enable_stdout!
+    return if @stdout_enabled
+    return unless Rails.logger.respond_to?(:broadcast_to)
+
+    stdout_logger = ActiveSupport::Logger.new(StdoutLogDevice.new)
+    stdout_logger.level = Rails.logger.level
+    stdout_logger.formatter = Rails.logger.formatter
+    Rails.logger.broadcast_to(stdout_logger)
+    @stdout_enabled = true
+  end
+end
+
 namespace :couchdb do
   desc "Start CouchDB listeners for all databases"
   task start_all_listeners: :environment do
+    CouchdbListenerRakeLogging.enable_stdout!
+
     sequential_configs = [
       {
         db_name: 'patients_records',
@@ -45,6 +75,8 @@ namespace :couchdb do
 
   desc "Start listener for specific database"
   task :start_listener, [:db_name] => :environment do |task, args|
+    CouchdbListenerRakeLogging.enable_stdout!
+
     db_name = args[:db_name]
 
     config_map = {

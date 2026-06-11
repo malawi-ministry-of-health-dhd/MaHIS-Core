@@ -25,6 +25,8 @@ module ArtService
         @cohort_builder = CohortBuilder.new
         @cohort_struct = CohortStruct.new
         @occupation = kwargs[:occupation]
+        @cohort_builder.ws_name = name
+        @cohort_builder.ws_location_id = Location.current&.location_id
       end
 
       def build_report
@@ -32,6 +34,9 @@ module ArtService
           @cohort_builder.build(@cohort_struct, @start_date, @end_date, @occupation, force_rebuild: @rebuild)
           clear_drill_down
           save_report
+          # Broadcast completion AFTER the report is persisted so the frontend's
+          # follow-up requestCohort call finds the saved data immediately.
+          @cohort_builder.broadcast_completion
         end
       rescue FailedToAcquireLock => e
         Rails.logger.warn("ART#Cohort report is locked by another process: #{e}")
@@ -72,8 +77,8 @@ module ArtService
           INNER JOIN patient_program pp ON pp.patient_id = e.patient_id
             AND pp.program_id = 1
             AND pp.voided = 0
-            AND pp.location_id = #{User.current.location_id}
-          INNER JOIN (
+            AND pp.location_id = #{Location.current.location_id}
+          LEFT JOIN (
             SELECT e.patient_id, MAX(o.value_datetime) appointment_date
             FROM encounter e
             INNER JOIN obs o ON o.encounter_id = e.encounter_id AND o.voided = 0 AND o.concept_id = 5096 -- appointment date
@@ -120,61 +125,99 @@ module ArtService
         # Query permanent tables directly since temp tables are cleaned up after report generation
         # The cohort_drill_down table already has the correct patient IDs from report generation
         ActiveRecord::Base.connection.select_all <<~SQL
+          WITH
+            cohort_patients AS (
+              SELECT DISTINCT patient_id
+              FROM cohort_drill_down
+              WHERE reporting_report_design_resource_id = #{id}
+            ),
+            arv_type_id AS (
+              SELECT patient_identifier_type_id
+              FROM patient_identifier_type
+              WHERE name = 'ARV Number'
+              LIMIT 1
+            ),
+            hiv_program_id AS (
+              SELECT program_id
+              FROM program
+              WHERE name = 'HIV PROGRAM'
+              LIMIT 1
+            ),
+            art_start_concept AS (
+              SELECT concept_id
+              FROM concept_name
+              WHERE name = 'ART start date' AND voided = 0
+              LIMIT 1
+            ),
+            arv_drugs_set AS (
+              SELECT cs.concept_id
+              FROM concept_set cs
+              INNER JOIN concept_name cn
+                ON cn.concept_id = cs.concept_set
+                AND cn.name = 'Antiretroviral drugs'
+                AND cn.voided = 0
+            ),
+            tb_status_concept AS (
+              SELECT concept_id
+              FROM concept_name
+              WHERE name = 'TB status' AND voided = 0
+              LIMIT 1
+            ),
+            latest_state AS (
+              SELECT pst.patient_program_id, MAX(pst.start_date) AS max_start_date
+              FROM patient_state pst
+              INNER JOIN patient_program pp ON pp.patient_program_id = pst.patient_program_id
+              INNER JOIN cohort_patients cp ON cp.patient_id = pp.patient_id
+              WHERE pst.voided = 0
+              GROUP BY pst.patient_program_id
+            ),
+            patient_art_start AS (
+              SELECT o.person_id, MIN(o.value_datetime) AS art_start_date
+              FROM obs o
+              INNER JOIN cohort_patients cp ON cp.patient_id = o.person_id
+              WHERE o.concept_id = (SELECT concept_id FROM art_start_concept)
+                AND o.voided = 0
+              GROUP BY o.person_id
+            ),
+            patient_arv_orders AS (
+              SELECT o.patient_id, MIN(o.start_date) AS first_order_date
+              FROM orders o
+              INNER JOIN cohort_patients cp ON cp.patient_id = o.patient_id
+              WHERE o.concept_id IN (SELECT concept_id FROM arv_drugs_set)
+                AND o.voided = 0
+              GROUP BY o.patient_id
+            ),
+            patient_tb_obs AS (
+              SELECT o.person_id, MAX(o.obs_datetime) AS tb_obs_date
+              FROM obs o
+              INNER JOIN cohort_patients cp ON cp.patient_id = o.person_id
+              WHERE o.concept_id = (SELECT concept_id FROM tb_status_concept)
+                AND o.voided = 0
+              GROUP BY o.person_id
+            )
           SELECT i.identifier arv_number, p.birthdate,
                  p.gender, n.given_name, n.family_name, p.person_id person_id,
                  ps.name AS outcome,
-                 DATE(MIN(COALESCE(art_start.value_datetime, orders.start_date))) AS art_start_date,
-                 DATE(MAX(tb_start.obs_datetime)) tb_observation_date
-          FROM cohort_drill_down c
-          INNER JOIN person p ON p.person_id = c.patient_id AND p.voided = 0
+                 DATE(COALESCE(pas.art_start_date, pao.first_order_date)) AS art_start_date,
+                 DATE(ptb.tb_obs_date) tb_observation_date
+          FROM cohort_patients cp
+          INNER JOIN person p ON p.person_id = cp.patient_id AND p.voided = 0
           LEFT JOIN patient_identifier i ON i.patient_id = p.person_id
-            AND i.voided = 0#{' '}
-            AND i.identifier_type = (
-              SELECT patient_identifier_type_id#{' '}
-              FROM patient_identifier_type#{' '}
-              WHERE name = 'ARV Number'#{' '}
-              LIMIT 1
-            )
+            AND i.voided = 0
+            AND i.identifier_type = (SELECT patient_identifier_type_id FROM arv_type_id)
           LEFT JOIN person_name n ON n.person_id = p.person_id AND n.voided = 0
           LEFT JOIN patient_program pp ON pp.patient_id = p.person_id
-            AND pp.program_id = (
-              SELECT program_id#{' '}
-              FROM program#{' '}
-              WHERE name = 'HIV PROGRAM'#{' '}
-              LIMIT 1
-            )
+            AND pp.program_id = (SELECT program_id FROM hiv_program_id)
             AND pp.voided = 0
+          LEFT JOIN latest_state ls ON ls.patient_program_id = pp.patient_program_id
           LEFT JOIN patient_state pst ON pst.patient_program_id = pp.patient_program_id
             AND pst.voided = 0
-            AND pst.start_date = (
-              SELECT MAX(ps2.start_date)
-              FROM patient_state ps2
-              WHERE ps2.patient_program_id = pp.patient_program_id
-              AND ps2.voided = 0
-            )
+            AND pst.start_date = ls.max_start_date
           LEFT JOIN program_workflow_state pws ON pws.program_workflow_state_id = pst.state
-          LEFT JOIN concept_name ps ON ps.concept_id = pws.concept_id
-            AND ps.voided = 0
-          LEFT JOIN obs art_start ON art_start.person_id = p.person_id
-            AND art_start.concept_id = (
-              SELECT concept_id FROM concept_name WHERE name = 'ART start date' AND voided = 0 LIMIT 1
-            )
-            AND art_start.voided = 0
-          LEFT JOIN orders ON orders.patient_id = p.person_id
-            AND orders.concept_id IN (
-              SELECT concept_id FROM concept_set WHERE concept_set = (
-                SELECT concept_id FROM concept_name WHERE name = 'Antiretroviral drugs' LIMIT 1
-              )
-            )
-            AND orders.voided = 0
-          LEFT JOIN obs tb_start ON tb_start.person_id = p.person_id AND tb_start.voided = 0
-            AND tb_start.concept_id = (
-              SELECT concept_id#{' '}
-              FROM concept_name#{' '}
-              WHERE name = 'TB status'#{' '}
-              LIMIT 1
-            )
-          WHERE c.reporting_report_design_resource_id = #{id}
+          LEFT JOIN concept_name ps ON ps.concept_id = pws.concept_id AND ps.voided = 0
+          LEFT JOIN patient_art_start pas ON pas.person_id = p.person_id
+          LEFT JOIN patient_arv_orders pao ON pao.patient_id = p.person_id
+          LEFT JOIN patient_tb_obs ptb ON ptb.person_id = p.person_id
           GROUP BY p.person_id ORDER BY p.person_id, p.date_created;
         SQL
       end
@@ -221,24 +264,74 @@ module ArtService
         end
       end
 
-      # Writes the report values to database
+      # Writes the report values to database using bulk inserts to avoid N+1 queries.
+      # Instead of 3 queries per indicator (INSERT + audit INSERT + User Load),
+      # this performs: 1 bulk INSERT + 1 SELECT (by UUID) + 1 bulk audit INSERT.
       def save_report_values(report)
-        @cohort_struct.values.collect do |value|
-          puts "Saving #{value.name} = #{value_contents_to_json(value.contents)}"
-          report_value = ReportValue.create(report:,
-                                            name: value.name,
-                                            indicator_name: value.indicator_name,
-                                            indicator_short_name: value.indicator_short_name,
-                                            creator: User.current.id,
-                                            description: value.description,
-                                            contents: value_contents_to_json(value.contents))
+        return [] if @cohort_struct.values.blank?
 
-          raise "Failed to save report value: #{report_value.errors.as_json}" unless report_value.errors.empty?
+        now = Time.current
+        user_id = User.current.user_id
+        request_uuid = SecureRandom.uuid
 
-          save_patients(report_value, value.contents)
+        # Pair each cohort value with a pre-generated UUID for later correlation
+        values_with_uuids = @cohort_struct.values.map { |v| [v, SecureRandom.uuid] }
 
-          report_value
+        # 1. Bulk INSERT all report value rows — bypasses per-row callbacks and auditing
+        ReportValue.insert_all!(values_with_uuids.map { |value, uuid|
+          {
+            uuid:,
+            name: value.name,
+            indicator_name: value.indicator_name,
+            indicator_short_name: value.indicator_short_name,
+            description: value.description,
+            contents: value_contents_to_json(value.contents).to_s,
+            report_design_id: report.id,
+            creator: user_id,
+            changed_by: user_id,
+            date_created: now,
+            date_changed: now,
+            retired: false
+          }
+        })
+
+        # 2. Fetch back inserted rows to get DB-assigned IDs; unscoped avoids retired=0 default scope
+        uuids = values_with_uuids.map(&:last)
+        saved_by_uuid = ReportValue.unscoped.where(uuid: uuids).index_by(&:uuid)
+
+        # 3. Bulk INSERT one audit record per report value (one shared request_uuid per job run)
+        Audited::Audit.insert_all!(values_with_uuids.map { |_value, uuid|
+          rv = saved_by_uuid[uuid]
+          {
+            auditable_id: rv.id,
+            auditable_type: 'ReportValue',
+            action: 'create',
+            audited_changes: rv.audited_attributes.to_yaml,
+            version: 1,
+            user_id:,
+            user_type: 'User',
+            request_uuid:,
+            created_at: now
+          }
+        })
+
+        # 4. Collect all (resource_id, patient_id) pairs across every indicator, then
+        #    bulk INSERT in one pass (batched at 1_000 rows to stay within max_allowed_packet)
+        report_values = values_with_uuids.map { |_value, uuid| saved_by_uuid[uuid] }
+
+        all_pairs = values_with_uuids.flat_map { |value, uuid|
+          rv = saved_by_uuid[uuid]
+          extract_patient_ids(value.contents).map { |pid| "(#{rv.id}, #{pid})" }
+        }
+
+        all_pairs.each_slice(50_000) do |batch|
+          ActiveRecord::Base.connection.execute <<~SQL
+            INSERT INTO cohort_drill_down (reporting_report_design_resource_id, patient_id)
+            VALUES #{batch.join(',')};
+          SQL
         end
+
+        report_values
       end
 
       def clear_drill_down
@@ -298,8 +391,10 @@ module ArtService
 
       PATIENT_ID_KEYS = ['patient_id', :patient_id, 'person_id', :person_id].freeze
 
-      def save_patients(r, values)
-        return if values.blank? || !values.respond_to?(:each)
+      # Resolves a collection of patient/person entries to an array of integer IDs,
+      # filtering out blanks and zeros.
+      def extract_patient_ids(values)
+        return [] if values.blank? || !values.respond_to?(:each)
 
         get_patient_id = lambda do |patient, keys = PATIENT_ID_KEYS|
           break nil if keys.empty?
@@ -307,33 +402,29 @@ module ArtService
           patient[keys.first] || get_patient_id[patient, keys[1..keys.size]]
         end
 
-        patient_ids = values.map do |patient|
-          if patient.respond_to?(:key?) && PATIENT_ID_KEYS.any? { |key| patient.key?(key) }
-            get_patient_id[patient]
-          elsif patient.respond_to?(:each) && patient.respond_to?(:first)
-            patient.first
-          else
-            patient
-          end
+        values.filter_map do |patient|
+          pid = if patient.respond_to?(:key?) && PATIENT_ID_KEYS.any? { |key| patient.key?(key) }
+                  get_patient_id[patient]
+                elsif patient.respond_to?(:each) && patient.respond_to?(:first)
+                  patient.first
+                else
+                  patient
+                end
+          pid unless pid.blank? || pid.to_i.zero?
         end
+      end
 
-        sql_insert_statement = nil
-        patient_ids.each do |patient_id|
-          next if patient_id.blank? || patient_id.to_i.zero?
+      def save_patients(r, values)
+        patient_ids = extract_patient_ids(values)
+        return if patient_ids.empty?
 
-          if sql_insert_statement.blank?
-            sql_insert_statement = "(#{r.id}, #{patient_id})"
-          else
-            sql_insert_statement += ",(#{r.id}, #{patient_id})"
-          end
+        patient_ids.each_slice(50_000) do |batch|
+          rows = batch.map { |pid| "(#{r.id}, #{pid})" }.join(',')
+          ActiveRecord::Base.connection.execute <<~SQL
+            INSERT INTO cohort_drill_down (reporting_report_design_resource_id, patient_id)
+            VALUES #{rows};
+          SQL
         end
-
-        return if sql_insert_statement.blank?
-
-        ActiveRecord::Base.connection.execute <<~SQL
-          INSERT INTO cohort_drill_down (reporting_report_design_resource_id, patient_id)
-          VALUES #{sql_insert_statement};
-        SQL
       end
 
       def calculate_age(birthdate)

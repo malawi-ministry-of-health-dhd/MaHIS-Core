@@ -70,8 +70,20 @@ module ArtTempTablesNaming
     temp_table_name('tmp_max_adherence')
   end
 
+  def tmp_first_registration
+    temp_table_name('tmp_first_registration')
+  end
+
   def temp_pregnant_obs
     temp_table_name('temp_pregnant_obs')
+  end
+
+  def temp_obs_last_visit
+    temp_table_name('temp_obs_last_visit')
+  end
+
+  def tmp_preg_max_dt
+    temp_table_name('tmp_preg_max_dt')
   end
 
   def temp_patient_side_effects
