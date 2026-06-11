@@ -171,6 +171,7 @@ module Sync
         'drugs' => {
           'rutf' => rutf_section,
           'amoxicillin' => amoxicillin_section,
+          'ampicillin' => ampicillin_section,
           'deworming' => deworming_section,
           'vitamin_a' => vitamin_a_section,
           'measles_rubella_vaccine' => measles_rubella_section
@@ -244,7 +245,34 @@ module Sync
     # ---- Amoxicillin ---------------------------------------------------
 
     def amoxicillin_section
-      concept_name = 'Amoxicillin'
+      build_antibiotic_section(
+        concept_name: 'Amoxicillin',
+        dose_range: '25-50',
+        frequency: 'twice daily',
+        duration_days: 7,
+        note: 'Syrup can be given — check strength per 5 ml (2 strengths: 125 mg and 250 mg). ' \
+              'Ampicillin is given in the same dose if amoxicillin is not available.',
+        weight_bands: Impow::OtsDrugDosageService.all_amoxicillin_weight_bands.map do |band|
+          format_weight_band(band, 'Amoxicillin')
+        end
+      )
+    end
+
+    def ampicillin_section
+      build_antibiotic_section(
+        concept_name: 'Ampicillin',
+        dose_range: '25-50', # adjust if clinically different
+        frequency: 'twice daily',
+        duration_days: 7,
+        note: 'Use when Amoxicillin is not available. Same dosing principles apply.',
+        weight_bands: Impow::OtsDrugDosageService.all_ampicillin_weight_bands.map do |band|
+          format_weight_band(band, 'Ampicillin')
+        end
+      )
+    end
+
+    # Helper method to build antibiotic sections (e.g., Amoxicillin, Ampicillin) since they have similar structure
+    def build_antibiotic_section(concept_name:, dose_range:, frequency:, duration_days:, note:, weight_bands:)
       concept = ConceptName.find_by(name: concept_name)
       drugs = get_drugs_by_concept_name(concept_name)
 
@@ -253,30 +281,32 @@ module Sync
         'concept_name' => concept_name,
         'concept_set' => 'Outpatient Therapeutic Services',
         'drugs' => drugs,
-        'dose_range_mg_per_kg_per_day' => '25-50',
-        'frequency' => 'twice daily',
-        'duration_days' => 7,
+        'dose_range_mg_per_kg_per_day' => dose_range,
+        'frequency' => frequency,
+        'duration_days' => duration_days,
         'when_given' => '1 dose at admission + 7 days at home for new enrollees only',
-        'note' => 'Syrup can be given — check strength per 5 ml (2 strengths: 125 mg and 250 mg). ' \
-                  'Ampicillin is given in the same dose if amoxicillin is not available.',
-        'weight_bands' => Impow::OtsDrugDosageService.all_amoxicillin_weight_bands.map do |band|
-          label = if band[:max] == Float::INFINITY
-                    ">#{band[:min].to_i} kg"
-                  elsif band[:min] == 0
-                    "<#{(band[:max] + 0.1).to_i} kg"
-                  else
-                    "#{band[:min].to_i}-#{band[:max].to_i} kg"
-                  end
+        'note' => note,
+        'weight_bands' => weight_bands
+      }
+    end
 
-          {
-            'label' => label,
-            'min_kg' => band[:min],
-            'max_kg' => band[:max] == Float::INFINITY ? nil : band[:max],
-            'dose_mg' => band[:dose_mg],
-            'frequency' => 'twice daily',
-            'recommended_drug_name' => band[:drug_name]
-          }
+    def format_weight_band(band, drug_name)
+      label =
+        if band[:max] == Float::INFINITY
+          ">#{band[:min].to_i} kg"
+        elsif band[:min] == 0
+          "<#{(band[:max] + 0.1).to_i} kg"
+        else
+          "#{band[:min].to_i}-#{band[:max].to_i} kg"
         end
+
+      {
+        'label' => label,
+        'min_kg' => band[:min],
+        'max_kg' => band[:max] == Float::INFINITY ? nil : band[:max],
+        'dose_mg' => band[:dose_mg],
+        'frequency' => 'twice daily',
+        'recommended_drug_name' => band[:drug_name] || drug_name
       }
     end
 

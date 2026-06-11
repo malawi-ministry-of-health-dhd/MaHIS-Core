@@ -54,6 +54,14 @@ module Impow
       { min: 35.0, max: Float::INFINITY, dose_mg: 1000, drug_name: 'Amoxicillin (1000mg tablet)' }
     ].freeze
 
+    AMPICILLIN_WEIGHT_BANDS = [
+      { min: 0,    max: 4.9,  dose_mg: 125,  drug_name: 'Ampicillin (125mg tablet)' },
+      { min: 5.0,  max: 10.0, dose_mg: 250,  drug_name: 'Ampicillin (250mg tablet)' },
+      { min: 10.0, max: 20.0, dose_mg: 500,  drug_name: 'Ampicillin (500mg tablet)' },
+      { min: 20.0, max: 35.0, dose_mg: 750,  drug_name: 'Ampicillin (750mg tablet)' },
+      { min: 35.0, max: Float::INFINITY, dose_mg: 1000, drug_name: 'Ampicillin (1000mg tablet)' }
+    ].freeze
+
     def self.amoxicillin_dose_for_weight(weight_kg)
       band = AMOXICILLIN_WEIGHT_BANDS.find { |b| weight_kg >= b[:min] && weight_kg <= b[:max] }
       return nil unless band
@@ -115,6 +123,10 @@ module Impow
 
     def self.all_amoxicillin_weight_bands
       AMOXICILLIN_WEIGHT_BANDS
+    end
+
+    def self.all_ampicillin_weight_bands
+      AMPICILLIN_WEIGHT_BANDS
     end
 
     def self.all_deworming_age_bands

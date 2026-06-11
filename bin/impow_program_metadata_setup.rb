@@ -4,9 +4,21 @@ require 'securerandom'
 
 CONCEPTS_TO_CREATE = [
   {
-    program_name: 'IMPOW PROGRAM',
+    program_name: 'Outpatient Therapeutic Services PROGRAM',
     concept_names: [
-      { value: 'IMPOW PROGRAM', type: 'FULLY_SPECIFIED' }
+      { value: 'Outpatient Therapeutic Services PROGRAM', type: 'FULLY_SPECIFIED' }
+    ]
+  },
+  {
+    program_name: 'Nutrition Rehabilitation Unit PROGRAM',
+    concept_names: [
+      { value: 'Nutrition Rehabilitation Unit PROGRAM', type: 'FULLY_SPECIFIED' }
+    ]
+  },
+  {
+    program_name: 'ICCM/CMAM Village Clinic PROGRAM',
+    concept_names: [
+      { value: 'ICCM/CMAM Village Clinic PROGRAM', type: 'FULLY_SPECIFIED' }
     ]
   },
   {
@@ -289,9 +301,33 @@ def create_nutrition_drugs
     puts "\n  Creating Amoxicillin 750mg tablet..."
     create_drug_and_link_to_set('Amoxicillin (750mg tablet)', otp_set, 3, 'Tablet', 'Oral', 'tabs', 'Amoxicillin')
 
+    # Create specific Ampicillin 125mg tablet
+    puts "\n  Creating Ampicillin 125mg tablet..."
+    create_drug_and_link_to_set('Ampicillin (125mg tablet)', otp_set, 4, 'Tablet', 'Oral', 'tabs', 'Ampicillin')
+
+    # Create specific Ampicillin 250mg tablet
+    puts "\n  Creating Ampicillin 250mg tablet..."
+    create_drug_and_link_to_set('Ampicillin (250mg tablet)', otp_set, 5, 'Tablet', 'Oral', 'tabs', 'Ampicillin')
+
+    # Create specific Ampicillin 500mg tablet
+    puts "\n  Creating Ampicillin 500mg tablet..."
+    create_drug_and_link_to_set('Ampicillin (500mg tablet)', otp_set, 6, 'Tablet', 'Oral', 'tabs', 'Ampicillin')
+
+    # Create specific Ampicillin 750mg tablet
+    puts "\n  Creating Ampicillin 750mg tablet..."
+    create_drug_and_link_to_set('Ampicillin (750mg tablet)', otp_set, 7, 'Tablet', 'Oral', 'tabs', 'Ampicillin')
+
+    # Create specific Ampicillin 1000mg tablet
+    puts "\n  Creating Ampicillin 1000mg tablet..."
+    create_drug_and_link_to_set('Ampicillin (1000mg tablet)', otp_set, 8, 'Tablet', 'Oral', 'tabs', 'Ampicillin')
+
     # Link existing Amoxicillin drugs to OTP set
     puts "\n  Linking existing Amoxicillin drugs to OTP..."
     link_existing_drugs_to_set('Amoxicillin', otp_set, 10)
+
+    # Link existing Ampicillin drugs to OTP set
+    puts "\n  Linking existing Ampicillin drugs to OTP..."
+    link_existing_drugs_to_set('Ampicillin', otp_set, 10)
 
     # Link existing Albendazole drugs to OTP set
     puts "\n  Linking existing Albendazole drugs to OTP..."
@@ -640,10 +676,14 @@ def run_create_program
         create_concept_name(program_concept, name[:value], type: name[:type]) unless exists
       end
 
-      # Only create a program for IMPOW PROGRAM
-      next unless program_name == 'IMPOW PROGRAM'
+      # Only create a program for ICCM PROGRAM, OTS PROGRAM, and NRU PROGRAM concepts
+      next unless ['ICCM/CMAM Village Clinic PROGRAM', 'Outpatient Therapeutic Services PROGRAM', 'Nutrition Rehabilitation Unit PROGRAM'].include?(program_name)
 
       program = Program.find_by(name: program_name)
+      if program_name == 'Outpatient Therapeutic Services PROGRAM'
+        program ||= Program.find_by(name: 'IMPOW Program')
+        # program&.update(name: program_name) if program && program.name != program_name
+      end
       if program
         puts "Skipped program: #{program_name} (already exists)"
       else
