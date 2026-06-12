@@ -8,9 +8,11 @@ module Sync
     DDE_LOCATION_ID = CONFIG['DDE_LOCATION_ID']
     
     # Sync DDE IDs to CouchDB for all DDE-activated facilities
-    def perform(batch_size = 100)
+    def perform(batch_size = 100, location_id = nil)
       db_name = 'dde'
       program_id = 14 # OPD Program - adjust as needed
+      normalized_batch_size = normalize_batch_size(batch_size)
+      normalized_location_id = normalize_location_id(location_id)
       
       begin
         dde_service = DdeService.new(program: Program.find(program_id))
@@ -19,11 +21,18 @@ module Sync
         raise "Program not found: #{program_id}"
       end
       
-      # Get all DDE-activated facilities
-      dde_facilities = get_dde_activated_facilities
+      # Get all DDE-activated facilities, or the listener-triggered facility.
+      dde_facilities = if normalized_location_id.present?
+                         get_dde_activated_facilities.select do |facility|
+                           facility['location_id'].to_s == normalized_location_id
+                         end
+                       else
+                         get_dde_activated_facilities
+                       end
       
       if dde_facilities.empty?
-        Sidekiq.logger.info "No DDE-activated facilities found. No sync needed."
+        facility_filter = normalized_location_id.present? ? " for facility #{normalized_location_id}" : ''
+        Sidekiq.logger.info "No DDE-activated facilities found#{facility_filter}. No sync needed."
         return
       end
       
@@ -36,7 +45,7 @@ module Sync
         Sidekiq.logger.info "Processing facility #{index + 1}/#{dde_facilities.length}: #{location_id}"
         
         begin
-          process_facility_dde_sync(dde_service, location_id, db_name, batch_size)
+          process_facility_dde_sync(dde_service, location_id, db_name, normalized_batch_size)
         rescue => e
           Sidekiq.logger.error "Error processing facility #{location_id}: #{e.message}"
           # Continue with other facilities
@@ -50,6 +59,22 @@ module Sync
     end
     
     private
+
+    def normalize_batch_size(batch_size)
+      normalized = batch_size.to_i
+      normalized.positive? ? normalized : 100
+    end
+
+    def normalize_location_id(location_id)
+      value = location_id.to_s.strip
+      value = value.delete_prefix('facility_')
+      value.presence
+    end
+
+    def dde_activated?(doc)
+      value = doc['dde_activated']
+      value == true || value.to_s.strip.casecmp('true').zero?
+    end
     
     def get_dde_activated_facilities
       begin
@@ -73,7 +98,7 @@ module Sync
           doc = row['doc']
           next if doc['_id'].start_with?('_design') # Skip design documents
           
-          if doc['dde_activated'] == true
+          if dde_activated?(doc)
             {
               'location_id' => doc['location_id'],
               'name' => doc['name'],
@@ -110,8 +135,7 @@ module Sync
         # Convert raw DDE IDs to properly formatted CouchDB documents
         formatted_documents = dde_ids.map { |dde_id| prepare_document(dde_id) }
         
-        sync_array_to_couchdb(formatted_documents, db_name, "dde_id", batch_size, 
-                             progress_interval: 25, rate_limit_interval: 5)
+        append_dde_documents_to_couchdb(formatted_documents, db_name, batch_size)
         
         # Verify final count for this facility
         final_count = get_facility_unassigned_dde_count(db_name, location_id)
@@ -119,6 +143,53 @@ module Sync
       else
         Sidekiq.logger.warn "Facility #{location_id}: No DDE IDs were allocated. Service may be unavailable."
       end
+    end
+
+    def append_dde_documents_to_couchdb(formatted_documents, db_name, batch_size)
+      total_count = formatted_documents.length
+      SyncProgress.start(db_name, total_count)
+
+      if total_count.zero?
+        SyncProgress.finish(db_name)
+        return
+      end
+
+      ensure_database_exists(db_name, manage_indexes: false)
+      processed = 0
+      skipped = 0
+      errors = []
+      db_url = couchdb_url(db_name)
+
+      Sidekiq.logger.info "Appending #{total_count} DDE ID documents to CouchDB without deleting existing IDs"
+
+      formatted_documents.each_slice(batch_size).with_index do |batch, batch_index|
+        existing_revs = fetch_existing_revs(batch, db_url)
+        new_documents = batch.reject { |doc| existing_revs.key?(doc['_id']) }
+        skipped += batch.length - new_documents.length
+
+        if new_documents.empty?
+          Sidekiq.logger.info "DDE ID append batch #{batch_index + 1}: all documents already exist, skipping"
+          SyncProgress.set(db_name, processed + skipped)
+          next
+        end
+
+        result = bulk_sync_to_couchdb(new_documents, db_name, manage_indexes: false)
+        errors.concat(result[:errors]) if result[:errors].any?
+
+        if result[:success]
+          processed += new_documents.length
+          SyncProgress.set(db_name, processed + skipped)
+          Sidekiq.logger.info "Appended #{processed}/#{total_count} DDE ID documents (skipped existing: #{skipped})"
+        else
+          error_message = result[:errors].presence || ["DDE ID append batch #{batch_index + 1} failed"]
+          errors.concat(error_message)
+          Sidekiq.logger.error "DDE ID append batch #{batch_index + 1} failed: #{error_message.join('; ')}"
+        end
+
+        sleep(0.05)
+      end
+
+      handle_sync_completion(processed + skipped, errors, total_count, 'DDE ID', skipped, progress_key: db_name)
     end
     
     def calculate_facility_ids_needed(db_name, location_id)
@@ -385,18 +456,18 @@ module Sync
 end
 
 # Usage examples:
-# Sync all DDE-activated facilities for default location (700):
+# Sync all DDE-activated facilities:
 # Sync::DdeIdsSyncJob.perform_async
 
-# Sync all DDE-activated facilities for location 800:
-# Sync::DdeIdsSyncJob.perform_async(800)
+# Sync a specific DDE-activated facility by location_id:
+# Sync::DdeIdsSyncJob.perform_async(100, 800)
 
-# Sync all DDE-activated facilities for location 700 with batch size 50:
-# Sync::DdeIdsSyncJob.perform_async(700, 50)
+# Sync all DDE-activated facilities with batch size 50:
+# Sync::DdeIdsSyncJob.perform_async(50)
 
-# Sync a specific facility at a specific location:
+# Sync a specific facility from console:
 # job = Sync::DdeIdsSyncJob.new
-# job.sync_specific_facility('FAC001', 700, 50)
+# job.sync_specific_facility(800, 50)
 
 # To clean assigned IDs for a specific facility:
 # job = Sync::DdeIdsSyncJob.new
