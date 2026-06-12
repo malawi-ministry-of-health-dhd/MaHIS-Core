@@ -382,14 +382,30 @@ end
 #   - info_schema.tables.table_rows counts ALL sites → wrong for per-site offset.
 #   - This table records the highest SOURCE obs_id successfully batch-committed for this site.
 def ensure_migration_progress_table
-  ActiveRecord::Base.connection.execute(<<~SQL)
+  conn = ActiveRecord::Base.connection
+  conn.execute(<<~SQL)
     CREATE TABLE IF NOT EXISTS #{DEST_DB}.migration_progress (
-      table_name  VARCHAR(64)  NOT NULL,
-      last_source_id  BIGINT   NOT NULL DEFAULT 0,
-      updated_at  TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      PRIMARY KEY (table_name)
+      site_id        INT          NOT NULL,
+      table_name     VARCHAR(64)  NOT NULL,
+      last_source_id BIGINT       NOT NULL DEFAULT 0,
+      updated_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (site_id, table_name)
     ) ENGINE=InnoDB
   SQL
+
+  # Migrate existing rows that pre-date the site_id column (assign site 0 = unknown).
+  # Safe to run on every startup — IF NOT EXISTS above is idempotent.
+  begin
+    cols = conn.execute("SHOW COLUMNS FROM #{DEST_DB}.migration_progress").map { |r| r[0] }
+    unless cols.include?('site_id')
+      conn.execute("ALTER TABLE #{DEST_DB}.migration_progress ADD COLUMN site_id INT NOT NULL DEFAULT 0 FIRST")
+      conn.execute("ALTER TABLE #{DEST_DB}.migration_progress DROP PRIMARY KEY, ADD PRIMARY KEY (site_id, table_name)")
+      puts '  ↳ Migrated migration_progress schema: added site_id column'
+    end
+  rescue StandardError
+    nil # Non-fatal — table may already be in the new shape
+  end
+
   puts '✅ migration_progress tracking table ready'
 rescue StandardError => e
   puts "⚠️  Could not create migration_progress table: #{e.message}"
@@ -1087,8 +1103,8 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
           batch_end = batch_range.last
           begin
             ActiveRecord::Base.connection.execute(<<~SQL)
-              INSERT INTO #{DEST_DB}.migration_progress (table_name, last_source_id)
-              VALUES ('obs', #{batch_end})
+              INSERT INTO #{DEST_DB}.migration_progress (site_id, table_name, last_source_id)
+              VALUES (#{SITE_ID}, 'obs', #{batch_end})
               ON DUPLICATE KEY UPDATE last_source_id = GREATEST(last_source_id, VALUES(last_source_id))
             SQL
           rescue StandardError
@@ -1726,8 +1742,13 @@ def get_concept_ids(records, key, _source_db)
     if destination_concept_id
       record[key] = destination_concept_id
     elsif %i[value_coded discontinued_reason].include?(key)
-      # For optional concept fields, set to nil; for required ones, mark for removal
-      record[key] = nil
+      # Concept answer not in mapping — this means the mapping file is incomplete.
+      # Silently setting to nil caused data loss in the past (e.g. concept 5327 missing
+      # from initial mapping, obs migrated with value_coded=NULL, patients dropped from
+      # ART cohort reports). Abort loudly so the gap is caught before data is written.
+      raise "[CONCEPT MAPPING ERROR] #{key}=#{source_concept_id} has no mapping in " \
+            "#{CONCEPT_MAPPING_FILE}. Run bin/generate_concept_mapping.rb to regenerate " \
+            "the mapping, verify the new entry is correct, then re-run migration."
     else
       records_to_remove << record
     end
@@ -1965,6 +1986,67 @@ end
 # Pre-build HIV encounter IDs cache table for fast SQL filtering on every obs/orders/drug_order batch.
 # This is idempotent: drops and recreates on each run. Takes ~30-60s but saves hours over 3000+ batches.
 create_hiv_encounter_ids_cache(source_db)
+
+# -----------------------------------------------------------------------
+# PRE-FLIGHT: Verify concept mapping covers all concept_id and value_coded
+# values that appear in source HIV obs. Abort before touching any data if
+# gaps are found — a missing mapping causes silent data corruption (obs
+# inserted with value_coded=NULL, or obs dropped entirely).
+# -----------------------------------------------------------------------
+if CONCEPT_ID_MAP.any? && ENV['SKIP_PREFLIGHT'] != 'true'
+  puts "\n🔍 Pre-flight concept mapping coverage check..."
+  conn = ActiveRecord::Base.connection
+
+  # Collect all distinct concept_ids used as obs question in source HIV obs
+  question_ids = conn.execute(<<~SQL).map { |r| r[0].to_i }
+    SELECT DISTINCT o.concept_id
+    FROM #{source_db}.obs o
+    INNER JOIN #{DEST_DB}.hiv_enc_ids_cache h ON h.encounter_id = o.encounter_id
+    WHERE o.voided = 0
+  SQL
+
+  # Collect all distinct value_coded values used as obs answer in source HIV obs
+  answer_ids = conn.execute(<<~SQL).map { |r| r[0].to_i }
+    SELECT DISTINCT o.value_coded
+    FROM #{source_db}.obs o
+    INNER JOIN #{DEST_DB}.hiv_enc_ids_cache h ON h.encounter_id = o.encounter_id
+    WHERE o.voided = 0 AND o.value_coded IS NOT NULL
+  SQL
+
+  missing_questions = question_ids.reject { |id| CONCEPT_ID_MAP.key?(id) }
+  missing_answers   = answer_ids.reject   { |id| CONCEPT_ID_MAP.key?(id) }
+
+  if missing_questions.any? || missing_answers.any?
+    puts "\n" + ('=' * 80)
+    puts '❌  CONCEPT MAPPING INCOMPLETE — migration aborted to prevent data loss'
+    puts '=' * 80
+    if missing_questions.any?
+      puts "\n  Unmapped obs question concept_ids (#{missing_questions.size}):"
+      missing_questions.each do |id|
+        name = conn.execute(
+          "SELECT name FROM #{source_db}.concept_name WHERE concept_id=#{id} " \
+          "AND concept_name_type='FULLY_SPECIFIED' LIMIT 1"
+        ).first&.[](0) || '(unknown)'
+        puts "    #{id}  \"#{name}\""
+      end
+    end
+    if missing_answers.any?
+      puts "\n  Unmapped obs answer value_coded concept_ids (#{missing_answers.size}):"
+      missing_answers.each do |id|
+        name = conn.execute(
+          "SELECT name FROM #{source_db}.concept_name WHERE concept_id=#{id} " \
+          "AND concept_name_type='FULLY_SPECIFIED' LIMIT 1"
+        ).first&.[](0) || '(unknown)'
+        puts "    #{id}  \"#{name}\""
+      end
+    end
+    puts "\n  Fix: run bin/generate_concept_mapping.rb, review new entries, then re-run migration."
+    puts '=' * 80
+    exit 1
+  else
+    puts "  ✓ All #{question_ids.size} question concepts and #{answer_ids.size} answer concepts are mapped"
+  end
+end
 
 # Build obs_pending: source HIV obs whose UUIDs are NOT yet in harmonized.obs.
 # This is the single correct resume mechanism for multi-site harmonized DBs:

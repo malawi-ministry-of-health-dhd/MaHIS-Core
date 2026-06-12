@@ -1940,6 +1940,8 @@ module ArtService
                                         .distinct
                                         .pluck(:concept_id)
 
+        # idx_obs_preg_covering (concept_id, value_coded, voided, obs_datetime, person_id)
+        # makes this a fully covering index scan — no table heap lookups needed.
         ActiveRecord::Base.connection.execute <<~SQL
           INSERT INTO #{temp_pregnant_obs}
           SELECT person_id,
