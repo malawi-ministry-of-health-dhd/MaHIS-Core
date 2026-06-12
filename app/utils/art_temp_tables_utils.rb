@@ -32,6 +32,7 @@ module ArtTempTablesUtils
       ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{tmp_max_adherence}")
       ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_pregnant_obs}")
       ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_patient_side_effects}")
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{tmp_first_registration}")
       create_temp_cohort_members_table
       create_tmp_patient_table
       create_temp_other_patient_types
@@ -43,6 +44,7 @@ module ArtTempTablesUtils
       create_tmp_max_adherence
       create_temp_pregnant_obs
       create_temp_patient_side_effects
+      create_tmp_first_registration
       return
     end
 
@@ -53,7 +55,7 @@ module ArtTempTablesUtils
       temp_cohort_members, temp_earliest_start_date, temp_other_patient_types,
       temp_register_start_date, temp_order_details, temp_art_start_date,
       temp_patient_tb_status, temp_latest_tb_status, tmp_max_adherence,
-      temp_pregnant_obs, temp_patient_side_effects
+      temp_pregnant_obs, temp_patient_side_effects, tmp_first_registration
     )
 
     if cols[temp_cohort_members] == 0
@@ -110,6 +112,11 @@ module ArtTempTablesUtils
       create_temp_patient_side_effects
     else
       (drop_temp_patient_side_effects unless cols[temp_patient_side_effects] == 2)
+    end
+    if cols[tmp_first_registration] == 0
+      create_tmp_first_registration
+    else
+      drop_tmp_first_registration
     end
 
     truncate_cohort_tables
@@ -466,6 +473,21 @@ module ArtTempTablesUtils
 
   def create_tmp_max_adherence_indexes
     safe_create_index("CREATE INDEX #{temp_index_name('tma_date')} ON #{tmp_max_adherence} (visit_date)")
+  end
+
+  def drop_tmp_first_registration
+    ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{tmp_first_registration}")
+    create_tmp_first_registration
+  end
+
+  def create_tmp_first_registration
+    ActiveRecord::Base.connection.execute <<~SQL
+      CREATE TABLE IF NOT EXISTS #{tmp_first_registration} (
+        patient_id   INT NOT NULL,
+        encounter_id INT NOT NULL,
+        PRIMARY KEY (patient_id)
+      ) ENGINE=InnoDB
+    SQL
   end
 
   def drop_temp_pregnant_obs
