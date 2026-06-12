@@ -22,6 +22,7 @@ class FacilityDdeActivationListener
 
   def initialize(**options)
     @config = DEFAULT_CONFIG.merge(options)
+    @last_sequence = nil
     validate_configuration!
   end
 
@@ -55,10 +56,10 @@ class FacilityDdeActivationListener
       include_docs: true,
       timeout: config[:timeout],
       heartbeat: config[:heartbeat],
-      since: 'now'
+      since: @last_sequence || 'now'
     )
 
-    Rails.logger.info('[Facility DDE Listener] Connecting to facilities _changes feed')
+    Rails.logger.info("[Facility DDE Listener] Connecting to facilities _changes feed: #{uri}")
 
     Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == 'https') do |http|
       request = Net::HTTP::Get.new(uri)
@@ -94,6 +95,7 @@ class FacilityDdeActivationListener
   end
 
   def process_change(change)
+    @last_sequence = change['seq'] if change['seq'].present?
     return if change['deleted'] == true
 
     doc = change['doc']
@@ -105,38 +107,35 @@ class FacilityDdeActivationListener
       return
     end
 
+    Rails.logger.info("[Facility DDE Listener] Activated facility change detected: #{facility_location_id(doc) || doc['_id']}")
     enqueue_dde_ids_sync(doc)
   end
 
   def enqueue_if_any_facility_is_activated
     username, password = couchdb_credentials
-    resource_options = {
-      headers: {
-        accept: :json,
-        content_type: :json
-      }
-    }
-    resource_options[:user] = username if username
-    resource_options[:password] = password if password
+    uri = URI(couchdb_url(FACILITIES_DB_NAME, '_all_docs'))
+    uri.query = URI.encode_www_form(include_docs: true)
+    request = RestClient::Request.new(
+      method: :get,
+      url: uri.to_s,
+      headers: { accept: :json },
+      user: username,
+      password: password
+    )
+    response = request.execute
+    rows = JSON.parse(response.body)['rows'] || []
+    docs = rows.filter_map do |row|
+      doc = row['doc']
+      next unless doc
+      next if doc['_id'].to_s.start_with?('_design/')
 
-    query = {
-      selector: {
-        '$or' => [
-          { 'dde_activated' => true },
-          { 'dde_activated' => 'true' }
-        ]
-      },
-      limit: 1
-    }
-
-    resource = RestClient::Resource.new(couchdb_url(FACILITIES_DB_NAME, '_find'), resource_options)
-    response = resource.post(query.to_json)
-    docs = JSON.parse(response.body)['docs'] || []
+      doc if dde_activated?(doc)
+    end
 
     return if docs.empty?
 
-    Rails.logger.info('[Facility DDE Listener] Found activated facility on startup; queueing DDE IDs sync')
-    enqueue_dde_ids_sync(docs.first)
+    Rails.logger.info('[Facility DDE Listener] Found activated facility on startup; queueing DDE IDs sync for all active facilities')
+    enqueue_all_dde_ids_sync
   rescue RestClient::NotFound
     Rails.logger.warn("[Facility DDE Listener] Facilities database '#{FACILITIES_DB_NAME}' not found; startup scan skipped")
   rescue StandardError => e
@@ -144,14 +143,42 @@ class FacilityDdeActivationListener
   end
 
   def enqueue_dde_ids_sync(doc)
-    jid = Sync::DdeIdsSyncJob.perform_async
-    facility_label = doc['location_id'] || doc['_id']
+    facility_label = facility_location_id(doc)
+    unless facility_label.present?
+      Rails.logger.warn("[Facility DDE Listener] Activated facility #{doc['_id']} has no location_id; DDE IDs sync was not queued")
+      return
+    end
+
+    jid = enqueue_dde_ids_sync_job(100, facility_label.to_s)
 
     if jid.present?
       Rails.logger.info("[Facility DDE Listener] Queued DDE IDs sync job #{jid} for activated facility #{facility_label}")
     else
       Rails.logger.info("[Facility DDE Listener] DDE IDs sync already queued/running for activated facility #{facility_label}")
     end
+  end
+
+  def enqueue_all_dde_ids_sync
+    jid = enqueue_dde_ids_sync_job(100, nil)
+
+    if jid.present?
+      Rails.logger.info("[Facility DDE Listener] Queued DDE IDs sync job #{jid} for all activated facilities")
+    else
+      Rails.logger.info('[Facility DDE Listener] DDE IDs sync already queued/running for all activated facilities')
+    end
+  end
+
+  def enqueue_dde_ids_sync_job(batch_size, location_id)
+    Rails.logger.info("[Facility DDE Listener] Enqueueing Sync::DdeIdsSyncJob on #{Sync::DdeIdsSyncJob.get_sidekiq_options['queue']} with args [#{batch_size.inspect}, #{location_id.inspect}]")
+    Sync::DdeIdsSyncJob.perform_async(batch_size, location_id)
+  rescue StandardError => e
+    Rails.logger.error("[Facility DDE Listener] Failed to enqueue Sync::DdeIdsSyncJob: #{e.class}: #{e.message}")
+    Rails.logger.error("[Facility DDE Listener] Enqueue backtrace: #{e.backtrace.first(3).join(' -> ')}") if e.backtrace
+    nil
+  end
+
+  def facility_location_id(doc)
+    doc['location_id'].presence || doc['_id'].to_s[/\Afacility_(.+)\z/, 1]
   end
 
   def dde_activated?(doc)
