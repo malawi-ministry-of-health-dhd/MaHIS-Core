@@ -663,7 +663,7 @@ module ArtService
                  (SELECT value_coded FROM obs
                   WHERE concept_id = (SELECT concept_id FROM concept_name WHERE name = 'Reason for ART eligibility' LIMIT 1) AND person_id = patient_program.patient_id AND voided = 0
                   AND obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
-                  ORDER BY obs_datetime DESC, date_created DESC LIMIT 1) AS reason_for_starting_art,
+                  ORDER BY obs_datetime DESC, date_created DESC, obs_id DESC LIMIT 1) AS reason_for_starting_art,
                  pa.value AS occupation
           FROM patient_program
           INNER JOIN person ON person.person_id = patient_program.patient_id AND person.voided = 0
@@ -1970,22 +1970,18 @@ module ArtService
       # Finds the latest Yes obs per female ART patient for pregnant/breastfeeding concepts
       # within a 2-year lookback window, restricted to HIV clinic encounter types.
       # This is more permissive than requiring obs on the exact drug-order date.
-      def load_temp_obs_last_visit(end_date)
+      def load_temp_obs_last_visit(_end_date)
         encounter_type_ids = EncounterType.where(name: ['HIV CLINIC CONSULTATION', 'HIV STAGING'])
                                           .pluck(:encounter_type_id)
         pregnant_concept_ids = ConceptName.where(name: ['Is patient pregnant?', 'patient pregnant'])
                                           .pluck(:concept_id)
         breastfeeding_concept_ids = ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding'])
                                                .pluck(:concept_id)
-        yes_concept_id = ConceptName.find_by(name: 'Yes')&.concept_id
 
         all_concept_ids = (pregnant_concept_ids + breastfeeding_concept_ids).uniq
-        return if all_concept_ids.empty? || encounter_type_ids.empty? || yes_concept_id.nil?
-
-        quoted_end = ActiveRecord::Base.connection.quote(end_date.to_s)
+        return if all_concept_ids.empty? || encounter_type_ids.empty?
 
         ActiveRecord::Base.connection.execute "DROP TABLE IF EXISTS #{temp_obs_last_visit}"
-        ActiveRecord::Base.connection.execute "DROP TABLE IF EXISTS #{tmp_preg_max_dt}"
 
         ActiveRecord::Base.connection.execute <<~SQL
           CREATE TABLE #{temp_obs_last_visit} (
@@ -1996,50 +1992,33 @@ module ArtService
           ) ENGINE=InnoDB
         SQL
 
-        ActiveRecord::Base.connection.execute <<~SQL
-          CREATE TABLE #{tmp_preg_max_dt} (
-            patient_id INT NOT NULL,
-            concept_id INT NOT NULL,
-            max_dt     DATETIME NOT NULL,
-            PRIMARY KEY (patient_id, concept_id)
-          ) ENGINE=MEMORY
-        SQL
+        yes_concept_id = concept('Yes').concept_id
 
-        # Step 1: find the latest obs_datetime per (patient, concept) for female ART patients
+        # Anchor on each patient's last drug-order date (same as BHT-EMR-API).
+        # Only Yes obs on that exact day from a clinic/staging encounter are counted.
+        # A 2-year window anchored at end_date overcounts because it can pick up a recent
+        # Yes obs that predates a later No recorded at the patient's last drug pickup.
         ActiveRecord::Base.connection.execute <<~SQL
-          INSERT INTO #{tmp_preg_max_dt} (patient_id, concept_id, max_dt)
-          SELECT obs.person_id, obs.concept_id, MAX(obs.obs_datetime)
+          INSERT INTO #{temp_obs_last_visit} (patient_id, concept_id, value_coded)
+          SELECT tpo.patient_id, obs.concept_id, #{yes_concept_id} AS value_coded
           FROM #{temp_patient_outcomes} tpo
           INNER JOIN #{temp_earliest_start_date} e
             ON e.patient_id = tpo.patient_id
             AND LEFT(e.gender, 1) = 'F'
+          INNER JOIN #{temp_max_drug_orders} mdo ON mdo.patient_id = tpo.patient_id
           INNER JOIN obs ON obs.person_id = tpo.patient_id
             AND obs.concept_id IN (#{all_concept_ids.join(',')})
             AND obs.voided = 0
-            AND obs.obs_datetime >= DATE(#{quoted_end}) - INTERVAL 2 YEAR
-            AND obs.obs_datetime <= #{quoted_end}
-          WHERE tpo.moh_cum_outcome = 'On antiretrovirals'
-          GROUP BY obs.person_id, obs.concept_id
-        SQL
-
-        # Step 2: fetch Yes obs matching that latest datetime, restricted to clinic encounters
-        ActiveRecord::Base.connection.execute <<~SQL
-          INSERT INTO #{temp_obs_last_visit} (patient_id, concept_id, value_coded)
-          SELECT m.patient_id, o.concept_id, o.value_coded
-          FROM #{tmp_preg_max_dt} m
-          INNER JOIN obs o ON o.person_id = m.patient_id
-            AND o.concept_id = m.concept_id
-            AND o.obs_datetime = m.max_dt
-            AND o.voided = 0
-            AND o.value_coded = #{yes_concept_id}
+            AND obs.value_coded = #{yes_concept_id}
+            AND obs.obs_datetime >= DATE(mdo.start_date)
+            AND obs.obs_datetime < DATE(mdo.start_date) + INTERVAL 1 DAY
           INNER JOIN encounter enc
-            ON enc.encounter_id = o.encounter_id
+            ON enc.encounter_id = obs.encounter_id
             AND enc.voided = 0
             AND enc.encounter_type IN (#{encounter_type_ids.join(',')})
-          GROUP BY m.patient_id, o.concept_id
+          WHERE tpo.moh_cum_outcome = 'On antiretrovirals'
+          GROUP BY tpo.patient_id, obs.concept_id
         SQL
-
-        ActiveRecord::Base.connection.execute "DROP TABLE IF EXISTS #{tmp_preg_max_dt}"
       end
 
       def pregnant_females_all_ages(start_date, end_date)
