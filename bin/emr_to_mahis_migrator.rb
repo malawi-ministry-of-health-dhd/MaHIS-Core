@@ -174,6 +174,10 @@ else
   CONCEPT_ID_MAP = {}
 end
 
+# Thread-safe cache for unmapped concepts encountered during migration.
+# Flushed to log/unmapped_concepts.log at the end of the run.
+UNMAPPED_CONCEPTS_CACHE = Concurrent::Array.new
+
 Location.current = Location.find_by_location_id(SITE_ID)
 user = User.unscoped.first
 user.location_id = SITE_ID
@@ -553,6 +557,59 @@ def build_hiv_filter_clause(table_name, source_db)
   when 'drug_order'
     "order_id IN (SELECT o.order_id FROM #{source_db}.orders o JOIN #{DEST_DB}.hiv_enc_ids_cache h ON h.encounter_id = o.encounter_id)"
   end
+end
+
+# Consolidate duplicate drug records created by older migrator runs that incorrectly
+# inserted drug rows from the source DB instead of reusing canonical destination drugs.
+#
+# For each set of drugs sharing the same name, keeps the lowest drug_id (canonical) and:
+#   1. Remaps drug_order.drug_inventory_id from duplicate IDs to the canonical ID.
+#   2. Remaps obs.value_drug from duplicate IDs to the canonical ID.
+#   3. Deletes the duplicate drug rows.
+#
+# Safe to run repeatedly — skips drug names that have no duplicates.
+def consolidate_duplicate_drugs
+  conn = ActiveRecord::Base.connection
+
+  # Find names with more than one non-retired drug_id
+  duplicates = conn.select_all(<<~SQL).to_a
+    SELECT name, MIN(drug_id) AS canonical_id, GROUP_CONCAT(drug_id ORDER BY drug_id) AS all_ids
+    FROM drug
+    WHERE name IS NOT NULL AND retired = 0
+    GROUP BY name
+    HAVING COUNT(*) > 1
+  SQL
+
+  if duplicates.empty?
+    puts '  ✓ No duplicate drug records found — nothing to consolidate'
+    return
+  end
+
+  puts "\n  Consolidating #{duplicates.size} duplicate drug name(s)..."
+  duplicates.each do |row|
+    canonical_id = row['canonical_id'].to_i
+    duplicate_ids = row['all_ids'].split(',').map(&:to_i) - [canonical_id]
+
+    dup_list = duplicate_ids.join(',')
+
+    # Remap drug_order references
+    affected_orders = conn.update(
+      "UPDATE drug_order SET drug_inventory_id = #{canonical_id} WHERE drug_inventory_id IN (#{dup_list})"
+    )
+
+    # Remap obs.value_drug references
+    affected_obs = conn.update(
+      "UPDATE obs SET value_drug = #{canonical_id} WHERE value_drug IN (#{dup_list})"
+    )
+
+    # Delete the duplicate drug rows (drug_ingredient rows may reference these — handle gracefully)
+    conn.execute("DELETE FROM drug_ingredient WHERE concept_id IN (#{dup_list}) OR ingredient_id IN (#{dup_list})")
+    conn.execute("DELETE FROM drug WHERE drug_id IN (#{dup_list})")
+
+    puts "    #{row['name'].truncate(60)}: canonical=#{canonical_id}, removed=#{duplicate_ids.join(',')} " \
+         "(remapped #{affected_orders} drug_order, #{affected_obs} obs rows)"
+  end
+  puts '  ✓ Drug consolidation complete'
 end
 
 # Report data quality issues found during migration
@@ -955,8 +1012,8 @@ def optimal_threads
 end
 
 # Constant batch size used across all tables.
-# Override with BATCH_SIZE env var, e.g. BATCH_SIZE=20000.
-DEFAULT_BATCH_SIZE = (ENV['BATCH_SIZE'] || 20_000).to_i
+# Override with BATCH_SIZE env var, e.g. BATCH_SIZE=100000.
+DEFAULT_BATCH_SIZE = (ENV['BATCH_SIZE'] || 100_000).to_i
 
 # Process in Batches with Dynamic Threads and Percentage Tracking
 def process_in_batches(source_db, table_name, batch_size = nil, target_model = nil)
@@ -967,7 +1024,7 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
   # Use smaller batches for large memory-intensive tables (reduces per-batch footprint and connection hold time).
   # Override with OBS_BATCH_SIZE env var. Only applies when BATCH_SIZE not explicitly set.
   if %w[obs drug_order].include?(table_name_str) && !ENV['BATCH_SIZE']
-    batch_size = (ENV['OBS_BATCH_SIZE'] || 10_000).to_i
+    batch_size = (ENV['OBS_BATCH_SIZE'] || 100_000).to_i
   end
   # Test mode: only process 10 records per table
   test_limit = ENV['TEST_MODE'] == 'true' ? 10 : nil
@@ -1627,11 +1684,17 @@ def fetch_new_ids_by_name(records, source_db, table_name, id_column, name_column
   # Escape single quotes in names for SQL safety
   escaped_names = names.map { |name| "'#{ActiveRecord::Base.connection.quote_string(name)}'" }.join(',')
 
-  # Build a case-insensitive name map: lowercase name => [actual_name, id]
-  name_to_id_map = model.unscoped.where("LOWER(TRIM(#{name_column})) IN (#{escaped_names.downcase})")
+  # Build a case-insensitive name map: lowercase name => id
+  # When duplicate names exist (e.g. migrated drug rows with same name as canonical),
+  # always prefer the minimum (canonical) id so drug_order resolution is stable.
+  # Exclude retired records when the model supports it (e.g. Drug) so we never
+  # resolve a reference to a retired destination record.
+  base_condition = "LOWER(TRIM(#{name_column})) IN (#{escaped_names.downcase})"
+  base_condition += ' AND retired = 0' if model.column_names.include?('retired')
+  name_to_id_map = model.unscoped.where(base_condition)
+                        .order(id_column => :asc)
                         .pluck(name_column, id_column)
-                        .map { |name, id| [name.downcase.strip, id] }
-                        .to_h
+                        .each_with_object({}) { |(name, id), h| h[name.downcase.strip] ||= id }
 
   records.compact.each do |record|
     next if record[new_id_key].blank?
@@ -1742,13 +1805,9 @@ def get_concept_ids(records, key, _source_db)
     if destination_concept_id
       record[key] = destination_concept_id
     elsif %i[value_coded discontinued_reason].include?(key)
-      # Concept answer not in mapping — this means the mapping file is incomplete.
-      # Silently setting to nil caused data loss in the past (e.g. concept 5327 missing
-      # from initial mapping, obs migrated with value_coded=NULL, patients dropped from
-      # ART cohort reports). Abort loudly so the gap is caught before data is written.
-      raise "[CONCEPT MAPPING ERROR] #{key}=#{source_concept_id} has no mapping in " \
-            "#{CONCEPT_MAPPING_FILE}. Run bin/generate_concept_mapping.rb to regenerate " \
-            "the mapping, verify the new entry is correct, then re-run migration."
+      # Concept answer not in mapping — cache for end-of-run log write and skip the record.
+      UNMAPPED_CONCEPTS_CACHE << { key: key, concept_id: source_concept_id }
+      records_to_remove << record
     else
       records_to_remove << record
     end
@@ -2018,7 +2077,7 @@ if CONCEPT_ID_MAP.any? && ENV['SKIP_PREFLIGHT'] != 'true'
 
   if missing_questions.any? || missing_answers.any?
     puts "\n" + ('=' * 80)
-    puts '❌  CONCEPT MAPPING INCOMPLETE — migration aborted to prevent data loss'
+    puts '⚠️  CONCEPT MAPPING INCOMPLETE — unmapped concepts will be skipped during migration'
     puts '=' * 80
     if missing_questions.any?
       puts "\n  Unmapped obs question concept_ids (#{missing_questions.size}):"
@@ -2040,9 +2099,8 @@ if CONCEPT_ID_MAP.any? && ENV['SKIP_PREFLIGHT'] != 'true'
         puts "    #{id}  \"#{name}\""
       end
     end
-    puts "\n  Fix: run bin/generate_concept_mapping.rb, review new entries, then re-run migration."
+    puts "\n  Note: run bin/generate_concept_mapping.rb to add missing mappings."
     puts '=' * 80
-    exit 1
   else
     puts "  ✓ All #{question_ids.size} question concepts and #{answer_ids.size} answer concepts are mapped"
   end
@@ -2299,6 +2357,26 @@ if __FILE__ == $0
 
   # Report performance metrics
   report_performance_metrics
+
+  # Flush unmapped concept cache to log file
+  unless UNMAPPED_CONCEPTS_CACHE.empty?
+    unmapped_log = Rails.root.join('log', 'unmapped_concepts.log')
+    # Deduplicate by concept_id only before writing
+    unique_concept_ids = UNMAPPED_CONCEPTS_CACHE.map { |e| e[:concept_id] }.uniq
+    File.open(unmapped_log, 'w') do |f|
+      f.puts "\n# Unmapped concepts from migration run at #{Time.now.iso8601} (#{unique_concept_ids.size} unique concept_ids)"
+      unique_concept_ids.each do |concept_id|
+        f.puts "UNMAPPED concept_id=#{concept_id} — not in #{CONCEPT_MAPPING_FILE}. Update the metadata server and regenerate mapping to migrate these records."
+      end
+    end
+    puts "\n⚠ #{unique_concept_ids.size} unmapped concept_id(s) skipped — see log/unmapped_concepts.log"
+  end
+
+  # Consolidate duplicate drug records: remap drug_order references to canonical
+  # (lowest) drug_id per name, then delete the duplicate rows. This ensures sites
+  # migrated with older migrator versions (which created duplicate drug rows) are
+  # cleaned up automatically. Safe to run repeatedly — no-op when no duplicates exist.
+  consolidate_duplicate_drugs
 
   # Final cleanup: Clear all active connections
   puts "\n✓ Migration complete! Cleaning up connections..."

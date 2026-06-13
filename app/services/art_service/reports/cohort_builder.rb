@@ -80,7 +80,7 @@ module ArtService
       end
 
       def init_temporary_tables(start_date, end_date, occupation, force_rebuild: false,
-                                  ws_name: nil, ws_location_id: nil)
+                                ws_name: nil, ws_location_id: nil)
         bcast_name     = ws_name || @ws_name
         bcast_loc      = ws_location_id || @ws_location_id
         shared_loaded = !force_rebuild && shared_cohort_tables_populated?
@@ -631,8 +631,8 @@ module ArtService
         load_data_into_temp_cohort_members_table(end_date)
         ActiveRecord::Base.connection.execute <<~SQL
           INSERT INTO #{temp_earliest_start_date}
-          SELECT patient_id, date_enrolled, earliest_start_date, recorded_start_date, 
-          birthdate, birthdate_estimated, death_date, gender, age_at_initiation, 
+          SELECT patient_id, date_enrolled, earliest_start_date, recorded_start_date,#{' '}
+          birthdate, birthdate_estimated, death_date, gender, age_at_initiation,#{' '}
           age_in_days, reason_for_starting_art
           FROM #{temp_cohort_members} #{occupation_filter(occupation:, field_name: 'occupation')}
         SQL
@@ -984,7 +984,8 @@ module ArtService
                                                         'WHO STAGE 3']).pluck(:concept_id)
         pregnant_concepts = ConceptName.where(name: ['PATIENT PREGNANT', 'Is patient pregnant at initiation?',
                                                      'Patient pregnant state', 'Is patient pregnant?']).pluck(:concept_id)
-        breastfeeding_concepts = ConceptName.where(name: 'Breastfeeding').pluck(:concept_id)
+        breastfeeding_concepts = ConceptName.where(name: ['Breastfeeding', 'Currently breastfeeding child',
+                                                          'Is patient breast feeding?']).pluck(:concept_id)
         who_stage_2_concepts = ConceptName.where(name: ['CD4 COUNT LESS THAN OR EQUAL TO 750',
                                                         'CD4 count less than or equal to 500', 'CD4 COUNT LESS THAN OR EQUAL TO 350', 'CD4 count less than 350', 'CD4 count less than 250', 'CD4 COUNT LESS THAN OR EQUAL TO 250']).pluck(:concept_id)
         pcr_concepts = ConceptName.where(name: 'HIV PCR').pluck(:concept_id)
@@ -1249,7 +1250,9 @@ module ArtService
                          total_pregnant_women.map { |woman| woman['person_id'].to_i }
                        end
 
-        breastfeeding_concept_ids = ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding'])
+        breastfeeding_concept_ids = ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding',
+                                                             'Is patient breast feeding?',
+                                                             'Currently breastfeeding child'])
                                                .pluck(:concept_id)
         return [] if breastfeeding_concept_ids.empty?
 
@@ -1975,7 +1978,9 @@ module ArtService
                                           .pluck(:encounter_type_id)
         pregnant_concept_ids = ConceptName.where(name: ['Is patient pregnant?', 'patient pregnant'])
                                           .pluck(:concept_id)
-        breastfeeding_concept_ids = ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding'])
+        breastfeeding_concept_ids = ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding',
+                                                             'Is patient breast feeding?',
+                                                             'Currently breastfeeding child'])
                                                .pluck(:concept_id)
 
         all_concept_ids = (pregnant_concept_ids + breastfeeding_concept_ids).uniq
@@ -2118,7 +2123,7 @@ module ArtService
 
         date_art_cid   = date_art_last_taken_concept_id
         reg_enc_type   = hiv_clinic_registration_encounter_type_id
-        return ActiveRecord::Base.connection.select_all("SELECT NULL LIMIT 0") unless date_art_cid && reg_enc_type
+        return ActiveRecord::Base.connection.select_all('SELECT NULL LIMIT 0') unless date_art_cid && reg_enc_type
 
         ActiveRecord::Base.connection.select_all <<~SQL
           SELECT tesd.patient_id
@@ -2145,7 +2150,7 @@ module ArtService
 
       def re_initiated_on_art(start_date, end_date)
         date_art_cid = date_art_last_taken_concept_id
-        return ActiveRecord::Base.connection.select_all("SELECT NULL LIMIT 0") unless date_art_cid
+        return ActiveRecord::Base.connection.select_all('SELECT NULL LIMIT 0') unless date_art_cid
 
         ActiveRecord::Base.connection.select_all(<<~SQL)
           SELECT tesd.patient_id
@@ -2377,17 +2382,17 @@ module ArtService
       end
 
       STEP_LABELS = {
-        1  => 'Loading patient types',
-        2  => 'Loading registration dates',
-        3  => 'Loading prescription orders',
-        4  => 'Loading ART start dates',
-        5  => 'Indexing earliest start dates',
-        6  => 'Computing demographics & patient types',
-        7  => 'Computing pregnancy & gender data',
-        8  => 'Computing eligibility & TB status',
-        9  => 'Computing regimen categories',
+        1 => 'Loading patient types',
+        2 => 'Loading registration dates',
+        3 => 'Loading prescription orders',
+        4 => 'Loading ART start dates',
+        5 => 'Indexing earliest start dates',
+        6 => 'Computing demographics & patient types',
+        7 => 'Computing pregnancy & gender data',
+        8 => 'Computing eligibility & TB status',
+        9 => 'Computing regimen categories',
         10 => 'Computing side effects & adherence',
-        11 => 'Finalizing report',
+        11 => 'Finalizing report'
       }.freeze
 
       CACHED_STEP_LABELS = STEP_LABELS.transform_values { |v| "Cached: #{v}" }.freeze

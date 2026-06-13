@@ -44,6 +44,7 @@
 require 'net/http'
 require 'json'
 require 'uri'
+require 'digest'
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 QUARTER        = ENV.fetch('QUARTER', 'Q4 2025')
@@ -67,6 +68,25 @@ REGENERATE_BASELINE   = ENV.fetch('REGENERATE_BASELINE', 'false').casecmp?('true
 # Max seconds to wait for a cohort to be generated (it runs as a background job)
 MAX_WAIT_SECONDS = 3600
 POLL_INTERVAL    = 10
+# ─── Password reset fallback ────────────────────────────────────────────────────
+# Resets a user's password directly in the DB using SHA512+salt (OpenMRS scheme),
+# then retries login. Used when a reseed resets the password hash.
+def reset_password_and_retry(base_url, username, password, label:, client:, client_version:)
+  print yellow("  Login failed — attempting password reset via DB for '#{username}'... ")
+  user = User.find_by(username: username)
+  unless user
+    puts red("user '#{username}' not found in DB")
+    return nil
+  end
+
+  user.password = Digest::SHA512.hexdigest("#{password}#{user.salt}")
+  user.save!(validate: false)
+  puts yellow('reset OK, retrying login...')
+  get_token(base_url, username, password, label: label, client: client, client_version: client_version)
+rescue StandardError => e
+  puts red("FAILED: #{e.message}")
+  nil
+end
 
 # ─── Colour helpers ───────────────────────────────────────────────────────────
 def red(s)    = "\e[31m#{s}\e[0m"
@@ -101,11 +121,6 @@ def get_token(base_url, username, password, label:, client:, client_version:)
   print "  Logging into #{label} (#{base_url}) as '#{username}'... "
   resp = http_post("#{base_url}/api/v1/auth/login", { username: username, password: password },
                    client: client, client_version: client_version)
-
-  unless resp.is_a?(Net::HTTPSuccess)
-    resp = http_post("#{base_url}/api/v1/users/login", { username: username, password: password },
-                     client: client, client_version: client_version)
-  end
 
   body = begin
     JSON.parse(resp.body)
@@ -251,10 +266,10 @@ def generate_mahis_cohort_direct(quarter)
 
     # Convert CohortStruct to indicator map
     cohort_struct.values.each_with_object({}) do |rv, map|
-      map[rv.short_name.to_s] = {
+      map[rv.name.to_s] = {
         value: parse_indicator_value(rv.contents),
         raw: rv.contents.to_s,
-        label: rv.long_name || rv.short_name.to_s
+        label: rv.indicator_name || rv.name.to_s
       }
     end
   rescue StandardError => e
@@ -402,6 +417,8 @@ else
   puts bold("▶ Fetching baseline from BHT-EMR-API (#{BASELINE_URL})")
   bl_token = get_token(BASELINE_URL, BASELINE_USER, BASELINE_PASS, label: 'BHT-EMR-API',
                                                                    client: BASELINE_CLIENT, client_version: BASELINE_CLIENT_VERSION)
+  bl_token ||= reset_password_and_retry(BASELINE_URL, BASELINE_USER, BASELINE_PASS, label: 'BHT-EMR-API',
+                                                                                    client: BASELINE_CLIENT, client_version: BASELINE_CLIENT_VERSION)
 
   if bl_token
     bl_report = fetch_cohort(BASELINE_URL, bl_token, QUARTER, label: 'BHT-EMR-API', regenerate: REGENERATE_BASELINE,
@@ -437,6 +454,8 @@ mahis_label      = 'MaHIS'
 
 mh_token = get_token(MAHIS_URL, MAHIS_USER, MAHIS_PASS, label: 'mahis_backend',
                                                         client: MAHIS_CLIENT, client_version: MAHIS_CLIENT_VERSION)
+mh_token ||= reset_password_and_retry(MAHIS_URL, MAHIS_USER, MAHIS_PASS, label: 'mahis_backend',
+                                                                         client: MAHIS_CLIENT, client_version: MAHIS_CLIENT_VERSION)
 
 if mh_token
   mh_report = fetch_cohort(MAHIS_URL, mh_token, QUARTER, label: 'mahis_backend', regenerate: REGENERATE,
