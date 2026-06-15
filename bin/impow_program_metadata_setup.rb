@@ -44,7 +44,8 @@ ENCOUNTER_TYPES_TO_CREATE = [
 ]
 
 def create_concept(concept_name, datatype_id: 4, concept_class_id: 11, is_set: false)
-  existing_concept = Concept.find_by(short_name: concept_name)
+  existing_concept = Concept.find_by(concept_id: ConceptName.find_by(name: concept_name)&.concept_id)
+  existing_concept ||= Concept.find_by(short_name: concept_name)
   if existing_concept
     puts "Skipped concept: #{concept_name} (already exists)"
     return existing_concept
