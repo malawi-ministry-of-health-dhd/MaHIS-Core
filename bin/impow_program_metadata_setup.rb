@@ -4,28 +4,21 @@ require 'securerandom'
 
 CONCEPTS_TO_CREATE = [
   {
-    program_name: 'Outpatient Therapeutic Services PROGRAM',
+    program_name: 'OTS PROGRAM',
     concept_names: [
-      { value: 'Outpatient Therapeutic Services PROGRAM', type: 'FULLY_SPECIFIED' }
+      { value: 'OTS PROGRAM', type: 'FULLY_SPECIFIED' }
     ]
   },
   {
-    program_name: 'Nutrition Rehabilitation Unit PROGRAM',
+    program_name: 'NRU PROGRAM',
     concept_names: [
-      { value: 'Nutrition Rehabilitation Unit PROGRAM', type: 'FULLY_SPECIFIED' }
+      { value: 'NRU PROGRAM', type: 'FULLY_SPECIFIED' }
     ]
   },
   {
-    program_name: 'ICCM/CMAM Village Clinic PROGRAM',
+    program_name: 'ICCM/CMAM PROGRAM',
     concept_names: [
-      { value: 'ICCM/CMAM Village Clinic PROGRAM', type: 'FULLY_SPECIFIED' }
-    ]
-  },
-  {
-    program_name: 'Outpatient Therapeutic Services',
-    concept_names: [
-      { value: 'Outpatient Therapeutic Services', type: 'FULLY_SPECIFIED' },
-      { value: 'OTS', type: 'SHORT' }
+      { value: 'ICCM/CMAM PROGRAM', type: 'FULLY_SPECIFIED' }
     ]
   },
   {
@@ -677,12 +670,12 @@ def run_create_program
       end
 
       # Only create a program for ICCM PROGRAM, OTS PROGRAM, and NRU PROGRAM concepts
-      next unless ['ICCM/CMAM Village Clinic PROGRAM', 'Outpatient Therapeutic Services PROGRAM', 'Nutrition Rehabilitation Unit PROGRAM'].include?(program_name)
+      next unless ['ICCM/CMAM PROGRAM', 'OTS PROGRAM', 'NRU PROGRAM'].include?(program_name)
 
       program = Program.find_by(name: program_name)
-      if program_name == 'Outpatient Therapeutic Services PROGRAM'
+      if program_name == 'OTS PROGRAM'
         program ||= Program.find_by(name: 'IMPOW Program')
-        # program&.update(name: program_name) if program && program.name != program_name
+        program&.update(name: program_name) if program && program.name != program_name
       end
       if program
         puts "Skipped program: #{program_name} (already exists)"
