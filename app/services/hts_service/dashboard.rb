@@ -42,26 +42,46 @@ module HtsService
       }]
     end
 
+    # Lightweight summary for the dashboard initial load: only the counts shown
+    # on the cards/header plus the day-bounded "awaiting results" list. The
+    # per-card patient lists are fetched lazily (see #dashboard_patients) when a
+    # card is clicked, so we never build/ship the unbounded "all HTS clients"
+    # list on every load.
     def self.dashboard_stats(filters)
       filters = filters.to_h.symbolize_keys
       dashboard_date = parse_dashboard_date(filters[:date]) || Date.current
-      total_client_ids = total_client_patient_ids
-      tested_today_ids = clients_tested_on_patient_ids(dashboard_date, filters[:order_type_id])
-      referred_to_art_ids = clients_referred_to_art_patient_ids(dashboard_date)
-      scheduled_today_ids = visits_scheduled_on_patient_ids(dashboard_date)
 
       {
-        total_clients: total_client_ids.length,
-        total_clients_patients: build_patient_rows(total_client_ids),
+        total_clients: total_clients_count,
         clients_with_conclusive_results: clients_with_conclusive_results,
-        clients_tested_today: tested_today_ids.length,
-        clients_tested_today_patients: build_patient_rows(tested_today_ids),
-        clients_referred_to_ART: referred_to_art_ids.length,
-        clients_referred_to_ART_patients: build_patient_rows(referred_to_art_ids),
-        visit_scheduled_today: scheduled_today_ids.length,
-        visit_scheduled_today_patients: build_patient_rows(scheduled_today_ids),
+        clients_tested_today: clients_tested_on(dashboard_date, filters[:order_type_id]),
+        clients_referred_to_ART: clients_referred_to_art(dashboard_date),
+        visit_scheduled_today: visits_scheduled_on(dashboard_date),
         patient_data: find_orders(filters)
       }
+    end
+
+    # Paginated + searchable patient rows for a single dashboard card category.
+    # Backs the lazy-loaded card modals so even the unbounded "total_clients"
+    # list is served one page at a time.
+    def self.dashboard_patients(filters)
+      filters = filters.to_h.symbolize_keys
+      dashboard_date = parse_dashboard_date(filters[:date]) || Date.current
+      page = [filters[:page].to_i, 1].max
+      per_page = filters[:per_page].to_i
+      per_page = 50 if per_page <= 0
+      per_page = [per_page, 200].min
+
+      patient_ids =
+        case filters[:category].to_s
+        when 'total_clients'           then total_client_patient_ids
+        when 'clients_tested_today'    then clients_tested_on_patient_ids(dashboard_date, filters[:order_type_id])
+        when 'clients_referred_to_ART' then clients_referred_to_art_patient_ids(dashboard_date)
+        when 'visit_scheduled_today'   then visits_scheduled_on_patient_ids(dashboard_date)
+        else []
+        end
+
+      build_patient_rows_paginated(patient_ids, page: page, per_page: per_page, search: filters[:search].to_s.strip)
     end
 
     def self.find_orders(filters)
@@ -227,14 +247,51 @@ module HtsService
       Encounter.where(program_id: HTS_PROGRAM_ID).distinct.pluck(:patient_id).compact
     end
 
-    def self.build_patient_rows(patient_ids)
+    # COUNT(DISTINCT ...) at the DB instead of plucking every id into Ruby just
+    # to take .length — the "total clients" set is unbounded and grows forever.
+    def self.total_clients_count
+      Encounter.where(program_id: HTS_PROGRAM_ID).distinct.count(:patient_id)
+    end
+
+    DEFAULT_PATIENT_ROWS_PER_PAGE = 50
+
+    # Returns a single page of patient rows for the given ids, with an optional
+    # name search and pagination metadata:
+    #   { data: [...], pagination: { current_page:, per_page:, total_count:, total_pages: } }
+    def self.build_patient_rows_paginated(patient_ids, page: 1, per_page: DEFAULT_PATIENT_ROWS_PER_PAGE, search: '')
+      page = [page.to_i, 1].max
+      per_page = per_page.to_i
+      per_page = DEFAULT_PATIENT_ROWS_PER_PAGE if per_page <= 0
+
       normalized_ids = Array(patient_ids).map(&:to_i).uniq.reject(&:zero?)
-      return [] if normalized_ids.empty?
+      return empty_patient_page(page, per_page) if normalized_ids.empty?
+
+      where_sql = +'p.voided = 0 AND p.person_id IN (?)'
+      where_binds = [normalized_ids]
+
+      search = search.to_s.strip
+      if search.present?
+        where_sql << " AND CONCAT_WS(' ', COALESCE(pn.given_name, ''), COALESCE(pn.middle_name, ''), " \
+                     "COALESCE(pn.family_name, '')) LIKE ?"
+        where_binds << "%#{search}%"
+      end
+
+      total_count = ActiveRecord::Base.connection.select_value(
+        ActiveRecord::Base.send(
+          :sanitize_sql_array,
+          [<<-SQL, *where_binds]
+            SELECT COUNT(DISTINCT p.person_id)
+            FROM person p
+            LEFT JOIN person_name pn ON pn.person_id = p.person_id AND pn.voided = 0
+            WHERE #{where_sql}
+          SQL
+        )
+      ).to_i
 
       rows = ActiveRecord::Base.connection.select_all(
         ActiveRecord::Base.send(
           :sanitize_sql_array,
-          [<<-SQL, normalized_ids]
+          [<<-SQL, *where_binds, per_page, (page - 1) * per_page]
             SELECT
               p.person_id AS patient_id,
               CONCAT_WS(
@@ -247,15 +304,15 @@ module HtsService
               p.gender AS patient_gender
             FROM person p
             LEFT JOIN person_name pn ON pn.person_id = p.person_id AND pn.voided = 0
-            WHERE p.voided = 0
-              AND p.person_id IN (?)
+            WHERE #{where_sql}
             GROUP BY p.person_id, p.birthdate, p.gender
             ORDER BY patient_name ASC
+            LIMIT ? OFFSET ?
           SQL
         )
       )
 
-      rows.map do |row|
+      data = rows.map do |row|
         ActiveSupport::HashWithIndifferentAccess.new(
           patient_id: row['patient_id'],
           patient_name: row['patient_name'],
@@ -263,6 +320,23 @@ module HtsService
           patient_gender: row['patient_gender']
         )
       end
+
+      {
+        data: data,
+        pagination: {
+          current_page: page,
+          per_page: per_page,
+          total_count: total_count,
+          total_pages: (total_count.to_f / per_page).ceil
+        }
+      }
+    end
+
+    def self.empty_patient_page(page, per_page)
+      {
+        data: [],
+        pagination: { current_page: page, per_page: per_page, total_count: 0, total_pages: 0 }
+      }
     end
 
     def self.appointment_encounter_type_ids

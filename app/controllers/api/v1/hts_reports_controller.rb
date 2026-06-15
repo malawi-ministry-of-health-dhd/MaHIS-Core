@@ -24,6 +24,11 @@ module Api
         render json: HtsService::Dashboard.dashboard_stats(filters)
       end
 
+      def daily_stats_patients
+        filters = params.permit(%i[category order_type_id date search page per_page])
+        render json: HtsService::Dashboard.dashboard_patients(filters)
+      end
+
       private
 
       def validate_params
