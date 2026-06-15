@@ -80,7 +80,7 @@ module ArtService
       end
 
       def init_temporary_tables(start_date, end_date, occupation, force_rebuild: false,
-                                ws_name: nil, ws_location_id: nil)
+                                  ws_name: nil, ws_location_id: nil)
         bcast_name     = ws_name || @ws_name
         bcast_loc      = ws_location_id || @ws_location_id
         shared_loaded = !force_rebuild && shared_cohort_tables_populated?
@@ -631,8 +631,8 @@ module ArtService
         load_data_into_temp_cohort_members_table(end_date)
         ActiveRecord::Base.connection.execute <<~SQL
           INSERT INTO #{temp_earliest_start_date}
-          SELECT patient_id, date_enrolled, earliest_start_date, recorded_start_date,#{' '}
-          birthdate, birthdate_estimated, death_date, gender, age_at_initiation,#{' '}
+          SELECT patient_id, date_enrolled, earliest_start_date, recorded_start_date, 
+          birthdate, birthdate_estimated, death_date, gender, age_at_initiation, 
           age_in_days, reason_for_starting_art
           FROM #{temp_cohort_members} #{occupation_filter(occupation:, field_name: 'occupation')}
         SQL
@@ -663,7 +663,7 @@ module ArtService
                  (SELECT value_coded FROM obs
                   WHERE concept_id = (SELECT concept_id FROM concept_name WHERE name = 'Reason for ART eligibility' LIMIT 1) AND person_id = patient_program.patient_id AND voided = 0
                   AND obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
-                  ORDER BY obs_datetime DESC, date_created DESC, obs_id DESC LIMIT 1) AS reason_for_starting_art,
+                  ORDER BY obs_datetime DESC, date_created DESC LIMIT 1) AS reason_for_starting_art,
                  pa.value AS occupation
           FROM patient_program
           INNER JOIN person ON person.person_id = patient_program.patient_id AND person.voided = 0
@@ -984,8 +984,7 @@ module ArtService
                                                         'WHO STAGE 3']).pluck(:concept_id)
         pregnant_concepts = ConceptName.where(name: ['PATIENT PREGNANT', 'Is patient pregnant at initiation?',
                                                      'Patient pregnant state', 'Is patient pregnant?']).pluck(:concept_id)
-        breastfeeding_concepts = ConceptName.where(name: ['Breastfeeding', 'Currently breastfeeding child',
-                                                          'Is patient breast feeding?']).pluck(:concept_id)
+        breastfeeding_concepts = ConceptName.where(name: 'Breastfeeding').pluck(:concept_id)
         who_stage_2_concepts = ConceptName.where(name: ['CD4 COUNT LESS THAN OR EQUAL TO 750',
                                                         'CD4 count less than or equal to 500', 'CD4 COUNT LESS THAN OR EQUAL TO 350', 'CD4 count less than 350', 'CD4 count less than 250', 'CD4 COUNT LESS THAN OR EQUAL TO 250']).pluck(:concept_id)
         pcr_concepts = ConceptName.where(name: 'HIV PCR').pluck(:concept_id)
@@ -1250,9 +1249,7 @@ module ArtService
                          total_pregnant_women.map { |woman| woman['person_id'].to_i }
                        end
 
-        breastfeeding_concept_ids = ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding',
-                                                             'Is patient breast feeding?',
-                                                             'Currently breastfeeding child'])
+        breastfeeding_concept_ids = ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding'])
                                                .pluck(:concept_id)
         return [] if breastfeeding_concept_ids.empty?
 
@@ -1670,18 +1667,28 @@ module ArtService
         patients_with_current_tb_episode = [0] if patients_with_current_tb_episode.blank?
 
         # Pulmonary tuberculosis within the last 2 years
+        # Three concept names covering both native MaHIS entries and data migrated from BHT-EMR-API:
+        #   40236 - 'Pulmonary tuberculosis within the last 2 years' / 'Ptb within the past two years'
+        #   189   - 'Tuberculosis (PTB or EPTB) within the last 2 years' (BHT migrated data)
         pulmonary_tb_within_last_2yrs_concept_id = concept('Pulmonary tuberculosis within the last 2 years').concept_id
         ptb_within_the_past_two_yrs_concept_id = concept('Ptb within the past two years').concept_id
+        tb_eptb_within_last_2yrs_concept_id = concept('Tuberculosis (PTB or EPTB) within the last 2 years').concept_id
         who_stages_criteria = concept('Who stages criteria present').concept_id
         yes_concept_id = concept('Yes').concept_id
+
+        tb_2yrs_concept_ids = [
+          pulmonary_tb_within_last_2yrs_concept_id,
+          ptb_within_the_past_two_yrs_concept_id,
+          tb_eptb_within_last_2yrs_concept_id
+        ].uniq.join(',')
 
         ActiveRecord::Base.connection.select_all(
           "SELECT * FROM #{temp_earliest_start_date} t
           INNER JOIN obs ON t.patient_id = obs.person_id
           WHERE date_enrolled BETWEEN '#{start_date}' AND '#{end_date}'
-            AND ((value_coded IN (#{pulmonary_tb_within_last_2yrs_concept_id}, #{ptb_within_the_past_two_yrs_concept_id})
+            AND ((value_coded IN (#{tb_2yrs_concept_ids})
             AND concept_id = #{who_stages_criteria})
-            OR (concept_id IN (#{pulmonary_tb_within_last_2yrs_concept_id}, #{ptb_within_the_past_two_yrs_concept_id}) AND value_coded = #{yes_concept_id}))
+            OR (concept_id IN (#{tb_2yrs_concept_ids}) AND value_coded = #{yes_concept_id}))
             AND patient_id NOT IN (#{patients_with_current_tb_episode.join(',')})
             AND voided = 0 AND DATE(obs_datetime) <= DATE(date_enrolled) GROUP BY patient_id"
         )
@@ -1943,8 +1950,6 @@ module ArtService
                                         .distinct
                                         .pluck(:concept_id)
 
-        # idx_obs_preg_covering (concept_id, value_coded, voided, obs_datetime, person_id)
-        # makes this a fully covering index scan — no table heap lookups needed.
         ActiveRecord::Base.connection.execute <<~SQL
           INSERT INTO #{temp_pregnant_obs}
           SELECT person_id,
@@ -1973,20 +1978,22 @@ module ArtService
       # Finds the latest Yes obs per female ART patient for pregnant/breastfeeding concepts
       # within a 2-year lookback window, restricted to HIV clinic encounter types.
       # This is more permissive than requiring obs on the exact drug-order date.
-      def load_temp_obs_last_visit(_end_date)
+      def load_temp_obs_last_visit(end_date)
         encounter_type_ids = EncounterType.where(name: ['HIV CLINIC CONSULTATION', 'HIV STAGING'])
                                           .pluck(:encounter_type_id)
         pregnant_concept_ids = ConceptName.where(name: ['Is patient pregnant?', 'patient pregnant'])
                                           .pluck(:concept_id)
-        breastfeeding_concept_ids = ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding',
-                                                             'Is patient breast feeding?',
-                                                             'Currently breastfeeding child'])
+        breastfeeding_concept_ids = ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding'])
                                                .pluck(:concept_id)
+        yes_concept_id = ConceptName.find_by(name: 'Yes')&.concept_id
 
         all_concept_ids = (pregnant_concept_ids + breastfeeding_concept_ids).uniq
-        return if all_concept_ids.empty? || encounter_type_ids.empty?
+        return if all_concept_ids.empty? || encounter_type_ids.empty? || yes_concept_id.nil?
+
+        quoted_end = ActiveRecord::Base.connection.quote(end_date.to_s)
 
         ActiveRecord::Base.connection.execute "DROP TABLE IF EXISTS #{temp_obs_last_visit}"
+        ActiveRecord::Base.connection.execute "DROP TABLE IF EXISTS #{tmp_preg_max_dt}"
 
         ActiveRecord::Base.connection.execute <<~SQL
           CREATE TABLE #{temp_obs_last_visit} (
@@ -1997,33 +2004,50 @@ module ArtService
           ) ENGINE=InnoDB
         SQL
 
-        yes_concept_id = concept('Yes').concept_id
-
-        # Anchor on each patient's last drug-order date (same as BHT-EMR-API).
-        # Only Yes obs on that exact day from a clinic/staging encounter are counted.
-        # A 2-year window anchored at end_date overcounts because it can pick up a recent
-        # Yes obs that predates a later No recorded at the patient's last drug pickup.
         ActiveRecord::Base.connection.execute <<~SQL
-          INSERT INTO #{temp_obs_last_visit} (patient_id, concept_id, value_coded)
-          SELECT tpo.patient_id, obs.concept_id, #{yes_concept_id} AS value_coded
+          CREATE TABLE #{tmp_preg_max_dt} (
+            patient_id INT NOT NULL,
+            concept_id INT NOT NULL,
+            max_dt     DATETIME NOT NULL,
+            PRIMARY KEY (patient_id, concept_id)
+          ) ENGINE=MEMORY
+        SQL
+
+        # Step 1: find the latest obs_datetime per (patient, concept) for female ART patients
+        ActiveRecord::Base.connection.execute <<~SQL
+          INSERT INTO #{tmp_preg_max_dt} (patient_id, concept_id, max_dt)
+          SELECT obs.person_id, obs.concept_id, MAX(obs.obs_datetime)
           FROM #{temp_patient_outcomes} tpo
           INNER JOIN #{temp_earliest_start_date} e
             ON e.patient_id = tpo.patient_id
             AND LEFT(e.gender, 1) = 'F'
-          INNER JOIN #{temp_max_drug_orders} mdo ON mdo.patient_id = tpo.patient_id
           INNER JOIN obs ON obs.person_id = tpo.patient_id
             AND obs.concept_id IN (#{all_concept_ids.join(',')})
             AND obs.voided = 0
-            AND obs.value_coded = #{yes_concept_id}
-            AND obs.obs_datetime >= DATE(mdo.start_date)
-            AND obs.obs_datetime < DATE(mdo.start_date) + INTERVAL 1 DAY
+            AND obs.obs_datetime >= DATE(#{quoted_end}) - INTERVAL 2 YEAR
+            AND obs.obs_datetime <= #{quoted_end}
+          WHERE tpo.moh_cum_outcome = 'On antiretrovirals'
+          GROUP BY obs.person_id, obs.concept_id
+        SQL
+
+        # Step 2: fetch Yes obs matching that latest datetime, restricted to clinic encounters
+        ActiveRecord::Base.connection.execute <<~SQL
+          INSERT INTO #{temp_obs_last_visit} (patient_id, concept_id, value_coded)
+          SELECT m.patient_id, o.concept_id, o.value_coded
+          FROM #{tmp_preg_max_dt} m
+          INNER JOIN obs o ON o.person_id = m.patient_id
+            AND o.concept_id = m.concept_id
+            AND o.obs_datetime = m.max_dt
+            AND o.voided = 0
+            AND o.value_coded = #{yes_concept_id}
           INNER JOIN encounter enc
-            ON enc.encounter_id = obs.encounter_id
+            ON enc.encounter_id = o.encounter_id
             AND enc.voided = 0
             AND enc.encounter_type IN (#{encounter_type_ids.join(',')})
-          WHERE tpo.moh_cum_outcome = 'On antiretrovirals'
-          GROUP BY tpo.patient_id, obs.concept_id
+          GROUP BY m.patient_id, o.concept_id
         SQL
+
+        ActiveRecord::Base.connection.execute "DROP TABLE IF EXISTS #{tmp_preg_max_dt}"
       end
 
       def pregnant_females_all_ages(start_date, end_date)
@@ -2123,7 +2147,7 @@ module ArtService
 
         date_art_cid   = date_art_last_taken_concept_id
         reg_enc_type   = hiv_clinic_registration_encounter_type_id
-        return ActiveRecord::Base.connection.select_all('SELECT NULL LIMIT 0') unless date_art_cid && reg_enc_type
+        return ActiveRecord::Base.connection.select_all("SELECT NULL LIMIT 0") unless date_art_cid && reg_enc_type
 
         ActiveRecord::Base.connection.select_all <<~SQL
           SELECT tesd.patient_id
@@ -2150,7 +2174,7 @@ module ArtService
 
       def re_initiated_on_art(start_date, end_date)
         date_art_cid = date_art_last_taken_concept_id
-        return ActiveRecord::Base.connection.select_all('SELECT NULL LIMIT 0') unless date_art_cid
+        return ActiveRecord::Base.connection.select_all("SELECT NULL LIMIT 0") unless date_art_cid
 
         ActiveRecord::Base.connection.select_all(<<~SQL)
           SELECT tesd.patient_id
@@ -2382,17 +2406,17 @@ module ArtService
       end
 
       STEP_LABELS = {
-        1 => 'Loading patient types',
-        2 => 'Loading registration dates',
-        3 => 'Loading prescription orders',
-        4 => 'Loading ART start dates',
-        5 => 'Indexing earliest start dates',
-        6 => 'Computing demographics & patient types',
-        7 => 'Computing pregnancy & gender data',
-        8 => 'Computing eligibility & TB status',
-        9 => 'Computing regimen categories',
+        1  => 'Loading patient types',
+        2  => 'Loading registration dates',
+        3  => 'Loading prescription orders',
+        4  => 'Loading ART start dates',
+        5  => 'Indexing earliest start dates',
+        6  => 'Computing demographics & patient types',
+        7  => 'Computing pregnancy & gender data',
+        8  => 'Computing eligibility & TB status',
+        9  => 'Computing regimen categories',
         10 => 'Computing side effects & adherence',
-        11 => 'Finalizing report'
+        11 => 'Finalizing report',
       }.freeze
 
       CACHED_STEP_LABELS = STEP_LABELS.transform_values { |v| "Cached: #{v}" }.freeze
