@@ -293,10 +293,17 @@ module HtsService
         )
       ).to_i
 
+      # NOTE: LIMIT/OFFSET are interpolated as integer literals, not bound
+      # params — MySQL rejects quoted values there (`LIMIT '25'`), and
+      # sanitize_sql_array would quote them. Safe because both are coerced to
+      # Integer above.
+      limit = per_page
+      offset = (page - 1) * per_page
+
       rows = ActiveRecord::Base.connection.select_all(
         ActiveRecord::Base.send(
           :sanitize_sql_array,
-          [<<-SQL, *where_binds, per_page, (page - 1) * per_page]
+          [<<-SQL, *where_binds]
             SELECT
               p.person_id AS patient_id,
               CONCAT_WS(
@@ -312,7 +319,7 @@ module HtsService
             WHERE #{where_sql}
             GROUP BY p.person_id, p.birthdate, p.gender
             ORDER BY patient_name ASC
-            LIMIT ? OFFSET ?
+            LIMIT #{limit.to_i} OFFSET #{offset.to_i}
           SQL
         )
       )
