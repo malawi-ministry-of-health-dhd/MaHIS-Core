@@ -191,7 +191,7 @@ module UserService
     if params.key?(:programs)
       UserProgram.where(user_id: user.user_id).delete_all
       Array(params[:programs]).map(&:to_i).each do |program_id|
-        UserProgram.insert({ user_id: user.user_id, program_id: program_id })
+        UserProgram.create(user_id: user.user_id, program_id: program_id)
       end
     end
     user
@@ -392,7 +392,7 @@ def self.new_arch_authenticate(user, password)
 end
 
   def self.check_user(username)
-    !User.where(username:).empty?
+    !User.where('LOWER(username) = ?', username.to_s.downcase).empty?
   end
 
   def self.user_roles(user)
