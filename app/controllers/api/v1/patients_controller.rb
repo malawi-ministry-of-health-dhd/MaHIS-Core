@@ -86,6 +86,12 @@ module Api
 
       def save_patient_record
         patient_record = SavePatientRecordService.new.create_patient_record(params[:record])
+
+        if patient_record.is_a?(String)
+          render json: { error: patient_record, errors: [patient_record] }, status: :bad_request
+          return
+        end
+
         broadcast_patient_record_saved(patient_record)
         render json: patient_record
       end
