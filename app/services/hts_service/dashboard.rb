@@ -114,6 +114,7 @@ module HtsService
           LEFT JOIN obs test_obs ON test_obs.order_id = o.order_id AND test_obs.voided = 0
           LEFT JOIN obs result_obs ON result_obs.obs_group_id = test_obs.obs_id AND result_obs.voided = 0
           WHERE o.voided = 0
+            AND o.order_type_id IN (?)
           GROUP BY o.order_id
           HAVING COUNT(result_obs.obs_id) = 0
         ) AS orders_without_results ON orders_without_results.order_id = lo.order_id
@@ -121,8 +122,12 @@ module HtsService
           AND lo.order_type_id IN (?)
       SQL
 
+      # First bind feeds the orders_without_results sub-query (which appears
+      # first in the SQL text), the second feeds the outer WHERE. Scoping the
+      # sub-query to the same order types is result-equivalent (it is only ever
+      # joined to HTS orders) but stops it scanning every order/obs in the DB.
       where_conditions = []
-      bind_values = [order_type_ids]
+      bind_values = [order_type_ids, order_type_ids]
 
       if filters[:patient_id]
         where_conditions << 'p.person_id = ?'
