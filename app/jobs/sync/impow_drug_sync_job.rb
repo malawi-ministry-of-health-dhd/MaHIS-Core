@@ -273,7 +273,7 @@ module Sync
     end
 
     def malaria_drugs_section
-      drugs = ['DP 60mg/480mg', 'DP 80mg/640mg', 'DP 20mg/160mg', 'DP 30mg/240mg', 'DP 40mg/320mg', 'Rectal Artesunate'].map do |drug_name|
+      drugs = ['DP 60mg/480mg', 'DP 80mg/640mg', 'DP 20mg/160mg', 'DP 30mg/240mg', 'DP 40mg/320mg', 'Rectal Artesunate', 'LA (Lumefantrine + arthemether)'].map do |drug_name|
         drug = Drug.find_by(name: drug_name)
         next unless drug
 

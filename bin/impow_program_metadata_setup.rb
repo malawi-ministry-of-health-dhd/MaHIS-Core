@@ -345,7 +345,7 @@ def create_nutrition_drugs
     create_drug_and_link_to_set('Ready-to-Use Therapeutic Food (RUTF)', nru_set, 3, 'Sachet', 'Oral', 'Sachets')
 
     # Create malaria drugs and link to OTS and NRU sets
-    ['DP 60mg/480mg', 'DP 80mg/640mg', 'DP 20mg/160mg', 'DP 30mg/240mg', 'DP 40mg/320mg', 'Rectal Artesunate'].each_with_index do |drug_name, index|
+    ['DP 60mg/480mg', 'DP 80mg/640mg', 'DP 20mg/160mg', 'DP 30mg/240mg', 'DP 40mg/320mg', 'Rectal Artesunate', 'LA (Lumefantrine + arthemether)'].each_with_index do |drug_name, index|
       puts "\n  Creating #{drug_name} and linking to OTS and NRU..."
       create_drug_and_link_to_set(drug_name, otp_set, 10 + index, 'Tablet', 'Oral', 'tabs', drug_name)
       create_drug_and_link_to_set(drug_name, nru_set, 10 + index, 'Tablet', 'Oral', 'tabs', drug_name)
