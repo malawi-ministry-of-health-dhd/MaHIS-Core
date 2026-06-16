@@ -19,7 +19,7 @@ module UserService
   class UserCreateError < StandardError; end
   class UserUpdateError < InvalidParameterError; end
 
-  def self.find_users(role: nil, search_string: nil, username: nil, include_deactivated: false)
+  def self.find_users(role: nil, search_string: nil, username: nil, include_deactivated: false, location_id: nil, location_ids: nil)
     # Check current user permissions
     is_global_superuser = User.current.global_superuser?
     is_district_superuser = User.current.district_superuser?
@@ -39,6 +39,12 @@ module UserService
     # Filter by role if provided
     if role
       query = query.joins(:roles).where(user_roles: { role: role })
+    end
+
+    if location_id.present?
+      query = query.where(location_id: location_id)
+    elsif location_ids.present?
+      query = query.where(location_id: Array(location_ids).reject(&:blank?))
     end
   
     # Filter by search_string (e.g., name or email) if provided and not empty
