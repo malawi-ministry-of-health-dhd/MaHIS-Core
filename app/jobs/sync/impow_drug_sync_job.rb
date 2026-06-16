@@ -174,7 +174,8 @@ module Sync
           'ampicillin' => ampicillin_section,
           'deworming' => deworming_section,
           'vitamin_a' => vitamin_a_section,
-          'measles_rubella_vaccine' => measles_rubella_section
+          'measles_rubella_vaccine' => measles_rubella_section,
+          'malaria_drugs' => malaria_drugs_section
         }
       }
     end
@@ -269,6 +270,23 @@ module Sync
           format_weight_band(band, 'Ampicillin')
         end
       )
+    end
+
+    def malaria_drugs_section
+      drugs = ['DP 60mg/480mg', 'DP 80mg/640mg', 'DP 20mg/160mg', 'DP 30mg/240mg', 'DP 40mg/320mg', 'Rectal Artesunate'].map do |drug_name|
+        drug = Drug.find_by(name: drug_name)
+        next unless drug
+
+        {
+          'drug_id' => drug.drug_id,
+          'drug_name' => drug.name,
+          'strength' => extract_strength(drug.name),
+          'units' => drug.units,
+          'dosage_form' => get_dosage_form_name(drug.dosage_form),
+          'route' => get_route_name(drug.route)
+        }
+      end.compact
+      drugs.empty? ? [] : drugs
     end
 
     # Helper method to build antibiotic sections (e.g., Amoxicillin, Ampicillin) since they have similar structure
