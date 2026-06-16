@@ -4,9 +4,9 @@ require 'securerandom'
 
 CONCEPTS_TO_CREATE = [
   {
-    program_name: 'IMPOW PROGRAM',
+    program_name: 'OTS/SFP PROGRAM',
     concept_names: [
-      { value: 'IMPOW PROGRAM', type: 'FULLY_SPECIFIED' }
+      { value: 'OTS/SFP PROGRAM', type: 'FULLY_SPECIFIED' }
     ]
   },
   {
@@ -666,46 +666,83 @@ def create_nutrition_concepts
   end
 end
 
-# Example: Adding states for IMPOW Program
-def create_impow_program_states
+def create_program_states
   states = [
-    { name: 'OTS',      initial: 1, terminal: 0 },
-    { name: 'SFP',      initial: 1, terminal: 0 },
-    { name: 'Referred to NRU',      initial: 1, terminal: 0 },
-    { name: 'Cured',              initial: 0, terminal: 1 },
-    { name: 'Died',               initial: 0, terminal: 1 },
-    { name: 'Defaulted',          initial: 0, terminal: 1 }
+    {
+      program_name: 'OTS/SFP PROGRAM',
+      states: [
+        { name: 'Admitted In OTS', initial: 1, terminal: 0 },
+        { name: 'On SFP', initial: 1, terminal: 0 },
+        { name: 'Cured In OTS', initial: 1, terminal: 0 },
+        { name: 'Cured In SFP', initial: 0, terminal: 1 },
+        { name: 'Defaulted In OTS', initial: 0, terminal: 1 },
+        { name: 'Defaulted In SFP', initial: 0, terminal: 1 },
+        { name: 'Died While In OTS', initial: 0, terminal: 1 },
+        { name: 'Died While In SFP', initial: 0, terminal: 1 },
+        { name: 'Not Responding To OTS Treatment', initial: 0, terminal: 1 },
+        { name: 'Not Responding To SFP Treatment', initial: 0, terminal: 1 },
+        { name: 'Referred To NRU', initial: 0, terminal: 1 },
+        { name: 'Transferred Out', initial: 0, terminal: 1 },
+        { name: 'Wrong Admission', initial: 0, terminal: 1 }
+      ]
+    },
+    {
+      program_name: 'NRU PROGRAM',
+      states: [
+        { name: 'Died', initial: 1, terminal: 0 },
+        { name: 'Transferred Out', initial: 0, terminal: 1 },
+        { name: 'Discharged To OTS/SFP', initial: 0, terminal: 1 },
+        { name: 'Not Responding To Treatment', initial: 0, terminal: 1 }
+      ]
+    },
+    {
+      program_name: 'ICCM/CMAM PROGRAM',
+      states: [
+        { name: 'Cured', initial: 1, terminal: 0 },
+        { name: 'Defaulted', initial: 0, terminal: 1 },
+        { name: 'Died', initial: 0, terminal: 1 },
+        { name: 'Not Responding To Treatment', initial: 0, terminal: 1 },
+        { name: 'Referred To OTS/SFP', initial: 0, terminal: 1 },
+        { name: 'Transferred Out', initial: 0, terminal: 1 }
+      ]
+    }
   ]
+  create_impow_program_states(states)
+end
 
+# Example: Adding states for OTS/SFP Program
+def create_impow_program_states(states)
   ActiveRecord::Base.transaction do
-    program = Program.find_by(name: 'IMPOW Program')
-    raise 'Program not found' unless program
-
-    states.each { |state| find_or_create_concept(state[:name]) }
-
-    workflow = ProgramWorkflow.find_or_create_by!(
-      program_id: program.program_id
-    ) do |wf|
-      wf.concept_id   = ConceptName.find_by!(name: 'Treatment status').concept_id
-      wf.creator      = User.current.id
-      wf.date_created = Time.current
-      wf.date_changed = Time.current
-      wf.changed_by   = User.current.id
-      wf.uuid         = SecureRandom.uuid
-    end
-
     states.each do |state|
-      concept = ConceptName.find_by!(name: state[:name]).concept
+      puts "\nCreating states for program: #{state[:program_name]}..."
+      program = Program.find_by(name: state[:program_name])
+      raise 'Program not found' unless program
 
-      find_or_create_workflow_state(
-        workflow,
-        concept,
-        initial: state[:initial],
-        terminal: state[:terminal]
-      )
+      state[:states].each { |s| find_or_create_concept(s[:name]) }
+
+      workflow = ProgramWorkflow.find_or_create_by!(
+        program_id: program.program_id
+      ) do |wf|
+        wf.concept_id   = ConceptName.find_by!(name: 'Treatment status').concept_id
+        wf.creator      = User.current.id
+        wf.date_created = Time.current
+        wf.date_changed = Time.current
+        wf.changed_by   = User.current.id
+        wf.uuid         = SecureRandom.uuid
+      end
+
+      state[:states].each do |s|
+        concept = ConceptName.find_by!(name: s[:name]).concept
+
+        find_or_create_workflow_state(
+          workflow,
+          concept,
+          initial: s[:initial],
+          terminal: s[:terminal]
+        )
+      end
     end
-
-    puts "\n✓ All IMPOW program states created successfully!"
+    puts "\n✓ All program states created successfully!"
   end
 end
 
@@ -762,7 +799,7 @@ end
 
 def run_create_program
   User.current = User.find_by_username('admin') || User.first
-  puts 'Creating IMPOW program and related concepts...'
+  puts 'Creating OTS/SFP program and related concepts...'
 
   ActiveRecord::Base.transaction do
     CONCEPTS_TO_CREATE.each do |concept_info|
@@ -782,10 +819,10 @@ def run_create_program
       end
 
       # Only create a program for ICCM PROGRAM, OTS PROGRAM, and NRU PROGRAM concepts
-      next unless ['ICCM/CMAM PROGRAM', 'IMPOW PROGRAM', 'NRU PROGRAM'].include?(program_name)
+      next unless ['ICCM/CMAM PROGRAM', 'OTS/SFP PROGRAM', 'NRU PROGRAM'].include?(program_name)
 
       program = Program.find_by(name: program_name)
-      if program_name == 'IMPOW PROGRAM'
+      if program_name == 'OTS/SFP PROGRAM'
         program ||= Program.find_by(name: 'OTS Program')
         program&.update(name: program_name) if program && program.name != program_name
       end
@@ -809,7 +846,7 @@ def run_create_program
   end
   create_nutrition_concepts
   create_nutrition_drugs
-  create_impow_program_states
+  create_program_states
 end
 
 run_create_program
