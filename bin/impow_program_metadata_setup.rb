@@ -4,9 +4,9 @@ require 'securerandom'
 
 CONCEPTS_TO_CREATE = [
   {
-    program_name: 'OTS PROGRAM',
+    program_name: 'IMPOW PROGRAM',
     concept_names: [
-      { value: 'OTS PROGRAM', type: 'FULLY_SPECIFIED' }
+      { value: 'IMPOW PROGRAM', type: 'FULLY_SPECIFIED' }
     ]
   },
   {
@@ -666,9 +666,103 @@ def create_nutrition_concepts
   end
 end
 
+# Example: Adding states for IMPOW Program
+def create_impow_program_states
+  states = [
+    { name: 'OTS',      initial: 1, terminal: 0 },
+    { name: 'SFP',      initial: 1, terminal: 0 },
+    { name: 'Referred to NRU',      initial: 1, terminal: 0 },
+    { name: 'Cured',              initial: 0, terminal: 1 },
+    { name: 'Died',               initial: 0, terminal: 1 },
+    { name: 'Defaulted',          initial: 0, terminal: 1 }
+  ]
+
+  ActiveRecord::Base.transaction do
+    program = Program.find_by(name: 'IMPOW Program')
+    raise 'Program not found' unless program
+
+    states.each { |state| find_or_create_concept(state[:name]) }
+
+    workflow = ProgramWorkflow.find_or_create_by!(
+      program_id: program.program_id
+    ) do |wf|
+      wf.concept_id   = ConceptName.find_by!(name: 'Treatment status').concept_id
+      wf.creator      = User.current.id
+      wf.date_created = Time.current
+      wf.date_changed = Time.current
+      wf.changed_by   = User.current.id
+      wf.uuid         = SecureRandom.uuid
+    end
+
+    states.each do |state|
+      concept = ConceptName.find_by!(name: state[:name]).concept
+
+      find_or_create_workflow_state(
+        workflow,
+        concept,
+        initial: state[:initial],
+        terminal: state[:terminal]
+      )
+    end
+
+    puts "\n✓ All IMPOW program states created successfully!"
+  end
+end
+
+def find_or_create_concept(name)
+  concept = ConceptName.find_by(name: name)&.concept
+  if concept
+    puts("⊙ Concept exists: #{name}")
+    return concept
+  end
+
+  concept = Concept.create!(
+    datatype_id: 4,
+    class_id: 5,
+    creator: User.current.id,
+    date_created: Time.current,
+    uuid: SecureRandom.uuid
+  )
+
+  ConceptName.create!(
+    name: name,
+    concept_id: concept.id,
+    creator: User.current.id,
+    locale: 'en',
+    date_created: Time.current,
+    uuid: SecureRandom.uuid
+  )
+
+  puts "✓ Created concept: #{name}"
+  return concept
+end
+
+def find_or_create_workflow_state(workflow, concept, initial:, terminal:)
+  state = ProgramWorkflowState.find_by(
+    program_workflow_id: workflow.id,
+    concept_id: concept.id
+  )
+
+  puts("⊙ State exists: #{ConceptName.find_by(concept_id: concept.id).name}") if state
+  return state if state
+
+  state = ProgramWorkflowState.create!(
+    concept_id: concept.id,
+    program_workflow_id: workflow.id,
+    initial: initial,
+    terminal: terminal,
+    creator: User.current.id,
+    date_created: Time.current,
+    uuid: SecureRandom.uuid
+  )
+
+  puts "✓ Created state: #{ConceptName.find_by(concept_id: concept.id).name}"
+  return state
+end
+
 def run_create_program
-  puts 'Creating IMPOW program and related concepts...'
   User.current = User.find_by_username('admin') || User.first
+  puts 'Creating IMPOW program and related concepts...'
 
   ActiveRecord::Base.transaction do
     CONCEPTS_TO_CREATE.each do |concept_info|
@@ -688,11 +782,11 @@ def run_create_program
       end
 
       # Only create a program for ICCM PROGRAM, OTS PROGRAM, and NRU PROGRAM concepts
-      next unless ['ICCM/CMAM PROGRAM', 'OTS PROGRAM', 'NRU PROGRAM'].include?(program_name)
+      next unless ['ICCM/CMAM PROGRAM', 'IMPOW PROGRAM', 'NRU PROGRAM'].include?(program_name)
 
       program = Program.find_by(name: program_name)
-      if program_name == 'OTS PROGRAM'
-        program ||= Program.find_by(name: 'IMPOW Program')
+      if program_name == 'IMPOW PROGRAM'
+        program ||= Program.find_by(name: 'OTS Program')
         program&.update(name: program_name) if program && program.name != program_name
       end
       if program
@@ -715,6 +809,7 @@ def run_create_program
   end
   create_nutrition_concepts
   create_nutrition_drugs
+  create_impow_program_states
 end
 
 run_create_program
