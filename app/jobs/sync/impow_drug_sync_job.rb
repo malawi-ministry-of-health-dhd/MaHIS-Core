@@ -174,7 +174,7 @@ module Sync
           'ampicillin' => ampicillin_section,
           'deworming' => deworming_section,
           'vitamin_a' => vitamin_a_section,
-          'measles_rubella_vaccine' => measles_rubella_section,
+          'vaccinations' => vaccine_section,
           'malaria_drugs' => malaria_drugs_section
         }
       }
@@ -424,24 +424,23 @@ module Sync
       }
     end
 
-    # ---- Measles-Rubella -----------------------------------------------
+    # ---- Vaccinations -----------------------------------------------
 
-    def measles_rubella_section
-      concept_name = 'Measles-Rubella Vaccine'
-      concept = ConceptName.find_by(name: concept_name)
-      drugs = get_drugs_by_concept_name(concept_name)
+    def vaccine_section
+      drugs = ['BCG', 'Measles vaccine', 'ROTA Vaccination', 'PCV', 'Pentavalent Vaccination', 'Polio Vaccination'].map do |drug_name|
+        drug = Drug.find_by(name: drug_name)
+        next unless drug
 
-      {
-        'concept_id' => concept&.concept_id,
-        'concept_name' => concept_name,
-        'concept_set' => 'Outpatient Therapeutic Services',
-        'drugs' => drugs,
-        'dose' => 1,
-        'dose_unit' => 'dose',
-        'when_given' => '4th week (4th visit)',
-        'eligibility_criteria' => 'No record of vaccination after 9 months old, OR at 6 months old during measles outbreak',
-        'note' => 'Given to all eligible patients regardless of weight'
-      }
+        {
+          'drug_id' => drug.drug_id,
+          'drug_name' => drug.name,
+          'strength' => extract_strength(drug.name),
+          'units' => drug.units,
+          'dosage_form' => get_dosage_form_name(drug.dosage_form),
+          'route' => get_route_name(drug.route)
+        }
+      end.compact
+      drugs.empty? ? [] : drugs
     end
 
     # ---- NRU (Inpatient Therapeutic Service) ---------------------------

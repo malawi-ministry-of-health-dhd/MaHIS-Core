@@ -351,6 +351,16 @@ def create_nutrition_drugs
       create_drug_and_link_to_set(drug_name, nru_set, 10 + index, 'Tablet', 'Oral', 'tabs', drug_name)
     end
 
+    # Create vaccination drugs and link to OTS set
+    ['BCG', 'Measles vaccine', 'ROTA Vaccination', 'PCV', 'Pentavalent Vaccination'].each_with_index do |vaccine_name, index|
+      puts "\n  Creating #{vaccine_name} and linking to OTS..."
+      create_drug_and_link_to_set(vaccine_name, otp_set, 20 + index, 'Vaccine', 'Intramuscular (IM)', 'doses', vaccine_name)
+    end
+    ['Polio Vaccination'].each_with_index do |vaccine_name, index|
+      puts "\n  Creating #{vaccine_name} and linking to OTS..."
+      create_drug_and_link_to_set(vaccine_name, otp_set, 25 + index, 'Vaccine', 'Oral', 'doses', vaccine_name)
+    end
+
     puts "\n" + '=' * 80
     puts 'Successfully created all IMPOW nutrition drugs and concept sets!'
     puts '=' * 80
