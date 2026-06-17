@@ -17,6 +17,7 @@ class SavePatientRecordService
 
   def create_patient_record(record)
     strip_derived_patient_fields!(record)
+    ensure_encounter_datetime!(record)
 
     required_fields = extract_required_fields(record)
     return "required fields missing" unless required_fields_present?(required_fields)
@@ -77,6 +78,75 @@ class SavePatientRecordService
 
   def required_fields_present?(required_fields)
     required_fields.to_h.values.all?(&:present?)
+  end
+
+  # When a record arrives without a top-level encounter_datetime (e.g. one
+  # re-written by an electronic lab-result write-back), fall back to the most
+  # recent clinical timestamp already present in the record, and only to the
+  # current time if the record carries no usable date at all. This keeps the
+  # required-fields guard satisfied while preserving the real clinical date.
+  def ensure_encounter_datetime!(record)
+    return record unless record.respond_to?(:[]=)
+    return record if parse_time_safe(record_value(record, :encounter_datetime)).present?
+
+    fallback = latest_record_datetime(record) || Time.current
+    record[:encounter_datetime] = fallback.iso8601
+
+    Rails.logger.warn(
+      "[SavePatientRecord] encounter_datetime missing; defaulted to #{record[:encounter_datetime]} " \
+      "for #{record_value(record, :ID) || record_value(record, :patientID)}"
+    )
+    record
+  end
+
+  # Most recent non-future timestamp drawn from the record's own clinical data.
+  # Only "when it happened" fields are considered (encounter/obs datetimes, lab
+  # order dates, medication encounter/start dates) — never future-dated fields
+  # such as appointment dates or drug end dates — and anything after now is
+  # discarded so the fallback can never land in the future.
+  def latest_record_datetime(record)
+    now        = Time.current
+    candidates = collect_obs_datetimes(record_value(record, :observations))
+
+    lab_orders = record_value(record, :labOrders)
+    if lab_orders
+      (Array(record_value(lab_orders, :saved)) + Array(record_value(lab_orders, :unsaved))).each do |order|
+        candidates << record_value(order, :order_date)
+      end
+    end
+
+    medication_orders = record_value(record, :MedicationOrder)
+    if medication_orders
+      (Array(record_value(medication_orders, :saved)) + Array(record_value(medication_orders, :unsaved))).each do |order|
+        candidates << record_value(order, :encounter_date)
+        candidates << record_value(order, :start_date)
+      end
+    end
+
+    candidates.filter_map { |value| parse_time_safe(value) }
+              .reject     { |time| time > now }
+              .max
+  end
+
+  def collect_obs_datetimes(observations)
+    Array(observations).flat_map do |group|
+      Array(record_value(group, :obs)).flat_map { |obs| extract_obs_times(obs) }
+    end
+  end
+
+  def extract_obs_times(obs)
+    times = [record_value(obs, :encounter_datetime), record_value(obs, :obs_datetime)]
+    Array(record_value(obs, :children)).each { |child| times.concat(extract_obs_times(child)) }
+    times
+  end
+
+  def parse_time_safe(value)
+    return nil if value.blank?
+    return value if value.is_a?(Time) || value.is_a?(DateTime)
+
+    Time.zone ? Time.zone.parse(value.to_s) : Time.parse(value.to_s)
+  rescue ArgumentError, TypeError
+    nil
   end
 
   def extract_patient_ids(record)
