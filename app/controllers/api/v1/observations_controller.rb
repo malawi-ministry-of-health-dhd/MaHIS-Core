@@ -38,6 +38,7 @@ module Api
         query = query.where('obs_datetime BETWEEN ? AND ?', *filter_period) if filter_period
 
         query = query.order(obs_datetime: :desc)
+        query = query.preload(Observation::SERIALIZE_PRELOADS)
 
         render json: paginate(query)
       end

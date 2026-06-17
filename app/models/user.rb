@@ -6,6 +6,15 @@ class User < RetirableRecord
 
   include Locatable
 
+  AUTHENTICATION_PRELOADS = %i[location roles].freeze
+  SERIALIZATION_PRELOADS = [
+    :location,
+    :programs,
+    { roles: :privileges },
+    { person: [:names, { person_attributes: :type }] }
+  ].freeze
+  SUPERUSER_ROLE_NAMES = ['Superuser', 'Global Superuser', 'District Superuser', 'Facility Superuser'].freeze
+
   audited except: %i[date_changed authentication_token token_expiry_time]
 
   belongs_to :person, foreign_key: :person_id
@@ -25,7 +34,15 @@ class User < RetirableRecord
            foreign_key: :person_id,
            dependent: :destroy)
 
+  scope :with_authentication_preloads, -> { includes(*AUTHENTICATION_PRELOADS) }
+  scope :with_serialization_preloads, -> { includes(*SERIALIZATION_PRELOADS) }
+
   default_scope { where(deactivated_on: nil) } if self.respond_to?(:deactivated_on)
+
+  def self.preload_serialization_payload(user)
+    ActiveRecord::Associations::Preloader.new(records: [user], associations: SERIALIZATION_PRELOADS).call
+    user
+  end
 
   def active?
     deactivated_on.nil?
@@ -44,25 +61,27 @@ class User < RetirableRecord
   end
 
   def global_superuser?
-    user_roles.exists?(role: 'Global Superuser')
+    role_assigned?('Global Superuser')
   end
 
   def district_superuser?
-    user_roles.exists?(role: 'District Superuser')
+    role_assigned?('District Superuser')
   end
 
   def facility_superuser?
-    user_roles.exists?(role: 'Facility Superuser')
+    role_assigned?('Facility Superuser')
   end
 
   def managed_location_ids
     return nil if global_superuser?
 
-    ids = [location_id.to_i]
-    if district_superuser?
-      ids += Location.where(parent_location: location_id).pluck(:location_id).map(&:to_i)
+    @managed_location_ids ||= begin
+      ids = [location_id.to_i]
+      if district_superuser?
+        ids += Location.where(parent_location: location_id).pluck(:location_id).map(&:to_i)
+      end
+      ids.compact.uniq
     end
-    ids.compact.uniq
   end
 
   def as_json(options = {})
@@ -89,7 +108,9 @@ class User < RetirableRecord
 
     # If user is a superuser, ensure they have ALL privileges
     if is_superuser?
-      all_privileges = Privilege.all.map { |p| { privilege: p.privilege, description: p.description, uuid: p.uuid } }
+      all_privileges = Privilege.pluck(:privilege, :description, :uuid).map do |privilege, description, uuid|
+        { privilege:, description:, uuid: }
+      end
       json['roles'].each do |role|
         if role['role']&.downcase&.include?('superuser')
           role['privileges'] = all_privileges
@@ -101,10 +122,30 @@ class User < RetirableRecord
   end
 
   def is_superuser?
-    user_roles.exists?(role: 'Superuser') || global_superuser? || district_superuser? || facility_superuser?
+    role_names = loaded_role_names
+    return (role_names & SUPERUSER_ROLE_NAMES).any? if role_names
+
+    user_roles.exists?(role: SUPERUSER_ROLE_NAMES)
   end
 
   def name
     person&.name
+  end
+
+  private
+
+  def role_assigned?(role_name)
+    role_names = loaded_role_names
+    return role_names.include?(role_name) if role_names
+
+    user_roles.exists?(role: role_name)
+  end
+
+  def loaded_role_names
+    if association(:roles).loaded?
+      roles.map(&:role)
+    elsif association(:user_roles).loaded?
+      user_roles.map(&:role)
+    end
   end
 end

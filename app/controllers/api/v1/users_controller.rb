@@ -290,12 +290,14 @@ module Api
       private
 
       def find_user(id)
+        users = User.with_serialization_preloads
+
         if User.current.global_superuser?
-          User.unscope(where: :location_id).find(id)
+          users.unscope(where: :location_id).find(id)
         elsif User.current.district_superuser?
-          User.unscope(where: :location_id).where(location_id: User.current.managed_location_ids).find(id)
+          users.unscope(where: :location_id).where(location_id: User.current.managed_location_ids).find(id)
         else
-          User.find(id)
+          users.find(id)
         end
       end
 

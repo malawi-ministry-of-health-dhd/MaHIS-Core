@@ -2,7 +2,12 @@
 
 module Sync
   class MnhStatsSyncJob < BaseSyncJob
-    sidekiq_options queue: 'sync_offline_data', retry: 3
+    sidekiq_options queue: 'sync_offline_data',
+                    retry: 3,
+                    lock: :until_and_while_executing,
+                    lock_ttl: 12.hours.to_i,
+                    lock_timeout: 0,
+                    on_conflict: { client: :log, server: :reject }
 
     DB_NAME = 'mnh_stats'
     PROGRAMS = {
@@ -20,9 +25,7 @@ module Sync
       location_id = encounter.location_id.presence || User.current&.location_id
       return if location_id.blank?
 
-      date = encounter.encounter_datetime&.to_date&.iso8601
-      perform_async(nil, DEFAULT_BULK_BATCH_SIZE, location_id.to_s, program_key)
-      perform_async(date, DEFAULT_BULK_BATCH_SIZE, location_id.to_s, program_key) if date.present?
+      enqueue_date_refresh(location_id, program_key, encounter.encounter_datetime)
     end
 
     def self.enqueue_for_patient_program(patient_program)
@@ -34,9 +37,7 @@ module Sync
       location_id = patient_program.location_id.presence || User.current&.location_id
       return if location_id.blank?
 
-      date = patient_program.date_enrolled&.to_date&.iso8601
-      perform_async(nil, DEFAULT_BULK_BATCH_SIZE, location_id.to_s, program_key)
-      perform_async(date, DEFAULT_BULK_BATCH_SIZE, location_id.to_s, program_key) if date.present?
+      enqueue_date_refresh(location_id, program_key, patient_program.date_enrolled)
     end
 
     def self.enqueue_for_patient_record(record)
@@ -50,9 +51,23 @@ module Sync
 
       date = patient_record_date(record)
       program_keys.each do |program_key|
-        perform_async(nil, DEFAULT_BULK_BATCH_SIZE, location_id.to_s, program_key)
-        perform_async(date, DEFAULT_BULK_BATCH_SIZE, location_id.to_s, program_key) if date.present?
+        enqueue_date_refresh(location_id, program_key, date)
       end
+    end
+
+    def self.enqueue_date_refresh(location_id, program_key, date)
+      normalized_date = normalize_refresh_date(date)
+      return if normalized_date.blank?
+
+      perform_async(normalized_date, DEFAULT_BULK_BATCH_SIZE, location_id.to_s, program_key)
+    end
+
+    def self.normalize_refresh_date(date)
+      return if date.blank?
+
+      date.respond_to?(:to_date) ? date.to_date.iso8601 : Date.parse(date.to_s).iso8601
+    rescue ArgumentError, TypeError
+      nil
     end
 
     def self.program_key_for_program_id(program_id)
