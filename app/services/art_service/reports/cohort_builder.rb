@@ -1993,7 +1993,7 @@ module ArtService
         all_concept_ids = (pregnant_concept_ids + breastfeeding_concept_ids).uniq
         return if all_concept_ids.empty? || encounter_type_ids.empty? || yes_concept_id.nil?
 
-        quoted_end = ActiveRecord::Base.connection.quote(end_date.to_s)
+        ActiveRecord::Base.connection.quote(end_date.to_s)
 
         ActiveRecord::Base.connection.execute "DROP TABLE IF EXISTS #{temp_obs_last_visit}"
         ActiveRecord::Base.connection.execute "DROP TABLE IF EXISTS #{tmp_preg_max_dt}"
@@ -2024,11 +2024,13 @@ module ArtService
           INNER JOIN #{temp_earliest_start_date} e
             ON e.patient_id = tpo.patient_id
             AND LEFT(e.gender, 1) = 'F'
+          JOIN temp_max_drug_orders_loc_1217 tmdol#{' '}
+            ON tpo.patient_id = tmdol.patient_id#{' '}
           INNER JOIN obs ON obs.person_id = tpo.patient_id
             AND obs.concept_id IN (#{all_concept_ids.join(',')})
             AND obs.voided = 0
-            AND obs.obs_datetime >= DATE(#{quoted_end}) - INTERVAL 2 YEAR
-            AND obs.obs_datetime <= #{quoted_end}
+            AND obs.obs_datetime >= DATE(tmdol.start_date)#{' '}
+            AND obs.obs_datetime < DATE(tmdol.start_date) + INTERVAL 1 DAY
           WHERE tpo.moh_cum_outcome = 'On antiretrovirals'
           GROUP BY obs.person_id, obs.concept_id
         SQL
