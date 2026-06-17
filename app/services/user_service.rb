@@ -222,7 +222,7 @@ module UserService
   end
 
   def self.create_token
-    SecureRandom.urlsafe_base64(32)
+    SecureRandom.urlsafe_base64(9)
   end
 
   def self.set_token(username, token, expiry_time)
