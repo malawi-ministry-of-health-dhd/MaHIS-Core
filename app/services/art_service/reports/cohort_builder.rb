@@ -1823,8 +1823,8 @@ module ArtService
                                                    'LYMPHOCYTE COUNT BELOW THRESHOLD WITH WHO STAGE 2'])
                                      .select(:concept_id)
 
-        # revised_art_guidelines_date = '2016-04-01'.to_date
-        # start_date = revised_art_guidelines_date if start_date.to_date < revised_art_guidelines_date
+        revised_art_guidelines_date = '2016-04-01'.to_date
+        start_date = revised_art_guidelines_date if start_date.to_date < revised_art_guidelines_date
 
         find_patients_by_reason_for_starting(start_date, end_date, reason_concepts)
           .each { |patient| patients << patient['patient_id'] }
