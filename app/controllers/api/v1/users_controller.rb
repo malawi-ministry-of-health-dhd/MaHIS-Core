@@ -11,7 +11,7 @@ module Api
       skip_before_action :authenticate, only: %i[login reset_password]
 
       def index
-        filters = params.permit(:role, :search_string, :include_deactivated).to_hash.transform_keys(&:to_sym)
+        filters = params.permit(:role, :search_string, :include_deactivated, :location_id, location_ids: []).to_hash.transform_keys(&:to_sym)
         query = service.find_users(**filters) 
 
         render json: {

@@ -92,6 +92,7 @@ class User < RetirableRecord
       include: {
         roles: { include: { privileges: {} } },
         programs: {},
+        location: { only: %i[location_id name] },
         person: {
           include: {
             names: {},
