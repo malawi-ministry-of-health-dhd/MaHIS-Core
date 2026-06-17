@@ -97,7 +97,7 @@ module Api
         end
 
         if encounter.errors.empty?
-          Sync::BatchPatientSyncJob.perform_async
+          enqueue_recent_patient_sync(encounter)
           render json: encounter.reload, status: :created
         else
           render json: encounter.errors, status: :bad_request
@@ -174,6 +174,16 @@ module Api
         obs_payload.each do |obs|
           observation_service.create_observation(encounter, normalize_observation(obs))
         end
+      end
+
+      def enqueue_recent_patient_sync(encounter)
+        location_id = encounter.location_id.presence || Location.current&.location_id || User.current&.location_id
+        # Without a resolvable location this would enqueue an ALL-locations sync
+        # (which also triggers a full-database reconciliation) on a single
+        # encounter save — skip rather than do that unintentionally.
+        return if location_id.blank?
+
+        Sync::BatchPatientSyncJob.perform_async(location_id, Sync::BatchPatientSyncJob.recent_since_date)
       end
 
       def normalize_observation(obs)

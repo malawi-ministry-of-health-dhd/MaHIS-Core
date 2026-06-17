@@ -106,8 +106,11 @@ module Sync
         prepare_bulk_document(record)
       end
 
-      # Use bulk sync from BaseSyncJob
-      bulk_result = bulk_sync_to_couchdb(documents, db_name, manage_indexes: false)
+      # Use bulk sync from BaseSyncJob. Skip the up-front _rev fetch: on the
+      # initial full load almost nothing exists yet, so posting straight away and
+      # resolving the rare conflicts in a second pass halves the CouchDB round
+      # trips per batch.
+      bulk_result = bulk_sync_to_couchdb(documents, db_name, manage_indexes: false, prefetch_revs: false)
       
       if bulk_result[:errors].any?
         Sidekiq.logger.error("Bulk sync had #{bulk_result[:errors].length} errors")

@@ -84,6 +84,9 @@ rails server
 
 - rails couchdb:start_all_listeners
 
+# Production mode
+- RAILS_ENV=production RACK_ENV=production bin/rails couchdb:start_all_listeners
+
 ---
 
 ## Data Migration from BHT-EMR to MaHIS

@@ -45,12 +45,23 @@ module Api
 
       def get_patient_list
         records = []
+        last_patient_id = -1
 
-        patient_ids = Patient.distinct
+        loop do
+          patient_ids = Patient.where('patient.patient_id > ?', last_patient_id)
+                               .reorder(nil)
+                               .order(patient_id: :asc)
+                               .limit(100)
+                               .pluck(:patient_id)
 
-        patient_ids.each do |patient|
-          record = BuildPatientRecordService.build_patient_record(patient.patient_id)
-          records << record
+          break if patient_ids.empty?
+
+          patient_ids.each do |patient_id|
+            record = BuildPatientRecordService.build_patient_record(patient_id)
+            records << record if record.present?
+          end
+
+          last_patient_id = patient_ids.last
         end
 
         render json: records

@@ -177,23 +177,23 @@ class SavePatientRecordService
 
   def execute_patient_operations(patient_id, record, managers)
     {
-      update_person_info:     managers[:identity_manager].update_person_information(patient_id, record),
-      merge_patients:         managers[:merge_patients_manager].merge_patients(patient_id, record),
-      manage_guardian:        managers[:guardian_manager].manage_guardian(patient_id, record),
-      create_relationship:    managers[:guardian_manager].create_relationship(record),
-      enroll_program:         managers[:enrollment_manager].enroll_program(patient_id, record),
-      save_lab_orders_data:   managers[:lab_data_manager].save_lab_orders_data(patient_id, record),
-      save_lab_results_data:  managers[:lab_data_manager].save_lab_results_data(patient_id, record),
-      void_lab_order:         managers[:lab_data_manager].void_lab_order(patient_id, record),
-      save_vaccines:          managers[:vaccine_manager].save_vaccines(patient_id, record),
-      send_sms:               managers[:sms_manager].send_sms(patient_id, record),
-      void_vaccine:           managers[:vaccine_manager].void_vaccine(patient_id, record),
-      save_medication_order:  managers[:medication_order_saver].save_medication_order(patient_id, record),
-      create_ncd_identifier:  managers[:identity_manager].create_ncd_identifier(patient_id, record),
-      save_dispensation_data: managers[:medication_order_saver].save_dispensation_data(patient_id, record),
-      void_drug_orders:       managers[:void_drug_orders].void_drug_orders(patient_id, record),
-      save_all_observations:  managers[:observation_saver].save_all_observations(patient_id, record),
-      void_encounters:        managers[:void_encounters].void_encounters(record)
+      update_person_info:     run_if(person_information_edit?(record)) { managers[:identity_manager].update_person_information(patient_id, record) },
+      merge_patients:         run_if(merge_requested?(record)) { managers[:merge_patients_manager].merge_patients(patient_id, record) },
+      manage_guardian:        run_if(guardian_work_pending?(record)) { managers[:guardian_manager].manage_guardian(patient_id, record) },
+      create_relationship:    run_if(relationships_pending?(record)) { managers[:guardian_manager].create_relationship(record) },
+      enroll_program:         run_if(enrollments_pending?(record)) { managers[:enrollment_manager].enroll_program(patient_id, record) },
+      save_lab_orders_data:   run_if(lab_orders_pending?(record)) { managers[:lab_data_manager].save_lab_orders_data(patient_id, record) },
+      save_lab_results_data:  run_if(lab_results_pending?(record)) { managers[:lab_data_manager].save_lab_results_data(patient_id, record) },
+      void_lab_order:         run_if(lab_order_voids_pending?(record)) { managers[:lab_data_manager].void_lab_order(patient_id, record) },
+      save_vaccines:          run_if(vaccine_orders_pending?(record)) { managers[:vaccine_manager].save_vaccines(patient_id, record) },
+      send_sms:               run_if(sms_pending?(record)) { managers[:sms_manager].send_sms(patient_id, record) },
+      void_vaccine:           run_if(vaccine_voids_pending?(record)) { managers[:vaccine_manager].void_vaccine(patient_id, record) },
+      save_medication_order:  run_if(medication_orders_pending?(record)) { managers[:medication_order_saver].save_medication_order(patient_id, record) },
+      create_ncd_identifier:  run_if(ncd_identifier_pending?(record)) { managers[:identity_manager].create_ncd_identifier(patient_id, record) },
+      save_dispensation_data: run_if(dispensations_pending?(record)) { managers[:medication_order_saver].save_dispensation_data(patient_id, record) },
+      void_drug_orders:       run_if(drug_order_voids_pending?(record)) { managers[:void_drug_orders].void_drug_orders(patient_id, record) },
+      save_all_observations:  run_if(observations_pending?(record)) { managers[:observation_saver].save_all_observations(patient_id, record) },
+      void_encounters:        run_if(encounter_voids_pending?(record)) { managers[:void_encounters].void_encounters(record) }
     }
   end
 
@@ -202,13 +202,14 @@ class SavePatientRecordService
     person           = patient&.person
     latest_encounter = BuildPatientRecordService.find_latest_encounter(patient_id)
     changed_operation_results = changed_operations(operation_results)
+    identifiers_by_type = BuildPatientRecordService.patient_identifiers_by_type(patient)
 
     patient_data[:encounter_datetime]    = latest_encounter&.encounter_datetime
     patient_data[:location_id]           = latest_encounter.location_id if latest_encounter&.location_id.present?
-    patient_data[:ID]                    = BuildPatientRecordService.patient_identifier(patient, 3)
-    patient_data[:nationalID]            = BuildPatientRecordService.patient_identifier(patient, 28)
+    patient_data[:ID]                    = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 3, patient_id)
+    patient_data[:nationalID]            = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 28, patient_id)
     patient_data[:patientID]             = patient_id
-    patient_data[:NcdID]                 = BuildPatientRecordService.patient_identifier(patient, 31)
+    patient_data[:NcdID]                 = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 31, patient_id)
     patient_data[:patient_identifiers]   = patient.patient_identifiers.as_json
     patient_data[:sync_status]           = overall_sync_status
     patient_data[:otherPersonInformation] = BuildPatientRecordService.build_other_person_info
@@ -255,7 +256,7 @@ class SavePatientRecordService
         allowed_encounter_types << get_encounter_id('TREATMENT')
 
       when :create_ncd_identifier
-        patient_data[:NcdID] = BuildPatientRecordService.patient_identifier(patient, 31)
+        patient_data[:NcdID] = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 31, patient_id)
 
       when :void_encounters
         voided_encounter_ids = patient_data.dig(:void_encounters)&.map { |ve| ve[:id] }&.compact || []
@@ -295,7 +296,10 @@ class SavePatientRecordService
   end
 
   def get_encounter_id(encounter_type)
-    EncounterType.find_by_name(encounter_type).encounter_type_id
+    @encounter_type_ids_by_name ||= {}
+    return @encounter_type_ids_by_name[encounter_type] if @encounter_type_ids_by_name.key?(encounter_type)
+
+    @encounter_type_ids_by_name[encounter_type] = EncounterType.find_by_name(encounter_type)&.encounter_type_id
   end
 
   def changed_operations(operation_results)
@@ -424,5 +428,95 @@ class SavePatientRecordService
 
   def serializable_value(value)
     value.respond_to?(:as_json) ? value.as_json : value
+  end
+
+  def run_if(condition)
+    return PatientRecordService::OperationResult.ok unless condition
+
+    yield
+  end
+
+  def person_information_edit?(record)
+    record_value(record, :personInformation).present? && record_value(record, :saveStatusPersonInformation) == 'edit'
+  end
+
+  def merge_requested?(record)
+    record_value(record_value(record, :otherPersonInformation) || {}, :secondaryPatientID).present?
+  end
+
+  def guardian_work_pending?(record)
+    %w[pending edit].include?(record_value(record, :saveStatusGuardianInformation).to_s) ||
+      record_value(record, :nextOfKinInformation).present?
+  end
+
+  def relationships_pending?(record)
+    Array.wrap(record_value(record, :relationships)).any?
+  end
+
+  def enrollments_pending?(record)
+    Array.wrap(record_value(record, :activePrograms)).any? do |item|
+      item.present? && record_value(item, :status) == 'unsaved'
+    end
+  end
+
+  def lab_orders_pending?(record)
+    Array.wrap(record_value(record_value(record, :labOrders) || {}, :unsaved)).any?
+  end
+
+  def lab_results_pending?(record)
+    Array.wrap(record_value(record_value(record, :labOrders) || {}, :results)).flatten(1).compact.any?
+  end
+
+  def lab_order_voids_pending?(record)
+    Array.wrap(record_value(record_value(record, :labOrders) || {}, :voided)).any?
+  end
+
+  def vaccine_orders_pending?(record)
+    Array.wrap(record_value(record_value(record, :vaccineAdministration) || {}, :orders)).any?
+  end
+
+  def vaccine_voids_pending?(record)
+    Array.wrap(record_value(record_value(record, :vaccineAdministration) || {}, :voided)).any?
+  end
+
+  def sms_pending?(record)
+    sms = record_value(record, :sms) || {}
+    record_value(sms, :appointment_date).present? && Array.wrap(record_value(sms, :cell_phone)).any?
+  end
+
+  def medication_orders_pending?(record)
+    medication_order = record_value(record, :MedicationOrder) || {}
+    Array.wrap(record_value(medication_order, :unsaved)).any? ||
+      Array.wrap(record_value(record, :art_orders_pending)).any?
+  end
+
+  def ncd_identifier_pending?(record)
+    ncd_id = record_value(record, :NcdID).to_s.strip
+    ncd_id == '-' ||
+      ncd_id.casecmp?('PENDING') ||
+      ActiveModel::Type::Boolean.new.cast(record_value(record, :needs_ncd_id)) ||
+      record_value(record, :unsavedNcdID).present?
+  end
+
+  def dispensations_pending?(record)
+    medication_order = record_value(record, :MedicationOrder) || {}
+    Array.wrap(record_value(medication_order, :saved)).any? do |order|
+      record_value(order, :dispensation).present?
+    end || Array.wrap(record_value(record, :art_dispensation_pending)).any?
+  end
+
+  def drug_order_voids_pending?(record)
+    voided_drug_orders = record_value(record, :voidedDrugOders) || {}
+    Array.wrap(record_value(voided_drug_orders, :unsaved)).any?
+  end
+
+  def observations_pending?(record)
+    Array.wrap(record_value(record, :observations)).any? do |item|
+      item.present? && record_value(item, :status) == 'unsaved' && record_value(item, :obs).present?
+    end
+  end
+
+  def encounter_voids_pending?(record)
+    Array.wrap(record_value(record, :void_encounters)).any?
   end
 end

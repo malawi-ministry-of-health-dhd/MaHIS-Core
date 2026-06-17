@@ -21,7 +21,7 @@ module VisitService
       return [] unless record
       
       begin
-        program = program_id ? Program.find_by(program_id: program_id) : nil
+        program = program_id ? visit_program(program_id) : nil
         patient_service.find_patient_visit_dates(record, program)
       rescue StandardError => e
         Rails.logger.error("Error in visits method: #{e.message}")
@@ -30,7 +30,14 @@ module VisitService
     end
     
     def patient_service
-      PatientService.new
+      @patient_service ||= PatientService.new
+    end
+
+    def visit_program(program_id)
+      @visit_programs_by_id ||= {}
+      return @visit_programs_by_id[program_id] if @visit_programs_by_id.key?(program_id)
+
+      @visit_programs_by_id[program_id] = Program.find_by(program_id: program_id)
     end
   end
 end

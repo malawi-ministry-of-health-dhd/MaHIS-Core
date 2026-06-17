@@ -51,8 +51,10 @@ module UserService
       query = query.where("username LIKE ?", "%#{username}%")
     end
   
-    # Return the query and the count of results
-    [query, query.count]
+    count = query.count
+    query = query.with_serialization_preloads
+
+    [query, count]
   end
 
   def self.create_user(username:, password:, given_name:, family_name:, roles:, programs:, location_id:, villages:, phone:, gender: nil)
@@ -204,6 +206,7 @@ module UserService
     user.authentication_token = token
     user.token_expiry_time = expires
     user.save
+    User.preload_serialization_payload(user)
 
     { token:, expiry_time: expires, user: }
   rescue StandardError => e
@@ -234,7 +237,7 @@ module UserService
   end
 
   def self.authenticate(token)
-    user = User.unscoped.where(authentication_token: token).first
+    user = User.unscoped.with_authentication_preloads.find_by(authentication_token: token)
     return nil if user.nil? || user.token_expiry_time < Time.now
 
     user
@@ -252,11 +255,11 @@ module UserService
   end
 
   def self.authenticate_credentials(username, password)
-    user = User.unscoped.where(username:).first
+    user = User.unscoped.with_authentication_preloads.find_by(username:)
     return nil unless user
 
     begin
-      Location.current = Location.find(user.location_id) if user.location_id.present?
+      Location.current = user.location if user.location_id.present?
     rescue ActiveRecord::RecordNotFound
       Rails.logger.warn "Location #{user.location_id} not found for user #{username}"
       # Fallback to some global property or skip? 
@@ -392,7 +395,7 @@ def self.new_arch_authenticate(user, password)
 end
 
   def self.check_user(username)
-    !User.where(username:).empty?
+    User.exists?(username:)
   end
 
   def self.user_roles(user)
