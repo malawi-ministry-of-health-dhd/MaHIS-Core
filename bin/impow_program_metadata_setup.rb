@@ -41,7 +41,7 @@ ENCOUNTER_TYPES_TO_CREATE = [
   { name: 'Triage', description: '' },
   { name: 'Medical Assessment', description: '' },
   { name: 'OTS Admission', description: 'Encounter type for admission to Outpatient Therapeutic Services' },
-  { name: 'Initial Assessment', description: 'Encounter type for initial assessment in NRU' },
+  { name: 'Initial Assessment', description: 'Encounter type for initial assessment in NRU' }
 ]
 
 def create_concept(concept_name, datatype_id: 4, concept_class_id: 11, is_set: false)
@@ -346,16 +346,19 @@ def create_nutrition_drugs
     create_drug_and_link_to_set('Ready-to-Use Therapeutic Food (RUTF)', nru_set, 3, 'Sachet', 'Oral', 'Sachets')
 
     # Create malaria drugs and link to OTS and NRU sets
-    ['DP 60mg/480mg', 'DP 80mg/640mg', 'DP 20mg/160mg', 'DP 30mg/240mg', 'DP 40mg/320mg', 'Rectal Artesunate', 'LA (Lumefantrine + arthemether)'].each_with_index do |drug_name, index|
+    ['DP 60mg/480mg', 'DP 80mg/640mg', 'DP 20mg/160mg', 'DP 30mg/240mg', 'DP 40mg/320mg', 'Rectal Artesunate',
+     'LA (Lumefantrine + arthemether)'].each_with_index do |drug_name, index|
       puts "\n  Creating #{drug_name} and linking to OTS and NRU..."
       create_drug_and_link_to_set(drug_name, otp_set, 10 + index, 'Tablet', 'Oral', 'tabs', drug_name)
       create_drug_and_link_to_set(drug_name, nru_set, 10 + index, 'Tablet', 'Oral', 'tabs', drug_name)
     end
 
     # Create vaccination drugs and link to OTS set
-    ['BCG', 'Measles vaccine', 'ROTA Vaccination', 'PCV', 'Pentavalent Vaccination'].each_with_index do |vaccine_name, index|
+    ['BCG', 'Measles vaccine', 'ROTA Vaccination', 'PCV',
+     'Pentavalent Vaccination'].each_with_index do |vaccine_name, index|
       puts "\n  Creating #{vaccine_name} and linking to OTS..."
-      create_drug_and_link_to_set(vaccine_name, otp_set, 20 + index, 'Vaccine', 'Intramuscular (IM)', 'doses', vaccine_name)
+      create_drug_and_link_to_set(vaccine_name, otp_set, 20 + index, 'Vaccine', 'Intramuscular (IM)', 'doses',
+                                  vaccine_name)
     end
     ['Polio Vaccination'].each_with_index do |vaccine_name, index|
       puts "\n  Creating #{vaccine_name} and linking to OTS..."
@@ -535,6 +538,55 @@ def create_text_concept(concept_name, concept_class_name)
   concept
 end
 
+# Create a date concept
+# @param concept_name [String] The name of the concept
+# @param concept_class_name [String] The concept class (e.g., 'Finding', 'Misc', 'Drug')
+# @return [Concept] The created concept or nil if error
+def create_date_concept(concept_name, concept_class_name)
+  # Find or create the concept class and datatype
+  concept_class = ConceptClass.find_by(name: concept_class_name)
+  concept_datatype = ConceptDatatype.find_by(name: 'Date')
+
+  unless concept_class && concept_datatype
+    puts "  ERROR: Could not find ConceptClass '#{concept_class_name}' or ConceptDatatype 'Date'"
+    return nil
+  end
+
+  # Check if concept already exists
+  existing_concept = Concept.joins(:concept_names).where(concept_names: { name: concept_name }).first
+  if existing_concept
+    puts "  Skipped concept: #{concept_name} (already exists)"
+    return existing_concept
+  end
+
+  # Create the concept
+  concept = Concept.create!(
+    short_name: concept_name,
+    datatype_id: concept_datatype.concept_datatype_id,
+    class_id: concept_class.concept_class_id,
+    is_set: false,
+    creator: User.current.id,
+    date_created: Time.now,
+    uuid: SecureRandom.uuid
+  )
+
+  # Create concept name
+  ConceptName.create!(
+    concept_id: concept.concept_id,
+    name: concept_name,
+    locale: 'en',
+    locale_preferred: true,
+    concept_name_type: 'FULLY_SPECIFIED',
+    creator: User.current.id,
+    date_created: Time.now,
+    uuid: SecureRandom.uuid
+  )
+
+  puts "  Created date concept: #{concept_name} (#{concept_class_name})"
+
+  concept
+end
+
 # Create IMPOW nutrition-related concepts
 # This creates:
 # - Pentavalent Vaccination (Coded, Procedure) with Yes/No answers
@@ -618,7 +670,8 @@ def create_nutrition_concepts
     # Create Groin concept (Misc, N/A)
     puts "\n18. Creating Groin concept..."
     groin_concept = create_concept('Groin', datatype_id: 4, concept_class_id: 11, is_set: false)
-    exists = ConceptName.where(concept_id: groin_concept.id, name: 'Groin', concept_name_type: 'FULLY_SPECIFIED').exists?
+    exists = ConceptName.where(concept_id: groin_concept.id, name: 'Groin',
+                               concept_name_type: 'FULLY_SPECIFIED').exists?
     create_concept_name(groin_concept, 'Groin', type: 'FULLY_SPECIFIED') unless exists
 
     # Create Pass concept (Misc, N/A)
@@ -642,7 +695,8 @@ def create_nutrition_concepts
     # Create Ulcers/Abscesses concept (Misc, N/A)
     puts "\n22. Creating Ulcers/Abscesses concept..."
     ulcers_concept = create_concept('Ulcers/Abscesses', datatype_id: 4, concept_class_id: 11, is_set: false)
-    exists = ConceptName.where(concept_id: ulcers_concept.id, name: 'Ulcers/Abscesses', concept_name_type: 'FULLY_SPECIFIED').exists?
+    exists = ConceptName.where(concept_id: ulcers_concept.id, name: 'Ulcers/Abscesses',
+                               concept_name_type: 'FULLY_SPECIFIED').exists?
     create_concept_name(ulcers_concept, 'Ulcers/Abscesses', type: 'FULLY_SPECIFIED') unless exists
 
     # Create Cured concept (Text, Finding)
@@ -658,8 +712,310 @@ def create_nutrition_concepts
     # Create Exposed concept (Misc, N/A)
     puts "\n25. Creating Exposed concept..."
     exposed_concept = create_concept('Exposed', datatype_id: 4, concept_class_id: 11, is_set: false)
-    exists = ConceptName.where(concept_id: exposed_concept.id, name: 'Exposed', concept_name_type: 'FULLY_SPECIFIED').exists?
+    exists = ConceptName.where(concept_id: exposed_concept.id, name: 'Exposed',
+                               concept_name_type: 'FULLY_SPECIFIED').exists?
     create_concept_name(exposed_concept, 'Exposed', type: 'FULLY_SPECIFIED') unless exists
+
+    # Create Pre-referral / emergency treatment comments concept (Text, Misc)
+    puts "\n26. Creating Pre-referral / emergency treatment comments concept..."
+    create_text_concept('Pre-referral / emergency treatment comments', 'Misc')
+
+    # Create Severe wasting concept (Coded, Finding)
+    puts "\n27. Creating Severe wasting concept..."
+    create_coded_concept_with_answers('Severe wasting', 'Finding', %w[Yes No])
+
+    # Create Dermatosis (raw skin / fissures) concept (Coded, Finding)
+    puts "\n28. Creating Dermatosis (raw skin / fissures) concept..."
+    create_coded_concept_with_answers('Dermatosis (raw skin / fissures)', 'Finding', %w[Yes No])
+
+    # Create Watery diarrhoea concept (Coded, Symptom)
+    puts "\n29. Creating Watery diarrhoea concept..."
+    create_coded_concept_with_answers('Watery diarrhoea', 'Symptom', %w[Yes No])
+
+    # Create Dry mouth / tongue concept (Coded, Finding)
+    puts "\n30. Creating Dry mouth / tongue concept..."
+    create_coded_concept_with_answers('Dry mouth / tongue', 'Finding', %w[Yes No])
+
+    # Create Days with diarrhoea concept (Numeric, Finding)
+    puts "\n31. Creating Days with diarrhoea concept..."
+    create_numeric_concept('Days with diarrhoea', 'Finding', 'days', allow_decimal: false)
+
+    # Create Bitot's spots concept (Coded, Finding)
+    puts "\n32. Creating Bitot's spots concept..."
+    create_coded_concept_with_answers("Bitot's spots", 'Finding', %w[Yes No])
+
+    # Create Corneal clouding concept (Coded, Finding)
+    puts "\n33. Creating Corneal clouding concept..."
+    create_coded_concept_with_answers('Corneal clouding', 'Finding', %w[Yes No])
+
+    # Create Eye pus or inflammation concept (Coded, Finding)
+    puts "\n34. Creating Eye pus or inflammation concept..."
+    create_coded_concept_with_answers('Eye pus or inflammation', 'Finding', %w[Yes No])
+
+    # Create HTS Date concept (Date, Misc)
+    puts "\n35. Creating HTS Date concept..."
+    create_date_concept('HTS Date', 'Misc')
+
+    # Create Cotrimoxazole Start Date concept (Date, Drug)
+    puts "\n36. Creating Cotrimoxazole Start Date concept..."
+    create_date_concept('Cotrimoxazole Start Date', 'Drug')
+
+    # Create Unconscious concept (Coded, Finding)
+    puts "\n37. Creating Unconscious concept..."
+    create_coded_concept_with_answers('Unconscious', 'Finding', %w[Yes No])
+
+    # Create Capillary refill time more than 3 seconds concept (Coded, Finding)
+    puts "\n38. Creating Capillary refill time more than 3 seconds concept..."
+    create_coded_concept_with_answers('Capillary refill time more than 3 seconds', 'Finding', %w[Yes No])
+
+    # Create Pulse Rate Weak concept (Coded, Finding)
+    puts "\n39. Creating Pulse Rate Weak concept..."
+    create_coded_concept_with_answers('Pulse Rate Weak', 'Finding', %w[Yes No])
+
+    # Create Oedema concept (Coded, Finding)
+    puts "\n40. Creating Oedema concept..."
+    create_coded_concept_with_answers('Oedema', 'Finding', %w[Yes No])
+
+    # Create Blood in stool concept (Coded, Symptom)
+    puts "\n41. Creating Blood in stool concept..."
+    create_coded_concept_with_answers('Blood in stool', 'Symptom', %w[Yes No])
+
+    # Create Vomiting concept (Coded, Symptom)
+    puts "\n42. Creating Vomiting concept..."
+    create_coded_concept_with_answers('Vomiting', 'Symptom', %w[Yes No])
+
+    # Create Restlessness concept (Coded, Finding)
+    puts "\n43. Creating Restlessness concept..."
+    create_coded_concept_with_answers('Restlessness', 'Finding', %w[Yes No])
+
+    # Create Sunken eyes concept (Coded, Finding)
+    puts "\n44. Creating Sunken eyes concept..."
+    create_coded_concept_with_answers('Sunken eyes', 'Finding', %w[Yes No])
+
+    # Create Measles concept (Coded, Diagnosis)
+    puts "\n45. Creating Measles concept..."
+    create_coded_concept_with_answers('Measles', 'Diagnosis', %w[Yes No])
+
+    # Create Corneal ulcer concept (Coded, Finding)
+    puts "\n46. Creating Corneal ulcer concept..."
+    create_coded_concept_with_answers('Corneal ulcer', 'Finding', %w[Yes No])
+
+    # Create HTS Outcome concept (Coded, Misc)
+    puts "\n47. Creating HTS Outcome concept..."
+    create_coded_concept_with_answers('HTS Outcome', 'Misc', ['Positive', 'Negative', 'Not Done'])
+
+    # Create ART start date concept (Date, Drug)
+    puts "\n48. Creating ART start date concept..."
+    create_date_concept('ART start date', 'Drug')
+
+    # Create Weight concept (Numeric, Finding)
+    puts "\n49. Creating Weight concept..."
+    create_numeric_concept('Weight', 'Finding', 'kg', allow_decimal: true)
+
+    # Create Height (cm) concept (Numeric, Finding)
+    puts "\n50. Creating Height (cm) concept..."
+    create_numeric_concept('Height (cm)', 'Finding', 'cm', allow_decimal: true)
+
+    # Create MUAC concept (Numeric, Finding)
+    puts "\n51. Creating MUAC concept..."
+    create_numeric_concept('MUAC', 'Finding', 'mm', allow_decimal: true)
+
+    # Create Temperature concept (Numeric, Finding)
+    puts "\n52. Creating Temperature concept..."
+    create_numeric_concept('Temperature', 'Finding', '°C', allow_decimal: true)
+
+    # Create Route of temperature concept (Coded, Finding)
+    puts "\n53. Creating Route of temperature concept..."
+    create_coded_concept_with_answers('Route of temperature', 'Finding', %w[Oral Rectal Axillary])
+
+    # Create Blood glucose concept (Numeric, Test)
+    puts "\n54. Creating Blood glucose concept..."
+    create_numeric_concept('Blood glucose', 'Test', 'mg/dL', allow_decimal: true)
+
+    # Create Haemoglobin concept (Numeric, Test)
+    puts "\n55. Creating Haemoglobin concept..."
+    create_numeric_concept('Haemoglobin', 'Test', 'g/dL', allow_decimal: true)
+
+    # Create Packed cell volume concept (Numeric, Test)
+    puts "\n56. Creating Packed cell volume concept..."
+    create_numeric_concept('Packed cell volume', 'Test', '%', allow_decimal: true)
+
+    # Create ABO Blood Grouping concept (Coded, Test)
+    puts "\n57. Creating ABO Blood Grouping concept..."
+    create_coded_concept_with_answers('ABO Blood Grouping', 'Test', %w[A B AB O])
+
+    # Create Diarrhoea episodes (number of loose stools) concept (Numeric, Finding)
+    puts "\n58. Creating Diarrhoea episodes (number of loose stools) concept..."
+    create_numeric_concept('Diarrhoea episodes (number of loose stools)', 'Finding', nil, allow_decimal: false)
+
+    # Create Vomiting episodes concept (Numeric, Finding)
+    puts "\n59. Creating Vomiting episodes concept..."
+    create_numeric_concept('Vomiting episodes', 'Finding', nil, allow_decimal: false)
+
+    # Create ReSoMal concept (Coded, Procedure)
+    puts "\n60. Creating ReSoMal concept..."
+    create_coded_concept_with_answers('ReSoMal', 'Procedure', %w[Yes No])
+
+    # Create Clinical notes construct concept (Text, Misc)
+    puts "\n61. Creating Clinical notes construct concept..."
+    create_text_concept('Clinical notes construct', 'Misc')
+
+    # Create Breastfeeding concept (Coded, Finding)
+    puts "\n62. Creating Breastfeeding concept..."
+    create_coded_concept_with_answers('Breastfeeding', 'Finding', %w[Yes No])
+
+    # Create Starting weight for feed plan concept (Numeric, Finding)
+    puts "\n63. Creating Starting weight for feed plan concept..."
+    create_numeric_concept('Starting weight for feed plan', 'Finding', 'kg', allow_decimal: true)
+
+    # Create Amount of feed offered concept (Numeric, Finding)
+    puts "\n64. Creating Amount of feed offered concept..."
+    create_numeric_concept('Amount of feed offered', 'Finding', 'ml', allow_decimal: true)
+
+    # Create Amount of feed left concept (Numeric, Finding)
+    puts "\n65. Creating Amount of feed left concept..."
+    create_numeric_concept('Amount of feed left', 'Finding', 'ml', allow_decimal: true)
+
+    # Create Amount of feed taken orally concept (Numeric, Finding)
+    puts "\n66. Creating Amount of feed taken orally concept..."
+    create_numeric_concept('Amount of feed taken orally', 'Finding', 'ml', allow_decimal: true)
+
+    # Create Amount of feed given via NG tube concept (Numeric, Finding)
+    puts "\n67. Creating Amount of feed given via NG tube concept..."
+    create_numeric_concept('Amount of feed given via NG tube', 'Finding', 'ml', allow_decimal: true)
+
+    # Create Estimated amount vomited concept (Numeric, Finding)
+    puts "\n68. Creating Estimated amount vomited concept..."
+    create_numeric_concept('Estimated amount vomited', 'Finding', 'ml', allow_decimal: true)
+
+    # Create Loose stools after feed concept (Numeric, Finding)
+    puts "\n69. Creating Loose stools after feed concept..."
+    create_numeric_concept('Loose stools after feed', 'Finding', nil, allow_decimal: false)
+
+    # Create Malaria Rapid Diagnostic Test concept (Coded, Test)
+    puts "\n70. Creating Malaria Rapid Diagnostic Test concept..."
+    create_coded_concept_with_answers('Malaria Rapid Diagnostic Test', 'Test', %w[Positive Negative])
+
+    # Create Antimalarial concept (Coded, Drug)
+    puts "\n71. Creating Antimalarial concept..."
+    create_coded_concept_with_answers('Antimalarial', 'Drug', %w[Yes No])
+
+    # Create Vitamin A concept (Coded, Procedure)
+    puts "\n72. Creating Vitamin A concept..."
+    create_coded_concept_with_answers('Vitamin A', 'Procedure', %w[Yes No])
+
+    # Create Deworming (Albendazole / Mebendazole) given concept (Coded, Procedure)
+    puts "\n73. Creating Deworming (Albendazole / Mebendazole) given concept..."
+    create_coded_concept_with_answers('Deworming (Albendazole / Mebendazole) given', 'Procedure', %w[Yes No])
+
+    # Create Minerals iron supplements concept (Coded, Drug)
+    puts "\n74. Creating Minerals iron supplements concept..."
+    create_coded_concept_with_answers('Minerals iron supplements', 'Drug', %w[Yes No])
+
+    # Create Tetracycline eye ointment given concept (Coded, Procedure)
+    puts "\n75. Creating Tetracycline eye ointment given concept..."
+    create_coded_concept_with_answers('Tetracycline eye ointment given', 'Procedure', %w[Yes No])
+
+    # Create Atropine eye drops given concept (Coded, Procedure)
+    puts "\n76. Creating Atropine eye drops given concept..."
+    create_coded_concept_with_answers('Atropine eye drops given', 'Procedure', %w[Yes No])
+
+    # Create Dermatosis treatment (1% KMnO₄ / zinc oxide bath) concept (Coded, Procedure)
+    puts "\n77. Creating Dermatosis treatment (1% KMnO₄ / zinc oxide bath) concept..."
+    create_coded_concept_with_answers('Dermatosis treatment (1% KMnO₄ / zinc oxide bath)', 'Procedure', %w[Yes No])
+
+    # Create Respiratory rate concept (Numeric, Finding)
+    puts "\n78. Creating Respiratory rate concept..."
+    create_numeric_concept('Respiratory rate', 'Finding', 'breaths/min', allow_decimal: false)
+
+    # Create Pulse Rate concept (Numeric, Finding)
+    puts "\n79. Creating Pulse Rate concept..."
+    create_numeric_concept('Pulse Rate', 'Finding', 'beats/min', allow_decimal: false)
+
+    # Create Hospitalization discharge date concept (Date, Misc)
+    puts "\n80. Creating Hospitalization discharge date concept..."
+    create_date_concept('Hospitalization discharge date', 'Misc')
+
+    # Create Cause of death concept (Text, Misc)
+    puts "\n81. Creating Cause of death concept..."
+    create_text_concept('Cause of death', 'Misc')
+
+    # Create Time Of Death concept (Text, Misc)
+    puts "\n82. Creating Time Of Death concept..."
+    create_text_concept('Time Of Death', 'Misc')
+
+    # Create IV Fluids given concept (Coded, Procedure)
+    puts "\n83. Creating IV Fluids given concept..."
+    create_coded_concept_with_answers('IV Fluids given', 'Procedure', %w[Yes No])
+
+    # Create BCG immunization was given at birth? concept (Coded, Procedure)
+    puts "\n84. Creating BCG immunization was given at birth? concept..."
+    create_coded_concept_with_answers('BCG immunization was given at birth?', 'Procedure', %w[Yes No])
+
+    # Create OPV vaccination given concept (Coded, Procedure)
+    puts "\n85. Creating OPV vaccination given concept..."
+    create_coded_concept_with_answers('OPV vaccination given', 'Procedure', %w[Yes No])
+
+    # Create Pentavalent vaccination given concept (Coded, Procedure)
+    puts "\n86. Creating Pentavalent vaccination given concept..."
+    create_coded_concept_with_answers('Pentavalent vaccination given', 'Procedure', %w[Yes No])
+
+    # Create PCV vaccination given concept (Coded, Procedure)
+    puts "\n87. Creating PCV vaccination given concept..."
+    create_coded_concept_with_answers('PCV vaccination given', 'Procedure', %w[Yes No])
+
+    # Create Rotavirus vaccination given concept (Coded, Procedure)
+    puts "\n88. Creating Rotavirus vaccination given concept..."
+    create_coded_concept_with_answers('Rotavirus vaccination given', 'Procedure', %w[Yes No])
+
+    # Create IPV vaccination given concept (Coded, Procedure)
+    puts "\n89. Creating IPV vaccination given concept..."
+    create_coded_concept_with_answers('IPV vaccination given', 'Procedure', %w[Yes No])
+
+    # Create Measles vaccination given concept (Coded, Procedure)
+    puts "\n90. Creating Measles vaccination given concept..."
+    create_coded_concept_with_answers('Measles vaccination given', 'Procedure', %w[Yes No])
+
+    # Create Discharge Notes concept (Text, Misc)
+    puts "\n91. Creating Discharge Notes concept..."
+    create_text_concept('Discharge Notes', 'Misc')
+
+    # Create Comments concept (Text, Misc)
+    puts "\n92. Creating Comments concept..."
+    create_text_concept('Comments', 'Misc')
+
+    # Create Drug administration notes concept (Text, Misc)
+    puts "\n93. Creating Drug administration notes concept..."
+    create_text_concept('Drug administration notes', 'Misc')
+
+    # Create Village concept (Text, Misc)
+    puts "\n94. Creating Village concept..."
+    create_text_concept('Village', 'Misc')
+
+    # Create Sex concept (Coded, Misc)
+    puts "\n95. Creating Sex concept..."
+    create_coded_concept_with_answers('Sex', 'Misc', %w[Male Female])
+
+    # Create Admission date concept (Date, Misc)
+    puts "\n96. Creating Admission date concept..."
+    create_date_concept('Admission date', 'Misc')
+
+    # Create HIV status concept (Coded, Finding)
+    puts "\n97. Creating HIV status concept..."
+    create_coded_concept_with_answers('HIV status', 'Finding', %w[Positive Negative Unknown Exposed])
+
+    # Create On ART concept (Coded, Finding)
+    puts "\n98. Creating On ART concept..."
+    create_coded_concept_with_answers('On ART', 'Finding', %w[Yes No])
+
+    # Create Referral type concept (Coded, Misc)
+    puts "\n99. Creating Referral type concept..."
+    create_coded_concept_with_answers('Referral type', 'Misc', %w[Internal External])
+
+    # Create Admission criteria concept (Coded, Misc)
+    puts "\n100. Creating Admission criteria concept..."
+    create_coded_concept_with_answers('Admission criteria', 'Misc',
+                                      ['MUAC < 11.5cm', 'Bilateral pitting oedema', 'Medical complications'])
 
     puts "\n" + '=' * 80
     puts 'Successfully created nutrition concepts!'
@@ -772,7 +1128,7 @@ def find_or_create_concept(name)
   )
 
   puts "✓ Created concept: #{name}"
-  return concept
+  concept
 end
 
 def find_or_create_workflow_state(workflow, concept, initial:, terminal:)
@@ -795,7 +1151,7 @@ def find_or_create_workflow_state(workflow, concept, initial:, terminal:)
   )
 
   puts "✓ Created state: #{ConceptName.find_by(concept_id: concept.id).name}"
-  return state
+  state
 end
 
 def run_create_program
