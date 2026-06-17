@@ -2473,6 +2473,34 @@ def clear_migrated_caches(completed_group_name)
   GC.start(full_mark: true, immediate_sweep: true)
 end
 
+# Clean reason for starting concepts that have duplicates with
+# the same obs_datetime
+def clean_duplicate_reason_for_starting(source_db)
+  ActiveRecord::Base.connection.execute("
+    UPDATE #{DEST_DB}.obs do SET voided = true,
+        voided_by = 1,
+        void_reason = 'EMR TO MAHIS Migration Duplicated in source'
+      WHERE do.uuid IN (
+      SELECT o.uuid
+      FROM #{source_db}.obs o
+      JOIN (
+          SELECT
+              person_id,
+              obs_datetime,
+              MAX(obs_id) AS max_obs_id
+          FROM #{source_db}.obs
+          WHERE concept_id = 7563
+            AND voided = 0
+          GROUP BY person_id, obs_datetime
+          HAVING COUNT(*) > 1
+      ) dup
+      ON o.person_id = dup.person_id
+      AND o.obs_datetime = dup.obs_datetime
+      WHERE o.concept_id = 7563
+        AND o.voided = 0
+        AND o.obs_id <> dup.max_obs_id);")
+end
+
 def populate_group(group, group_name, source_db)
   start_time = Time.now
   capture_memory_snapshot("Before #{group_name}")
@@ -2809,6 +2837,9 @@ if __FILE__ == $0
   backfill_orders_obs_ids(source_db)
 
   update_group_obs_ids(source_db)
+
+  puts 'Cleaning duplicated reason for stating'
+  clean_duplicate_reason_for_starting(source_db)
 
   # Report data quality issues
   report_data_quality_issues

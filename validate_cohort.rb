@@ -62,8 +62,8 @@ MAHIS_CLIENT            = ENV.fetch('MAHIS_CLIENT', 'mahis')
 MAHIS_CLIENT_VERSION    = ENV.fetch('MAHIS_CLIENT_VERSION', '0.0.0')
 TOLERANCE             = ENV.fetch('TOLERANCE', '0').to_i
 OUTPUT_FORMAT         = ENV.fetch('OUTPUT_FORMAT', 'text').downcase
-REGENERATE            = ENV.fetch('REGENERATE', 'true').casecmp?('true')
-REGENERATE_BASELINE   = ENV.fetch('REGENERATE_BASELINE', 'true').casecmp?('true')
+REGENERATE            = ENV.fetch('REGENERATE', 'false').casecmp?('true')
+REGENERATE_BASELINE   = ENV.fetch('REGENERATE_BASELINE', 'false').casecmp?('true')
 
 # Max seconds to wait for a cohort to be generated (it runs as a background job)
 MAX_WAIT_SECONDS = 3600
@@ -143,7 +143,8 @@ rescue StandardError => e
 end
 
 # ─── Cohort fetcher ───────────────────────────────────────────────────────────
-def fetch_cohort(base_url, token, quarter, label:, client:, client_version:, regenerate: false, username: nil, password: nil)
+def fetch_cohort(base_url, token, quarter, label:, client:, client_version:, regenerate: false, username: nil,
+                 password: nil)
   encoded_quarter = URI.encode_www_form_component(quarter)
   base_cohort_url = "#{base_url}/api/v1/programs/1/reports/cohort?name=#{encoded_quarter}"
   # Only send regenerate=true on the FIRST request to avoid queuing multiple jobs
@@ -159,7 +160,7 @@ def fetch_cohort(base_url, token, quarter, label:, client:, client_version:, reg
   # Sidekiq job, returning 204 while the job runs.  We must see at least one 204
   # (or 202) before accepting a 200 — otherwise we'd grab the stale cached report
   # that existed before the regenerate request was processed.
-  seen_queued       = !regenerate  # skip the guard when not regenerating
+  seen_queued       = !regenerate # skip the guard when not regenerating
 
   loop do
     url  = first_call ? first_request_url : poll_url
@@ -202,8 +203,8 @@ def fetch_cohort(base_url, token, quarter, label:, client:, client_version:, reg
                                              label: label, client: client, client_version: client_version)
       if new_token
         token      = new_token
-        first_call = true  # resend with regenerate flag on the fresh token
-        seen_queued = !regenerate  # reset stale-cache guard for the fresh request
+        first_call = true # resend with regenerate flag on the fresh token
+        seen_queued = !regenerate # reset stale-cache guard for the fresh request
         next
       else
         puts red('  Re-authentication failed after 401')
