@@ -209,9 +209,9 @@ module UserService
     token = create_token
     expires = Time.now + AUTHENTICATION_TOKEN_VALIDITY_PERIOD
 
+    user.update_columns(authentication_token: token, token_expiry_time: expires)
     user.authentication_token = token
     user.token_expiry_time = expires
-    user.save
     User.preload_serialization_payload(user)
 
     { token:, expiry_time: expires, user: }
@@ -222,15 +222,7 @@ module UserService
   end
 
   def self.create_token
-    # ASIDE: Are we guaranteed that this algorithm produces next to
-    # no collisions? Verification of these tokens right now simply
-    # involves a look up in the database thus these tokens must
-    # at the very least be guaranteed to always be unique.
-    # TODO: Look up standard library package 'securerandom' for
-    # something we could use here with lim(collisions) -> 0.
-    token_chars = ('a'..'z').to_a + ('A'..'Z').to_a + ('0'..'9').to_a
-    token_length = 12
-    Array.new(token_length) { token_chars[rand(token_chars.length)] }.join
+    SecureRandom.urlsafe_base64(9)
   end
 
   def self.set_token(username, token, expiry_time)
