@@ -47,9 +47,18 @@ module UserService
       query = query.where(location_id: Array(location_ids).reject(&:blank?))
     end
   
-    # Filter by search_string (e.g., name or email) if provided and not empty
+    # Filter by search_string if provided and not empty
     if search_string.present?
-      query = query.where("username LIKE ?", "%#{search_string}%")
+      search_term = "%#{ActiveRecord::Base.sanitize_sql_like(search_string.to_s.strip)}%"
+      query = query
+              .left_joins(person: :names)
+              .where(
+                "users.username LIKE :search OR person_name.given_name LIKE :search OR person_name.family_name LIKE :search OR " \
+                "CONCAT_WS(' ', person_name.given_name, person_name.family_name) LIKE :search OR " \
+                "CONCAT_WS(' ', person_name.family_name, person_name.given_name) LIKE :search",
+                search: search_term
+              )
+              .distinct
     end
   
     # Filter by username if provided and not empty
@@ -110,7 +119,7 @@ module UserService
 
     end
     # user programs
-    programs&.each do |program_id|
+    normalize_program_ids(programs).each do |program_id|
       UserProgram.create user_id: user.user_id, program_id:
     end
 
@@ -198,7 +207,7 @@ module UserService
     # Update programs if any
     if params.key?(:programs)
       UserProgram.where(user_id: user.user_id).delete_all
-      Array(params[:programs]).map(&:to_i).each do |program_id|
+      normalize_program_ids(params[:programs]).each do |program_id|
         UserProgram.create(user_id: user.user_id, program_id: program_id)
       end
     end
@@ -417,6 +426,22 @@ end
   # check if user is already assigned to a project
   def self.find_user_program(user_id, program_id)
     UserProgram.where(user_id:, program_id:).first
+  end
+
+  def self.normalize_program_ids(programs)
+    Array(programs).filter_map do |program|
+      program_id = if program.respond_to?(:to_unsafe_h)
+                     program.to_unsafe_h[:program_id] || program.to_unsafe_h['program_id'] ||
+                       program.to_unsafe_h[:id] || program.to_unsafe_h['id']
+                   elsif program.is_a?(Hash)
+                     program[:program_id] || program['program_id'] || program[:id] || program['id']
+                   else
+                     program
+                   end
+
+      program_id = program_id.to_i
+      program_id.positive? ? program_id : nil
+    end.uniq
   end
 
   def self.hash_password(password, salt)
