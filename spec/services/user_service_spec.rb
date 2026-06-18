@@ -72,5 +72,30 @@ RSpec.describe UserService do
 
       expect(target_user.user_programs.reload).to be_empty
     end
+
+    it 'does not wipe existing programs when an invalid program id is submitted' do
+      UserService.update_user(target_user, programs: programs.map(&:program_id))
+      original_ids = target_user.user_programs.pluck(:program_id)
+
+      expect do
+        UserService.update_user(target_user, programs: [999_999_999])
+      end.to raise_error(ActiveRecord::RecordInvalid)
+
+      # The destructive delete must roll back with the failed insert.
+      expect(target_user.user_programs.reload.pluck(:program_id)).to match_array(original_ids)
+    end
+
+    it 'returns a user whose :programs association reflects the new assignment, not a stale cache' do
+      program_ids = programs.map(&:program_id)
+
+      # Mimic the controller, which eager-loads :programs before the update runs.
+      target_user.programs.load
+
+      UserService.update_user(target_user, programs: program_ids)
+
+      # Without resetting the association the serialized response would echo the
+      # stale (empty) preload instead of what was persisted.
+      expect(target_user.programs.map(&:program_id)).to match_array(program_ids)
+    end
   end
 end
