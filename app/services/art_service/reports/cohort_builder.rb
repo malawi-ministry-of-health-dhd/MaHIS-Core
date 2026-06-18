@@ -1259,7 +1259,7 @@ module ArtService
           SELECT t.patient_id AS person_id, t.value_coded
           FROM #{temp_obs_last_visit} t
           WHERE t.concept_id IN (#{breastfeeding_concept_ids.join(',')})
-            AND t.patient_id NOT IN (#{pregnant_ids.join(',')})
+          AND t.patient_id NOT IN (#{pregnant_ids.join(',')})
         SQL
       end
 
@@ -1986,7 +1986,8 @@ module ArtService
         pregnant_concept_ids = ConceptName.where(name: ['Is patient pregnant?', 'patient pregnant'])
                                           .pluck(:concept_id)
         breastfeeding_concept_ids = ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding',
-                                                             'Is patient breast feeding?', 'Currently breastfeeding child'])
+                                                             'Is patient breast feeding?',
+                                                             'Currently breastfeeding child'])
                                                .pluck(:concept_id)
         yes_concept_id = ConceptName.find_by(name: 'Yes')&.concept_id
 
@@ -2029,6 +2030,7 @@ module ArtService
           INNER JOIN obs ON obs.person_id = tpo.patient_id
             AND obs.concept_id IN (#{all_concept_ids.join(',')})
             AND obs.voided = 0
+            AND obs.value_coded = #{yes_concept_id}
             AND obs.obs_datetime >= DATE(tmdol.start_date)#{' '}
             AND obs.obs_datetime < DATE(tmdol.start_date) + INTERVAL 1 DAY
           WHERE tpo.moh_cum_outcome = 'On antiretrovirals'
