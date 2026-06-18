@@ -97,5 +97,25 @@ RSpec.describe UserService do
       # stale (empty) preload instead of what was persisted.
       expect(target_user.programs.map(&:program_id)).to match_array(program_ids)
     end
+
+    it 'assigns programs even when the editor is at a different facility than the target user' do
+      # User is location-scoped via Locatable. A superuser editing a user at
+      # another facility must still be able to assign programs: passing the
+      # loaded user object to UserProgram.create! avoids a location-scoped
+      # belongs_to re-query that would otherwise fail with "User must exist".
+      other_location = Location.unscoped.where.not(location_id: target_user.location_id).first
+      skip 'needs a second location in the test DB' unless other_location
+
+      program_ids = programs.map(&:program_id)
+      original_location = Location.current
+      Location.current = other_location
+      begin
+        UserService.update_user(target_user, programs: program_ids)
+      ensure
+        Location.current = original_location
+      end
+
+      expect(target_user.user_programs.reload.pluck(:program_id)).to match_array(program_ids)
+    end
   end
 end

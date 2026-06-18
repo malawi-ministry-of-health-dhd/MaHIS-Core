@@ -84,7 +84,7 @@ module Api
         user = UserService.update_user find_user(params[:id]), update_params
 
         if user.errors.empty?
-          update_last_password_property(user.id, update_params[:password])
+          update_last_password_property(user, update_params[:password])
           render json: user, status: :ok
         else
           render json: user.errors, status: :bad_request
@@ -338,14 +338,19 @@ module Api
         end
       end
 
-      def update_last_password_property(user_id, password)
+      def update_last_password_property(user, password)
         return unless password.present?
-        
+
         property = UserProperty.find_or_initialize_by(
           property: 'last_password_updated',
-          user_id: user_id
+          user_id: user.user_id
         )
-        
+
+        # Bind the loaded object so the required belongs_to :user validation is
+        # satisfied from memory; passing only user_id would re-query User under
+        # its location/active scope and silently fail to save for a user managed
+        # from another facility (find_user unscopes location for superusers).
+        property.user = user
         property.property_value = Time.current.to_s
         property.save
       end
