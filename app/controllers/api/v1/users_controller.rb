@@ -70,6 +70,10 @@ module Api
         # Force programs through since permit can silently drop integer arrays
         update_params[:programs] = UserService.normalize_program_ids(params[:programs]) if params.key?(:programs)
 
+        # Reject unknown/retired program ids up-front so the update never deletes
+        # existing assignments only to silently fail to recreate them.
+        return if params.key?(:programs) && !validate_programs_existance(update_params[:programs])
+
         return unless validate_roles(update_params[:roles])
         return unless validate_role_permissions(update_params[:roles])
 

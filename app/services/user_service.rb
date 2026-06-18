@@ -119,9 +119,7 @@ module UserService
 
     end
     # user programs
-    normalize_program_ids(programs).each do |program_id|
-      UserProgram.create user_id: user.user_id, program_id:
-    end
+    replace_user_programs(user, programs)
 
     user
   end
@@ -205,12 +203,8 @@ module UserService
     end
 
     # Update programs if any
-    if params.key?(:programs)
-      UserProgram.where(user_id: user.user_id).delete_all
-      normalize_program_ids(params[:programs]).each do |program_id|
-        UserProgram.create(user_id: user.user_id, program_id: program_id)
-      end
-    end
+    replace_user_programs(user, params[:programs]) if params.key?(:programs)
+
     user
   end
 
@@ -426,6 +420,33 @@ end
   # check if user is already assigned to a project
   def self.find_user_program(user_id, program_id)
     UserProgram.where(user_id:, program_id:).first
+  end
+
+  # Replaces a user's program assignments with the given set, atomically.
+  #
+  # Wrapping the delete + recreate in a transaction and using +create!+ ensures
+  # a validation failure on any program can never silently wipe a user's
+  # existing assignments — the whole change rolls back instead. (+belongs_to
+  # :program+ is required, and +Program+ is scoped to +retired: 0+, so a stale
+  # or retired id would otherwise make the non-bang +create+ a silent no-op
+  # after +delete_all+ had already cleared the table.)
+  #
+  # Resetting the associations afterwards makes a freshly-serialized +user+
+  # reflect the database rather than a stale eager-loaded :programs collection
+  # (the controller preloads :programs before the update runs).
+  def self.replace_user_programs(user, programs)
+    program_ids = normalize_program_ids(programs)
+
+    ActiveRecord::Base.transaction do
+      UserProgram.where(user_id: user.user_id).delete_all
+      program_ids.each do |program_id|
+        UserProgram.create!(user_id: user.user_id, program_id:)
+      end
+    end
+
+    user.association(:programs).reset
+    user.association(:user_programs).reset
+    user
   end
 
   def self.normalize_program_ids(programs)
