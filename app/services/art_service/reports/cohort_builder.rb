@@ -2025,7 +2025,7 @@ module ArtService
           INNER JOIN #{temp_earliest_start_date} e
             ON e.patient_id = tpo.patient_id
             AND LEFT(e.gender, 1) = 'F'
-          JOIN temp_max_drug_orders_loc_1217 tmdol#{' '}
+          JOIN #{temp_max_drug_orders} tmdol#{' '}
             ON tpo.patient_id = tmdol.patient_id#{' '}
           INNER JOIN obs ON obs.person_id = tpo.patient_id
             AND obs.concept_id IN (#{all_concept_ids.join(',')})
