@@ -68,7 +68,7 @@ module Api
                                       roles: [], programs: []
 
         # Force programs through since permit can silently drop integer arrays
-        update_params[:programs] = params[:programs].map(&:to_i) if params.key?(:programs)
+        update_params[:programs] = UserService.normalize_program_ids(params[:programs]) if params.key?(:programs)
 
         return unless validate_roles(update_params[:roles])
         return unless validate_role_permissions(update_params[:roles])
@@ -325,7 +325,7 @@ module Api
 
       # validate program
       def validate_programs_existance(programs)
-        programs.each do |program_id|
+        UserService.normalize_program_ids(programs).each do |program_id|
           next if Program.find_by(program_id:)
 
           errors = ['All Programs must exists']
