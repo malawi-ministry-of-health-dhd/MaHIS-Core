@@ -107,10 +107,13 @@ module UserService
 
       # For users with HSA roles villages will have to be assigned to them 
       if HSA_ROLES.include?(role.role)
-        # Create UserVillage records for each village
+        # Create UserVillage records for each village.
+        # Pass the loaded `user` object (not user_id): UserVillage belongs_to
+        # :user is required and would otherwise re-query User under its
+        # location scope, silently failing for a user at another facility.
         Array(villages).each do |village_id|
           UserVillage.create(
-            user_id: user.user_id,
+            user:,
             village_id: village_id,
             creator: User.current.id
           )
@@ -147,9 +150,12 @@ module UserService
     
     villages_to_retire.update_all(retired: 1) if villages_to_retire.any?
     
+    # Pass the loaded `user` object (not user_id): UserVillage belongs_to :user
+    # is required and would otherwise re-query User under its location scope,
+    # silently dropping villages for a user at another facility.
     villages_to_add.each do |village_id|
       UserVillage.create(
-        user_id: user.user_id,
+        user:,
         village_id: village_id,
         creator: User.current.id
       )
@@ -434,13 +440,22 @@ end
   # Resetting the associations afterwards makes a freshly-serialized +user+
   # reflect the database rather than a stale eager-loaded :programs collection
   # (the controller preloads :programs before the update runs).
+  #
+  # We pass the already-loaded +user+ object (not +user_id+) to +create!+. The
+  # required +belongs_to :user+ validation otherwise re-queries User through its
+  # default scopes — and User is location-scoped via Locatable
+  # (+where(location_id: current_location_id)+). When a superuser edits a user
+  # at a different facility, +find_user+ loads them with the location scope
+  # removed, but the belongs_to re-query would not, so the user "disappears" and
+  # the save fails with "User must exist" (a 422). Handing over the object skips
+  # that re-query entirely — the same way UserRole.create already does.
   def self.replace_user_programs(user, programs)
     program_ids = normalize_program_ids(programs)
 
     ActiveRecord::Base.transaction do
       UserProgram.where(user_id: user.user_id).delete_all
       program_ids.each do |program_id|
-        UserProgram.create!(user_id: user.user_id, program_id:)
+        UserProgram.create!(user:, program_id:)
       end
     end
 
