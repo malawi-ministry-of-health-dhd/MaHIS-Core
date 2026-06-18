@@ -854,7 +854,7 @@ def create_nutrition_concepts
 
     # Create ReSoMal concept (Coded, Procedure)
     puts "\n60. Creating ReSoMal concept..."
-    create_coded_concept_with_answers('ReSoMal', 'Procedure', %w[Yes No])
+    create_coded_concept_with_answers('ReSoMal volume given', 'Procedure', %w[Yes No])
 
     # Create Clinical notes construct concept (Text, Misc)
     puts "\n61. Creating Clinical notes construct concept..."
@@ -1016,6 +1016,64 @@ def create_nutrition_concepts
     puts "\n100. Creating Admission criteria concept..."
     create_coded_concept_with_answers('Admission criteria', 'Misc',
                                       ['MUAC < 11.5cm', 'Bilateral pitting oedema', 'Medical complications'])
+
+    # Create Severe unexplained wasting or malnutrition not responding... concept (Coded, Finding)
+    puts "\n101. Creating Severe unexplained wasting or malnutrition not responding... concept..."
+    create_coded_concept_with_answers('Severe unexplained wasting or malnutrition not responding...', 'Finding',
+                                      %w[Yes No])
+
+    # Create Type of feed concept (Coded, Finding)
+    puts "\n102. Creating Type of feed concept..."
+    create_coded_concept_with_answers('Type of feed', 'Finding', ['F-75', 'F-100', 'RUTF', 'Breast milk'])
+
+    # Create Number of daily feeds concept (Numeric, Finding)
+    puts "\n103. Creating Number of daily feeds concept..."
+    create_numeric_concept('Number of daily feeds', 'Finding', nil, allow_decimal: false)
+
+    # Create Amount per feed concept (Numeric, Finding)
+    puts "\n104. Creating Amount per feed concept..."
+    create_numeric_concept('Amount per feed', 'Finding', 'ml', allow_decimal: true)
+
+    # Create Nasogastric (NG) tube in use concept (Coded, Finding)
+    puts "\n105. Creating Nasogastric (NG) tube in use concept..."
+    create_coded_concept_with_answers('Nasogastric (NG) tube in use', 'Finding', %w[Yes No])
+
+    # Create Time concept (Text, Misc)
+    puts "\n106. Creating Time concept..."
+    create_text_concept('Time', 'Misc')
+
+    # Create RUTF taken (fraction of sachet) concept (Numeric, Finding)
+    puts "\n107. Creating RUTF taken (fraction of sachet) concept..."
+    create_numeric_concept('RUTF taken (fraction of sachet)', 'Finding', nil, allow_decimal: true)
+
+    # Create RUTF weekly sachet allocation concept (Numeric, Finding)
+    puts "\n108. Creating RUTF weekly sachet allocation concept..."
+    create_numeric_concept('RUTF weekly sachet allocation', 'Finding', 'sachets', allow_decimal: false)
+
+    # Create Malaria Test Date concept (Date, Test)
+    puts "\n109. Creating Malaria Test Date concept..."
+    create_date_concept('Malaria Test Date', 'Test')
+
+    # Create Discharging officer concept (Text, Misc)
+    puts "\n110. Creating Discharging officer concept..."
+    create_text_concept('Discharging officer', 'Misc')
+
+    # Create Transfer site concept (Text, Misc)
+    puts "\n111. Creating Transfer site concept..."
+    create_text_concept('Transfer site', 'Misc')
+
+    # Create Administering officer initials concept (Text, Misc)
+    puts "\n112. Creating Administering officer initials concept..."
+    create_text_concept('Administering officer initials', 'Misc')
+
+    # Create Referred for HIV testing concept (Coded, Finding)
+    puts "\n113. Creating Referred for HIV testing concept..."
+    create_coded_concept_with_answers('Referred for HIV testing', 'Finding', %w[Yes No])
+
+    # Create Current treatment phase concept (Coded, Finding)
+    puts "\n114. Creating Current treatment phase concept..."
+    create_coded_concept_with_answers('Current treatment phase', 'Finding',
+                                      %w[Stabilization Transition Rehabilitation])
 
     puts "\n" + '=' * 80
     puts 'Successfully created nutrition concepts!'
