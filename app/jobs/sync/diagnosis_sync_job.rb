@@ -75,7 +75,7 @@ module Sync
         sleep(0.05)
       end
 
-      handle_sync_completion(processed, errors, total_count, data_type_name)
+      handle_sync_completion(processed, errors, total_count, data_type_name, progress_key: db_name)
     end
 
     def get_diagnoses_query
