@@ -33,6 +33,7 @@ module Api
 
         provider = User.current.user_id
         provider = params[:user_id] if params.include?(:user_id)
+        return unless validate_cross_user_property_update(provider)
 
         # MySQL INSERT ... ON DUPLICATE KEY UPDATE — atomic, race-safe
         ActiveRecord::Base.connection.execute(
@@ -63,6 +64,43 @@ module Api
           render status: :no_content
         else
           render json: { errors: property.errors }, status: :internal_server_error
+        end
+      end
+
+      private
+
+      SUPERUSER_ROLE_RANK = {
+        'facility superuser' => 1,
+        'district superuser' => 2,
+        'superuser' => 3,
+        'global superuser' => 4
+      }.freeze
+
+      def validate_cross_user_property_update(provider)
+        return true if provider.to_i == User.current.user_id.to_i
+
+        target_user = User.includes(:roles).find(provider)
+        return true if can_manage_sensitive_user?(target_user)
+
+        render json: {
+          errors: ['You are not authorised to update properties for this user']
+        }, status: :forbidden
+        false
+      end
+
+      def can_manage_sensitive_user?(target_user)
+        current_rank = superuser_rank(User.current)
+        target_rank = superuser_rank(target_user)
+
+        current_rank == SUPERUSER_ROLE_RANK['global superuser'] || target_rank.zero? || current_rank > target_rank
+      end
+
+      def superuser_rank(user)
+        return 0 unless user
+
+        user.roles.map(&:role).reduce(0) do |highest_rank, role_name|
+          rank = SUPERUSER_ROLE_RANK[role_name.to_s.strip.downcase] || 0
+          [highest_rank, rank].max
         end
       end
     end

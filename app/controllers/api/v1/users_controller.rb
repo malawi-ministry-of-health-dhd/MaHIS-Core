@@ -27,6 +27,7 @@ module Api
       def update_username
         new_username, = params.require(%i[new_username])
         target_user = find_user(params[:id] || params[:user_id])  # uses find_user which unscopes
+        return unless validate_sensitive_user_update(target_user, %i[username])
         return unless validate_username(new_username)
         updated = UserService.update_username(target_user, new_username)
         render json: { message: ['username updated successfully'], user: updated }
@@ -77,11 +78,14 @@ module Api
         return unless validate_roles(update_params[:roles])
         return unless validate_role_permissions(update_params[:roles])
 
+        target_user = find_user(params[:id])
+        return unless validate_sensitive_user_update(target_user, sensitive_update_fields(update_params))
+
         if update_params[:location_id] && !validate_location(update_params[:location_id])
           return
         end
 
-        user = UserService.update_user find_user(params[:id]), update_params
+        user = UserService.update_user target_user, update_params
 
         if user.errors.empty?
           update_last_password_property(user, update_params[:password])
@@ -202,7 +206,10 @@ module Api
 
       def update_user_villages
         update_params = params.permit user_village_ids: []
-        user_villages = UserService.update_user_villages(user, update_params[:user_village_ids])
+        target_user = user
+        return unless validate_sensitive_user_update(target_user, %i[villages])
+
+        user_villages = UserService.update_user_villages(target_user, update_params[:user_village_ids])
         render json: { villages: user_villages }, status: :ok
       rescue => e
         render json: { errors: [e.message] }, status: :internal_server_error
@@ -255,6 +262,12 @@ module Api
       PROTECTED_ROLES = %w[Superuser Global\ Superuser District\ Superuser Facility\ Superuser].freeze
       # Only a Global Superuser may grant these roles
       GLOBAL_ONLY_ROLES = ['Global Superuser', 'District Superuser'].freeze
+      SUPERUSER_ROLE_RANK = {
+        'facility superuser' => 1,
+        'district superuser' => 2,
+        'superuser' => 3,
+        'global superuser' => 4
+      }.freeze
 
       def validate_role_permissions(roles)
         return true if roles.blank?
@@ -275,6 +288,36 @@ module Api
         end
 
         true
+      end
+
+      def sensitive_update_fields(update_params)
+        %i[password roles programs location_id].select { |key| update_params.key?(key) }
+      end
+
+      def validate_sensitive_user_update(target_user, fields)
+        return true if fields.blank?
+        return true if can_manage_sensitive_user?(target_user)
+
+        render json: {
+          errors: ["You are not authorised to update #{fields.join(', ')} for this user"]
+        }, status: :forbidden
+        false
+      end
+
+      def can_manage_sensitive_user?(target_user)
+        current_rank = superuser_rank(User.current)
+        target_rank = superuser_rank(target_user)
+
+        current_rank == SUPERUSER_ROLE_RANK['global superuser'] || target_rank.zero? || current_rank > target_rank
+      end
+
+      def superuser_rank(user)
+        return 0 unless user
+
+        user.roles.map(&:role).reduce(0) do |highest_rank, role_name|
+          rank = SUPERUSER_ROLE_RANK[role_name.to_s.strip.downcase] || 0
+          [highest_rank, rank].max
+        end
       end
 
       def validate_username(username)
