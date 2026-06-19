@@ -22,7 +22,10 @@ module GlobalPropertyService
     # Sync a global property document from CouchDB to MySQL
     # Used by CouchDB change listener
     def create_or_update_from_couchdb(doc)
-      return 'Missing required fields' unless valid_couchdb_document?(doc)
+      unless valid_couchdb_document?(doc)
+        Rails.logger.error("[Global Property Sync] Invalid CouchDB document: #{doc.inspect}")
+        return
+      end
 
       property_name = doc['property']
       property_value = doc['property_value']
@@ -45,7 +48,7 @@ module GlobalPropertyService
         )
 
         if global_property.save
-          Rails.logger.info("[Global Property Sync] Successfully synced: #{property_name} = #{property_value} (location: #{location_id})")
+          Rails.logger.info("[Global Property Sync] Successfully synced: #{property_name} (location: #{location_id})")
           'synced'
         else
           Rails.logger.error("[Global Property Sync] Failed to save: #{property_name}. Errors: #{global_property.errors.full_messages}")
