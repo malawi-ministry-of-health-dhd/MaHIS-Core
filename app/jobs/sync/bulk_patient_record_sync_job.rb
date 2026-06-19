@@ -60,10 +60,12 @@ module Sync
         end
       end
       
-      # Sync all patient records in one bulk operation to CouchDB
+      # Sync all patient records in one bulk operation to CouchDB. Progress for
+      # 'patients_records' is tracked from CouchDB's actual doc count by
+      # EnsurePatientIndexesJob (not per-batch increments), so a re-sync of
+      # already-present patients can't push the count past the real total.
       if patient_records.any?
         bulk_sync_patients_to_couchdb(patient_records)
-        SyncProgress.increment('patients_records', patient_records.count)
 
         duration = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_time
         records_per_sec = duration.positive? ? (patient_records.count / duration).round(2) : patient_records.count

@@ -48,7 +48,7 @@ module Sync
 
     # Wards are small reference data. Always upsert them instead of relying on
     # count-only checks, which can skip when CouchDB has stale ward documents.
-    def check_and_clean_couchdb_if_needed_for_model(_model_class, _db_name, _query)
+    def check_and_clean_couchdb_if_needed_for_model(_model_class, _db_name, _query, _last_updated = nil)
       :continue_sync
     end
   end
