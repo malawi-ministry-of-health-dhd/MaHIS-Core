@@ -5,6 +5,18 @@ class Role < ApplicationRecord
   self.primary_key = 'role' # Yes, role is the name of the primary key
 
   SUPERUSER_ROLES = ['Superuser', 'Global Superuser', 'District Superuser', 'Facility Superuser'].freeze
+  STANDARD_ROLE_DESCRIPTIONS = {
+    'General Registration Clerk' => 'General registration clerk role',
+    'Clinician' => 'Licensed clinician role',
+    'Student Clinician' => 'Student clinician role requiring supervising clinician at login',
+    'Intern Clinician' => 'Intern clinician role requiring supervising clinician at login',
+    'Doctor' => 'Doctor role',
+    'Nurse' => 'Licensed nurse role',
+    'Student Nurse' => 'Student nurse role requiring supervising nurse at login',
+    'Intern Nurse' => 'Intern nurse role',
+    'Pharmacist' => 'Pharmacist role',
+    'Provider' => 'Provider role'
+  }.freeze
 
   # include Openmrs
 
@@ -24,6 +36,32 @@ class Role < ApplicationRecord
       'View Programs', 'View Enrollments'
     ],
     'Clinician' => [
+      'View Patients', 'Search Patients', 'Activate Visits',
+      'View Encounters', 'Add Encounters', 'Edit Encounters',
+      'View Observations', 'Add Observations', 'Edit Observations',
+      'View Diagnoses', 'Record Diagnosis', 'Add Diagnoses', 'Edit Diagnoses',
+      'Conduct Clinical Assessment', 'View Medications', 'Add Medications',
+      'Edit Medications', 'Prescribe Treatment', 'View Prescriptions',
+      'Order Investigations', 'View Lab Orders', 'View Lab Results', 'View Vitals',
+      'View Consultations', 'Add Consultations', 'Edit Consultations',
+      'View Appointments', 'Add Appointments', 'Edit Appointments',
+      'Record Patient Outcomes', 'View Programs', 'View Enrollments',
+      'Enroll Patients', 'View Reports'
+    ],
+    'Student Clinician' => [
+      'View Patients', 'Search Patients', 'Activate Visits',
+      'View Encounters', 'Add Encounters', 'Edit Encounters',
+      'View Observations', 'Add Observations', 'Edit Observations',
+      'View Diagnoses', 'Record Diagnosis', 'Add Diagnoses', 'Edit Diagnoses',
+      'Conduct Clinical Assessment', 'View Medications', 'Add Medications',
+      'Edit Medications', 'Prescribe Treatment', 'View Prescriptions',
+      'Order Investigations', 'View Lab Orders', 'View Lab Results', 'View Vitals',
+      'View Consultations', 'Add Consultations', 'Edit Consultations',
+      'View Appointments', 'Add Appointments', 'Edit Appointments',
+      'Record Patient Outcomes', 'View Programs', 'View Enrollments',
+      'Enroll Patients', 'View Reports'
+    ],
+    'Intern Clinician' => [
       'View Patients', 'Search Patients', 'Activate Visits',
       'View Encounters', 'Add Encounters', 'Edit Encounters',
       'View Observations', 'Add Observations', 'Edit Observations',
@@ -58,6 +96,24 @@ class Role < ApplicationRecord
       'View Diagnoses', 'View Medications',
       'View Appointments', 'Add Appointments', 'View Programs', 'View Enrollments'
     ],
+    'Student Nurse' => [
+      'View Patients', 'Search Patients', 'Activate Visits',
+      'View Encounters', 'Add Encounters',
+      'View Observations', 'Add Observations',
+      'View Vitals', 'Capture Vitals', 'Add Vitals', 'Edit Vitals',
+      'Manage Monitoring Charts', 'Support Patient Movement',
+      'View Diagnoses', 'View Medications',
+      'View Appointments', 'Add Appointments', 'View Programs', 'View Enrollments'
+    ],
+    'Intern Nurse' => [
+      'View Patients', 'Search Patients', 'Activate Visits',
+      'View Encounters', 'Add Encounters',
+      'View Observations', 'Add Observations',
+      'View Vitals', 'Capture Vitals', 'Add Vitals', 'Edit Vitals',
+      'Manage Monitoring Charts', 'Support Patient Movement',
+      'View Diagnoses', 'View Medications',
+      'View Appointments', 'Add Appointments', 'View Programs', 'View Enrollments'
+    ],
     'Pharmacist' => [
       'View Patients', 'Search Patients', 'Activate Visits',
       'View Medications', 'View Prescriptions', 'Dispense Medications',
@@ -74,12 +130,20 @@ class Role < ApplicationRecord
   def self.sync_standard_privileges!
     added = 0
     skipped = 0
-    missing_roles = []
+    created_roles = 0
 
     transaction do
       STANDARD_ROLE_PRIVILEGES.each do |role_name, privileges|
         role = find_by(role: role_name)
-        next missing_roles << role_name unless role
+        if role.nil?
+          role_attributes = {
+            role: role_name,
+            description: STANDARD_ROLE_DESCRIPTIONS[role_name] || "#{role_name} role",
+            uuid: SecureRandom.uuid
+          }
+          role = create!(role_attributes)
+          created_roles += 1
+        end
 
         current = RolePrivilege.where(role: role_name).pluck(:privilege)
         (privileges - current).each do |priv_name|
@@ -95,7 +159,7 @@ class Role < ApplicationRecord
       end
     end
 
-    { added_privileges: added, already_existed: skipped, missing_roles: missing_roles }
+    { created_roles: created_roles, added_privileges: added, already_existed: skipped }
   end
 
   def self.location_scoped?

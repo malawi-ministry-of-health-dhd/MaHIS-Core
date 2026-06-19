@@ -8,7 +8,7 @@ module Api
       DEFAULT_ROLENAME = 'clerk'
       include PasswordPolicy
 
-      skip_before_action :authenticate, only: %i[login reset_password]
+      skip_before_action :authenticate, only: %i[login confirm_supervision reset_password]
 
       def index
         filters = params.permit(:role, :search_string, :include_deactivated, :location_id, location_ids: []).to_hash.transform_keys(&:to_sym)
@@ -116,6 +116,11 @@ module Api
             return render json: LoginResponseService.build(user, UserService.new_authentication_token(user))
           end
 
+          supervision_response = LoginResponseService.build(user, UserService.new_authentication_token(user), mark_login: false)
+          if supervision_response[:supervision_required]
+            return render json: supervision_response, status: :accepted
+          end
+
           if extra_security_login_enabled?(user)
             if PasskeyAuthenticationService.required_for?(user)
               passkey_challenge = PasskeyAuthenticationService.authentication_options(user)
@@ -136,6 +141,61 @@ module Api
             render json: LoginResponseService.build(user, UserService.new_authentication_token(user)), status: :ok
           end
         end
+      end
+
+      def confirm_supervision
+        login_params, error = required_params required: %i[username password supervisor_user_id]
+        return render json: login_params, status: :bad_request if error
+
+        username, password, supervisor_user_id = login_params
+        user = UserService.authenticate_credentials(username, password)
+        return render json: { errors: ['Invalid user or password'] }, status: :unauthorized if user.nil?
+
+        password_response = LoginResponseService.build(user, nil, mark_login: false)
+        if password_change_required?(password_response)
+          return render json: LoginResponseService.build(
+            user,
+            UserService.new_authentication_token(user),
+            require_supervision: false
+          )
+        end
+
+        requirement = LoginResponseService.supervision_requirement(user)
+        return render json: { errors: ['Supervision is not required for this user'] }, status: :bad_request if requirement.nil?
+
+        supervisor = User.with_authentication_preloads.find(supervisor_user_id)
+        unless LoginResponseService.valid_supervisor?(user, supervisor, requirement)
+          return render json: { errors: ['Selected supervisor is not valid for this user'] }, status: :forbidden
+        end
+
+        supervision_session = LoginResponseService.record_supervision!(user, supervisor, requirement)
+
+        if extra_security_login_enabled?(user)
+          if PasskeyAuthenticationService.required_for?(user)
+            passkey_challenge = PasskeyAuthenticationService.authentication_options(user)
+            return render json: {
+              passkey_authentication_required: true,
+              passkey_session: passkey_challenge[:session_token],
+              public_key: passkey_challenge[:options]
+            }, status: :accepted
+          end
+
+          passkey_challenge = PasskeyAuthenticationService.registration_options(user)
+          return render json: {
+            passkey_registration_required: true,
+            passkey_session: passkey_challenge[:session_token],
+            public_key: passkey_challenge[:options]
+          }, status: :accepted
+        end
+
+        response = LoginResponseService.build(
+          user,
+          UserService.new_authentication_token(user),
+          require_supervision: false
+        )
+        response[:supervision_session] = supervision_session
+
+        render json: response, status: :ok
       end
 
       def check_first_time_login

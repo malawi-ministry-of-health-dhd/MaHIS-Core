@@ -873,6 +873,13 @@ ensure_facility_level_data!
 rebuild_concept_word_index!
 ensure_bootstrap_users!
 load Rails.root.join('db', 'seeds', 'privileges_seed.rb')
+# Must run after privileges_seed.rb so the privilege rows exist before they are
+# wired to roles. This idempotent seed creates the standard clinical roles
+# (incl. the supervision roles: Student/Intern Nurse & Clinician) and their
+# privileges. It lives here in seeds — not only in migrations — because data
+# migrations are skipped when a DB is built via `db:schema:load`, which is how
+# fresh production DBs are typically created.
+load Rails.root.join('db', 'seeds', 'role_privileges_seed.rb')
 
 puts <<~MSG
   ----------------------------------------

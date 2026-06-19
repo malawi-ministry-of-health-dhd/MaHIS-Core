@@ -419,6 +419,7 @@ Rails.application.routes.draw do
   get '/api/v1/archiving_candidates' => 'api/v1/patients#find_archiving_candidates'
   get '/api/v1/_health' => 'healthcheck#index'
   post '/api/v1/auth/login' => 'api/v1/users#login'
+  post '/api/v1/auth/confirm_supervision' => 'api/v1/users#confirm_supervision'
   post '/api/v1/auth/reset_password' => 'api/v1/users#reset_password'
   post '/api/v1/auth/verify_token' => 'api/v1/users#check_token_validity'
   get '/api/v1/fast_track_assessment' => 'api/v1/fast_track#assessment'

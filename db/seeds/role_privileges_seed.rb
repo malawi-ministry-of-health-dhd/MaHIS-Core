@@ -54,6 +54,80 @@ ROLE_PRIVILEGE_MAP = {
     View\ Reports
   ],
 
+  'Student Clinician' => %w[
+    View\ Patients
+    Search\ Patients
+    Activate\ Visits
+    View\ Encounters
+    Add\ Encounters
+    Edit\ Encounters
+    View\ Observations
+    Add\ Observations
+    Edit\ Observations
+    View\ Diagnoses
+    Record\ Diagnosis
+    Add\ Diagnoses
+    Edit\ Diagnoses
+    Conduct\ Clinical\ Assessment
+    View\ Medications
+    Add\ Medications
+    Edit\ Medications
+    Prescribe\ Treatment
+    View\ Prescriptions
+    Order\ Investigations
+    View\ Lab\ Orders
+    View\ Lab\ Results
+    View\ Vitals
+    View\ Consultations
+    Add\ Consultations
+    Edit\ Consultations
+    View\ Appointments
+    Add\ Appointments
+    Edit\ Appointments
+    Record\ Patient\ Outcomes
+    View\ Programs
+    View\ Enrollments
+    Enroll\ Patients
+    View\ Reports
+  ],
+
+  'Intern Clinician' => %w[
+    View\ Patients
+    Search\ Patients
+    Activate\ Visits
+    View\ Encounters
+    Add\ Encounters
+    Edit\ Encounters
+    View\ Observations
+    Add\ Observations
+    Edit\ Observations
+    View\ Diagnoses
+    Record\ Diagnosis
+    Add\ Diagnoses
+    Edit\ Diagnoses
+    Conduct\ Clinical\ Assessment
+    View\ Medications
+    Add\ Medications
+    Edit\ Medications
+    Prescribe\ Treatment
+    View\ Prescriptions
+    Order\ Investigations
+    View\ Lab\ Orders
+    View\ Lab\ Results
+    View\ Vitals
+    View\ Consultations
+    Add\ Consultations
+    Edit\ Consultations
+    View\ Appointments
+    Add\ Appointments
+    Edit\ Appointments
+    Record\ Patient\ Outcomes
+    View\ Programs
+    View\ Enrollments
+    Enroll\ Patients
+    View\ Reports
+  ],
+
   'Doctor' => %w[
     View\ Patients
     Search\ Patients
@@ -113,6 +187,50 @@ ROLE_PRIVILEGE_MAP = {
     Manage\ Monitoring\ Charts
   ],
 
+  'Student Nurse' => %w[
+    View\ Patients
+    Search\ Patients
+    Activate\ Visits
+    View\ Encounters
+    Add\ Encounters
+    View\ Observations
+    Add\ Observations
+    View\ Vitals
+    Capture\ Vitals
+    Add\ Vitals
+    Edit\ Vitals
+    View\ Diagnoses
+    View\ Medications
+    View\ Appointments
+    Add\ Appointments
+    View\ Programs
+    View\ Enrollments
+    Support\ Patient\ Movement
+    Manage\ Monitoring\ Charts
+  ],
+
+  'Intern Nurse' => %w[
+    View\ Patients
+    Search\ Patients
+    Activate\ Visits
+    View\ Encounters
+    Add\ Encounters
+    View\ Observations
+    Add\ Observations
+    View\ Vitals
+    Capture\ Vitals
+    Add\ Vitals
+    Edit\ Vitals
+    View\ Diagnoses
+    View\ Medications
+    View\ Appointments
+    Add\ Appointments
+    View\ Programs
+    View\ Enrollments
+    Support\ Patient\ Movement
+    Manage\ Monitoring\ Charts
+  ],
+
   'Pharmacist' => %w[
     View\ Patients
     Search\ Patients
@@ -151,15 +269,36 @@ ROLE_PRIVILEGE_MAP = {
   ],
 }.freeze
 
+ROLE_DESCRIPTIONS = {
+  'General Registration Clerk' => 'General registration clerk role',
+  'Clinician' => 'Licensed clinician role',
+  'Student Clinician' => 'Student clinician role requiring supervising clinician at login',
+  'Intern Clinician' => 'Intern clinician role requiring supervising clinician at login',
+  'Doctor' => 'Doctor role',
+  'Nurse' => 'Licensed nurse role',
+  'Student Nurse' => 'Student nurse role requiring supervising nurse at login',
+  'Intern Nurse' => 'Intern nurse role',
+  'Pharmacist' => 'Pharmacist role',
+  'Provider' => 'Provider role',
+  'Lab Technician' => 'Lab technician role'
+}.freeze
+
 added = 0
 skipped = 0
+created_roles = 0
 
 ROLE_PRIVILEGE_MAP.each do |role_name, privileges|
   role = Role.find_by(role: role_name)
 
   unless role
-    puts "  SKIP  Role '#{role_name}' not found in database — skipping"
-    next
+    role_attributes = {
+      role: role_name,
+      description: ROLE_DESCRIPTIONS[role_name] || "#{role_name} role",
+      uuid: SecureRandom.uuid
+    }
+    role = Role.create!(role_attributes)
+    created_roles += 1
+    puts "  ADD   Role '#{role_name}'"
   end
 
   privileges.each do |privilege_name|
@@ -184,4 +323,4 @@ ROLE_PRIVILEGE_MAP.each do |role_name, privileges|
   end
 end
 
-puts "\nDone. Added #{added} role-privilege assignments, #{skipped} already existed."
+puts "\nDone. Created #{created_roles} roles. Added #{added} role-privilege assignments, #{skipped} already existed."
