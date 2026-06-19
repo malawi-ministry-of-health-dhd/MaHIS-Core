@@ -144,12 +144,12 @@ module Api
       end
 
       def confirm_supervision
-        login_params, error = required_params required: %i[username password supervisor_user_id]
+        login_params, error = required_params required: %i[username password]
         return render json: login_params, status: :bad_request if error
 
         username           = login_params[:username]
         password           = login_params[:password]
-        supervisor_user_id = login_params[:supervisor_user_id]
+        supervisor_user_id = params[:supervisor_user_id]
         user = UserService.authenticate_credentials(username, password)
         return render json: { errors: ['Invalid user or password'] }, status: :unauthorized if user.nil?
 
@@ -165,12 +165,18 @@ module Api
         requirement = LoginResponseService.supervision_requirement(user)
         return render json: { errors: ['Supervision is not required for this user'] }, status: :bad_request if requirement.nil?
 
-        supervisor = User.with_authentication_preloads.find(supervisor_user_id)
-        unless LoginResponseService.valid_supervisor?(user, supervisor, requirement)
-          return render json: { errors: ['Selected supervisor is not valid for this user'] }, status: :forbidden
-        end
+        supervision_session = nil
+        if supervisor_user_id.present?
+          supervisor = User.with_authentication_preloads.find(supervisor_user_id)
+          unless LoginResponseService.valid_supervisor?(user, supervisor, requirement)
+            return render json: { errors: ['Selected supervisor is not valid for this user'] }, status: :forbidden
+          end
 
-        supervision_session = LoginResponseService.record_supervision!(user, supervisor, requirement)
+          supervision_session = LoginResponseService.record_supervision!(user, supervisor, requirement)
+        elsif !requirement[:optional]
+          # A supervisor is mandatory for non-optional trainee roles.
+          return render json: { errors: ['A supervisor must be selected'] }, status: :bad_request
+        end
 
         if extra_security_login_enabled?(user)
           if PasskeyAuthenticationService.required_for?(user)
@@ -195,7 +201,7 @@ module Api
           UserService.new_authentication_token(user),
           require_supervision: false
         )
-        response[:supervision_session] = supervision_session
+        response[:supervision_session] = supervision_session if supervision_session
 
         render json: response, status: :ok
       end

@@ -19,6 +19,14 @@ module LoginResponseService
       supervision_type: 'clinician',
       supervisor_role: 'Clinician',
       excluded_roles: ['Student Clinician', 'Intern Clinician']
+    },
+    # Optional: an Intern Nurse may select a supervising nurse, but login is not
+    # blocked if none is chosen.
+    'Intern Nurse' => {
+      supervision_type: 'nurse',
+      supervisor_role: 'Nurse',
+      excluded_roles: ['Student Nurse', 'Intern Nurse'],
+      optional: true
     }
   }.freeze
 
@@ -61,7 +69,7 @@ module LoginResponseService
     end
 
     def supervisors_for(user, requirement)
-      User.includes(:person, :roles)
+      User.includes(:roles, person: :names)
           .joins(:roles)
           .where(location_id: user.location_id)
           .where(role: { role: requirement[:supervisor_role] })
@@ -82,6 +90,7 @@ module LoginResponseService
     end
 
     def record_supervision!(trainee, supervisor, requirement)
+      recorded_at = Time.current
       payload = {
         trainee_user_id: trainee.user_id,
         trainee_role: requirement[:trainee_role],
@@ -90,16 +99,26 @@ module LoginResponseService
         supervisor_role: requirement[:supervisor_role],
         supervision_type: requirement[:supervision_type],
         location_id: trainee.location_id,
-        started_at: Time.current.iso8601
+        started_at: recorded_at.iso8601
       }
 
-      property = UserProperty.find_or_initialize_by(
-        property: SUPERVISION_SESSION_PROPERTY,
-        user_id: trainee.user_id
-      )
-      property.user = trainee
-      property.property_value = payload.to_json
-      property.save!
+      ActiveRecord::Base.transaction do
+        # Fast same-day gate: a single row the login flow reads back; overwritten
+        # on each confirmation.
+        property = UserProperty.find_or_initialize_by(
+          property: SUPERVISION_SESSION_PROPERTY,
+          user_id: trainee.user_id
+        )
+        property.user = trainee
+        property.property_value = payload.to_json
+        property.save!
+
+        # Durable audit trail in the shared `audits` table — one immutable row per
+        # confirmation. user_property has a composite key and can't be auto-audited,
+        # so the entry is written explicitly against the trainee user.
+        record_supervision_audit!(trainee, supervisor, payload, recorded_at)
+      end
+
       payload
     end
 
@@ -136,10 +155,36 @@ module LoginResponseService
 
     private
 
+    # Writes one immutable supervision record to the shared `audits` table.
+    # auditable = the trainee (so it shows in the trainee's audit history),
+    # associated = the supervisor; the full session payload is stored in
+    # audited_changes (YAML, matching how the audited gem serialises it).
+    def record_supervision_audit!(trainee, supervisor, payload, recorded_at)
+      next_version = (Audited::Audit
+                        .where(auditable_type: 'User', auditable_id: trainee.user_id)
+                        .maximum(:version) || 0) + 1
+
+      Audited::Audit.create!(
+        auditable_type: 'User',
+        auditable_id: trainee.user_id,
+        associated_type: 'User',
+        associated_id: supervisor.user_id,
+        user_id: supervisor.user_id,
+        username: supervisor.name,
+        action: 'supervision',
+        audited_changes: payload.transform_keys(&:to_s),
+        comment: "#{payload[:trainee_role]} supervised by #{supervisor.name} (#{payload[:supervisor_role]})",
+        version: next_version,
+        created_at: recorded_at
+      )
+    end
+
     def supervision_required_response(user, requirement, facility_level)
       {
         action: 'supervision_required',
         supervision_required: true,
+        # When true the client may proceed without choosing a supervisor.
+        optional: requirement[:optional] == true,
         trainee_user_id: user.user_id,
         trainee_role: requirement[:trainee_role],
         supervision_type: requirement[:supervision_type],
@@ -150,9 +195,12 @@ module LoginResponseService
     end
 
     def supervisor_payload(user, supervisor_role)
+      latest_name = user.person&.names&.max_by(&:date_created)
       {
         user_id: user.user_id,
         name: user.name,
+        given_name: latest_name&.given_name,
+        family_name: latest_name&.family_name,
         username: user.username,
         role: supervisor_role,
         location_id: user.location_id
