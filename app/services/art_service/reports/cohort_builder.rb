@@ -650,38 +650,62 @@ module ArtService
 
         ActiveRecord::Base.connection.execute <<~SQL
           INSERT INTO #{temp_cohort_members}
+          WITH reason_concept AS (
+            SELECT concept_id FROM concept_name WHERE name = 'Reason for ART eligibility' LIMIT 1
+          ),
+          latest_reason AS (
+            SELECT
+              o.person_id,
+              o.value_coded
+            FROM obs o
+            JOIN (
+              -- build a deterministic sort key and take the max per person
+              SELECT
+                person_id,
+                MAX(CONCAT(DATE_FORMAT(obs_datetime, '%Y-%m-%d %H:%i:%s'),
+                          LPAD(UNIX_TIMESTAMP(date_created), 20, '0'),
+                          LPAD(obs_id, 20, '0'))) AS sortkey
+              FROM obs
+              WHERE concept_id = (SELECT concept_id FROM reason_concept)
+                AND voided = 0
+                AND obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
+              GROUP BY person_id
+            ) m ON o.person_id = m.person_id
+              AND CONCAT(DATE_FORMAT(o.obs_datetime, '%Y-%m-%d %H:%i:%s'),
+                          LPAD(UNIX_TIMESTAMP(o.date_created), 20, '0'),
+                          LPAD(o.obs_id, 20, '0')) = m.sortkey
+            WHERE o.concept_id = (SELECT concept_id FROM reason_concept)
+              AND o.voided = 0
+              AND o.obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
+          )
           SELECT patient_program.patient_id,
-                 DATE(MIN(art_order.start_date)) AS date_enrolled,
-                 DATE(COALESCE(MIN(art_start_date_obs.value_datetime), MIN(art_order.start_date))) AS earliest_start_date,
-                 DATE(MIN(art_start_date_obs.value_datetime)) AS recorded_start_date,
-                 person.birthdate,
-                 person.birthdate_estimated,
-                 person.death_date,
-                 LEFT(person.gender, 1) gender,
-                 IF(person.birthdate IS NOT NULL, TIMESTAMPDIFF(YEAR, person.birthdate,  DATE(COALESCE(art_start_date_obs.value_datetime, MIN(art_order.start_date)))), NULL) AS age_at_initiation,
-                 IF(person.birthdate IS NOT NULL, TIMESTAMPDIFF(DAY, person.birthdate,  DATE(COALESCE(art_start_date_obs.value_datetime, MIN(art_order.start_date)))), NULL) AS age_in_days,
-                 (SELECT value_coded FROM obs
-                  WHERE concept_id = (SELECT concept_id FROM concept_name WHERE name = 'Reason for ART eligibility' LIMIT 1) AND person_id = patient_program.patient_id AND voided = 0
-                  AND obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
-                  ORDER BY obs_datetime DESC, date_created DESC LIMIT 1) AS reason_for_starting_art,
-                 pa.value AS occupation
+                DATE(MIN(art_order.start_date)) AS date_enrolled,
+                DATE(COALESCE(MIN(art_start_date_obs.value_datetime), MIN(art_order.start_date))) AS earliest_start_date,
+                DATE(MIN(art_start_date_obs.value_datetime)) AS recorded_start_date,
+                person.birthdate,
+                person.birthdate_estimated,
+                person.death_date,
+                LEFT(person.gender, 1) AS gender,
+                IF(person.birthdate IS NOT NULL, TIMESTAMPDIFF(YEAR, person.birthdate, DATE(COALESCE(art_start_date_obs.value_datetime, MIN(art_order.start_date)))), NULL) AS age_at_initiation,
+                IF(person.birthdate IS NOT NULL, TIMESTAMPDIFF(DAY, person.birthdate, DATE(COALESCE(art_start_date_obs.value_datetime, MIN(art_order.start_date)))), NULL) AS age_in_days,
+                lr.value_coded AS reason_for_starting_art,
+                pa.value AS occupation
           FROM patient_program
           INNER JOIN person ON person.person_id = patient_program.patient_id AND person.voided = 0
           LEFT JOIN (#{current_occupation_query}) pa ON pa.person_id = patient_program.patient_id
-          LEFT JOIN patient_state AS outcome
-            ON outcome.patient_program_id = patient_program.patient_program_id
-          LEFT JOIN #{temp_art_start_date} AS art_start_date_obs
-            ON art_start_date_obs.patient_id = patient_program.patient_id
-           /* TODO: Re-enable the following condition. Has been removed because LLH and PIH
-              were noted to be dropping patients because of it. Seems these sites may have orders
-              without corresponding encounters. Adding this condition bumps up performance a bit. */
-           /* INNER JOIN encounter AS prescription_encounter
-            ON prescription_encounter.patient_id = patient_program.patient_id
-            AND prescription_encounter.program_id = patient_program.program_id
-            AND prescription_encounter.encounter_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
-            AND prescription_encounter.encounter_type IN (SELECT encounter_type_id FROM encounter_type WHERE name LIKE 'Treatment')
-            AND prescription_encounter.voided = 0 */
+          LEFT JOIN patient_state AS outcome ON outcome.patient_program_id = patient_program.patient_program_id
+          LEFT JOIN #{temp_art_start_date} AS art_start_date_obs ON art_start_date_obs.patient_id = patient_program.patient_id
+            /* TODO: Re-enable the following condition. Has been removed because LLH and PIH
+                were noted to be dropping patients because of it. Seems these sites may have orders
+                without corresponding encounters. Adding this condition bumps up performance a bit. */
+            /* INNER JOIN encounter AS prescription_encounter
+              ON prescription_encounter.patient_id = patient_program.patient_id
+              AND prescription_encounter.program_id = patient_program.program_id
+              AND prescription_encounter.encounter_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
+              AND prescription_encounter.encounter_type IN (SELECT encounter_type_id FROM encounter_type WHERE name LIKE 'Treatment')
+              AND prescription_encounter.voided = 0 */
           INNER JOIN #{temp_order_details} AS art_order ON art_order.patient_id = patient_program.patient_id AND art_order.start_date <= DATE(#{end_date})
+          LEFT JOIN latest_reason lr ON lr.person_id = patient_program.patient_id
           WHERE patient_program.voided = 0
             AND outcome.voided = 0
             AND patient_program.program_id = 1
@@ -699,8 +723,10 @@ module ArtService
               AND e.encounter_type IN (SELECT encounter_type_id FROM encounter_type WHERE name = 'REGISTRATION' AND retired = 0)
               GROUP BY e.patient_id
             )*/
-          GROUP by patient_program.patient_id HAVING reason_for_starting_art IS NOT NULL
+          GROUP BY patient_program.patient_id#{' '}
+          HAVING reason_for_starting_art IS NOT NULL
         SQL
+
         remove_drug_refills_and_external_consultation(end_date)
       end
       # rubocop:enable Metrics/MethodLength
