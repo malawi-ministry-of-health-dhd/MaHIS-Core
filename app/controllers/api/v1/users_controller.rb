@@ -188,6 +188,8 @@ module Api
 
       # GET
       def activate
+        return unless validate_sensitive_user_update(user, %i[status])
+
         if UserService.activate_user(user)
           render json: { message: ['User activated'], user: }
         else
@@ -197,6 +199,8 @@ module Api
 
       # Deactivates user
       def deactivate
+        return unless validate_sensitive_user_update(user, %i[status])
+
         if UserService.deactivate_user(user)
           render json: { message: ['User de-activated'], user: }
         else
