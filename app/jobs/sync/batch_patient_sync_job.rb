@@ -44,6 +44,13 @@ module Sync
       # single encounter save never kicks off a full-database reconciliation.
       reconcile = location_id.blank?
 
+      # Anchor the progress row to the true totals (all patients vs. how many are
+      # already in CouchDB) before fanning out, so it reflects the whole patient
+      # population rather than just this run's delta — an incremental run that
+      # re-syncs one changed patient should still read "N/N", not "1/1". The live
+      # count is refreshed from CouchDB by EnsurePatientIndexesJob as it drains.
+      initialize_patient_progress if reconcile
+
       total_patients, total_jobs = sync_patients_in_bulk(location_id, parsed_since_date, normalized_batch_size)
 
       if total_patients.zero?
@@ -51,10 +58,6 @@ module Sync
         EnsurePatientIndexesJob.perform_async('reconcile' => reconcile)
         return
       end
-
-      # Initialise the progress bar for the patient load; the fan-out jobs each
-      # report their share via SyncProgress.increment as they complete.
-      SyncProgress.start('patients_records', total_patients)
 
       location_msg = location_id.present? ? "for location #{location_id}" : "for ALL locations"
       Rails.logger.info("Queued #{total_jobs} bulk sync jobs for #{total_patients} patients #{location_msg} (#{normalized_batch_size} patients per job)")
@@ -66,6 +69,19 @@ module Sync
     end
 
     private
+
+    # Seed the patient progress row from ground truth: total = all patients,
+    # done = how many are already in CouchDB. EnsurePatientIndexesJob keeps `done`
+    # current from CouchDB as the fan-out drains, so the row never reads as the
+    # per-run delta (e.g. "1/1") when most patients are already synced.
+    def initialize_patient_progress
+      total = Patient.count
+      synced = CouchdbPatientService.patient_record_count.to_i
+      SyncProgress.start('patients_records', total)
+      SyncProgress.set('patients_records', [synced, total].min) if total.positive?
+    rescue StandardError => e
+      Rails.logger.warn("Could not initialise patient sync progress: #{e.class}: #{e.message}")
+    end
 
     def normalize_batch_size(batch_size)
       size = batch_size.to_i

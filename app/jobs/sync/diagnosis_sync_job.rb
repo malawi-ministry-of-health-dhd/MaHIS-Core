@@ -37,21 +37,28 @@ module Sync
       :continue_sync
     end
 
-    # Override to bypass find_in_batches (concept_name has no primary key)
+    # Override to bypass find_in_batches (concept_name has no primary key).
+    # Uses keyset pagination on (concept_id, code) instead of OFFSET — on TiDB,
+    # OFFSET is a distributed skip whose cost grows with the page number, which is
+    # what made the diagnoses sync crawl on its final pages.
     def sync_custom_bulk(query, db_name, batch_size, total_count, data_type_name)
       ensure_database_exists(db_name)
 
       processed = 0
       errors = []
-      offset = 0
+      last_concept_id = nil
+      last_code = nil
 
       loop do
-        batch = query.offset(offset).limit(batch_size).to_a
+        batch = diagnoses_keyset_page(query, last_concept_id, last_code, batch_size)
         break if batch.empty?
 
         begin
           documents = batch.map { |record| prepare_bulk_document(record) }
-          bulk_result = bulk_sync_to_couchdb(documents, db_name)
+          # ensure_database_exists above already ensured the indexes once; skip the
+          # per-batch index check and the per-batch _rev fetch (a fresh load after
+          # the count-mismatch clean has no existing revs) to cut round trips ~half.
+          bulk_result = bulk_sync_to_couchdb(documents, db_name, manage_indexes: false, prefetch_revs: false)
 
           processed += batch.size
           SyncProgress.set(db_name, processed)
@@ -71,11 +78,32 @@ module Sync
           end
         end
 
-        offset += batch_size
+        last = batch.last
+        last_concept_id = last.concept_id
+        last_code = last.code
         sleep(0.05)
       end
 
-      handle_sync_completion(processed, errors, total_count, data_type_name)
+      # progress_key: db_name ('diagnoses') — without it, finish() lands on the
+      # data_type_name ('diagnosis') and the started 'diagnoses' bar never completes.
+      handle_sync_completion(processed, errors, total_count, data_type_name, progress_key: db_name)
+    end
+
+    # One keyset page ordered by (concept_id, code). The document grain is
+    # (concept_id, code) (id = "diagnosis_<concept_id>_<code>"), so this composite
+    # cursor visits every distinct document; rows that share a (concept_id, code)
+    # collapse to the same CouchDB doc, so skipping a boundary duplicate is safe.
+    def diagnoses_keyset_page(query, last_concept_id, last_code, limit)
+      scope = query.reorder(Arel.sql('concept_id ASC, code ASC'))
+
+      if last_concept_id
+        scope = scope.where(
+          '(concept_name.concept_id > :cid) OR (concept_name.concept_id = :cid AND concept_map.concept_code > :code)',
+          cid: last_concept_id, code: last_code
+        )
+      end
+
+      scope.limit(limit).to_a
     end
 
     def get_diagnoses_query

@@ -75,6 +75,7 @@ rails server
 - rails sync:all # enqueue everything + live dashboard
 - rails sync:progress # watch an already-running sync from another terminal
 - WATCH=0 rails sync:all # enqueue only, no dashboard
+- rails sync:doctor # check for common issues
 
 # Run only one job (e.g. StageSyncJob)
 

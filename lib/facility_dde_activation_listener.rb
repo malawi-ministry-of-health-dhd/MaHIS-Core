@@ -18,17 +18,33 @@ class FacilityDdeActivationListener
     heartbeat: 30_000
   }.freeze
 
+  # Persisted _changes checkpoint (a CouchDB _local doc, the standard pattern)
+  # so a restart resumes from the exact sequence and replays activations missed
+  # while the listener was down, instead of starting from 'now' and losing them.
+  CHECKPOINT_DOC_ID = '_local/facility_dde_activation_listener'
+  CHECKPOINT_INTERVAL = 10 # seconds between checkpoint writes (debounce)
+
   attr_reader :config
 
   def initialize(**options)
     @config = DEFAULT_CONFIG.merge(options)
     @last_sequence = nil
+    @checkpoint_rev = nil
+    @last_checkpoint_at = nil
     validate_configuration!
   end
 
   def start
     Rails.logger.info('[Facility DDE Listener] Starting facilities CouchDB listener')
-    enqueue_if_any_facility_is_activated
+
+    @last_sequence = load_checkpoint
+    if @last_sequence.present?
+      Rails.logger.info('[Facility DDE Listener] Resuming facilities _changes from saved checkpoint (replays activations missed while down)')
+    else
+      Rails.logger.info('[Facility DDE Listener] No saved checkpoint; scanning current activations and starting from now')
+      enqueue_if_any_facility_is_activated
+      @last_sequence = 'now'
+    end
 
     loop do
       listen_to_changes
@@ -66,7 +82,17 @@ class FacilityDdeActivationListener
       request.basic_auth(username, password) if username && password
 
       http.request(request) do |response|
-        raise "HTTP #{response.code}: #{response.message}" unless response.is_a?(Net::HTTPSuccess)
+        unless response.is_a?(Net::HTTPSuccess)
+          # A stale/invalid saved sequence (e.g. the facilities DB was recreated)
+          # makes CouchDB return 400. Reset to 'now' + rescan rather than looping.
+          if response.code.to_i == 400 && @last_sequence != 'now'
+            Rails.logger.warn("[Facility DDE Listener] _changes rejected saved sequence (HTTP #{response.code}); resetting to 'now' and rescanning")
+            reset_checkpoint_and_rescan
+            return
+          end
+
+          raise "HTTP #{response.code}: #{response.message}"
+        end
 
         process_response_stream(response)
       end
@@ -95,7 +121,10 @@ class FacilityDdeActivationListener
   end
 
   def process_change(change)
-    @last_sequence = change['seq'] if change['seq'].present?
+    if change['seq'].present?
+      @last_sequence = change['seq']
+      save_checkpoint(@last_sequence)
+    end
     return if change['deleted'] == true
 
     doc = change['doc']
@@ -184,6 +213,56 @@ class FacilityDdeActivationListener
   def dde_activated?(doc)
     value = doc['dde_activated']
     value == true || value.to_s.strip.casecmp('true').zero?
+  end
+
+  # Read the saved _changes sequence from the _local checkpoint doc. Returns nil
+  # on first run (no checkpoint) so the caller falls back to the startup scan.
+  def load_checkpoint
+    data = JSON.parse(checkpoint_resource.get.body)
+    @checkpoint_rev = data['_rev']
+    data['since'].presence
+  rescue RestClient::NotFound
+    @checkpoint_rev = nil
+    nil
+  rescue StandardError => e
+    Rails.logger.warn("[Facility DDE Listener] Could not load sequence checkpoint: #{e.message}")
+    nil
+  end
+
+  # Persist the latest sequence, debounced (activations are rare and re-reading
+  # the last few seconds of changes after a crash is harmless — DDE sync jobs are
+  # idempotent/deduped). 'now' is never persisted; it's not a resumable sequence.
+  def save_checkpoint(seq, force: false)
+    return if seq.blank? || seq == 'now'
+    return if !force && @last_checkpoint_at && (monotonic - @last_checkpoint_at) < CHECKPOINT_INTERVAL
+
+    body = { 'since' => seq }
+    body['_rev'] = @checkpoint_rev if @checkpoint_rev
+    response = checkpoint_resource.put(body.to_json)
+    @checkpoint_rev = JSON.parse(response.body)['rev']
+    @last_checkpoint_at = monotonic
+  rescue RestClient::Conflict
+    load_checkpoint # refresh _rev; the next change will retry the save
+  rescue StandardError => e
+    Rails.logger.warn("[Facility DDE Listener] Could not save sequence checkpoint (seq=#{seq}): #{e.message}")
+  end
+
+  def reset_checkpoint_and_rescan
+    @last_sequence = 'now'
+    @checkpoint_rev = nil
+    enqueue_if_any_facility_is_activated
+  end
+
+  def checkpoint_resource
+    username, password = couchdb_credentials
+    options = { headers: { content_type: :json, accept: :json } }
+    options[:user] = username if username
+    options[:password] = password if password
+    RestClient::Resource.new(couchdb_url(FACILITIES_DB_NAME, CHECKPOINT_DOC_ID), options)
+  end
+
+  def monotonic
+    Process.clock_gettime(Process::CLOCK_MONOTONIC)
   end
 
   def couchdb_credentials

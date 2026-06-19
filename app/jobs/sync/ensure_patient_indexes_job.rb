@@ -34,6 +34,10 @@ module Sync
 
       consecutive_idle = patient_sync_idle? ? consecutive_idle + 1 : 0
 
+      # Keep the dashboard's patient count honest while the fan-out drains: track
+      # CouchDB's actual doc count rather than per-batch increments.
+      refresh_patient_progress if reconcile
+
       unless consecutive_idle >= REQUIRED_EMPTY_POLLS || attempt >= MAX_ATTEMPTS
         return reschedule(reconcile, attempt + 1, consecutive_idle, reconcile_rounds)
       end
@@ -117,6 +121,18 @@ module Sync
       payload['queue']
     rescue StandardError
       nil
+    end
+
+    # Update the patient progress row from CouchDB's actual doc count (ground
+    # truth) so the dashboard shows synced/total for the whole population, not a
+    # per-run delta. Total is re-asserted in case only an incremental run ran.
+    def refresh_patient_progress
+      total = Patient.count
+      synced = CouchdbPatientService.patient_record_count.to_i
+      SyncProgress.ensure('patients_records', total)
+      SyncProgress.set('patients_records', [synced, total].min) if total.positive?
+    rescue StandardError => e
+      Sidekiq.logger.warn("EnsurePatientIndexesJob: could not refresh patient progress: #{e.class}: #{e.message}")
     end
 
     def build_patient_indexes
