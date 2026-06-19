@@ -68,7 +68,11 @@ module Api
                                       roles: [], programs: []
 
         # Force programs through since permit can silently drop integer arrays
-        update_params[:programs] = params[:programs].map(&:to_i) if params.key?(:programs)
+        update_params[:programs] = UserService.normalize_program_ids(params[:programs]) if params.key?(:programs)
+
+        # Reject unknown/retired program ids up-front so the update never deletes
+        # existing assignments only to silently fail to recreate them.
+        return if params.key?(:programs) && !validate_programs_existance(update_params[:programs])
 
         return unless validate_roles(update_params[:roles])
         return unless validate_role_permissions(update_params[:roles])
@@ -80,7 +84,7 @@ module Api
         user = UserService.update_user find_user(params[:id]), update_params
 
         if user.errors.empty?
-          update_last_password_property(user.id, update_params[:password])
+          update_last_password_property(user, update_params[:password])
           render json: user, status: :ok
         else
           render json: user.errors, status: :bad_request
@@ -325,7 +329,7 @@ module Api
 
       # validate program
       def validate_programs_existance(programs)
-        programs.each do |program_id|
+        UserService.normalize_program_ids(programs).each do |program_id|
           next if Program.find_by(program_id:)
 
           errors = ['All Programs must exists']
@@ -334,14 +338,19 @@ module Api
         end
       end
 
-      def update_last_password_property(user_id, password)
+      def update_last_password_property(user, password)
         return unless password.present?
-        
+
         property = UserProperty.find_or_initialize_by(
           property: 'last_password_updated',
-          user_id: user_id
+          user_id: user.user_id
         )
-        
+
+        # Bind the loaded object so the required belongs_to :user validation is
+        # satisfied from memory; passing only user_id would re-query User under
+        # its location/active scope and silently fail to save for a user managed
+        # from another facility (find_user unscopes location for superusers).
+        property.user = user
         property.property_value = Time.current.to_s
         property.save
       end

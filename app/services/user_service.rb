@@ -47,9 +47,18 @@ module UserService
       query = query.where(location_id: Array(location_ids).reject(&:blank?))
     end
   
-    # Filter by search_string (e.g., name or email) if provided and not empty
+    # Filter by search_string if provided and not empty
     if search_string.present?
-      query = query.where("username LIKE ?", "%#{search_string}%")
+      search_term = "%#{ActiveRecord::Base.sanitize_sql_like(search_string.to_s.strip)}%"
+      query = query
+              .left_joins(person: :names)
+              .where(
+                "users.username LIKE :search OR person_name.given_name LIKE :search OR person_name.family_name LIKE :search OR " \
+                "CONCAT_WS(' ', person_name.given_name, person_name.family_name) LIKE :search OR " \
+                "CONCAT_WS(' ', person_name.family_name, person_name.given_name) LIKE :search",
+                search: search_term
+              )
+              .distinct
     end
   
     # Filter by username if provided and not empty
@@ -98,10 +107,13 @@ module UserService
 
       # For users with HSA roles villages will have to be assigned to them 
       if HSA_ROLES.include?(role.role)
-        # Create UserVillage records for each village
+        # Create UserVillage records for each village.
+        # Pass the loaded `user` object (not user_id): UserVillage belongs_to
+        # :user is required and would otherwise re-query User under its
+        # location scope, silently failing for a user at another facility.
         Array(villages).each do |village_id|
           UserVillage.create(
-            user_id: user.user_id,
+            user:,
             village_id: village_id,
             creator: User.current.id
           )
@@ -110,9 +122,7 @@ module UserService
 
     end
     # user programs
-    programs&.each do |program_id|
-      UserProgram.create user_id: user.user_id, program_id:
-    end
+    replace_user_programs(user, programs)
 
     user
   end
@@ -140,9 +150,12 @@ module UserService
     
     villages_to_retire.update_all(retired: 1) if villages_to_retire.any?
     
+    # Pass the loaded `user` object (not user_id): UserVillage belongs_to :user
+    # is required and would otherwise re-query User under its location scope,
+    # silently dropping villages for a user at another facility.
     villages_to_add.each do |village_id|
       UserVillage.create(
-        user_id: user.user_id,
+        user:,
         village_id: village_id,
         creator: User.current.id
       )
@@ -196,12 +209,8 @@ module UserService
     end
 
     # Update programs if any
-    if params.key?(:programs)
-      UserProgram.where(user_id: user.user_id).delete_all
-      Array(params[:programs]).map(&:to_i).each do |program_id|
-        UserProgram.create(user_id: user.user_id, program_id: program_id)
-      end
-    end
+    replace_user_programs(user, params[:programs]) if params.key?(:programs)
+
     user
   end
 
@@ -209,9 +218,9 @@ module UserService
     token = create_token
     expires = Time.now + AUTHENTICATION_TOKEN_VALIDITY_PERIOD
 
+    user.update_columns(authentication_token: token, token_expiry_time: expires)
     user.authentication_token = token
     user.token_expiry_time = expires
-    user.save
     User.preload_serialization_payload(user)
 
     { token:, expiry_time: expires, user: }
@@ -222,15 +231,7 @@ module UserService
   end
 
   def self.create_token
-    # ASIDE: Are we guaranteed that this algorithm produces next to
-    # no collisions? Verification of these tokens right now simply
-    # involves a look up in the database thus these tokens must
-    # at the very least be guaranteed to always be unique.
-    # TODO: Look up standard library package 'securerandom' for
-    # something we could use here with lim(collisions) -> 0.
-    token_chars = ('a'..'z').to_a + ('A'..'Z').to_a + ('0'..'9').to_a
-    token_length = 12
-    Array.new(token_length) { token_chars[rand(token_chars.length)] }.join
+    SecureRandom.urlsafe_base64(9)
   end
 
   def self.set_token(username, token, expiry_time)
@@ -425,6 +426,58 @@ end
   # check if user is already assigned to a project
   def self.find_user_program(user_id, program_id)
     UserProgram.where(user_id:, program_id:).first
+  end
+
+  # Replaces a user's program assignments with the given set, atomically.
+  #
+  # Wrapping the delete + recreate in a transaction and using +create!+ ensures
+  # a validation failure on any program can never silently wipe a user's
+  # existing assignments — the whole change rolls back instead. (+belongs_to
+  # :program+ is required, and +Program+ is scoped to +retired: 0+, so a stale
+  # or retired id would otherwise make the non-bang +create+ a silent no-op
+  # after +delete_all+ had already cleared the table.)
+  #
+  # Resetting the associations afterwards makes a freshly-serialized +user+
+  # reflect the database rather than a stale eager-loaded :programs collection
+  # (the controller preloads :programs before the update runs).
+  #
+  # We pass the already-loaded +user+ object (not +user_id+) to +create!+. The
+  # required +belongs_to :user+ validation otherwise re-queries User through its
+  # default scopes — and User is location-scoped via Locatable
+  # (+where(location_id: current_location_id)+). When a superuser edits a user
+  # at a different facility, +find_user+ loads them with the location scope
+  # removed, but the belongs_to re-query would not, so the user "disappears" and
+  # the save fails with "User must exist" (a 422). Handing over the object skips
+  # that re-query entirely — the same way UserRole.create already does.
+  def self.replace_user_programs(user, programs)
+    program_ids = normalize_program_ids(programs)
+
+    ActiveRecord::Base.transaction do
+      UserProgram.where(user_id: user.user_id).delete_all
+      program_ids.each do |program_id|
+        UserProgram.create!(user:, program_id:)
+      end
+    end
+
+    user.association(:programs).reset
+    user.association(:user_programs).reset
+    user
+  end
+
+  def self.normalize_program_ids(programs)
+    Array(programs).filter_map do |program|
+      program_id = if program.respond_to?(:to_unsafe_h)
+                     program.to_unsafe_h[:program_id] || program.to_unsafe_h['program_id'] ||
+                       program.to_unsafe_h[:id] || program.to_unsafe_h['id']
+                   elsif program.is_a?(Hash)
+                     program[:program_id] || program['program_id'] || program[:id] || program['id']
+                   else
+                     program
+                   end
+
+      program_id = program_id.to_i
+      program_id.positive? ? program_id : nil
+    end.uniq
   end
 
   def self.hash_password(password, salt)

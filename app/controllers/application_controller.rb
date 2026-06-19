@@ -4,6 +4,7 @@ require 'require_params'
 require 'user_service'
 
 class ApplicationController < ActionController::API
+  around_action :clear_request_context
   # before_action :check_location
   before_action :authenticate
   before_action :set_audited_user
@@ -123,6 +124,14 @@ class ApplicationController < ActionController::API
   end
 
   private
+
+  def clear_request_context
+    yield
+  ensure
+    User.current = nil
+    Location.current = nil
+    Audited.store[:current_user] = nil if defined?(Audited)
+  end
 
   def check_client_version
     return true if params[:no_client]
