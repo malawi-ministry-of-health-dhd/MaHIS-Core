@@ -30,7 +30,7 @@ module CouchdbListenerRakeLogging
 end
 
 namespace :couchdb do
-  desc "Start CouchDB listeners for all databases"
+  desc 'Start CouchDB listeners for all databases'
   task start_all_listeners: :environment do
     CouchdbListenerRakeLogging.enable_stdout!
 
@@ -50,9 +50,14 @@ namespace :couchdb do
         processor_service: StagesService.new,
         processor_method: :create_stage
       },
+      {
+        db_name: 'global_properties',
+        processor_service: GlobalPropertyService,
+        processor_method: :create_or_update_from_couchdb
+      }
     ]
 
-    Rails.logger.info("[CouchDB Listener] Starting sequential backfill: patients_records → visits → stages")
+    Rails.logger.info('[CouchDB Listener] Starting sequential backfill: patients_records → visits → stages → global_properties')
 
     # Phase 1: Sequential blocking backfill — each must finish before the next starts
     sequential_configs.each do |config|
@@ -60,12 +65,12 @@ namespace :couchdb do
       Rails.logger.info("[CouchDB Listener] Backfilling #{db_name}...")
 
       listener = CouchdbChangesListener.new(**config)
-      listener.process_all_unprocessed_documents  # already public, blocking
+      listener.process_all_unprocessed_documents # already public, blocking
 
       Rails.logger.info("[CouchDB Listener] Backfill complete for #{db_name}.")
     end
 
-    Rails.logger.info("[CouchDB Listener] All backfills done. Starting live change-feed listeners...")
+    Rails.logger.info('[CouchDB Listener] All backfills done. Starting live change-feed listeners...')
 
     Thread.new { FacilityDdeActivationListener.new.start }
 
@@ -73,8 +78,8 @@ namespace :couchdb do
     CouchdbChangesListener.start_multiple_live_only(sequential_configs)
   end
 
-  desc "Start listener for specific database"
-  task :start_listener, [:db_name] => :environment do |task, args|
+  desc 'Start listener for specific database'
+  task :start_listener, [:db_name] => :environment do |_task, args|
     CouchdbListenerRakeLogging.enable_stdout!
 
     db_name = args[:db_name]
@@ -92,6 +97,10 @@ namespace :couchdb do
         processor_service: StagesService.new,
         processor_method: :create_stage
       },
+      'global_properties' => {
+        processor_service: GlobalPropertyService,
+        processor_method: :create_or_update_from_couchdb
+      }
     }
 
     if db_name == 'facilities'
