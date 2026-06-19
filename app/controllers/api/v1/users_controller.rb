@@ -147,7 +147,9 @@ module Api
         login_params, error = required_params required: %i[username password supervisor_user_id]
         return render json: login_params, status: :bad_request if error
 
-        username, password, supervisor_user_id = login_params
+        username           = login_params[:username]
+        password           = login_params[:password]
+        supervisor_user_id = login_params[:supervisor_user_id]
         user = UserService.authenticate_credentials(username, password)
         return render json: { errors: ['Invalid user or password'] }, status: :unauthorized if user.nil?
 
