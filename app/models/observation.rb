@@ -18,6 +18,18 @@ class Observation < VoidableRecord
       }
     }
   }.freeze
+  SERIALIZE_PRELOADS = [
+    { concept: :concept_names },
+    { order: :drug_order },
+    { drug: :drug_cms },
+    {
+      children: [
+        { concept: :concept_names },
+        { order: :drug_order },
+        { drug: :drug_cms }
+      ]
+    }
+  ].freeze
 
   after_commit :refresh_mnh_stats_after_commit, on: %i[create update]
   after_void :after_void

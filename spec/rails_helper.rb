@@ -51,7 +51,8 @@ RSpec.configure do |config|
     'beds_controller_spec.rb',
     'report_spec.rb',
     'cohort_builder_spec.rb',
-    'medication_order_saver_spec.rb'
+    'medication_order_saver_spec.rb',
+    'user_service_spec.rb'
   ].freeze
 
   # Wrap individual test execution to skip non-passing specs

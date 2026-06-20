@@ -7,8 +7,8 @@ default: &default
   collation: utf8_unicode_ci
   username: your_scoped_username
   password: your_secret_password
-  pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 20 } %>
-  checkout_timeout: 5000
+  pool: <%= ENV.fetch("DB_POOL") { ENV.fetch("RAILS_MAX_THREADS") { 5 } } %>
+  checkout_timeout: <%= ENV.fetch("DB_CHECKOUT_TIMEOUT") { 5 } %>
   variables:
     sql_mode: STRICT_TRANS_TABLES
 

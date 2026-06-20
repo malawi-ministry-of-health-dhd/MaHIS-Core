@@ -91,9 +91,14 @@ module ImmunizationService
     # Creates associated assignees for the session schedule
     def create_assignees(session_schedule_id, assignees)
       assignees.each do |user_id|
+        # Load the assignee across facilities and pass the object: belongs_to
+        # :user is required, so passing only user_id re-queries User under the
+        # acting user's location scope and raises for an assignee at another
+        # facility, rolling back the whole schedule. unscope keeps the active/
+        # non-retired guard (a missing/inactive id raises a clear RecordNotFound).
         SessionScheduleAssignee.create!(
           session_schedule_id: session_schedule_id,
-          user_id: user_id
+          user: User.unscope(where: :location_id).find(user_id)
         )
       end
     end
@@ -169,7 +174,13 @@ module ImmunizationService
     def void_and_replace_assignees(session_schedule_id, assignees, current_time, voided_by)
       void_records(SessionScheduleAssignee, session_schedule_id, nil,  current_time)
       assignees.each do |assignee_id|
-        SessionScheduleAssignee.create!(session_schedule_id: session_schedule_id, user_id: assignee_id)
+        # See create_assignees: pass the loaded (location-unscoped) user object
+        # so the required belongs_to :user check doesn't reject cross-facility
+        # assignees and roll back the edit.
+        SessionScheduleAssignee.create!(
+          session_schedule_id: session_schedule_id,
+          user: User.unscope(where: :location_id).find(assignee_id)
+        )
       end
     end
 

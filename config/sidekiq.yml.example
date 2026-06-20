@@ -1,7 +1,9 @@
-:concurrency: 5
+:concurrency: 20
 :queues:
-  - sync_offline_data
+  - batch_sync
+  - patient_sync
   - default
   - mailers
-  - patient_sync
-  - batch_sync
+  - ncd_active_patients
+  - sync_offline_data
+  - couch_ingest

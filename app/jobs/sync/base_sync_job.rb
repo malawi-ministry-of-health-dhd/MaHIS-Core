@@ -382,7 +382,13 @@ module Sync
     end
     
     # NEW: Bulk sync to CouchDB using _bulk_docs endpoint
-    def bulk_sync_to_couchdb(documents, db_name, manage_indexes: true)
+    #
+    # prefetch_revs: when true (default), every document's existing _rev is
+    # fetched up-front via _all_docs so updates don't conflict. On an initial
+    # full load that extra round trip is wasted (almost nothing exists yet), so
+    # the high-volume patient fan-out passes false: it posts straight away and
+    # resolves the rare conflicts in a single follow-up pass.
+    def bulk_sync_to_couchdb(documents, db_name, manage_indexes: true, prefetch_revs: true)
       db_url = couchdb_url(db_name)
       bulk_url = "#{db_url}/_bulk_docs"
 
@@ -399,32 +405,61 @@ module Sync
         ReferenceDataSearchFields.ensure_couchdb_indexes!(db_url, db_name, logger: Sidekiq.logger)
       end
 
-      # Fetch existing _revs to avoid conflicts
-      existing_revs = fetch_existing_revs(unique_documents, db_url)
-
-      # Merge _rev into documents that already exist
-      documents_with_revs = unique_documents.map do |doc|
-        rev = existing_revs[doc['_id']]
-        rev ? doc.merge('_rev' => rev) : doc
+      if prefetch_revs
+        # Fetch existing _revs up-front and merge them so updates don't conflict.
+        existing_revs = fetch_existing_revs(unique_documents, db_url)
+        documents_with_revs = unique_documents.map do |doc|
+          rev = existing_revs[doc['_id']]
+          rev ? doc.merge('_rev' => rev) : doc
+        end
+        result = post_bulk_docs(documents_with_revs, bulk_url)
+        return { success: result[:success], errors: result[:errors] }
       end
 
-      bulk_data = { 'docs' => documents_with_revs }
+      # Initial-load fast path: post without fetching revs first.
+      result = post_bulk_docs(unique_documents, bulk_url)
+      return { success: result[:success], errors: result[:errors] } if result[:conflicts].empty?
 
+      # Second pass: only the docs that already existed come back as conflicts.
+      conflicting = unique_documents.select { |doc| result[:conflicts].include?(doc['_id']) }
+      revs = fetch_existing_revs(conflicting, db_url)
+      retry_docs = conflicting.map do |doc|
+        rev = revs[doc['_id']]
+        rev ? doc.merge('_rev' => rev) : doc
+      end
+      retry_result = post_bulk_docs(retry_docs, bulk_url)
+
+      non_conflict_errors = result[:errors].reject do |msg|
+        result[:conflicts].any? { |id| msg.start_with?("Doc #{id}:") }
+      end
+      { success: result[:success] && retry_result[:success], errors: non_conflict_errors + retry_result[:errors] }
+    end
+
+    # POST a batch to _bulk_docs and classify the per-document results. Returns
+    # success plus formatted error strings and the list of ids that conflicted
+    # (so the caller can fetch their revs and retry just those).
+    def post_bulk_docs(documents, bulk_url)
       retries = 0
       begin
         response = RestClient.post(
           bulk_url,
-          bulk_data.to_json,
+          { 'docs' => documents }.to_json,
           { content_type: :json, accept: :json }
         )
         result = JSON.parse(response.body)
         errors = result.select { |r| r.key?('error') }.map do |err|
           "Doc #{err['id']}: #{err['error']} - #{err['reason']}"
         end
-        { success: true, errors: errors }
+        conflicts = result.select { |r| r['error'] == 'conflict' }.map { |r| r['id'] }
+        { success: true, errors: errors, conflicts: conflicts }
       rescue RestClient::Exception, SocketError => e
         retries += 1
-        retries <= 2 ? (sleep(0.1 * retries); retry) : { success: false, errors: ["Bulk sync failed: #{e.message}"] }
+        if retries <= 2
+          sleep(0.1 * retries)
+          retry
+        else
+          { success: false, errors: ["Bulk sync failed: #{e.message}"], conflicts: [] }
+        end
       end
     end
 
