@@ -5,8 +5,8 @@
 ### System Requirements
 
 - **Ruby**: ~> 3.2.0
-- **Rails**: ~> 7.0.6
-- **Database**: MySQL/MariaDB
+- **Rails**: ~> 8.1
+- **Database**: MySQL/MariaDB or TiDB 8.5+
 - **Redis**: For background jobs and caching
 - **Node.js**: For JavaScript runtime
 - **NPM**: For package management
@@ -47,6 +47,8 @@ Edit the configuration files with your settings:
 
 Edit `config/application.yml` with your application settings.
 
+For TiDB configuration, TLS settings, readiness checks, and migration guidance, see [docs/tidb.md](docs/tidb.md).
+
 ## Database Initialization
 
 ### For Empty Database
@@ -55,6 +57,7 @@ To initialize a new empty database:
 
 ```bash
 rails db:create
+rails db:migrate
 INITIAL_SETUP=true rails db:seed
 ```
 

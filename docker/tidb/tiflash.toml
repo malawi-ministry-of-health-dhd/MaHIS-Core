@@ -1,0 +1,46 @@
+display_name = "mahis-tiflash"
+listen_host = "0.0.0.0"
+tcp_port = 9000
+http_port = 8123
+tmp_path = "/data/tiflash/tmp"
+
+[storage]
+format_version = 4
+
+[storage.main]
+dir = ["/data/tiflash/main"]
+
+[flash]
+tidb_status_addr = "tidb:10080"
+service_addr = "tiflash:3930"
+
+[flash.flash_cluster]
+cluster_manager_path = "/tiflash/flash_cluster_manager"
+log = "/data/tiflash/logs/cluster-manager.log"
+master_ttl = 60
+refresh_interval = 20
+update_rule_interval = 5
+
+[flash.proxy]
+addr = "0.0.0.0:20170"
+advertise-addr = "tiflash:20170"
+status-addr = "0.0.0.0:20292"
+advertise-status-addr = "tiflash:20292"
+data-dir = "/data/tiflash/proxy"
+config = "/etc/tiflash/tiflash-learner.toml"
+log-file = "/data/tiflash/logs/proxy.log"
+log-level = "info"
+
+[logger]
+log = "/data/tiflash/logs/tiflash.log"
+errorlog = "/data/tiflash/logs/error.log"
+level = "info"
+size = "100M"
+count = 10
+
+[raft]
+pd_addr = "pd:2379"
+storage_engine = "tmt"
+
+[status]
+metrics_port = 8234

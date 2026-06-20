@@ -270,8 +270,8 @@ module ArtService
       data = ActiveRecord::Base.connection.select_all <<~SQL
         select
           `p`.`patient_id` AS `patient_id`, `pe`.`birthdate`,
-          cast(patient_date_enrolled(`p`.`patient_id`) as date) AS `date_enrolled`,
-          date_antiretrovirals_started(`p`.`patient_id`, min(`s`.`start_date`)) AS `earliest_start_date`,
+          art_dates.date_enrolled AS `date_enrolled`,
+          art_dates.earliest_start_date AS `earliest_start_date`,
           n.given_name, n.family_name, pe.gender, i.identifier arv_number
         from
           ((`patient_program` `p`
@@ -281,6 +281,7 @@ module ArtService
           LEFT JOIN patient_identifier i ON i.patient_id = pe.person_id
           AND i.identifier_type = #{indetifier_type} AND i.voided = 0
           LEFT JOIN person_name n ON n.person_id = pe.person_id AND n.voided = 0
+          INNER JOIN earliest_start_date art_dates ON art_dates.patient_id = p.patient_id
         where
           ((`p`.`voided` = 0)
               and (`s`.`voided` = 0)
@@ -305,13 +306,14 @@ module ArtService
       data = ActiveRecord::Base.connection.select_all <<~SQL
         select
           `p`.`patient_id` AS `patient_id`,
-          cast(patient_date_enrolled(`p`.`patient_id`) as date) AS `date_enrolled`,
-          date_antiretrovirals_started(`p`.`patient_id`, min(`s`.`start_date`)) AS `earliest_start_date`
+          art_dates.date_enrolled AS `date_enrolled`,
+          art_dates.earliest_start_date AS `earliest_start_date`
         from
           ((`patient_program` `p`
           left join `person` `pe` ON ((`pe`.`person_id` = `p`.`patient_id`))
           left join `patient_state` `s` ON ((`p`.`patient_program_id` = `s`.`patient_program_id`)))
           left join `person` ON ((`person`.`person_id` = `p`.`patient_id`)))
+          INNER JOIN earliest_start_date art_dates ON art_dates.patient_id = p.patient_id
         where
           ((`p`.`voided` = 0)
               and (`s`.`voided` = 0)

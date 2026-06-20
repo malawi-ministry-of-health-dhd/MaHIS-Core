@@ -1,31 +1,22 @@
 # frozen_string_literal: true
 
-require 'yaml'
+require Rails.root.join('lib', 'database_sql_importer').to_s
+require Rails.root.join('lib', 'tidb_support').to_s
 
 class LoadMahisSkeleton < ActiveRecord::Migration[7.0]
   def up
-    # Load database configuration
-    db_config = YAML.load_file(
-      Rails.root.join('config', 'database.yml'),
-      aliases: true
-    )[Rails.env]
+    tidb = TidbSupport.enabled?(connection)
+    TidbSupport.verify_supported!(connection)
 
-    username = db_config['username']
-    password = db_config['password']
-    database = db_config['database']
-    host     = db_config['host']
-    port     = db_config['port']
+    say "Loading OpenMRS skeleton#{' for TiDB' if tidb}..."
+    DatabaseSqlImporter.new(
+      config: ActiveRecord::Base.connection_db_config.configuration_hash,
+      file_path: Rails.root.join('db', 'mahis_skeleton.sql.gz'),
+      skip_routines: tidb
+    ).import!
 
-    # Load OpenMRS skeleton database
-    cmd = "gunzip -c db/mahis_skeleton.sql.gz | mysql -u #{username}"
-    cmd += " -p#{password}" if password.present?
-    cmd += " -h #{host}" if host.present?
-    cmd += " -P #{port}" if port.present?
-    cmd += " #{database}"
-
-    puts 'Loading OpenMRS skeleton...'
-    system(cmd)
-    puts 'Harmonized DB Initialization Complete 🎉'
+    say 'Skipped stored routines because TiDB does not support them; function-dependent reports remain deferred.' if tidb
+    say 'Harmonized database initialization complete.'
   end
 
   def down

@@ -354,11 +354,12 @@ module ArtService
         end
 
         def extra_information(patient_id)
-          ActiveRecord::Base.connection.select_one <<~SQL
+          information = ActiveRecord::Base.connection.select_one <<~SQL
             SELECT patient_current_regimen(#{patient_id}, DATE(#{ActiveRecord::Base.connection.quote(end_date)})) AS current_regimen,
-            date_antiretrovirals_started(#{patient_id}, DATE(#{ActiveRecord::Base.connection.quote(end_date)})) AS art_start_date,
             current_pepfar_defaulter_date(#{patient_id}, DATE(#{ActiveRecord::Base.connection.quote(end_date)})) AS defaulter_date
           SQL
+          information['art_start_date'] = ReportingPatientArtFact.where(patient_id:).minimum(:earliest_start_date)
+          information
         end
 
         def yes_concepts

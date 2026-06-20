@@ -162,20 +162,27 @@ class Patient < VoidableRecord
     return @preloaded_art_start_date if defined?(@preloaded_art_start_date)
     return nil if id.blank?
 
-    result = ActiveRecord::Base.connection.select_one <<~SQL
-      SELECT patient_start_date(#{id}) AS art_start_date
-    SQL
-    result['art_start_date'] || nil
+    self.class.art_start_dates_for([id])[id.to_i]
   end
 
   def self.preload_art_start_dates(patients)
     return if patients.empty?
 
-    ids = patients.map { |p| p.patient_id.to_i }.join(',')
-    results = connection.select_all(
-      "SELECT patient_id, patient_start_date(patient_id) AS art_start_date FROM patient WHERE patient_id IN (#{ids})"
-    ).each_with_object({}) { |row, hash| hash[row['patient_id'].to_i] = row['art_start_date'] }
+    results = art_start_dates_for(patients.map(&:patient_id))
     patients.each { |p| p.preloaded_art_start_date = results[p.patient_id.to_i] }
+  end
+
+  def self.art_start_dates_for(patient_ids)
+    ids = patient_ids.filter_map { |id| Integer(id, exception: false) }.uniq
+    return {} if ids.empty?
+
+    connection.select_all(<<~SQL).each_with_object({}) do |row, dates|
+      SELECT patient_id, art_start_date
+      FROM patient_art_start_dates
+      WHERE patient_id IN (#{ids.join(',')})
+    SQL
+      dates[row['patient_id'].to_i] = row['art_start_date']
+    end
   end
 
   def last_arv_drug_expire_date

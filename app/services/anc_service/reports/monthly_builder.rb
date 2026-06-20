@@ -328,15 +328,8 @@ module AncService
         # Returns patient's actual ART start date.
         def find_patient_earliest_start_date(patient, date_enrolled = nil)
           date_enrolled ||= find_patient_date_enrolled(patient)
-
-          patient_id = ActiveRecord::Base.connection.quote(patient.patient_id)
-          date_enrolled = ActiveRecord::Base.connection.quote(date_enrolled)
-
-          result = ActiveRecord::Base.connection.select_one(
-            "SELECT date_antiretrovirals_started(#{patient_id}, #{date_enrolled}) AS date"
-          )
-
-          result['date']&.to_date
+          ReportingPatientArtFact.where(patient_id: patient.patient_id).minimum(:earliest_start_date)&.to_date ||
+            date_enrolled&.to_date
         end
 
         def on_art_in_nart(date)

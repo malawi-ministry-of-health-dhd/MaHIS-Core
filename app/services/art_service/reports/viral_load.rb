@@ -88,7 +88,7 @@ module ArtService
         observations = ActiveRecord::Base.connection.select_all <<~SQL
           SELECT obs.person_id,
                  obs.value_datetime,
-                 date_antiretrovirals_started(obs.person_id, NULL) AS start_date,
+                 art_dates.earliest_start_date AS start_date,
                  patient_identifier.identifier,
                  person_name.given_name,
                  person_name.family_name,
@@ -110,6 +110,8 @@ module ArtService
           LEFT JOIN person
             ON person.person_id = obs.person_id
             AND person.voided = 0
+          INNER JOIN earliest_start_date art_dates
+            ON art_dates.patient_id = obs.person_id
           LEFT JOIN person_name
             ON person_name.person_id = obs.person_id
             AND person_name.voided = 0

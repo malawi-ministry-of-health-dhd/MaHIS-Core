@@ -89,9 +89,10 @@ module Api
 
       def list
         clients = ActiveRecord::Base.connection.select_all <<~SQL
-          SELECT p.*, a.identifier, patient_start_date(p.person_id) AS art_start_date
+          SELECT p.*, a.identifier, art_start_dates.art_start_date
           FROM person p
           LEFT JOIN patient_identifier a ON a.patient_id = p.person_id AND a.identifier_type = 4 AND a.voided = 0
+          LEFT JOIN patient_art_start_dates art_start_dates ON art_start_dates.patient_id = p.person_id
           WHERE p.person_id IN(#{params[:person_ids]})
           GROUP BY p.person_id ORDER BY a.date_created DESC;
         SQL

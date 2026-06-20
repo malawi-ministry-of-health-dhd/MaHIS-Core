@@ -2242,65 +2242,6 @@ module ArtService
         #         end
       end
 
-      def create_tmp_patient_table_2(_end_date)
-        ##########################################################
-        ActiveRecord::Base.connection.execute <<~SQL
-          DROP FUNCTION IF EXISTS patient_date_enrolled;
-        SQL
-
-        Drug.arv_drugs.map(&:concept_id)
-
-        ActiveRecord::Base.connection.execute <<~SQL
-          CREATE FUNCTION patient_date_enrolled(my_patient_id int) RETURNS DATE
-          DETERMINISTIC
-          BEGIN
-          DECLARE my_start_date DATE;
-          DECLARE min_start_date DATETIME;
-          DECLARE arv_concept_id INT(11);
-
-          SET arv_concept_id = (SELECT concept_id FROM concept_name WHERE name ='ANTIRETROVIRAL DRUGS' LIMIT 1);
-
-          SET my_start_date = (SELECT DATE(o.start_date) FROM drug_order d INNER JOIN orders o ON d.order_id = o.order_id AND o.voided = 0 WHERE o.patient_id = my_patient_id AND drug_inventory_id IN(SELECT drug_id FROM drug WHERE concept_id IN(SELECT concept_id FROM concept_set WHERE concept_set = arv_concept_id)) AND d.quantity > 0 AND o.start_date = (SELECT min(start_date) FROM drug_order d INNER JOIN orders o ON d.order_id = o.order_id AND o.voided = 0 WHERE d.quantity > 0 AND o.patient_id = my_patient_id AND drug_inventory_id IN(SELECT drug_id FROM drug WHERE concept_id IN(SELECT concept_id FROM concept_set WHERE concept_set = arv_concept_id))) LIMIT 1);
-
-
-          RETURN my_start_date;
-          END;
-        SQL
-        ##########################################################
-
-        unless @keep_temp_tables
-          ActiveRecord::Base.connection.execute <<~SQL
-            DROP TABLE IF EXISTS `temp_earliest_start_date`;
-          SQL
-        end
-
-        return if @keep_temp_tables && check_if_table_exists(temp_earliest_start_date)
-
-        ActiveRecord::Base.connection.execute <<~SQL
-          CREATE TABLE #{temp_earliest_start_date}
-            select
-                `p`.`patient_id` AS `patient_id`,
-                `pe`.`gender` AS `gender`,
-                `pe`.`birthdate`,
-                date_antiretrovirals_started(`p`.`patient_id`, min(`s`.`start_date`)) AS `earliest_start_date`,
-                cast(patient_date_enrolled(`p`.`patient_id`) as date) AS `date_enrolled`,
-                `person`.`death_date` AS `death_date`,
-                (select timestampdiff(year, `pe`.`birthdate`, min(`s`.`start_date`))) AS `age_at_initiation`,
-                (select timestampdiff(day, `pe`.`birthdate`, min(`s`.`start_date`))) AS `age_in_days`
-            from
-                ((`patient_program` `p`
-                left join `person` `pe` ON ((`pe`.`person_id` = `p`.`patient_id`))
-                left join `patient_state` `s` ON ((`p`.`patient_program_id` = `s`.`patient_program_id`)))
-                left join `person` ON ((`person`.`person_id` = `p`.`patient_id`)))
-            where
-                ((`p`.`voided` = 0)
-                    and (`s`.`voided` = 0)
-                    and (`p`.`program_id` = 1)
-                    and (`s`.`state` = 7))
-            group by `p`.`patient_id`;
-        SQL
-      end
-
       def arv_orders
         Order.joins(:drug_order).where(
           'drug_order.drug_inventory_id in (?)', Drug.arv_drugs.collect(&:drug_id)
@@ -2347,12 +2288,7 @@ module ArtService
 
       # Retrieve the earliest (clinic?) start date for a patient
       def patient_earliest_start_date(patient_id, min_start_date)
-        result = ActiveRecord::Base.connection.select_one(
-          "SELECT date_antiretrovirals_started(
-            #{patient_id}, '#{min_start_date.to_date}'
-           ) AS date"
-        )
-        result['date'].to_date
+        ReportingPatientArtFact.where(patient_id:).minimum(:earliest_start_date)&.to_date || min_start_date.to_date
       end
 
       # Returns a list of reasons for starting ART for each patient.

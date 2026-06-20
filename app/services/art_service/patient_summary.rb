@@ -104,12 +104,8 @@ module ArtService
     end
 
     def art_period
-      sdate = ActiveRecord::Base.connection.select_one <<~SQL
-        SELECT date_antiretrovirals_started(#{patient.patient_id}, current_date()) AS earliest_date;
-      SQL
-
       start_date = begin
-        sdate['earliest_date'].to_time
+        ReportingPatientArtFact.where(patient_id: patient.patient_id).minimum(:earliest_start_date)&.to_time
       rescue StandardError
         nil
       end

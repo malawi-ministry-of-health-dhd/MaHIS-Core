@@ -1,0 +1,22 @@
+log-file = "/data/tiflash/logs/learner.log"
+
+[server]
+engine-addr = "tiflash:3930"
+addr = "0.0.0.0:20170"
+advertise-addr = "tiflash:20170"
+status-addr = "0.0.0.0:20292"
+advertise-status-addr = "tiflash:20292"
+
+[storage]
+data-dir = "/data/tiflash/proxy"
+
+[raftstore]
+capacity = "10GB"
+
+[rocksdb]
+wal-dir = ""
+
+[security]
+ca-path = ""
+cert-path = ""
+key-path = ""

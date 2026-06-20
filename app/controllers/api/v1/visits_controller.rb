@@ -67,29 +67,60 @@ module Api
             "#{full_name_sql} AS full_name"
           )
           .where(location_id: User.current.location_id)
-          .joins(
-            'INNER JOIN patient_identifier '\
-            'ON patient_identifier.patient_identifier_id = ('\
-            'SELECT latest_identifier.patient_identifier_id '\
-            'FROM patient_identifier latest_identifier '\
-            'WHERE latest_identifier.patient_id = visit.patient_id '\
-            'AND latest_identifier.identifier_type = 3 '\
-            'AND latest_identifier.voided = 0 '\
-            'ORDER BY latest_identifier.preferred DESC, '\
-            'latest_identifier.date_created DESC, '\
-            'latest_identifier.patient_identifier_id DESC '\
-            'LIMIT 1)'
-          )
-          .joins(
-            'LEFT JOIN person_name '\
-            'ON person_name.person_name_id = ('\
-            'SELECT latest_name.person_name_id '\
-            'FROM person_name latest_name '\
-            'WHERE latest_name.person_id = visit.patient_id '\
-            'AND latest_name.voided = 0 '\
-            'ORDER BY latest_name.date_created DESC, latest_name.person_name_id DESC '\
-            'LIMIT 1)'
-          )
+          .joins(latest_identifier_join_sql)
+          .joins(latest_name_join_sql)
+      end
+
+      def latest_identifier_join_sql
+        <<~SQL.squish
+          INNER JOIN (
+            SELECT ranked_identifiers.patient_identifier_id,
+                   ranked_identifiers.patient_id,
+                   ranked_identifiers.identifier
+            FROM (
+              SELECT patient_identifier.patient_identifier_id,
+                     patient_identifier.patient_id,
+                     patient_identifier.identifier,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY patient_identifier.patient_id
+                       ORDER BY patient_identifier.preferred DESC,
+                                patient_identifier.date_created DESC,
+                                patient_identifier.patient_identifier_id DESC
+                     ) AS ranking
+              FROM patient_identifier
+              WHERE patient_identifier.identifier_type = 3
+                AND patient_identifier.voided = 0
+            ) AS ranked_identifiers
+            WHERE ranked_identifiers.ranking = 1
+          ) AS patient_identifier ON patient_identifier.patient_id = visit.patient_id
+        SQL
+      end
+
+      def latest_name_join_sql
+        <<~SQL.squish
+          LEFT JOIN (
+            SELECT ranked_names.person_name_id,
+                   ranked_names.person_id,
+                   ranked_names.given_name,
+                   ranked_names.middle_name,
+                   ranked_names.family_name
+            FROM (
+              SELECT person_name.person_name_id,
+                     person_name.person_id,
+                     person_name.given_name,
+                     person_name.middle_name,
+                     person_name.family_name,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY person_name.person_id
+                       ORDER BY person_name.date_created DESC,
+                                person_name.person_name_id DESC
+                     ) AS ranking
+              FROM person_name
+              WHERE person_name.voided = 0
+            ) AS ranked_names
+            WHERE ranked_names.ranking = 1
+          ) AS person_name ON person_name.person_id = visit.patient_id
+        SQL
       end
 
       def filter_by_program(visits, program_id)

@@ -124,12 +124,13 @@ module ArtService
             SELECT person.person_id AS patient_id,
                    patient_identifier.identifier AS arv_number,
                    DATE(MIN(orders.start_date)) AS tpt_initiation_date,
-                   date_antiretrovirals_started(person.person_id, MIN(denominator_patient.start_date)) AS art_start_date,
+                   art_dates.earliest_start_date AS art_start_date,
                    patient_outcome(person.person_id, DATE(#{end_date})) AS outcome,
                    person.gender,
                    person.birthdate,
                    disaggregated_age_group(person.birthdate, DATE(#{end_date})) AS age_group
             FROM person
+            INNER JOIN earliest_start_date art_dates ON art_dates.patient_id = person.person_id
             LEFT JOIN patient_identifier
               ON patient_identifier.patient_id = person.person_id
               AND patient_identifier.voided = 0

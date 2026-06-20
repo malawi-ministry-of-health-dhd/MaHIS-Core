@@ -130,12 +130,10 @@ module Api
       end
 
       def on_art_for_12_plus_months(patient_id, passed_date)
-        query = ActiveRecord::Base.connection.select_one <<~SQL
-          SELECT date_antiretrovirals_started(#{patient_id}, DATE("#{passed_date.to_date}")) AS start_date;
-        SQL
+        start_date = ReportingPatientArtFact.where(patient_id:).minimum(:earliest_start_date)
 
         begin
-          (date.to_date - query['start_date'].to_date).to_i >= 1
+          (passed_date.to_date - start_date.to_date).to_i >= 1
         rescue StandardError
           false
         end

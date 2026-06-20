@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 
-require 'yaml'
 require 'open-uri'
 require 'fileutils'
 require 'digest/sha1'
 require 'securerandom'
-require 'shellwords'
 require 'tempfile'
+require 'zlib'
+require Rails.root.join('lib', 'tidb_support').to_s
 
 if ENV['INITIAL_SETUP']
   puts "\e[31mWARNING: This will wipe out your database. Do you want to continue? (y/N)\e[0m"
@@ -19,16 +19,19 @@ if ENV['INITIAL_SETUP']
   end
 end
 
-db_config = YAML.load_file(
-  Rails.root.join('config', 'database.yml'),
-  aliases: true
-)[Rails.env]
+db_config = ActiveRecord::Base.connection_db_config.configuration_hash.stringify_keys
 
 username = db_config['username']
 password = db_config['password']
 database = db_config['database']
 host     = db_config['host']
 port     = db_config['port']
+
+DB_IMPORT_SSL_MODE = db_config['ssl_mode'] || db_config['sslmode']
+DB_IMPORT_SSL_CA = db_config['sslca']
+DB_IMPORT_SSL_CERT = db_config['sslcert']
+DB_IMPORT_SSL_KEY = db_config['sslkey']
+DB_IMPORT_CONNECT_TIMEOUT = db_config.fetch('connect_timeout', 10)
 
 GITHUB_METADATA_URL = ENV.fetch(
   'GITHUB_METADATA_URL',
@@ -40,12 +43,20 @@ SEED_CONCEPT_WORD_REGEX_LARGE = /[!"#$%&'()*,+\-.\/:;<=>?@\[\]\\^_`{|}~]/
 SEED_CONCEPT_WORD_REGEX_SMALL = /[!"#$%&'()*,.\/:;<=>?@\[\]\\^_`{|}~]/
 
 def mysql_import_command(username:, password:, host:, port:, database:)
-  command = ['mysql', '-u', username.to_s]
-  command << "--password=#{password}" if password.present?
+  command = [ENV.fetch('MYSQL_CLIENT', 'mysql'), '--protocol=TCP', '-u', username.to_s]
   command += ['-h', host.to_s] if host.present?
   command += ['-P', port.to_s] if port.present?
+  command << "--connect-timeout=#{DB_IMPORT_CONNECT_TIMEOUT}"
+  command << "--ssl-mode=#{DB_IMPORT_SSL_MODE.to_s.upcase}" if DB_IMPORT_SSL_MODE.present?
+  command << "--ssl-ca=#{DB_IMPORT_SSL_CA}" if DB_IMPORT_SSL_CA.present?
+  command << "--ssl-cert=#{DB_IMPORT_SSL_CERT}" if DB_IMPORT_SSL_CERT.present?
+  command << "--ssl-key=#{DB_IMPORT_SSL_KEY}" if DB_IMPORT_SSL_KEY.present?
   command << database.to_s
   command
+end
+
+def mysql_import_environment(password)
+  password.present? ? { 'MYSQL_PWD' => password.to_s } : {}
 end
 
 def fetch_metadata_from_github!(url, local_path)
@@ -129,7 +140,7 @@ def import_sql_file!(file_path:, username:, password:, host:, port:, database:)
     database: database
   )
 
-  return if system(*command, in: import_path)
+  return if system(mysql_import_environment(password), *command, in: import_path)
 
   exit_code = $?.respond_to?(:exitstatus) ? $?.exitstatus : 'unknown'
   raise "Import failed for #{File.basename(file_path)} (exit code: #{exit_code})"
@@ -152,18 +163,13 @@ def import_sql_or_gzip_file!(file_path:, username:, password:, host:, port:, dat
     )
   end
 
+  FileUtils.mkdir_p(Rails.root.join('tmp'))
   tmp_file = Tempfile.new(['seed_import_', '.sql'], Rails.root.join('tmp'))
-  tmp_file.close
-
-  command = <<~BASH
-    set -o pipefail
-    gunzip -c #{Shellwords.escape(file_path)} > #{Shellwords.escape(tmp_file.path)}
-  BASH
-
-  unless system('bash', '-lc', command)
-    exit_code = $?.respond_to?(:exitstatus) ? $?.exitstatus : 'unknown'
-    raise "Failed to decompress #{File.basename(file_path)} (exit code: #{exit_code})"
+  Zlib::GzipReader.open(file_path) do |compressed|
+    IO.copy_stream(compressed, tmp_file)
   end
+  tmp_file.flush
+  tmp_file.close
 
   import_sql_file!(
     file_path: tmp_file.path,
@@ -221,32 +227,23 @@ def import_routines_from_skeleton!(skeleton_path:, username:, password:, host:, 
   skeleton_path = skeleton_path.to_s
   raise "Skeleton SQL file not found: #{skeleton_path}" unless File.exist?(skeleton_path)
 
-  mysql_cmd = Shellwords.join(
-    mysql_import_command(
-      username: username,
-      password: password,
-      host: host,
-      port: port,
-      database: database
-    )
+  routine_names = []
+  Zlib::GzipReader.open(skeleton_path) do |input|
+    input.each_line do |line|
+      match = line.match(%r{DROP (FUNCTION|PROCEDURE) IF EXISTS `([^`]+)`})
+      routine_names << match[2] if match
+    end
+  end
+
+  return import_targeted_routines_from_skeleton!(
+    skeleton_path: skeleton_path,
+    routine_names: routine_names,
+    username: username,
+    password: password,
+    host: host,
+    port: port,
+    database: database
   )
-
-  command = <<~BASH
-    set -o pipefail
-    gunzip -c #{Shellwords.escape(skeleton_path)} |
-      awk '
-        /^\\/\\*!50003 DROP (FUNCTION|PROCEDURE) IF EXISTS/ {capture=1}
-        capture {print}
-        capture && /^\\/\\*!50003 SET collation_connection[[:space:]]*=[[:space:]]*@saved_col_connection[[:space:]]*\\*\\/[[:space:]]*;/ {capture=0}
-      ' |
-      sed -E 's/DEFINER[[:space:]]*=[[:space:]]*`[^`]+`@`[^`]+`[[:space:]]*//g' |
-      #{mysql_cmd}
-  BASH
-
-  return if system('bash', '-lc', command)
-
-  exit_code = $?.respond_to?(:exitstatus) ? $?.exitstatus : 'unknown'
-  raise "Routine import failed from #{File.basename(skeleton_path)} (exit code: #{exit_code})"
 end
 
 def extract_routine_blocks_from_skeleton(skeleton_path:, routine_names:)
@@ -315,6 +312,11 @@ def import_targeted_routines_from_skeleton!(skeleton_path:, routine_names:, user
 end
 
 def ensure_required_routines!(username:, password:, host:, port:, database:)
+  if TidbSupport.enabled?(ActiveRecord::Base.connection)
+    puts 'TiDB detected: stored routine bootstrap is deferred because TiDB does not support stored functions.'
+    return
+  end
+
   required_routines = %w[
     patient_start_date
     patient_outcome

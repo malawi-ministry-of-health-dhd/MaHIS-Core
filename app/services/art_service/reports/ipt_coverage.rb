@@ -73,12 +73,13 @@ module ArtService
         ActiveRecord::Base.connection.select_all <<-SQL
           select
             `p`.`patient_id` AS `patient_id`, pe.birthdate, pe.gender,
-             cast(patient_date_enrolled(`p`.`patient_id`) as date) AS `date_enrolled`
+             art_dates.date_enrolled AS `date_enrolled`
           from
             ((`patient_program` `p`
             left join `person` `pe` ON ((`pe`.`person_id` = `p`.`patient_id`))
             left join `patient_state` `s` ON ((`p`.`patient_program_id` = `s`.`patient_program_id`)))
             left join `person` ON ((`person`.`person_id` = `p`.`patient_id`)))
+          INNER JOIN earliest_start_date art_dates ON art_dates.patient_id = p.patient_id
           where
             ((`p`.`voided` = 0)
                 and (`s`.`voided` = 0)

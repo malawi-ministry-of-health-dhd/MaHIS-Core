@@ -1,0 +1,80 @@
+name: mahis-tidb
+
+# Single-replica TiDB for local development and migration validation only.
+# Production requires a supported multi-node topology with backups and TLS.
+services:
+  pd:
+    image: pingcap/pd:v8.5.6
+    container_name: mahis-tidb-pd
+    restart: unless-stopped
+    command:
+      - --name=pd
+      - --data-dir=/data/pd
+      - --client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://pd:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-peer-urls=http://pd:2380
+      - --initial-cluster=pd=http://pd:2380
+      - --log-file=
+    volumes:
+      - pd-data:/data/pd
+    ports:
+      - 127.0.0.1:2379:2379
+
+  tikv:
+    image: pingcap/tikv:v8.5.6
+    container_name: mahis-tidb-tikv
+    restart: unless-stopped
+    depends_on:
+      - pd
+    command:
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv:20160
+      - --data-dir=/data/tikv
+      - --pd=pd:2379
+      - --log-file=
+    volumes:
+      - tikv-data:/data/tikv
+
+  tidb:
+    image: pingcap/tidb:v8.5.6
+    container_name: mahis-tidb-server
+    restart: unless-stopped
+    depends_on:
+      - pd
+      - tikv
+    command:
+      - --store=tikv
+      - --path=pd:2379
+      - --host=0.0.0.0
+      - --advertise-address=tidb
+      - --status=10080
+      - --log-file=
+    ports:
+      - 127.0.0.1:4001:4000
+      - 127.0.0.1:10081:10080
+
+  tiflash:
+    image: pingcap/tiflash:v8.5.6
+    container_name: mahis-tidb-tiflash
+    restart: unless-stopped
+    depends_on:
+      - pd
+      - tikv
+      - tidb
+    command:
+      - --config-file=/etc/tiflash/tiflash.toml
+    volumes:
+      - ./tiflash.toml:/etc/tiflash/tiflash.toml:ro
+      - ./tiflash-learner.toml:/etc/tiflash/tiflash-learner.toml:ro
+      - tiflash-data:/data/tiflash
+    ports:
+      - 127.0.0.1:8234:8234
+
+volumes:
+  pd-data:
+    name: mahis-tidb-pd-data
+  tikv-data:
+    name: mahis-tidb-tikv-data
+  tiflash-data:
+    name: mahis-tidb-tiflash-data

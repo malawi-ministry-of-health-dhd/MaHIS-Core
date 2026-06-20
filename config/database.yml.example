@@ -1,28 +1,35 @@
-# Mysql configurations
+# MySQL/TiDB configuration. Set TIDB_ENABLED=true to use TiDB defaults.
+<% tidb_enabled = %w[1 true yes on].include?(ENV.fetch("TIDB_ENABLED", "").downcase) %>
 default: &default
-  host: 127.0.0.1
-  port: 3308
   adapter: mysql2
-  encoding: utf8
-  collation: utf8_unicode_ci
-  username: your_scoped_username
-  password: your_secret_password
+  host: <%= ENV.fetch("DB_HOST", "127.0.0.1") %>
+  port: <%= ENV.fetch("DB_PORT", tidb_enabled ? 4000 : 3306) %>
+  encoding: <%= ENV.fetch("DB_ENCODING", "utf8mb4") %>
+  collation: <%= ENV.fetch("DB_COLLATION", "utf8mb4_unicode_ci") %>
+  username: <%= ENV.fetch("DB_USERNAME", "root") %>
+  password: <%= ENV.fetch("DB_PASSWORD", "") %>
   pool: <%= ENV.fetch("DB_POOL") { ENV.fetch("RAILS_MAX_THREADS") { 5 } } %>
   checkout_timeout: <%= ENV.fetch("DB_CHECKOUT_TIMEOUT") { 5 } %>
+  connect_timeout: <%= ENV.fetch("DB_CONNECT_TIMEOUT", 10) %>
+  read_timeout: <%= ENV.fetch("DB_READ_TIMEOUT", 30) %>
+  write_timeout: <%= ENV.fetch("DB_WRITE_TIMEOUT", 30) %>
+  ssl_mode: <%= ENV.fetch("DB_SSL_MODE", tidb_enabled ? "verify_identity" : "disabled") %>
+  sslca: <%= ENV["DB_SSL_CA"] %>
+  advisory_locks: true
   variables:
-    sql_mode: STRICT_TRANS_TABLES
+    sql_mode: <%= ENV.fetch("DB_SQL_MODE", "STRICT_TRANS_TABLES") %>
 
 development:
   <<: *default
-  database: openmrs_dev
+  database: <%= ENV.fetch("DB_NAME", "openmrs_dev") %>
 
 test:
   <<: *default
-  database: openmrs_test
+  database: <%= ENV.fetch("DB_TEST_NAME", "openmrs_test") %>
 
 production:
   <<: *default
-  database: openmrs_prod
+  database: <%= ENV.fetch("DB_NAME", "openmrs_prod") %>
 
 # Uncomment out the following and update them accordingly if
 # you need to sync hts and anc to RDS.
@@ -45,11 +52,12 @@ production:
 
 healthdata:
   adapter: mysql2
-  username: root
-  database: healthdata
-  password:
-  host: localhost
-  pool: 500
+  host: <%= ENV.fetch("HEALTHDATA_DB_HOST", "localhost") %>
+  port: <%= ENV.fetch("HEALTHDATA_DB_PORT", 3306) %>
+  username: <%= ENV.fetch("HEALTHDATA_DB_USERNAME", "root") %>
+  database: <%= ENV.fetch("HEALTHDATA_DB_NAME", "healthdata") %>
+  password: <%= ENV.fetch("HEALTHDATA_DB_PASSWORD", "") %>
+  pool: <%= ENV.fetch("HEALTHDATA_DB_POOL", 5) %>
 
 # metadata_server:
 #  adapter: mysql2
@@ -61,4 +69,10 @@ healthdata:
 
 centralized_source_db:
   <<: *default
-  database: mpc
+  host: <%= ENV.fetch("SOURCE_DB_HOST", "127.0.0.1") %>
+  port: <%= ENV.fetch("SOURCE_DB_PORT", 3306) %>
+  username: <%= ENV.fetch("SOURCE_DB_USERNAME", "root") %>
+  password: <%= ENV.fetch("SOURCE_DB_PASSWORD", "") %>
+  database: <%= ENV.fetch("SOURCE_DB_NAME", "mpc") %>
+  ssl_mode: <%= ENV.fetch("SOURCE_DB_SSL_MODE", "disabled") %>
+  sslca: <%= ENV["SOURCE_DB_SSL_CA"] %>

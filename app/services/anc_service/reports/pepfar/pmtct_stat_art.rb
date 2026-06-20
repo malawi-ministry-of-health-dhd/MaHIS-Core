@@ -63,8 +63,9 @@ module AncService
               MIN(current_test_result.value_coded)              as hiv_status,
               MIN(art_status.value_coded)                       AS art_status,
               pepfar_patient_outcome(p.person_id, '#{@end_date}') AS current_outcome,
-              date_antiretrovirals_started(p.person_id, '#{@end_date}') outcome_date
+              art_dates.earliest_start_date outcome_date
             FROM person p
+                LEFT JOIN earliest_start_date art_dates ON art_dates.patient_id = p.person_id
                 INNER JOIN (SELECT e.encounter_datetime, e.patient_id
                      FROM encounter e
                               INNER JOIN obs ob ON e.encounter_id = ob.encounter_id

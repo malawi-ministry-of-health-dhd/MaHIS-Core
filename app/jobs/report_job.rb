@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require Rails.root.join('lib', 'tidb_reporting').to_s
+
 class ReportJob < ApplicationJob
   queue_as :default
 
@@ -29,7 +31,9 @@ class ReportJob < ApplicationJob
 
       clazz = clazzname.constantize
       report_engine = clazz.new
-      report_engine.generate_report(**kwargs)
+      TidbReporting.with_analytics_session do
+        report_engine.generate_report(**kwargs)
+      end
     ensure
       Sidekiq.redis do |r|
         r.del(exec_lock_key)

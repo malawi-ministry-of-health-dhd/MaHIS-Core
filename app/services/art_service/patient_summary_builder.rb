@@ -388,16 +388,7 @@ module ArtService
     end
 
     def art_start_date
-      row = ActiveRecord::Base.connection.select_one(<<~SQL)
-        SELECT date_antiretrovirals_started(#{@patient_id}, MIN(s.start_date)) AS start_date
-        FROM patient_program p
-        INNER JOIN patient_state s ON s.patient_program_id = p.patient_program_id AND s.voided = 0
-        WHERE p.patient_id  = #{@patient_id}
-          AND p.program_id  = #{hiv_program_id}
-          AND p.voided      = 0
-          AND s.state       = #{on_arvs_state_id}
-      SQL
-      row&.dig('start_date')&.to_s.presence
+      ReportingPatientArtFact.where(patient_id: @patient_id).minimum(:earliest_start_date)&.to_s.presence
     end
 
     def init_pregnant?

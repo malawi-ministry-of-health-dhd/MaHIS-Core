@@ -222,7 +222,7 @@ module ArtService
                 END AS diastolic_classification,
                 UPPER(LEFT(p.gender, 1)) gender,
                 disaggregated_age_group(p.birthdate, #{@end_date}) age_group,
-                patient_start_date(tpo.patient_id) art_start_date,
+                art_start_dates.art_start_date,
                 i.identifier arv_number,
                 latest_drug_order.start_date,
                 GROUP_CONCAT(DISTINCT d.name) drug_names
@@ -238,6 +238,7 @@ module ArtService
             INNER JOIN obs sys ON sys.concept_id = #{systolic_concept_id} AND sys.person_id = tpo.patient_id AND sys.obs_datetime = tpo.obs_date AND sys.voided = 0
             INNER JOIN obs dia ON dia.concept_id = #{diastolic_concept_id} AND dia.person_id = tpo.patient_id AND dia.obs_datetime = tpo.obs_date AND dia.voided = 0
             INNER JOIN person p ON p.person_id = tpo.patient_id AND p.voided = 0
+            LEFT JOIN patient_art_start_dates art_start_dates ON art_start_dates.patient_id = tpo.patient_id
             INNER JOIN encounter e ON e.encounter_id = dia.encounter_id AND e.program_id = #{hiv_program_id} AND e.voided = 0 AND e.location_id = #{@location_id}
             LEFT JOIN patient_identifier i ON i.patient_id = e.patient_id AND i.identifier_type = #{arv_number_type_id} AND i.voided = 0
             LEFT JOIN (
@@ -264,9 +265,10 @@ module ArtService
               disaggregated_age_group(p.birthdate, #{@end_date}) age_group,
               UPPER(LEFT(p.gender, 1)) gender,
               TIMESTAMPDIFF(YEAR, DATE(COALESCE(latest_bp.obs_date, MIN(ps2.start_date))), DATE(#{@start_date})) due,
-              patient_start_date(p.person_id) art_start_date,
+              art_start_dates.art_start_date,
               i.identifier arv_number
             FROM person p
+            LEFT JOIN patient_art_start_dates art_start_dates ON art_start_dates.patient_id = p.person_id
             INNER JOIN patient_program pp2 ON pp2.patient_id = p.person_id AND pp2.voided = 0 AND pp2.program_id = #{hiv_program_id} AND pp2.location_id = #{@location_id}
             INNER JOIN (
               SELECT MAX(ps.start_date) as start_date, ps.patient_program_id

@@ -94,7 +94,7 @@ module ArtService
             SELECT person.person_id AS patient_id,
                    patient_identifier.identifier AS arv_number,
                    DATE(MIN(orders.start_date)) AS tpt_initiation_date,
-                   date_antiretrovirals_started(person.person_id, MIN(patient_state.start_date)) AS art_start_date,
+                   art_dates.earliest_start_date AS art_start_date,
                    SUM(drug_order.quantity) AS total_pills_taken,
                    SUM(DATEDIFF(orders.auto_expire_date, orders.start_date)) AS total_days_on_medication,
                    person.gender,
@@ -102,6 +102,7 @@ module ArtService
                    disaggregated_age_group(person.birthdate, DATE(#{end_date})) AS age_group,
                    GROUP_CONCAT(DISTINCT orders.concept_id SEPARATOR ',') AS drug_concepts
             FROM person
+            INNER JOIN earliest_start_date art_dates ON art_dates.patient_id = person.person_id
             LEFT JOIN patient_identifier
               ON patient_identifier.patient_id = person.person_id
               AND patient_identifier.voided = 0
