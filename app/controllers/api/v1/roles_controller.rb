@@ -11,7 +11,7 @@ module Api
                                    .or(roles_query.where(location_id: nil))
         end
 
-        roles = paginate(roles_query)
+        roles = params[:paginate] == 'true' ? paginate(roles_query) : roles_query.order(:role)
         render json: roles.as_json(include: { privileges: {}, role_privileges: {}, user_roles: {} })
       end
 
