@@ -49,9 +49,14 @@ class NcdService::PatientsEngine
         next_available_number = (possible_identifiers - assigned_numbers).first
       end   
 
-      # Must match the stored format ("<prefix>-NCD-<n>") and the parse regex
-      # above; the sibling generator in PatientIdentityManager does the same.
-      "#{current_ncd_code}-NCD-#{next_available_number}"
+      # Return "<prefix> <number>" (space-separated) — NOT the canonical
+      # "<prefix>-NCD-<number>". This is the contract the NCD enrollment UI
+      # relies on: it strips the digits for the number, appends "-NCD-" to the
+      # prefix on its own, then recombines (see NCDNumber.vue / UpdateNCDNumberModal.vue).
+      # Emitting the "-NCD-" form here makes the UI double it ("<prefix>-NCD--NCD-<number>").
+      # (The server-side save path in PatientIdentityManager DOES return the full
+      # "-NCD-" form, because it persists the identifier directly with no UI in between.)
+      "#{current_ncd_code} #{next_available_number}"
     end
 
     def ncd_number_already_exists(ncd_number)

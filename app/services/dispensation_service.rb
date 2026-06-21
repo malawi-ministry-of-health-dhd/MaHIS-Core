@@ -139,7 +139,7 @@ module DispensationService
     # Creates a dispensing encounter
     def create_encounter(program, patient, date, provider = nil, location_id = nil)
       Encounter.create(
-        encounter_type: EncounterType.find_by(name: 'DISPENSING').encounter_type_id,
+        encounter_type: dispensing_encounter_type_id,
         patient_id: patient.patient_id,
         location_id: location_id ||Location.current.location_id,
         encounter_datetime: date,
@@ -148,11 +148,20 @@ module DispensationService
       )
     end
 
+    # Resolves the "DISPENSING" encounter type id.
+    # The name is stored sentence-cased ("Dispensing") in metadata and the
+    # encounter_type.name column is case-sensitive (utf8_bin) on TiDB, so an
+    # exact-case `find_by(name: 'DISPENSING')` returns nil. Match case-insensitively.
+    def dispensing_encounter_type_id
+      EncounterType.where('LOWER(name) = ?', 'dispensing').pick(:encounter_type_id) ||
+        raise("Encounter type `DISPENSING` not found")
+    end
+
     # Finds a dispensing encounter for the given patient on the given date
     def find_encounter(program, patient, date)
       date = date.to_date
 
-      encounter_type = EncounterType.find_by(name: 'DISPENSING').encounter_type_id
+      encounter_type = dispensing_encounter_type_id
       Encounter.where(program_id: program.id,
                       encounter_type:,
                       patient_id: patient.id,

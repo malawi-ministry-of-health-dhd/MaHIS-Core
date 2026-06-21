@@ -7,6 +7,7 @@ require 'securerandom'
 require 'tempfile'
 require 'zlib'
 require Rails.root.join('lib', 'tidb_support').to_s
+require Rails.root.join('lib', 'reference_name_collation').to_s
 
 if ENV['INITIAL_SETUP']
   puts "\e[31mWARNING: This will wipe out your database. Do you want to continue? (y/N)\e[0m"
@@ -870,6 +871,10 @@ begin
 rescue StandardError => e
   raise "Failed to import metadata from GitHub: #{e.message}"
 end
+
+# The imported metadata recreates reference tables with case-sensitive `*_bin`
+# collations; restore the case-insensitive name matching the app relies on.
+ReferenceNameCollation.enforce!(connection: ActiveRecord::Base.connection)
 
 ensure_facility_level_data!
 rebuild_concept_word_index!
