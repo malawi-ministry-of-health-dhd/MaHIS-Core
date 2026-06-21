@@ -38,58 +38,37 @@ class VisitService
       patient_id = patient_identifier[:patient_id] if patient_identifier.present?
     end
 
-    # Check if visit already exists
-    checkVisit = Visit.where(patient_id: patient_id, date_stopped: nil).first
-    if checkVisit.present?
-      visit_data = checkVisit.attributes
-      visit_data[:identifier] = identifier if identifier.present?
-      visit_data[:full_name] = Patient.find_by(patient_id: patient_id).try(:name)
-      return visit_data
+    raise InvalidParameterError, 'Patient could not be resolved for visit' if patient_id.blank?
+
+    encounter_type = visit_encounter_type!
+    existing_visit = Visit.where(patient_id:, date_stopped: nil).first
+    if existing_visit
+      ensure_visit_encounter!(existing_visit, encounter_type, visit_params)
+      return visit_payload(existing_visit, visit_params, identifier)
     end
 
-    # Build visit with all required fields
     visit = Visit.new
-    
-    # Required fields
     visit.patient_id = patient_id
     visit.visit_type_id = visit_params[:visit_type_id]
     visit.date_started = visit_params[:date_started] || Time.now
     visit.date_created = visit_params[:date_created] || Time.now
-    visit.creator = visit_params[:provider_id] || User.current&.user_id 
+    visit.creator = visit_params[:provider_id] || User.current&.user_id
     visit.voided = false
-    
-    # Optional fields
     visit.date_stopped = visit_params[:date_stopped] if visit_params[:date_stopped].present?
     visit.location_id = visit_params[:location_id] if visit_params[:location_id].present?
     visit.indication_concept_id = visit_params[:indication_concept_id] if visit_params[:indication_concept_id].present?
 
-    if visit.save
-      visit_data = visit.attributes
-      visit_data[:full_name] = Patient.find_by(patient_id: patient_id).try(:name)
-      visit_data[:identifier] = identifier if identifier.present?
-      visit_data[:program_id] = visit_params[:program_id]
-      visit_data[:location_id] = visit_params[:location_id].to_s
-
-      if stage_params.present?
-        data = StagesService.new.create_stage(stage_params)
-        sync_to_couchdb(data, "stages", data[:identifier]) if data.present?
-      end
-      
-      # Create encounter first
-      id = EncounterType.find_by_name("visit")
-      create_encounter(patient_id, id.encounter_type_id,
-        {
-          program_id: visit_params[:program_id],
-          location_id: visit_params[:location_id],
-          encounter_datetime: visit_params[:date_started],
-          provider_id: visit_params[:provider_id]
-        })
-
-      visit_data
-    else
-      Rails.logger.error("Visit creation failed: #{visit.errors.full_messages.join(', ')}")
-      raise "Visit creation failed: #{visit.errors.full_messages.join(', ')}"
+    Visit.transaction do
+      visit.save!
+      ensure_visit_encounter!(visit, encounter_type, visit_params)
     end
+
+    if stage_params.present?
+      data = StagesService.new.create_stage(stage_params)
+      sync_to_couchdb(data, 'stages', data[:identifier]) if data.present?
+    end
+
+    visit_payload(visit, visit_params, identifier)
   end
 
   def close_visit(visit_params)
@@ -152,6 +131,37 @@ class VisitService
   end
 
   private
+
+  def visit_encounter_type!
+    EncounterType.find_by('LOWER(name) = ?', 'visit') ||
+      raise(InvalidParameterError, 'Encounter type "Visit" is not configured')
+  end
+
+  def ensure_visit_encounter!(visit, encounter_type, visit_params)
+    encounter_id = create_encounter(
+      visit.patient_id,
+      encounter_type.encounter_type_id,
+      {
+        program_id: visit_params[:program_id],
+        location_id: visit_params[:location_id],
+        encounter_datetime: visit_params[:date_started] || visit.date_started,
+        provider_id: visit_params[:provider_id]
+      }
+    )
+    raise InvalidParameterError, 'Visit encounter could not be created' if encounter_id.blank?
+
+    encounter = Encounter.find(encounter_id)
+    encounter.update!(visit:) unless encounter.visit_id == visit.visit_id
+  end
+
+  def visit_payload(visit, visit_params, identifier)
+    visit.attributes.merge(
+      'identifier' => identifier.presence,
+      'full_name' => Patient.find_by(patient_id: visit.patient_id).try(:name),
+      'program_id' => visit_params[:program_id],
+      'location_id' => visit.location_id.to_s
+    ).compact
+  end
 
   def skipped_visit_payload(receipt, visit_params)
     visit = Visit.find_by(visit_id: receipt&.target_id)

@@ -32,6 +32,7 @@ services:
       - --advertise-addr=tikv:20160
       - --data-dir=/data/tikv
       - --pd=pd:2379
+      - --status-addr=0.0.0.0:20180
       - --log-file=
     volumes:
       - tikv-data:/data/tikv
@@ -71,6 +72,42 @@ services:
     ports:
       - 127.0.0.1:8234:8234
 
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: mahis-tidb-prometheus
+    restart: unless-stopped
+    depends_on:
+      - pd
+      - tikv
+      - tidb
+      - tiflash
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - 127.0.0.1:9090:9090
+
+  monitoring-config:
+    image: pingcap/pd:v8.5.6
+    container_name: mahis-tidb-monitoring-config
+    restart: on-failure
+    depends_on:
+      - pd
+      - prometheus
+    entrypoint: ["/pd-ctl"]
+    command:
+      - -u
+      - http://pd:2379
+      - config
+      - set
+      - pd-server.metric-storage
+      - http://prometheus:9090
+
 volumes:
   pd-data:
     name: mahis-tidb-pd-data
@@ -78,3 +115,5 @@ volumes:
     name: mahis-tidb-tikv-data
   tiflash-data:
     name: mahis-tidb-tiflash-data
+  prometheus-data:
+    name: mahis-tidb-prometheus-data

@@ -52,11 +52,11 @@ class ArtService::Reports::Cohort::Tpt
   end
 
   def rifapentine_concept
-    @rifapentine_concept ||= ConceptName.find_by!(name: 'Rifapentine')
+    @rifapentine_concept ||= concept_name_for!('Rifapentine')
   end
 
   def three_hp_concept
-    @three_hp_concept ||= ConceptName.find_by!(name: 'Isoniazid/Rifapentine')
+    @three_hp_concept ||= concept_name_for!('Isoniazid/Rifapentine')
   end
 
   def processed_tpt_clients
@@ -90,6 +90,16 @@ class ArtService::Reports::Cohort::Tpt
   def newly_initiated_on_tpt
     start_date = ActiveRecord::Base.connection.quote(@start_date)
     end_date = ActiveRecord::Base.connection.quote(@end_date)
+    tpt_concept_names = ['Rifapentine', 'Isoniazid', 'Isoniazid/Rifapentine']
+    tpt_concept_ids = ConceptName.where('LOWER(name) IN (?)', tpt_concept_names.map(&:downcase))
+                                 .where(voided: false)
+                                 .distinct
+                                 .pluck(:concept_id)
+    tpt_drug_ids = Drug.where(concept_id: tpt_concept_ids).pluck(:drug_id)
+    order_type_id = OrderType.find_by_name('Drug order').order_type_id
+    treatment_type_id = EncounterType.find_by_name('Treatment').encounter_type_id
+    hiv_program_id = Program.find_by_name('HIV Program').program_id
+    tpt_received_concept_id = Concept.find_by_name('TPT Drugs Received').concept_id
 
     @newly_initiated_on_tpt ||= ActiveRecord::Base.connection.select_all <<~SQL
       SELECT
@@ -120,13 +130,13 @@ class ArtService::Reports::Cohort::Tpt
       #{dsd_query(dsd: @dsd, model: 'cohort_patients') if @dsd}
       INNER JOIN orders
         ON orders.patient_id = cohort_patients.patient_id
-        AND orders.order_type_id = (SELECT order_type_id FROM order_type WHERE name = 'Drug order' LIMIT 1)
+        AND orders.order_type_id = #{order_type_id}
         AND orders.start_date >= #{start_date}
         AND orders.start_date < DATE(#{end_date}) + INTERVAL 1 DAY
         AND orders.voided = 0
       INNER JOIN concept_name AS tpt_drug_concepts
         ON tpt_drug_concepts.concept_id = orders.concept_id
-        AND tpt_drug_concepts.name IN ('Rifapentine', 'Isoniazid', 'Isoniazid/Rifapentine')
+        AND LOWER(tpt_drug_concepts.name) IN ('rifapentine', 'isoniazid', 'isoniazid/rifapentine')
         AND tpt_drug_concepts.voided = 0
       INNER JOIN drug_order AS drug_orders
         ON drug_orders.order_id = orders.order_id
@@ -134,14 +144,14 @@ class ArtService::Reports::Cohort::Tpt
       INNER JOIN encounter
         /* Ensure we are dealing with ART prescriptions (Treatment encounter) */
         ON encounter.encounter_id = orders.encounter_id
-        AND encounter.encounter_type = (SELECT encounter_type_id FROM encounter_type WHERE name = 'Treatment' LIMIT 1)
-        AND encounter.program_id = (SELECT program_id FROM program WHERE name = 'HIV Program' LIMIT 1)
+        AND encounter.encounter_type = #{treatment_type_id}
+        AND encounter.program_id = #{hiv_program_id}
         AND encounter.voided = 0
       LEFT JOIN obs tpt_transfer_in_obs
         ON tpt_transfer_in_obs.person_id = orders.patient_id
-        AND tpt_transfer_in_obs.concept_id = #{ConceptName.find_by_name('TPT Drugs Received').concept_id}
+        AND tpt_transfer_in_obs.concept_id = #{tpt_received_concept_id}
         AND tpt_transfer_in_obs.voided = 0
-        AND tpt_transfer_in_obs.value_drug IN (SELECT drug_id FROM drug WHERE concept_id IN (SELECT concept_id FROM concept_name WHERE name IN ('Rifapentine', 'Isoniazid', 'Isoniazid/Rifapentine')))
+        AND tpt_transfer_in_obs.value_drug IN (#{tpt_drug_ids.presence&.join(',') || 0})
       -- Get the last TPT prescription
       LEFT JOIN (
         SELECT
@@ -155,14 +165,18 @@ class ArtService::Reports::Cohort::Tpt
           END AS course
         FROM #{temp_earliest_start_date}
         INNER JOIN orders o ON o.patient_id = #{temp_earliest_start_date}.patient_id
-        INNER JOIN concept_name AS tpt_drug_concepts ON tpt_drug_concepts.concept_id = o.concept_id AND tpt_drug_concepts.name IN ('Rifapentine', 'Isoniazid', 'Isoniazid/Rifapentine') AND tpt_drug_concepts.voided = 0
+        INNER JOIN concept_name AS tpt_drug_concepts ON tpt_drug_concepts.concept_id = o.concept_id AND LOWER(tpt_drug_concepts.name) IN ('rifapentine', 'isoniazid', 'isoniazid/rifapentine') AND tpt_drug_concepts.voided = 0
         INNER JOIN drug_order AS drug_orders ON drug_orders.order_id = o.order_id AND drug_orders.quantity > 0
-        INNER JOIN encounter ON encounter.encounter_id = o.encounter_id AND encounter.encounter_type = (SELECT encounter_type_id FROM encounter_type WHERE name = 'Treatment' LIMIT 1) AND encounter.program_id = (SELECT program_id FROM program WHERE name = 'HIV Program' LIMIT 1) AND encounter.voided = 0
+        INNER JOIN encounter ON encounter.encounter_id = o.encounter_id AND encounter.encounter_type = #{treatment_type_id} AND encounter.program_id = #{hiv_program_id} AND encounter.voided = 0
         WHERE o.voided = 0
         AND o.start_date < #{start_date}
         GROUP BY o.patient_id
       ) AS last_tpt_prescription ON last_tpt_prescription.patient_id = orders.patient_id
       GROUP BY cohort_patients.patient_id
     SQL
+  end
+
+  def concept_name_for!(name)
+    ConceptName.where('LOWER(name) = ?', name.downcase).first!
   end
 end

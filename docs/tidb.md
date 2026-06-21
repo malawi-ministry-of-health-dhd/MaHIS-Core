@@ -18,6 +18,7 @@ Local endpoints:
 - SQL: `127.0.0.1:4001`
 - Status API: `http://127.0.0.1:10081/status`
 - TiFlash metrics: `http://127.0.0.1:8234/metrics`
+- Prometheus: `http://127.0.0.1:9090`
 - Database: `mahis_dev`
 - Application user: `mahis_app`
 - Local-only password: `mahis_tidb_local`
@@ -29,6 +30,22 @@ docker compose -f docker/tidb/compose.yml down
 ```
 
 Do not add `--volumes` unless the local TiDB database should be permanently deleted.
+
+### Local monitoring
+
+The Compose stack includes Prometheus with 15 days of persistent metrics for PD,
+TiDB, TiKV, and TiFlash. The one-shot `monitoring-config` service automatically
+registers Prometheus with PD so the built-in TiDB Dashboard can display
+historical monitoring data. To repair that registration manually, run:
+
+```bash
+docker exec mahis-tidb-pd /pd-ctl -u http://127.0.0.1:2379 \
+  config set pd-server.metric-storage http://prometheus:9090
+```
+
+Open TiDB Dashboard at `http://127.0.0.1:2379/dashboard/` and Prometheus at
+`http://127.0.0.1:9090`. Confirm all scrape targets are healthy at
+`http://127.0.0.1:9090/targets`.
 
 On macOS, MySQL 9 clients cannot load TiDB's default `mysql_native_password` authentication plugin. Install the supported versioned client and compile `mysql2` against it:
 

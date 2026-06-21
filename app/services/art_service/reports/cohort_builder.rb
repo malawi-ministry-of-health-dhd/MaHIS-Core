@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative './cohort/tpt'
+require Rails.root.join('lib', 'tidb_support').to_s
 
 module ArtService
   module Reports
@@ -38,11 +39,15 @@ module ArtService
       def concept(name)
         return unless name.present?
 
-        @concept_cache[name] ||= Concept.joins(:concept_names).where('concept_name.name = ?', name).first
+        @concept_cache[name] ||= Concept.joins(:concept_names)
+                                       .where('LOWER(concept_name.name) = ?', name.to_s.downcase)
+                                       .first
       end
 
       # Recreate MySQL functions with location-specific table names
       def create_location_specific_mysql_functions
+        return if TidbSupport.enabled?(ActiveRecord::Base.connection)
+
         ActiveRecord::Base.connection.execute("DROP FUNCTION IF EXISTS #{died_in_function_name}")
         ActiveRecord::Base.connection.execute <<~SQL
           CREATE FUNCTION #{died_in_function_name}(set_patient_id INT, set_status VARCHAR(25), date_enrolled DATE)
@@ -646,7 +651,7 @@ module ArtService
         new_patient_concept = concept('New patient').concept_id
         drug_refill_concept = concept('Drug refill').concept_id
         external_concept = concept('External Consultation').concept_id
-        program_id = Program.find_by(name: 'HIV program').id
+        program_id = Program.find_by_name('HIV program').id
 
         ActiveRecord::Base.connection.execute <<~SQL
           INSERT INTO #{temp_cohort_members}
@@ -978,18 +983,19 @@ module ArtService
       # rubocop:disable Metrics/AbcSize
       def batch_load_eligibility_reasons(cohort_struct, start_date, end_date, cum_start_date, quarter_start_date)
         # Cache all concept lookups upfront
-        who_stage_4_concepts = ConceptName.where(name: ['WHO stage IV adult', 'WHO stage IV peds',
-                                                        'WHO STAGE 4']).pluck(:concept_id)
-        who_stage_3_concepts = ConceptName.where(name: ['WHO stage III adult', 'WHO stage III peds',
-                                                        'WHO STAGE 3']).pluck(:concept_id)
-        pregnant_concepts = ConceptName.where(name: ['PATIENT PREGNANT', 'Is patient pregnant at initiation?',
-                                                     'Patient pregnant state', 'Is patient pregnant?']).pluck(:concept_id)
-        breastfeeding_concepts = ConceptName.where(name: 'Breastfeeding').pluck(:concept_id)
-        who_stage_2_concepts = ConceptName.where(name: ['CD4 COUNT LESS THAN OR EQUAL TO 750',
-                                                        'CD4 count less than or equal to 500', 'CD4 COUNT LESS THAN OR EQUAL TO 350', 'CD4 count less than 350', 'CD4 count less than 250', 'CD4 COUNT LESS THAN OR EQUAL TO 250']).pluck(:concept_id)
-        pcr_concepts = ConceptName.where(name: 'HIV PCR').pluck(:concept_id)
-        presumed_hiv_concepts = ConceptName.where(name: ['PRESUMED SEVERE HIV',
-                                                         'PRESUMED SEVERE HIV CRITERIA IN INFANTS']).pluck(:concept_id)
+        who_stage_4_concepts = concept_ids_for_names(['WHO stage IV adult', 'WHO stage IV peds', 'WHO STAGE 4'])
+        who_stage_3_concepts = concept_ids_for_names(['WHO stage III adult', 'WHO stage III peds', 'WHO STAGE 3'])
+        pregnant_concepts = concept_ids_for_names(['PATIENT PREGNANT', 'Is patient pregnant at initiation?',
+                                                   'Patient pregnant state', 'Is patient pregnant?'])
+        breastfeeding_concepts = concept_ids_for_names('Breastfeeding')
+        who_stage_2_concepts = concept_ids_for_names(['CD4 COUNT LESS THAN OR EQUAL TO 750',
+                                                      'CD4 count less than or equal to 500',
+                                                      'CD4 COUNT LESS THAN OR EQUAL TO 350',
+                                                      'CD4 count less than 350', 'CD4 count less than 250',
+                                                      'CD4 COUNT LESS THAN OR EQUAL TO 250'])
+        pcr_concepts = concept_ids_for_names('HIV PCR')
+        presumed_hiv_concepts = concept_ids_for_names(['PRESUMED SEVERE HIV',
+                                                       'PRESUMED SEVERE HIV CRITERIA IN INFANTS'])
 
         # Single batched query to get all eligibility reason counts
         results = ActiveRecord::Base.connection.select_one <<~SQL
@@ -1249,8 +1255,7 @@ module ArtService
                          total_pregnant_women.map { |woman| woman['person_id'].to_i }
                        end
 
-        breastfeeding_concept_ids = ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding'])
-                                               .pluck(:concept_id)
+        breastfeeding_concept_ids = concept_ids_for_names(['Breast feeding?', 'Breast feeding', 'Breastfeeding'])
         return [] if breastfeeding_concept_ids.empty?
 
         ActiveRecord::Base.connection.select_all <<~SQL
@@ -1262,8 +1267,7 @@ module ArtService
       end
 
       def total_pregnant_women(_patients_list, _start_date, _end_date)
-        pregnant_concept_ids = ConceptName.where(name: ['Is patient pregnant?', 'patient pregnant'])
-                                          .pluck(:concept_id)
+        pregnant_concept_ids = concept_ids_for_names(['Is patient pregnant?', 'patient pregnant'])
         return [] if pregnant_concept_ids.empty?
 
         ActiveRecord::Base.connection.select_all <<~SQL
@@ -1583,6 +1587,8 @@ module ArtService
       end
 
       def died_in(month_str)
+        return died_in_without_stored_function(month_str) if TidbSupport.enabled?(ActiveRecord::Base.connection)
+
         registered = []
         if month_str == '4+ months'
           data = ActiveRecord::Base.connection.select_all(
@@ -1605,6 +1611,30 @@ module ArtService
         end
 
         registered
+      end
+
+      def died_in_without_stored_function(month_str)
+        death_date = 'COALESCE(t.death_date, o.moh_outcome_date)'
+        period = <<~SQL.squish
+          CASE
+            WHEN #{death_date} IS NULL THEN 'Unknown'
+            WHEN TIMESTAMPDIFF(DAY, DATE(t.earliest_start_date), DATE(#{death_date})) <= 30 THEN '1st month'
+            WHEN TIMESTAMPDIFF(DAY, DATE(t.earliest_start_date), DATE(#{death_date})) <= 60 THEN '2nd month'
+            WHEN TIMESTAMPDIFF(DAY, DATE(t.earliest_start_date), DATE(#{death_date})) <= 91 THEN '3rd month'
+            WHEN TIMESTAMPDIFF(DAY, DATE(t.earliest_start_date), DATE(#{death_date})) > 91 THEN '4+ months'
+            ELSE 'Unknown'
+          END
+        SQL
+        expected_periods = month_str == '4+ months' ? ['4+ months', 'Unknown'] : [month_str]
+        quoted_periods = expected_periods.map { |value| ActiveRecord::Base.connection.quote(value) }.join(', ')
+
+        ActiveRecord::Base.connection.select_all(<<~SQL).map { |patient| patient['patient_id'] }
+          SELECT DISTINCT o.patient_id, #{period} AS died_in
+          FROM #{temp_patient_outcomes} o
+          INNER JOIN #{temp_earliest_start_date} t USING(patient_id)
+          WHERE o.moh_cum_outcome = 'Patient died'
+            AND #{period} IN (#{quoted_periods})
+        SQL
       end
 
       def get_outcome(outcome)
@@ -1922,10 +1952,7 @@ module ArtService
           'Is patient pregnant at initiation?'
         ]
 
-        pregnant_concept_ids = ConceptName.where(name: pregnancy_concept_names, voided: 0)
-                                          .select(:concept_id)
-                                          .distinct
-                                          .pluck(:concept_id)
+        pregnant_concept_ids = concept_ids_for_names(pregnancy_concept_names)
 
         # Get concept IDs for answer values (Yes and pregnancy status concepts)
         answer_concept_names = [
@@ -1935,10 +1962,7 @@ module ArtService
           'Pregnant woman'
         ]
 
-        answer_concept_ids = ConceptName.where(name: answer_concept_names, voided: 0)
-                                        .select(:concept_id)
-                                        .distinct
-                                        .pluck(:concept_id)
+        answer_concept_ids = concept_ids_for_names(answer_concept_names)
 
         ActiveRecord::Base.connection.execute <<~SQL
           INSERT INTO #{temp_pregnant_obs}
@@ -1969,13 +1993,11 @@ module ArtService
       # within a 2-year lookback window, restricted to HIV clinic encounter types.
       # This is more permissive than requiring obs on the exact drug-order date.
       def load_temp_obs_last_visit(end_date)
-        encounter_type_ids = EncounterType.where(name: ['HIV CLINIC CONSULTATION', 'HIV STAGING'])
+        encounter_type_ids = EncounterType.where('LOWER(name) IN (?)', ['hiv clinic consultation', 'hiv staging'])
                                           .pluck(:encounter_type_id)
-        pregnant_concept_ids = ConceptName.where(name: ['Is patient pregnant?', 'patient pregnant'])
-                                          .pluck(:concept_id)
-        breastfeeding_concept_ids = ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding'])
-                                               .pluck(:concept_id)
-        yes_concept_id = ConceptName.find_by(name: 'Yes')&.concept_id
+        pregnant_concept_ids = concept_ids_for_names(['Is patient pregnant?', 'patient pregnant'])
+        breastfeeding_concept_ids = concept_ids_for_names(['Breast feeding?', 'Breast feeding', 'Breastfeeding'])
+        yes_concept_id = concept('Yes')&.concept_id
 
         all_concept_ids = (pregnant_concept_ids + breastfeeding_concept_ids).uniq
         return if all_concept_ids.empty? || encounter_type_ids.empty? || yes_concept_id.nil?
@@ -2052,10 +2074,7 @@ module ArtService
           'Is patient pregnant at initiation?'
         ]
 
-        pregnancy_concept_ids = ConceptName.where(name: pregnancy_concept_names, voided: 0)
-                                           .select(:concept_id)
-                                           .distinct
-                                           .pluck(:concept_id)
+        pregnancy_concept_ids = concept_ids_for_names(pregnancy_concept_names)
 
         # (patient_id_plus_date_enrolled || []).each do |patient_id, date_enrolled|
         registered = ActiveRecord::Base.connection.select_all <<~SQL
@@ -2081,16 +2100,22 @@ module ArtService
 
         pregnant_at_initiation_ids = [0] if pregnant_at_initiation_ids.blank?
 
-        transfer_ins_women = ActiveRecord::Base.connection.select_all <<~SQL
-          SELECT patient_id, re_initiated_check(patient_id, date_enrolled) re_initiated
-          FROM #{temp_earliest_start_date}
-          WHERE date_enrolled BETWEEN '#{start_date}' AND '#{end_date}'
-            AND DATE(date_enrolled) != DATE(earliest_start_date)
-            AND (gender = 'F' OR gender = 'Female')
-            AND patient_id IN (#{pregnant_at_initiation_ids.join(',')})
-          GROUP BY patient_id
-          HAVING re_initiated COLLATE utf8mb3_general_ci != 'Re-initiated'
-        SQL
+        transfer_ins_women = if TidbSupport.enabled?(ActiveRecord::Base.connection)
+                               transfer_ins_women_without_stored_function(
+                                 start_date, end_date, pregnant_at_initiation_ids
+                               )
+                             else
+                               ActiveRecord::Base.connection.select_all <<~SQL
+                                 SELECT patient_id, re_initiated_check(patient_id, date_enrolled) re_initiated
+                                 FROM #{temp_earliest_start_date}
+                                 WHERE date_enrolled BETWEEN '#{start_date}' AND '#{end_date}'
+                                   AND DATE(date_enrolled) != DATE(earliest_start_date)
+                                   AND (gender = 'F' OR gender = 'Female')
+                                   AND patient_id IN (#{pregnant_at_initiation_ids.join(',')})
+                                 GROUP BY patient_id
+                                 HAVING re_initiated COLLATE utf8mb3_general_ci != 'Re-initiated'
+                               SQL
+                             end
 
         transfer_ins_preg_women = []
         all_pregnant_females = []
@@ -2103,6 +2128,45 @@ module ArtService
         end
 
         (all_pregnant_females + transfer_ins_preg_women).uniq
+      end
+
+      def transfer_ins_women_without_stored_function(start_date, end_date, patient_ids)
+        date_last_taken = concept('DATE ART LAST TAKEN').concept_id
+        taken_art_recently = concept('HAS THE PATIENT TAKEN ART IN THE LAST TWO MONTHS').concept_id
+        no_concept = concept('NO').concept_id
+
+        ActiveRecord::Base.connection.select_all <<~SQL
+          SELECT DISTINCT tesd.patient_id
+          FROM #{temp_earliest_start_date} tesd
+          WHERE tesd.date_enrolled BETWEEN '#{start_date}' AND '#{end_date}'
+            AND DATE(tesd.date_enrolled) != DATE(tesd.earliest_start_date)
+            AND (tesd.gender = 'F' OR tesd.gender = 'Female')
+            AND tesd.patient_id IN (#{patient_ids.join(',')})
+            AND NOT EXISTS (
+              SELECT 1
+              FROM clinic_registration_encounter registration
+              INNER JOIN ever_registered_obs registered
+                ON registered.encounter_id = registration.encounter_id
+              INNER JOIN obs observation
+                ON observation.encounter_id = registration.encounter_id
+                AND observation.voided = 0
+              WHERE registration.patient_id = tesd.patient_id
+                AND (
+                  (observation.concept_id = #{date_last_taken}
+                    AND TIMESTAMPDIFF(DAY, observation.value_datetime, observation.obs_datetime) > 14)
+                  OR
+                  (observation.concept_id = #{taken_art_recently}
+                    AND observation.value_coded = #{no_concept})
+                )
+            )
+        SQL
+      end
+
+      def concept_ids_for_names(names)
+        ConceptName.where(voided: false)
+                   .where('LOWER(name) IN (?)', Array(names).map { |name| name.to_s.downcase })
+                   .distinct
+                   .pluck(:concept_id)
       end
 
       def initial_females_all_ages(start_date, end_date, data)

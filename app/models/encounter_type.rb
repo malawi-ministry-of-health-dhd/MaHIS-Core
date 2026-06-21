@@ -9,4 +9,10 @@ class EncounterType < RetirableRecord
   HIV_CLINIC_CONSULTATION = 'HIV CLINIC CONSULTATION'
   HIV_CLINIC_REGISTRATION = 'HIV CLINIC REGISTRATION'
   REGISTRATION = 'REGISTRATION'
+
+  def self.find_by_name(name)
+    return if name.blank?
+
+    where('LOWER(name) = ?', name.to_s.downcase).first
+  end
 end

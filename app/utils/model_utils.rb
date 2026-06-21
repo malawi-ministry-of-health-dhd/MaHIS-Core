@@ -14,11 +14,13 @@ module ModelUtils
     name = args.first
     return unless name.present?
 
-    Concept.joins(:concept_names).where('concept_name.name = ?', name).first
+    Concept.find_by_name(name)
   end
 
   def concept_name(name)
-    ConceptName.find_by(name:)
+    return if name.blank?
+
+    ConceptName.where('LOWER(name) = ?', name.to_s.downcase).first
   end
 
   def concept_name_to_id(name)
@@ -39,7 +41,7 @@ module ModelUtils
   end
 
   def encounter_type(name)
-    EncounterType.find_by name:
+    EncounterType.find_by_name(name)
   end
 
   def global_property(name, location_id = nil)

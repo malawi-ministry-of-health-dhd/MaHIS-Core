@@ -11,6 +11,12 @@ class Program < RetirableRecord
 
   validates_presence_of :concept_id, :name
 
+  def self.find_by_name(name)
+    return if name.blank?
+
+    where('LOWER(name) = ?', name.to_s.downcase).first
+  end
+
   def as_json(options = {})
     super(options.merge(
       include: {

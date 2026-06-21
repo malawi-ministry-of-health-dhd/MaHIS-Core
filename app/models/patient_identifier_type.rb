@@ -7,6 +7,28 @@ class PatientIdentifierType < RetirableRecord
   NPID_TYPE_NAME = 'National id'
   DDE_ID_TYPE_NAME = 'DDE person document id'
 
+  NCD_NUMBER_TYPE_NAME = 'NCD Number'
+  # Canonical id used as a fallback. The metadata seeds this type at id 31 and
+  # several call sites historically hard-code it.
+  NCD_NUMBER_TYPE_ID = 31
+
+  # Resolves the "NCD Number" identifier type.
+  #
+  # The seeded metadata stores identifier-type names in sentence case
+  # ("Ncd number") while the `name` column uses a case-sensitive (utf8_bin)
+  # collation, so an exact-case `find_by_name('NCD Number')` never matches and
+  # the lookup returns nil. Match case-insensitively, then fall back to the
+  # canonical id so callers never get nil for a type that does exist.
+  def self.ncd_number_type
+    find_by('LOWER(name) = ?', NCD_NUMBER_TYPE_NAME.downcase) ||
+      find_by(patient_identifier_type_id: NCD_NUMBER_TYPE_ID)
+  end
+
+  # Convenience accessor returning just the id, guaranteed non-nil.
+  def self.ncd_number_type_id
+    ncd_number_type&.patient_identifier_type_id || NCD_NUMBER_TYPE_ID
+  end
+
   def next_identifier(options = {})
     return nil unless name == 'National id'
 

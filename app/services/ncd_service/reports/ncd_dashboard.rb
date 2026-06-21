@@ -87,16 +87,21 @@ module NcdService
       def create_cohort_table
         program = Program.find_by_name('NCD PROGRAM')
         program_id = program&.id || 32
-        ncd_type_id = PatientIdentifierType.find_by_name('NCD Number')&.id || 31
-        
-        ActiveRecord::Base.connection.execute("DROP TEMPORARY TABLE IF EXISTS temp_ncd_cohort")
+        ncd_type_id = PatientIdentifierType.ncd_number_type_id
+
+        connection = ActiveRecord::Base.connection
+        connection.execute("DROP TEMPORARY TABLE IF EXISTS temp_ncd_cohort")
         
         location_clause = @location_id.present? ? "AND location_id = #{@location_id}" : ""
         
-        sql = <<-SQL
+        connection.execute <<~SQL
           CREATE TEMPORARY TABLE temp_ncd_cohort (
             patient_id INT PRIMARY KEY
-          ) AS
+          )
+        SQL
+
+        connection.execute <<~SQL
+          INSERT INTO temp_ncd_cohort (patient_id)
           SELECT DISTINCT patient_id
           FROM (
             SELECT patient_id FROM patient_program WHERE program_id = #{program_id} AND voided = 0 #{location_clause}
@@ -106,8 +111,6 @@ module NcdService
             SELECT patient_id FROM encounter WHERE program_id = #{program_id} AND voided = 0 #{location_clause}
           ) AS all_ncd_patients
         SQL
-        
-        ActiveRecord::Base.connection.execute(sql)
       end
 
       def drop_cohort_table
@@ -226,7 +229,7 @@ module NcdService
       end
 
       def pending_ncd_data
-        ncd_type_id = PatientIdentifierType.find_by_name('NCD Number')&.id
+        ncd_type_id = PatientIdentifierType.ncd_number_type_id
         return { count: 0, patients: [] } unless ncd_type_id
         
         sql = <<-SQL

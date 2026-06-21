@@ -26,7 +26,11 @@ class Concept < RetirableRecord
   has_many :concept_attributes, foreign_key: :concept_id
 
   def self.find_by_name(concept_name)
-    Concept.joins(:concept_names).where(['concept_name.name =?', concept_name.to_s]).first
+    return if concept_name.blank?
+
+    joins(:concept_names)
+      .where('LOWER(concept_name.name) = ?', concept_name.to_s.downcase)
+      .first
   end
 
   def as_json(options = {})

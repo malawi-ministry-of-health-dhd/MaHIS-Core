@@ -177,7 +177,7 @@ module PatientRecordService
       current_ncd_code = global_property("site_prefix")&.property_value
       raise 'Global property `site_prefix` not set' unless current_ncd_code
 
-      type                           = PatientIdentifierType.find_by_name('NCD Number')
+      type                           = PatientIdentifierType.ncd_number_type
       raise 'Patient identifier type `NCD Number` not found' unless type
 
       current_ncd_number_identifiers = PatientIdentifier.where(identifier_type: type.patient_identifier_type_id)

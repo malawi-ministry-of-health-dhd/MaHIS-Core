@@ -39,8 +39,9 @@ class StagesService
       )
     end
 
-    if Program.find_by_name("AETC Program").id == stage_params[:program_id]
-      stage.visit_number = VisitService.next_daily_visit_number! 
+    aetc_program_id = Program.where('LOWER(name) = ?', 'aetc program').pick(:program_id)
+    if aetc_program_id.present? && aetc_program_id.to_i == stage_params[:program_id].to_i
+      stage.visit_number = VisitService.next_daily_visit_number!
     end
 
     stage.program_id = stage_params["program_id"]

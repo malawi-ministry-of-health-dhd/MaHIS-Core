@@ -12,12 +12,16 @@ class ConceptSet < ApplicationRecord
   #
   # Returns: An ActiveRecord::Relation of ConceptSets
   def self.find_members_by_name(concept_set_name)
-    concept = ConceptName.where(name: concept_set_name)
+    concept = ConceptName.where('LOWER(name) = ?', concept_set_name.to_s.downcase)
                          .select(:concept_id)
     ConceptSet.where(set: concept)
   end
 
   scope :filter_members, lambda { |name: nil|
-                           where(concept: ConceptName.where('name LIKE ?', "#{name}%").select(:concept_id))
+                           where(
+                             concept: ConceptName
+                               .where('LOWER(name) LIKE ?', "#{name.to_s.downcase}%")
+                               .select(:concept_id)
+                           )
                          }
 end

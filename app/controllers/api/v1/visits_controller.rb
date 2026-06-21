@@ -55,7 +55,8 @@ module Api
       def visit_params
         params.permit(
           :patient_id, :identifier, :date_started, :full_name, :date_stopped,
-          :program_id, :location_id, :stage, :visit_type_id
+          :program_id, :location_id, :stage, :visit_type_id, :provider_id,
+          :date_created, :indication_concept_id, :sync_status
         )
       end
 

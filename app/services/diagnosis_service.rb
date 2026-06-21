@@ -7,13 +7,13 @@ class DiagnosisService
     ConceptName
       .joins(concept_maps: :concept_source)
       .where(
-        concept_source: { name: 'ICD-11' },
         locale_preferred: 1,
         voided: 0
       )
+      .where('LOWER(concept_source.name) = ?', 'icd-11')
       .where(
-        'concept_name.name LIKE :q OR concept_map.concept_code LIKE :q',
-        q: "#{q}%"
+        'LOWER(concept_name.name) LIKE :q OR LOWER(concept_map.concept_code) LIKE :q',
+        q: "#{q.downcase}%"
       )
       .select(
         'concept_name.concept_id',
@@ -22,6 +22,6 @@ class DiagnosisService
         'concept_map.concept_code AS code',
       )
       .distinct
-      .order('concept_name.name')
+      .order('LOWER(concept_name.name), concept_name.name')
   end
 end

@@ -78,13 +78,13 @@ module ArtService
           SELECT o.person_id, 'FP' as maternal_status
           FROM obs  o
           INNER JOIN #{temp_earliest_start_date}  c ON c.patient_id = o.person_id AND c.gender = 'F'
-          LEFT JOIN obs  a ON a.person_id = o.person_id AND a.obs_datetime > o.obs_datetime AND a.concept_id IN (#{pregnant_concepts.to_sql}) AND a.voided = 0
+          LEFT JOIN obs  a ON a.person_id = o.person_id AND a.obs_datetime > o.obs_datetime AND a.concept_id IN (#{pregnant_concepts.join(',')}) AND a.voided = 0
           AND a.obs_datetime >= DATE(#{ActiveRecord::Base.connection.quote(start_date)}) AND a.obs_datetime < DATE(#{ActiveRecord::Base.connection.quote(end_date)}) + INTERVAL 1 DAY
           WHERE a.obs_id is null
             AND o.obs_datetime >= DATE(#{ActiveRecord::Base.connection.quote(start_date)})
             AND o.obs_datetime < DATE(#{ActiveRecord::Base.connection.quote(end_date)}) + INTERVAL 1 DAY
             AND o.voided = 0
-            AND o.concept_id in (#{pregnant_concepts.to_sql})
+            AND o.concept_id in (#{pregnant_concepts.join(',')})
             AND o.value_coded IN (#{yes_concepts.join(',')})
           GROUP BY o.person_id
         SQL
@@ -96,13 +96,13 @@ module ArtService
           SELECT o.person_id,  'FBf' as maternal_status
           FROM obs  o
           INNER JOIN #{temp_earliest_start_date}  c ON c.patient_id = o.person_id AND c.gender = 'F'
-          LEFT JOIN obs  a ON a.person_id = o.person_id AND a.obs_datetime > o.obs_datetime AND a.concept_id IN (#{breast_feeding_concepts.to_sql}) AND a.voided = 0
+          LEFT JOIN obs  a ON a.person_id = o.person_id AND a.obs_datetime > o.obs_datetime AND a.concept_id IN (#{breast_feeding_concepts.join(',')}) AND a.voided = 0
           AND a.obs_datetime >= DATE(#{ActiveRecord::Base.connection.quote(start_date)}) AND a.obs_datetime < DATE(#{ActiveRecord::Base.connection.quote(end_date)}) + INTERVAL 1 DAY
           WHERE a.obs_id is null
             AND o.obs_datetime >= DATE(#{ActiveRecord::Base.connection.quote(start_date)})
             AND o.obs_datetime < DATE(#{ActiveRecord::Base.connection.quote(end_date)}) + INTERVAL 1 DAY
             AND o.voided = 0
-            AND o.concept_id IN (#{breast_feeding_concepts.to_sql})
+            AND o.concept_id IN (#{breast_feeding_concepts.join(',')})
             AND o.value_coded IN (#{yes_concepts.join(',')})
             AND o.person_id NOT IN (SELECT c.patient_id FROM #{temp_maternal_status}  c)
           GROUP BY o.person_id
@@ -118,24 +118,28 @@ module ArtService
       end
 
       def yes_concepts
-        @yes_concepts ||= ConceptName.where(name: 'Yes').select(:concept_id).map do |record|
-          record['concept_id'].to_i
-        end
+        @yes_concepts ||= concept_ids_for_names('Yes')
       end
 
       def pregnant_concepts
-        @pregnant_concepts ||= ConceptName.where(name: ['Is patient pregnant?', 'patient pregnant'])
-                                          .select(:concept_id)
+        @pregnant_concepts ||= concept_ids_for_names(['Is patient pregnant?', 'patient pregnant'])
       end
 
       def breast_feeding_concepts
-        @breast_feeding_concepts ||= ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding'])
-                                                .select(:concept_id)
+        @breast_feeding_concepts ||= concept_ids_for_names(['Breast feeding?', 'Breast feeding', 'Breastfeeding'])
       end
 
       def encounter_types
         @encounter_types ||= EncounterType.where(name: ['HIV CLINIC CONSULTATION', 'HIV STAGING'])
                                           .select(:encounter_type_id)
+      end
+
+      def concept_ids_for_names(names)
+        ConceptName.where(voided: false)
+                   .where('LOWER(name) IN (?)', Array(names).map { |name| name.to_s.downcase })
+                   .distinct
+                   .pluck(:concept_id)
+                   .presence || [0]
       end
     end
   end

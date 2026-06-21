@@ -53,7 +53,7 @@ class NcdActivePatientService
   end
 
   def build_data_query(filters, limit, offset)
-    ncd_type_id = PatientIdentifierType.find_by_name('NCD Number')&.id || 31
+    ncd_type_id = PatientIdentifierType.ncd_number_type_id
     location_clause = filters[:location_id].present? ? "AND location_id = #{sanitize_number(filters[:location_id])}" : ""
     <<-SQL
       SELECT 
@@ -316,7 +316,7 @@ class NcdActivePatientService
         )
       SQL
     when "pending_ids"
-      ncd_type_id = PatientIdentifierType.find_by_name("NCD Number")&.id || 31
+      ncd_type_id = PatientIdentifierType.ncd_number_type_id
       <<~SQL.chomp
         AND NOT EXISTS (
           SELECT 1 FROM patient_identifier pi2
