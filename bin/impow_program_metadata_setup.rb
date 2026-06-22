@@ -341,8 +341,10 @@ def create_nutrition_drugs
     nru_set = create_drug_concept_set('Inpatient Therapeutic Service', 'NRU')
 
     # F-75 and F-100 each have their own concepts
-    create_drug_and_link_to_set('F-75 Therapeutic Milk (F75)', nru_set, 1, 'Powder', 'Oral', 'g', 'F-75 Therapeutic Milk (F75)')
-    create_drug_and_link_to_set('F-100 Therapeutic Milk (F100)', nru_set, 2, 'Powder', 'Oral', 'g', 'F-100 Therapeutic Milk (F100)')
+    create_drug_and_link_to_set('F-75 Therapeutic Milk (F75)', nru_set, 1, 'Powder', 'Oral', 'g',
+                                'F-75 Therapeutic Milk (F75)')
+    create_drug_and_link_to_set('F-100 Therapeutic Milk (F100)', nru_set, 2, 'Powder', 'Oral', 'g',
+                                'F-100 Therapeutic Milk (F100)')
     create_drug_and_link_to_set('Ready-to-Use Therapeutic Food (RUTF)', nru_set, 3, 'Sachet', 'Oral', 'Sachets')
 
     # Create malaria drugs and link to OTS and NRU sets
@@ -411,8 +413,12 @@ def create_nutrition_drugs
     puts "\n  Creating Potassium Permanganate..."
     create_drug_and_link_to_set('Potassium Permanganate(1% KMnO4)', antiseptic_set, 1, 'Solution', 'Topical', 'ml',
                                 'Potassium Permanganate medicinal')
-    Drug.find_by(name: 'Ferrous sulphate')&.update(concept_id: ConceptName.find_by(name: 'Ferrous sulfate')&.concept_id, dosage_form: get_dosage_form_concept('Tablet')&.concept_id, route: get_route_concept('Oral')&.concept_id, units: 'tabs')
-    Drug.find_by(name:'Tetracycline eye ointment 1%')&.update(concept_id: ConceptName.find_by(name: 'Tetracycline eye ointment 1%')&.concept_id, dosage_form: get_dosage_form_concept('Ointment')&.concept_id, route: get_route_concept('Topical')&.concept_id, units: 'g')
+    Drug.find_by(name: 'Ferrous sulphate')&.update(
+      concept_id: ConceptName.find_by(name: 'Ferrous sulfate')&.concept_id, dosage_form: get_dosage_form_concept('Tablet')&.concept_id, route: get_route_concept('Oral')&.concept_id, units: 'tabs'
+    )
+    Drug.find_by(name: 'Tetracycline eye ointment 1%')&.update(
+      concept_id: ConceptName.find_by(name: 'Tetracycline eye ointment 1%')&.concept_id, dosage_form: get_dosage_form_concept('Ointment')&.concept_id, route: get_route_concept('Topical')&.concept_id, units: 'g'
+    )
     puts "\n" + '=' * 80
     puts 'Successfully created all IMPOW nutrition drugs and concept sets!'
     puts '=' * 80
