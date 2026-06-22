@@ -67,9 +67,11 @@ db/lims_metadata/*.json
 .claude
 vendor_bk
 
+# Local credentials for the MySQL-to-TiDB direct migration script
+/.env.tidb-migration
+
 # Ignore json files under hts_metadata
 db/hts_metadata/*.json
 
 # f bups
 db/data/facilities/backups/
-

@@ -1,0 +1,8 @@
+# Local Docker Desktop profile. Keep TiKV below the VM-wide memory ceiling so
+# bulk imports leave room for TiDB, PD, Prometheus, and TiFlash.
+memory-usage-limit = "4GiB"
+memory-usage-high-water = 0.8
+
+[storage.block-cache]
+capacity = "2GiB"
+strict-capacity-limit = true

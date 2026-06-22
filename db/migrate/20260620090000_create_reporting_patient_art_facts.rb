@@ -37,6 +37,42 @@ class CreateReportingPatientArtFacts < ActiveRecord::Migration[8.1]
 
   def create_tidb_views
     execute <<~SQL
+      CREATE OR REPLACE SQL SECURITY INVOKER VIEW all_person_addresses AS
+      SELECT address.person_address_id,
+             address.person_id,
+             address.preferred,
+             address.address1,
+             address.address2,
+             address.city_village,
+             address.state_province,
+             address.postal_code,
+             address.country,
+             address.latitude,
+             address.longitude,
+             address.creator,
+             address.date_created,
+             address.voided,
+             address.voided_by,
+             address.date_voided,
+             address.void_reason,
+             address.county_district,
+             address.neighborhood_cell,
+             address.region,
+             address.subregion,
+             address.township_division,
+             address.uuid
+      FROM person_address address
+      INNER JOIN (
+        SELECT person_id, MAX(person_address_id) AS person_address_id
+        FROM person_address
+        WHERE voided = 0
+          AND person_id IS NOT NULL
+        GROUP BY person_id
+      ) latest ON latest.person_address_id = address.person_address_id
+      WHERE address.voided = 0
+    SQL
+
+    execute <<~SQL
       CREATE OR REPLACE SQL SECURITY INVOKER VIEW earliest_start_date AS
       SELECT facts.patient_id,
              person.gender,

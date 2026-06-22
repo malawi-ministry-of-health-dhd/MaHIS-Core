@@ -33,8 +33,10 @@ services:
       - --data-dir=/data/tikv
       - --pd=pd:2379
       - --status-addr=0.0.0.0:20180
+      - --config=/etc/tikv/tikv.toml
       - --log-file=
     volumes:
+      - ./tikv.toml:/etc/tikv/tikv.toml:ro
       - tikv-data:/data/tikv
 
   tidb:

@@ -8,6 +8,10 @@ The TiDB schema bootstrap skips the stored-routine block without deleting it fro
 
 The repository includes a persistent, single-replica TiDB 8.5.6 cluster for development and migration validation. It is not a production topology.
 
+The local TiKV profile is capped at 4 GiB with a 2 GiB strict block cache so a
+bulk import does not consume the entire Docker Desktop VM. Production TiKV
+memory sizing must be based on dedicated host capacity instead of this profile.
+
 ```bash
 docker compose -f docker/tidb/compose.yml up -d
 docker compose -f docker/tidb/compose.yml ps
@@ -146,6 +150,29 @@ The next routine families to port are `disaggregated_age_group`, `patient_curren
 ## Migrate an existing MySQL database
 
 Use TiDB Data Migration for full plus incremental replication, or Dumpling and TiDB Lightning for a controlled offline import. Do not use `bin/emr_to_mahis_migrator.rb` as the transport for a whole production database.
+
+For a maintenance-window migration where all source writers can remain stopped,
+`bin/mysql_to_tidb_direct_dump.sh` creates a compressed snapshot, imports it into
+an empty TiDB database, and compares exact row counts. It deliberately excludes
+stored routines, triggers, and events. Run `bin/mysql_to_tidb_direct_dump.sh
+--help` for its required environment variables. The target database is never
+dropped or overwritten by the script. Copy `.env.tidb-migration.example` to
+the ignored `.env.tidb-migration`, then run it with `ENV_FILE=.env.tidb-migration
+bin/mysql_to_tidb_direct_dump.sh`. When `TARGET_ADMIN_USERNAME` is configured,
+the script uses that account only to create the empty target database and grant
+the scoped import user; otherwise, those privileges must already exist. The
+local environment can set `LOCAL_TIFLASH_CONTAINER=mahis-tidb-tiflash` to pause
+TiFlash during the bulk import and avoid exhausting Docker Desktop memory. Do
+not set that option for production or non-Docker TiDB clusters. The default
+`EXCLUDED_TABLE_DATA=immunization_cache_data` preserves that table's schema but
+omits its rebuildable JSON cache rows, which can exceed TiDB's default 6 MiB
+single-entry limit. Exact row verification reports this exclusion explicitly.
+`STRIP_DEFINERS=true` removes source-only MySQL account clauses such as
+`DEFINER=petros@localhost` from views while retaining their SQL and security
+mode, avoiding a requirement for the TiDB import user to have `SUPER`.
+The local environment enables `DROP_TARGET_ON_FAILURE=true` so a failed import
+does not leave a partial database that blocks the next rehearsal. Keep this off
+in production when the failed target must be retained for investigation.
 
 1. Run a compatibility check against a production schema snapshot.
 2. Import schema and data into a non-production TiDB cluster.
