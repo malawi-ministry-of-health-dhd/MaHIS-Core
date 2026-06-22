@@ -2,10 +2,25 @@ module NcdService
   module Reports
     class NcdDashboard
       def self.find_report(start_date:, end_date:, **extra_kwargs)
+        couch_report = NcdService::Reports::CouchDashboard.find_report(
+          start_date: start_date,
+          end_date: end_date,
+          **extra_kwargs
+        )
+        return couch_report if couch_report.present?
+
         new.find_report(start_date: start_date, end_date: end_date, sections: extra_kwargs[:sections], **extra_kwargs.except(:sections))
       end
 
       def find_report(start_date:, end_date:, sections: nil, **_kwargs)
+        couch_report = NcdService::Reports::CouchDashboard.find_report(
+          start_date: start_date,
+          end_date: end_date,
+          sections: sections,
+          **_kwargs
+        )
+        return couch_report if couch_report.present?
+
         @start_date = start_date
         @end_date = end_date
         @sections = sections || ['all']
