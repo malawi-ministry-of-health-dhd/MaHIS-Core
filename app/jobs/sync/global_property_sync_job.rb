@@ -25,13 +25,18 @@ module Sync
     end
 
     def build_document(gp)
+      # Use deterministic _id based on location and property to match frontend behavior
+      # and prevent duplicates when syncing the same property multiple times
+      property_key = gp.property.to_s.gsub('_', '__').gsub('.', '_')
+      location_id = gp.location_id || 'unknown_location'
+
       {
-        '_id'            => "global_property_#{gp.uuid}",
-        'property'       => gp.property.to_s,
+        '_id' => "global_property_#{location_id}_#{property_key}",
+        'property' => gp.property.to_s,
         'property_value' => gp.property_value,
-        'description'    => gp.description,
-        'location_id'    => gp.location_id,
-        'uuid'           => gp.uuid
+        'description' => gp.description,
+        'location_id' => location_id.to_s,
+        'uuid' => gp.uuid
       }
     end
   end

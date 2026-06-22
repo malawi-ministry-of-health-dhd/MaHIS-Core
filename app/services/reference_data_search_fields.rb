@@ -114,24 +114,16 @@ module ReferenceDataSearchFields
   def ensure_couchdb_indexes!(db_url, db_name, logger: Rails.logger, force: false)
     return if db_url.blank?
     return unless supported_database?(db_name)
-    return if @indexed_databases[[db_url, db_name.to_s]] && !force
 
-    COUCHDB_INDEXES.fetch(db_name.to_s, []).each do |definition|
-      RestClient.post(
-        "#{db_url}/_index",
-        {
-          type: 'json',
-          name: definition[:name],
-          ddoc: definition[:name],
-          index: { fields: definition[:fields] }
-        }.to_json,
-        { content_type: :json, accept: :json }
-      )
-    rescue StandardError => e
-      logger&.warn("Could not create CouchDB #{db_name} index #{definition[:name]}: #{e.message}")
-    end
-
-    @indexed_databases[[db_url, db_name.to_s]] = true
+    CouchdbIndexEnsurer.ensure!(
+      db_url,
+      COUCHDB_INDEXES.fetch(db_name.to_s, []),
+      cache: @indexed_databases,
+      cache_key: [db_url, db_name.to_s],
+      logger:,
+      force:,
+      label: "CouchDB #{db_name}"
+    )
   end
 
   def normalize_text(value)

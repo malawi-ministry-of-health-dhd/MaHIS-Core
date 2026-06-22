@@ -119,6 +119,10 @@ class ReportService
     engine(@program).cohort_report_drill_down(id)
   end
 
+  def cohort_report_raw_data(start_date, end_date, **kwargs)
+    engine(@program).cohort_report_raw_data(start_date, end_date, **kwargs)
+  end
+
   def regimen_switch(start_date, end_date, pepfar, **kwargs)
     engine(@program).regimen_switch(start_date, end_date, pepfar, **kwargs)
   end
@@ -258,11 +262,24 @@ class ReportService
     kwargs[:user] = User.current.user_id
     kwargs[:location_id] = Location.current.location_id
 
+    clazzname = engine(@program).class.to_s
+    # Location-scoped reservation key — prevents any cohort job at this location
+    # from being enqueued while another is already running or reserved.
+    # TTL of 5 minutes covers the enqueue→job-start window; the job sets its own
+    # longer-lived execution lock (name-scoped) inside ReportJob#perform.
+    location_lock_key = "report_job:reserved:#{clazzname}:#{kwargs[:location_id]}"
+    reserved = Sidekiq.redis { |r| r.set(location_lock_key, kwargs[:name].to_s, nx: true, ex: 300) }
+    unless reserved
+      running_for = Sidekiq.redis { |r| r.call("GET", location_lock_key) }
+      LOGGER.info("ReportJob: skipping enqueue for #{clazzname}(#{kwargs[:name]}) — location #{kwargs[:location_id]} already building '#{running_for}'")
+      return
+    end
+
     LOGGER.debug("Queueing #{kwargs['type']} report: #{kwargs}")
     if @immediate_mode
-      ReportJob.perform_now(engine(@program).class.to_s, **kwargs)
+      ReportJob.perform_now(clazzname, **kwargs)
     else
-      ReportJob.perform_later(engine(@program).class.to_s, **kwargs)
+      ReportJob.perform_later(clazzname, **kwargs)
     end
   end
 end

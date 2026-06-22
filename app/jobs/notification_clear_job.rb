@@ -6,11 +6,16 @@ class NotificationClearJob < ApplicationJob
 
   def perform
     lab = User.find_by(username: 'lab_daemon')
-    NotificationAlert.where('date_to_expire < ?', Time.now).each do |alert|
-      # update the notification alert to read
-      alert.update!(alert_read: true, changed_by: lab)
-      # update the notification alert recipient to cleared
-      alert.notification_alert_recipients.update_all(cleared: true, alert_read: true)
-    end
+    expired_alert_ids = NotificationAlert.unscoped
+                                         .where(alert_read: 0)
+                                         .where('date_to_expire < ?', Time.current)
+                                         .pluck(:alert_id)
+    return if expired_alert_ids.empty?
+
+    alert_updates = { alert_read: true, date_changed: Time.current }
+    alert_updates[:changed_by] = lab.user_id if lab
+
+    NotificationAlert.unscoped.where(alert_id: expired_alert_ids).update_all(alert_updates)
+    NotificationAlertRecipient.unscoped.where(alert_id: expired_alert_ids).update_all(cleared: true, alert_read: true)
   end
 end

@@ -8,10 +8,10 @@ module Api
       DEFAULT_ROLENAME = 'clerk'
       include PasswordPolicy
 
-      skip_before_action :authenticate, only: %i[login reset_password]
+      skip_before_action :authenticate, only: %i[login confirm_supervision reset_password]
 
       def index
-        filters = params.permit(:role, :search_string, :include_deactivated).to_hash.transform_keys(&:to_sym)
+        filters = params.permit(:role, :search_string, :include_deactivated, :location_id, location_ids: []).to_hash.transform_keys(&:to_sym)
         query = service.find_users(**filters) 
 
         render json: {
@@ -27,6 +27,7 @@ module Api
       def update_username
         new_username, = params.require(%i[new_username])
         target_user = find_user(params[:id] || params[:user_id])  # uses find_user which unscopes
+        return unless validate_sensitive_user_update(target_user, %i[username])
         return unless validate_username(new_username)
         updated = UserService.update_username(target_user, new_username)
         render json: { message: ['username updated successfully'], user: updated }
@@ -68,19 +69,26 @@ module Api
                                       roles: [], programs: []
 
         # Force programs through since permit can silently drop integer arrays
-        update_params[:programs] = params[:programs].map(&:to_i) if params.key?(:programs)
+        update_params[:programs] = UserService.normalize_program_ids(params[:programs]) if params.key?(:programs)
+
+        # Reject unknown/retired program ids up-front so the update never deletes
+        # existing assignments only to silently fail to recreate them.
+        return if params.key?(:programs) && !validate_programs_existance(update_params[:programs])
 
         return unless validate_roles(update_params[:roles])
         return unless validate_role_permissions(update_params[:roles])
+
+        target_user = find_user(params[:id])
+        return unless validate_sensitive_user_update(target_user, sensitive_update_fields(update_params))
 
         if update_params[:location_id] && !validate_location(update_params[:location_id])
           return
         end
 
-        user = UserService.update_user find_user(params[:id]), update_params
+        user = UserService.update_user target_user, update_params
 
         if user.errors.empty?
-          update_last_password_property(user.id, update_params[:password])
+          update_last_password_property(user, update_params[:password])
           render json: user, status: :ok
         else
           render json: user.errors, status: :bad_request
@@ -98,43 +106,104 @@ module Api
         login_params, error = required_params required: %i[username password]
         return render json: login_params, status: :bad_request if error
 
-        api_key = UserService.login(login_params[:username], login_params[:password])
+        user = UserService.authenticate_credentials(login_params[:username], login_params[:password])
         
-        if api_key.nil?
+        if user.nil?
           render json: { errors: ['Invalid user or password'] }, status: :unauthorized
         else
-          user = User.find_by(username: login_params[:username])
-          facility_level = user ? facility_level_for_location(user.location_id) : nil
-          
-          if user
-            # Check if this is first time login BEFORE updating
-            # Check both existence and that the value is not blank
-            existing_property = UserProperty.find_by(
-              property: 'last_login_time',
-              user_id: user.user_id
-            )
-            
-            is_first_time = existing_property.nil? || existing_property.property_value.blank?
-            
-            # Update or create the last_login_time property
-            property = UserProperty.find_or_initialize_by(
-              property: 'last_login_time',
-              user_id: user.user_id
-            )
-            
-            property.property_value = Time.current.iso8601
-            property.save
-            
-            render json: { 
-              authorization: api_key,
-              facility_level: facility_level,
-              first_time_login: is_first_time,
-              password_needs_update: password_needs_update?(user.user_id)
-            }
+          password_response = LoginResponseService.build(user, nil, mark_login: false)
+          if password_change_required?(password_response)
+            return render json: LoginResponseService.build(user, UserService.new_authentication_token(user))
+          end
+
+          supervision_response = LoginResponseService.build(user, UserService.new_authentication_token(user), mark_login: false)
+          if supervision_response[:supervision_required]
+            return render json: supervision_response, status: :accepted
+          end
+
+          if extra_security_login_enabled?(user)
+            if PasskeyAuthenticationService.required_for?(user)
+              passkey_challenge = PasskeyAuthenticationService.authentication_options(user)
+              render json: {
+                passkey_authentication_required: true,
+                passkey_session: passkey_challenge[:session_token],
+                public_key: passkey_challenge[:options]
+              }, status: :accepted
+            else
+              passkey_challenge = PasskeyAuthenticationService.registration_options(user)
+              render json: {
+                passkey_registration_required: true,
+                passkey_session: passkey_challenge[:session_token],
+                public_key: passkey_challenge[:options]
+              }, status: :accepted
+            end
           else
-            render json: { authorization: api_key, facility_level: facility_level }
+            render json: LoginResponseService.build(user, UserService.new_authentication_token(user)), status: :ok
           end
         end
+      end
+
+      def confirm_supervision
+        login_params, error = required_params required: %i[username password]
+        return render json: login_params, status: :bad_request if error
+
+        username           = login_params[:username]
+        password           = login_params[:password]
+        supervisor_user_id = params[:supervisor_user_id]
+        user = UserService.authenticate_credentials(username, password)
+        return render json: { errors: ['Invalid user or password'] }, status: :unauthorized if user.nil?
+
+        password_response = LoginResponseService.build(user, nil, mark_login: false)
+        if password_change_required?(password_response)
+          return render json: LoginResponseService.build(
+            user,
+            UserService.new_authentication_token(user),
+            require_supervision: false
+          )
+        end
+
+        requirement = LoginResponseService.supervision_requirement(user)
+        return render json: { errors: ['Supervision is not required for this user'] }, status: :bad_request if requirement.nil?
+
+        supervision_session = nil
+        if supervisor_user_id.present?
+          supervisor = User.with_authentication_preloads.find(supervisor_user_id)
+          unless LoginResponseService.valid_supervisor?(user, supervisor, requirement)
+            return render json: { errors: ['Selected supervisor is not valid for this user'] }, status: :forbidden
+          end
+
+          supervision_session = LoginResponseService.record_supervision!(user, supervisor, requirement)
+        elsif !requirement[:optional]
+          # A supervisor is mandatory for non-optional trainee roles.
+          return render json: { errors: ['A supervisor must be selected'] }, status: :bad_request
+        end
+
+        if extra_security_login_enabled?(user)
+          if PasskeyAuthenticationService.required_for?(user)
+            passkey_challenge = PasskeyAuthenticationService.authentication_options(user)
+            return render json: {
+              passkey_authentication_required: true,
+              passkey_session: passkey_challenge[:session_token],
+              public_key: passkey_challenge[:options]
+            }, status: :accepted
+          end
+
+          passkey_challenge = PasskeyAuthenticationService.registration_options(user)
+          return render json: {
+            passkey_registration_required: true,
+            passkey_session: passkey_challenge[:session_token],
+            public_key: passkey_challenge[:options]
+          }, status: :accepted
+        end
+
+        response = LoginResponseService.build(
+          user,
+          UserService.new_authentication_token(user),
+          require_supervision: false
+        )
+        response[:supervision_session] = supervision_session if supervision_session
+
+        render json: response, status: :ok
       end
 
       def check_first_time_login
@@ -187,6 +256,8 @@ module Api
 
       # GET
       def activate
+        return unless validate_sensitive_user_update(user, %i[status])
+
         if UserService.activate_user(user)
           render json: { message: ['User activated'], user: }
         else
@@ -196,6 +267,8 @@ module Api
 
       # Deactivates user
       def deactivate
+        return unless validate_sensitive_user_update(user, %i[status])
+
         if UserService.deactivate_user(user)
           render json: { message: ['User de-activated'], user: }
         else
@@ -205,7 +278,10 @@ module Api
 
       def update_user_villages
         update_params = params.permit user_village_ids: []
-        user_villages = UserService.update_user_villages(user, update_params[:user_village_ids])
+        target_user = user
+        return unless validate_sensitive_user_update(target_user, %i[villages])
+
+        user_villages = UserService.update_user_villages(target_user, update_params[:user_village_ids])
         render json: { villages: user_villages }, status: :ok
       rescue => e
         render json: { errors: [e.message] }, status: :internal_server_error
@@ -233,6 +309,19 @@ module Api
 
       private
 
+      def login_response(user, api_key)
+        LoginResponseService.build(user, api_key)
+      end
+
+      def password_change_required?(login_response)
+        login_response[:first_time_login] || login_response[:password_needs_update]
+      end
+
+      def extra_security_login_enabled?(user)
+        property = UserProperty.find_by(user_id: user.user_id, property: 'extra_security_login')
+        property&.property_value&.downcase == 'true'
+      end
+
       def validate_roles(roles)
         if roles && !roles.respond_to?(:each)
           render json: ['`roles` must be an array'], status: :bad_request
@@ -243,6 +332,14 @@ module Api
       end
 
       PROTECTED_ROLES = %w[Superuser Global\ Superuser District\ Superuser Facility\ Superuser].freeze
+      # Only a Global Superuser may grant these roles
+      GLOBAL_ONLY_ROLES = ['Global Superuser', 'District Superuser'].freeze
+      SUPERUSER_ROLE_RANK = {
+        'facility superuser' => 1,
+        'district superuser' => 2,
+        'superuser' => 3,
+        'global superuser' => 4
+      }.freeze
 
       def validate_role_permissions(roles)
         return true if roles.blank?
@@ -250,13 +347,49 @@ module Api
         roles.each do |role|
           next unless PROTECTED_ROLES.any? { |pr| pr.casecmp(role.to_s).zero? }
 
-          unless User.current.global_superuser?
-            render json: { errors: ["You are not authorised to assign the '#{role}' role"] }, status: :forbidden
-            return false
+          # Global Superusers may assign any protected role
+          next if User.current.global_superuser?
+
+          # Plain Superusers may assign any protected role except Global Superuser
+          if User.current.is_superuser?
+            next unless GLOBAL_ONLY_ROLES.any? { |gr| gr.casecmp(role.to_s).zero? }
           end
+
+          render json: { errors: ["You are not authorised to assign the '#{role}' role"] }, status: :forbidden
+          return false
         end
 
         true
+      end
+
+      def sensitive_update_fields(update_params)
+        %i[password roles programs location_id].select { |key| update_params.key?(key) }
+      end
+
+      def validate_sensitive_user_update(target_user, fields)
+        return true if fields.blank?
+        return true if can_manage_sensitive_user?(target_user)
+
+        render json: {
+          errors: ["You are not authorised to update #{fields.join(', ')} for this user"]
+        }, status: :forbidden
+        false
+      end
+
+      def can_manage_sensitive_user?(target_user)
+        current_rank = superuser_rank(User.current)
+        target_rank = superuser_rank(target_user)
+
+        current_rank == SUPERUSER_ROLE_RANK['global superuser'] || target_rank.zero? || current_rank > target_rank
+      end
+
+      def superuser_rank(user)
+        return 0 unless user
+
+        user.roles.map(&:role).reduce(0) do |highest_rank, role_name|
+          rank = SUPERUSER_ROLE_RANK[role_name.to_s.strip.downcase] || 0
+          [highest_rank, rank].max
+        end
       end
 
       def validate_username(username)
@@ -276,12 +409,14 @@ module Api
       private
 
       def find_user(id)
+        users = User.with_serialization_preloads
+
         if User.current.global_superuser?
-          User.unscope(where: :location_id).find(id)
+          users.unscope(where: :location_id).find(id)
         elsif User.current.district_superuser?
-          User.unscope(where: :location_id).where(location_id: User.current.managed_location_ids).find(id)
+          users.unscope(where: :location_id).where(location_id: User.current.managed_location_ids).find(id)
         else
-          User.find(id)
+          users.find(id)
         end
       end
 
@@ -309,7 +444,7 @@ module Api
 
       # validate program
       def validate_programs_existance(programs)
-        programs.each do |program_id|
+        UserService.normalize_program_ids(programs).each do |program_id|
           next if Program.find_by(program_id:)
 
           errors = ['All Programs must exists']
@@ -318,14 +453,19 @@ module Api
         end
       end
 
-      def update_last_password_property(user_id, password)
+      def update_last_password_property(user, password)
         return unless password.present?
-        
+
         property = UserProperty.find_or_initialize_by(
           property: 'last_password_updated',
-          user_id: user_id
+          user_id: user.user_id
         )
-        
+
+        # Bind the loaded object so the required belongs_to :user validation is
+        # satisfied from memory; passing only user_id would re-query User under
+        # its location/active scope and silently fail to save for a user managed
+        # from another facility (find_user unscopes location for superusers).
+        property.user = user
         property.property_value = Time.current.to_s
         property.save
       end

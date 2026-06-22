@@ -53,9 +53,13 @@ module PasswordPolicy
 
     while pass_count <= 6
       if !passwords_properties.include?("last_used_password_#{pass_count}")
+        # Pass the loaded `user` object (not user_id): UserProperty belongs_to
+        # :user is required and would re-query User under its location/active
+        # scope, silently dropping this password-history row for a user managed
+        # from another facility (validate_password loads via User.unscoped).
         UserProperty
           .create(
-            user_id: user.id,
+            user:,
             property: "last_used_password_#{pass_count}",
             property_value: UserService.hash_password(params[:password], user.salt),
           )

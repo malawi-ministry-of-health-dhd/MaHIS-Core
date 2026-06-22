@@ -15,6 +15,14 @@ module ExceptionHandler
       render json: { errors: [e.message] }, status: :bad_request
     end
 
+    # Without this, an unhandled RecordInvalid still maps to 422 (Rails default)
+    # but with an empty body, so clients only see a generic "Unprocessable
+    # Entity". Surface the actual validation messages instead.
+    rescue_from ActiveRecord::RecordInvalid do |e|
+      log_exception(e)
+      render json: { errors: e.record.errors.full_messages }, status: :unprocessable_entity
+    end
+
     rescue_from ApplicationError do |e|
       render json: { errors: [e.message] }, status: :internal_server_error
     end

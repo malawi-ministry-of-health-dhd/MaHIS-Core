@@ -25,6 +25,9 @@ gem 'puma', '~> 6.3'
 # Use Json Web Token (JWT) for token based authentication
 gem 'jwt'
 
+# WebAuthn/passkey verification for device-bound user authentication
+gem 'webauthn'
+
 # Use the browser gem to get browser information
 gem 'browser'
 
@@ -56,7 +59,7 @@ gem 'rswag-api'
 gem 'rswag-ui'
 
 gem 'emr_ohsp_interface', '~> 3.0.1'
-gem 'his_emr_api_lab', '= 2.3.3'
+gem 'his_emr_api_lab', '= 2.3.8'
 # gem 'his_emr_api_lab', path: '../his_emr_api_lab'
 gem 'his_emr_api_radiology', '~> 2.0.0'
 

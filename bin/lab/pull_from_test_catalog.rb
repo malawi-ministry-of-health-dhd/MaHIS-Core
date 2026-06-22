@@ -8,7 +8,7 @@ Rails.logger = Logger.new($stdout)
 ActiveRecord::Base.logger = Rails.logger
 user = User.find_by(username: 'admin')
 User.current = user.present? ? user : User.unscoped.where(retired: 0).first
-TEST_CATALOG_VERSION = 'v12'
+TEST_CATALOG_VERSION = 'v14'
 
 def consolelog(text)
   puts "\n=======================================================\n"
@@ -47,7 +47,7 @@ def fetch_test_catalog
     'Accept' => 'application/json'
   }
 
-  consolelog 'Getting test catalog from LIMS'
+  consolelog "Getting test catalog version #{TEST_CATALOG_VERSION} from LIMS"
 
   uri = URI(url + "/v2/test_catalog/#{TEST_CATALOG_VERSION}")
 

@@ -15,12 +15,13 @@ require 'sidekiq/api'
 class SyncDashboard
   REFRESH_SECONDS = 0.5
   IDLE_EXIT_SECONDS = 120 # stop if nothing moves and no index is building
+  STALL_WARN_SECONDS = 15 # warn (but keep watching) if work is queued yet nothing is processing it
 
-  # Left (dataset) column geometry.
+  # Left (dataset) column geometry. Compact since each row is now a small dot
+  # plus a percentage rather than a full-width bar.
   DS_NAME_WIDTH = 28
-  DS_BAR_WIDTH = 12
   DS_COUNT_WIDTH = 13
-  LEFT_WIDTH = 90
+  LEFT_WIDTH = 62
 
   # Right (index) column geometry.
   IDX_NAME_WIDTH = 26
@@ -33,9 +34,12 @@ class SyncDashboard
   DIVIDER = ' │ '
   FILLED = '█'
   EMPTY  = '░'
+  DOT    = '●'
 
   BOLD = "\e[1m"
   GREEN = "\e[32m"
+  YELLOW = "\e[33m"
+  RED = "\e[31m"
   RESET = "\e[0m"
   ANSI = /\e\[[0-9;]*m/.freeze
 
@@ -96,10 +100,36 @@ class SyncDashboard
     tasks = index_tasks
     track_activity(rows, tasks)
 
-    lines = [header(rows), '']
+    lines = [header(rows)]
+    lines.concat(warning_lines)
+    lines << ''
     lines.concat(zip_columns(dataset_block(rows), index_block(tasks)))
     lines = clamp_width(lines)
     limit_height ? clamp_height(lines) : lines
+  end
+
+  # A banner shown when a sync should be progressing but isn't — the usual cause
+  # of a dashboard stuck at "0/0 … waiting for sync jobs to start". Distinguishes
+  # the failure modes so the fix is obvious.
+  def warning_lines
+    return [] unless stalled?
+
+    if !sidekiq_running?
+      [warn_text('⚠ No Sidekiq worker detected — queued jobs will not run. Start one with:'),
+       warn_text('    bundle exec sidekiq -C config/sidekiq.yml')]
+    elsif busy_sync_workers?
+      [warn_text('⚠ A sync job has been running with no progress — it may be stuck (often'),
+       warn_text('    CouchDB unreachable). Check `rails sync:doctor` and the Sidekiq log.')]
+    elsif sync_jobs_pending?
+      [warn_text('⚠ Jobs are queued but no worker is processing them — is Sidekiq listening to'),
+       warn_text('    batch_sync, patient_sync, sync_offline_data?   Run `rails sync:doctor`.')]
+    elsif !@seen_tables
+      [warn_text('⚠ Nothing is queued or running and nothing has synced — enqueues may have been'),
+       warn_text('    dropped (stale locks). Run `rails sync:doctor`, then `rails sync:clear_locks`.')]
+    else
+      [warn_text('⚠ A dataset is still marked “syncing” but no worker is processing it — the job'),
+       warn_text('    likely ended without reporting completion. Re-run or check `rails sync:doctor`.')]
+    end
   end
 
   def header(rows)
@@ -115,8 +145,10 @@ class SyncDashboard
     if rows.empty?
       lines << '  (waiting for sync jobs to start…)'
     else
-      # A blank line below each bar for breathing room (the divider continues).
-      rows.each { |r| lines << dataset_line(r) << '' }
+      # One line per dataset (no blank spacer): with ~30 datasets the spacer
+      # doubled the height and pushed the still-running rows off the top of the
+      # terminal in the final repaint.
+      rows.each { |r| lines << dataset_line(r) }
     end
     lines
   end
@@ -126,7 +158,7 @@ class SyncDashboard
     if tasks.empty?
       lines << '  (none building)'
     else
-      tasks.sort_by(&:label).each { |t| lines << index_line(t) << '' }
+      tasks.sort_by(&:label).each { |t| lines << index_line(t) }
     end
     lines
   end
@@ -146,7 +178,21 @@ class SyncDashboard
     ratio = total.positive? ? [done.to_f / total, 1.0].min : (row[:status] == 'done' ? 1.0 : 0.0)
     status = row[:status] == 'running' ? 'syncing' : row[:status]
     counts = "#{done}/#{total}"
-    "  #{cell(row[:type], DS_NAME_WIDTH)} #{bar(ratio, DS_BAR_WIDTH)} #{pct(ratio)}  #{counts.ljust(DS_COUNT_WIDTH)} #{status}"
+    "  #{status_dot(row[:status])} #{cell(row[:type], DS_NAME_WIDTH)} #{pct(ratio)}  #{counts.ljust(DS_COUNT_WIDTH)} #{status}"
+  end
+
+  # Compact status indicator: a small coloured dot instead of a full progress bar
+  # (green = done, yellow = syncing, red = failed). The percentage still conveys
+  # partial progress for in-flight datasets.
+  def status_dot(status)
+    return DOT unless @tty
+
+    color = case status
+            when 'done' then GREEN
+            when 'failed' then RED
+            else YELLOW
+            end
+    "#{color}#{DOT}#{RESET}"
   end
 
   def index_line(task)
@@ -194,6 +240,10 @@ class SyncDashboard
 
   def bold(text)
     @tty ? "#{BOLD}#{text}#{RESET}" : text
+  end
+
+  def warn_text(text)
+    @tty ? "#{YELLOW}#{text}#{RESET}" : text
   end
 
   # ---- screen control ------------------------------------------------------
@@ -302,18 +352,69 @@ class SyncDashboard
   end
 
   def idle_timed_out?
-    CouchdbIndexProgress.idle? && (monotonic - @last_change_at) > @idle_exit
+    # Keep watching while CouchDB is indexing or a sync worker is actively running
+    # a job (a long patient fan-out can go a while between progress ticks). Only
+    # give up after a sustained quiet period. Crucially this still exits when
+    # Sidekiq is down or not consuming the sync queues — jobs queued with no busy
+    # worker — instead of hanging forever on "waiting for sync jobs to start".
+    return false unless CouchdbIndexProgress.idle?
+    return false if busy_sync_workers?
+
+    (monotonic - @last_change_at) > @idle_exit
+  end
+
+  # True when a sync should be moving but hasn't for a sustained period — drives
+  # the on-screen warning. Fires when, after the grace period and with no index
+  # building, there has been no progress AND either nothing is processing the
+  # work, a worker is stuck (busy but never registered any dataset), or nothing
+  # ever registered at all.
+  def stalled?
+    return false if (monotonic - @started_at) < STALL_WARN_SECONDS
+    return false unless CouchdbIndexProgress.idle?
+    # Once any dataset has completed, the sync is clearly working — don't flash a
+    # warning during the normal finalize tail (the patient index-build poller is
+    # "scheduled", which otherwise looks like queued-but-unprocessed work). The
+    # end-of-run summary reports any stragglers instead.
+    return false if any_completed?
+    return false unless (monotonic - @last_change_at) > STALL_WARN_SECONDS
+
+    !busy_sync_workers? || !@seen_tables
+  end
+
+  def any_completed?
+    SyncProgress.snapshot.any? { |row| %w[done failed].include?(row[:status]) }
+  end
+
+  def sidekiq_running?
+    Sidekiq::ProcessSet.new.size.positive?
+  rescue StandardError
+    false
   end
 
   def print_summary
     rows = SyncProgress.snapshot
     done = rows.count { |r| r[:status] == 'done' }
     failed = rows.select { |r| r[:status] == 'failed' }
+    unfinished = rows.reject { |r| %w[done failed].include?(r[:status]) }
+                     .sort_by { |r| r[:type].to_s }
     @output.puts
-    @output.puts "Progress watch interrupted (sync continues in the background)." if @interrupted
+    @output.puts 'Progress watch interrupted (sync continues in the background).' if @interrupted
     @output.puts bold("Sync state: #{done}/#{rows.size} datasets done.")
-    failed.each { |r| @output.puts "  failed  #{r[:type]}: #{r[:message]}" }
+    failed.each { |r| @output.puts "  failed   #{r[:type]}: #{r[:message]}" }
+    # Always name the still-running datasets explicitly — they sort to the top of
+    # the live frame and can scroll off, so this is the reliable place to see them.
+    unless unfinished.empty?
+      @output.puts "  still syncing (#{unfinished.size}):"
+      unfinished.each { |r| @output.puts "    #{r[:type].to_s.ljust(DS_NAME_WIDTH)} #{r[:done]}/#{r[:total]} (#{r[:status]})" }
+    end
     @output.puts '  (timed out waiting for activity — sync may still be running)' if idle_timed_out? && !finished?
+
+    # If nothing ran, the most likely cause is no worker — say so explicitly.
+    if rows.empty? || (sync_jobs_pending? && !sidekiq_running?)
+      @output.puts
+      @output.puts warn_text('No Sidekiq worker is processing the sync queues.')
+      @output.puts '  Start one in another terminal:  bundle exec sidekiq -C config/sidekiq.yml'
+    end
   end
 
   def elapsed

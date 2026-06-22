@@ -60,10 +60,12 @@ module Sync
         end
       end
       
-      # Sync all patient records in one bulk operation to CouchDB
+      # Sync all patient records in one bulk operation to CouchDB. Progress for
+      # 'patients_records' is tracked from CouchDB's actual doc count by
+      # EnsurePatientIndexesJob (not per-batch increments), so a re-sync of
+      # already-present patients can't push the count past the real total.
       if patient_records.any?
         bulk_sync_patients_to_couchdb(patient_records)
-        SyncProgress.increment('patients_records', patient_records.count)
 
         duration = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_time
         records_per_sec = duration.positive? ? (patient_records.count / duration).round(2) : patient_records.count
@@ -106,8 +108,11 @@ module Sync
         prepare_bulk_document(record)
       end
 
-      # Use bulk sync from BaseSyncJob
-      bulk_result = bulk_sync_to_couchdb(documents, db_name, manage_indexes: false)
+      # Use bulk sync from BaseSyncJob. Skip the up-front _rev fetch: on the
+      # initial full load almost nothing exists yet, so posting straight away and
+      # resolving the rare conflicts in a second pass halves the CouchDB round
+      # trips per batch.
+      bulk_result = bulk_sync_to_couchdb(documents, db_name, manage_indexes: false, prefetch_revs: false)
       
       if bulk_result[:errors].any?
         Sidekiq.logger.error("Bulk sync had #{bulk_result[:errors].length} errors")

@@ -157,6 +157,7 @@ ActiveRecord::Base.establish_connection(
 )
 puts "✓ Connection pool configured: #{pool_size} connections, #{optimal_thread_count} threads"
 SITE_ID = get_validated_location_id(source_db)
+DEST_DB = ActiveRecord::Base.connection.current_database
 SITE_USER_MAPPING = Rails.root.join('log', "users_mapping_#{SITE_ID}.json")
 File.write(SITE_USER_MAPPING, '{}') unless File.exist?(SITE_USER_MAPPING)
 
@@ -220,9 +221,9 @@ REALTIME_MONITOR = {
 # Performance thresholds for auto-tuning
 PERFORMANCE_THRESHOLDS = {
   records_per_second_min: 100,
-  memory_usage_max: 85,
+  memory_usage_max: 92,   # Raised from 85: with swap=0 and large caches, 87-90% is normal during obs migration
   cpu_usage_max: 90,
-  critical_memory: 95,
+  critical_memory: 96,    # Raised from 95: trigger full GC only at true crisis
   critical_cpu: 95
 }
 
@@ -375,6 +376,25 @@ def ensure_migration_indexes(source_db)
   puts '=' * 80
 end
 
+# Create a lightweight table to track migration progress by SOURCE id per table.
+# This is the only reliable resume mechanism for multi-site harmonized DBs:
+#   - Target obs_ids are new auto-increments → cannot be used to locate source progress.
+#   - info_schema.tables.table_rows counts ALL sites → wrong for per-site offset.
+#   - This table records the highest SOURCE obs_id successfully batch-committed for this site.
+def ensure_migration_progress_table
+  ActiveRecord::Base.connection.execute(<<~SQL)
+    CREATE TABLE IF NOT EXISTS #{DEST_DB}.migration_progress (
+      table_name  VARCHAR(64)  NOT NULL,
+      last_source_id  BIGINT   NOT NULL DEFAULT 0,
+      updated_at  TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (table_name)
+    ) ENGINE=InnoDB
+  SQL
+  puts '✅ migration_progress tracking table ready'
+rescue StandardError => e
+  puts "⚠️  Could not create migration_progress table: #{e.message}"
+end
+
 # Load HIV patient IDs from source database for filtering
 def load_hiv_patient_ids(source_db)
   puts "\n🔍 Loading HIV program patient IDs from source..."
@@ -397,11 +417,11 @@ end
 def load_hiv_encounter_ids(source_db)
   puts '🔍 Loading HIV encounter IDs from source...'
 
-  # Get all encounters linked to HIV program
+  # Get all encounters linked to HIV program or with no program assigned
   result = ActiveRecord::Base.connection.execute(<<~SQL)
     SELECT DISTINCT encounter_id#{' '}
     FROM #{source_db}.encounter#{' '}
-    WHERE program_id = #{HIV_PROGRAM_ID}
+    WHERE program_id = #{HIV_PROGRAM_ID} OR program_id IS NULL
   SQL
 
   result.each do |row|
@@ -409,6 +429,87 @@ def load_hiv_encounter_ids(source_db)
   end
 
   puts "✓ Loaded #{HIV_ENCOUNTER_IDS.size} HIV encounter IDs"
+end
+
+# Pre-build a persistent HIV encounter IDs cache table in the target DB.
+# This eliminates the repeated inline subquery against the 11M-row mpc.encounter table
+# on every batch — turning O(n_batches * subquery_cost) into O(1) table creation + O(n_batches * index_lookup).
+def create_hiv_encounter_ids_cache(source_db)
+  conn = ActiveRecord::Base.connection
+
+  # Check if the cache table already exists and is populated — skip expensive rebuild on restart.
+  existing_count = begin
+    conn.select_value("SELECT COUNT(*) FROM #{DEST_DB}.hiv_enc_ids_cache").to_i
+  rescue StandardError
+    0
+  end
+
+  source_count = begin
+    conn.select_value(
+      "SELECT COUNT(DISTINCT encounter_id) FROM #{source_db}.encounter WHERE program_id = #{HIV_PROGRAM_ID} OR program_id IS NULL"
+    ).to_i
+  rescue StandardError
+    0
+  end
+
+  if existing_count > 0 && existing_count == source_count
+    puts "✅ HIV encounter IDs cache already populated: #{existing_count} IDs (skipping rebuild)"
+    return
+  end
+
+  puts "\n🔧 Building HIV encounter IDs cache table (#{existing_count} existing vs #{source_count} source)..."
+  start = Time.now
+  conn.execute("DROP TABLE IF EXISTS #{DEST_DB}.hiv_enc_ids_cache")
+  conn.execute(<<~SQL)
+    CREATE TABLE #{DEST_DB}.hiv_enc_ids_cache (
+      encounter_id INT NOT NULL,
+      PRIMARY KEY (encounter_id)
+    ) ENGINE=InnoDB ROW_FORMAT=COMPRESSED
+  SQL
+  conn.execute(<<~SQL)
+    INSERT INTO #{DEST_DB}.hiv_enc_ids_cache (encounter_id)
+    SELECT DISTINCT encounter_id FROM #{source_db}.encounter WHERE program_id = #{HIV_PROGRAM_ID} OR program_id IS NULL
+  SQL
+  count = conn.select_value("SELECT COUNT(*) FROM #{DEST_DB}.hiv_enc_ids_cache").to_i
+  puts "✅ HIV encounter IDs cache ready: #{count} IDs (#{(Time.now - start).round(1)}s)"
+rescue StandardError => e
+  puts "⚠️  Could not create hiv_enc_ids_cache: #{e.message} — falling back to inline subquery"
+end
+
+# Build a table of source HIV obs_ids whose UUIDs are NOT yet present in the target DB.
+# This is the correct multi-site resume mechanism: it uses UUID as the identity key,
+# which is stable across obs_id remapping and independent of how many other sites' obs
+# are already in the harmonized DB.
+#
+# Result: harmonized.obs_pending contains only the obs_ids still to be migrated.
+# Subsequent batch queries filter to obs_pending instead of the full source range.
+def build_obs_pending_table(source_db)
+  conn = ActiveRecord::Base.connection
+
+  puts "\n🔧 Building obs_pending table (UUID diff: source HIV obs vs target obs)..."
+  start = Time.now
+
+  conn.execute("DROP TABLE IF EXISTS #{DEST_DB}.obs_pending")
+  conn.execute(<<~SQL)
+    CREATE TABLE #{DEST_DB}.obs_pending (
+      obs_id INT NOT NULL,
+      PRIMARY KEY (obs_id)
+    ) ENGINE=InnoDB
+  SQL
+  conn.execute(<<~SQL)
+    INSERT INTO #{DEST_DB}.obs_pending (obs_id)
+    SELECT o.obs_id
+    FROM #{source_db}.obs o
+    INNER JOIN #{DEST_DB}.hiv_enc_ids_cache h ON h.encounter_id = o.encounter_id
+    LEFT JOIN #{DEST_DB}.obs t ON t.uuid = o.uuid
+    WHERE t.obs_id IS NULL
+  SQL
+  count = conn.select_value("SELECT COUNT(*) FROM #{DEST_DB}.obs_pending").to_i
+  puts "✅ obs_pending ready: #{count} obs still to migrate (#{(Time.now - start).round(1)}s)"
+  count
+rescue StandardError => e
+  puts "⚠️  Could not build obs_pending: #{e.message} — will fall back to full range scan with INSERT IGNORE"
+  -1
 end
 
 # Check if a table should be filtered for HIV program only
@@ -425,15 +526,16 @@ def build_hiv_filter_clause(table_name, source_db)
   when 'patient_identifier'
     "patient_id IN (SELECT DISTINCT patient_id FROM #{source_db}.patient_program WHERE program_id = #{HIV_PROGRAM_ID})"
   when 'encounter'
-    "program_id = #{HIV_PROGRAM_ID}"
+    "(program_id = #{HIV_PROGRAM_ID} OR program_id IS NULL)"
   when 'patient_state'
     # patient_state references patient_program_id, so we need to get HIV patient_program IDs
     # This is trickier - we'll filter this in populate_records instead
     nil
   when 'orders', 'obs'
-    "encounter_id IN (SELECT DISTINCT encounter_id FROM #{source_db}.encounter WHERE program_id = #{HIV_PROGRAM_ID})"
+    # Use pre-built cache table (O(index_lookup)) instead of inline subquery (O(11M rows * n_batches))
+    "encounter_id IN (SELECT encounter_id FROM #{DEST_DB}.hiv_enc_ids_cache)"
   when 'drug_order'
-    "order_id IN (SELECT o.order_id FROM #{source_db}.orders o JOIN #{source_db}.encounter e ON e.encounter_id = o.encounter_id WHERE e.program_id = #{HIV_PROGRAM_ID})"
+    "order_id IN (SELECT o.order_id FROM #{source_db}.orders o JOIN #{DEST_DB}.hiv_enc_ids_cache h ON h.encounter_id = o.encounter_id)"
   end
 end
 
@@ -846,6 +948,11 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
   table_name_str = table_name.to_s
 
   batch_size ||= DEFAULT_BATCH_SIZE
+  # Use smaller batches for large memory-intensive tables (reduces per-batch footprint and connection hold time).
+  # Override with OBS_BATCH_SIZE env var. Only applies when BATCH_SIZE not explicitly set.
+  if %w[obs drug_order].include?(table_name_str) && !ENV['BATCH_SIZE']
+    batch_size = (ENV['OBS_BATCH_SIZE'] || 10_000).to_i
+  end
   # Test mode: only process 10 records per table
   test_limit = ENV['TEST_MODE'] == 'true' ? 10 : nil
 
@@ -881,7 +988,44 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
   puts "🧪 TEST MODE: Limiting to #{test_limit} records per table" if test_limit
   puts "🔍 HIV FILTER: Processing #{total_records} HIV-related records from #{table_name_str}" if hiv_filter
   num_threads = test_limit ? 1 : optimal_threads
+  # Hard-cap threads for large memory-intensive tables to prevent RAM exhaustion.
+  # Override with OBS_THREADS env var (default 5).
+  if %w[obs drug_order].include?(table_name_str) && !test_limit
+    max_obs_threads = (ENV['OBS_THREADS'] || 5).to_i
+    num_threads = [num_threads, max_obs_threads].min
+    puts "🔒 Thread cap for #{table_name_str}: using #{num_threads} threads (max #{max_obs_threads})"
+  end
   puts "Using #{num_threads} threads for processing #{table_name_str}..."
+
+  # For obs: use obs_pending table (UUID-diff of source vs target) to restrict batch ranges
+  # to only unprocessed records. This is correct for multi-site harmonized DBs — it never
+  # relies on obs_id ordering, row counts, or any site-specific heuristics.
+  obs_pending_active = false
+  if table_name_str == 'obs'
+    pending_exists = begin
+      ActiveRecord::Base.connection.select_value(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='#{DEST_DB}' AND table_name='obs_pending'"
+      ).to_i > 0
+    rescue StandardError; false
+    end
+
+    if pending_exists
+      pending_min, pending_max, pending_count = ActiveRecord::Base.connection.select_one(
+        "SELECT MIN(obs_id), MAX(obs_id), COUNT(*) FROM #{DEST_DB}.obs_pending"
+      ).values.map(&:to_i)
+
+      if pending_count > 0
+        obs_pending_active = true
+        batch_ranges = (pending_min..pending_max).each_slice(batch_size).to_a
+        total_records = pending_count
+        puts "📋 obs_pending: #{pending_count} records to migrate (source obs_id #{pending_min}..#{pending_max})"
+      else
+        puts '✅ obs_pending is empty — all HIV obs already in target, skipping obs table'
+        end_table_monitoring(table_name_str, 0)
+        return
+      end
+    end
+  end
 
   start_table_monitoring(table_name_str, total_records)
 
@@ -917,10 +1061,16 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
                     full_table_name = "#{source_db}.#{table_name_str}"
                     column_name = ActiveRecord::Base.connection.columns(full_table_name).first.name
 
-                    # Combine batch range with HIV filter
-                    where_parts = ["#{column_name} >= #{batch_range.first} AND #{column_name} <= #{batch_range.last}"]
-                    where_parts << hiv_filter if hiv_filter
-                    where_clause = where_parts.join(' AND ')
+                    if obs_pending_active
+                      # Filter to only the obs_ids in obs_pending (UUID-verified missing records).
+                      # obs_pending already incorporates the HIV filter, so no separate hiv_filter needed.
+                      where_clause = "#{column_name} IN (SELECT obs_id FROM #{DEST_DB}.obs_pending WHERE obs_id >= #{batch_range.first} AND obs_id <= #{batch_range.last})"
+                    else
+                      # Standard range + HIV filter path (non-obs tables, or obs without pending table).
+                      where_parts = ["#{column_name} >= #{batch_range.first} AND #{column_name} <= #{batch_range.last}"]
+                      where_parts << hiv_filter if hiv_filter
+                      where_clause = where_parts.join(' AND ')
+                    end
 
                     query_with_columns(full_table_name, where_clause, nil, nil, target_model)
                   end
@@ -928,6 +1078,23 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
         next if records.blank?
 
         yield(records)
+
+        # Track the highest source obs_id committed for site-independent crash-resume.
+        # Uses batch_range.last (the ID upper bound), not the actual max in records,
+        # so it is safe even when the batch contains sparse IDs (non-HIV obs filtered out).
+        # On resume we subtract a large safety margin, so any small over-estimate is fine.
+        if table_name_str == 'obs'
+          batch_end = batch_range.last
+          begin
+            ActiveRecord::Base.connection.execute(<<~SQL)
+              INSERT INTO #{DEST_DB}.migration_progress (table_name, last_source_id)
+              VALUES ('obs', #{batch_end})
+              ON DUPLICATE KEY UPDATE last_source_id = GREATEST(last_source_id, VALUES(last_source_id))
+            SQL
+          rescue StandardError
+            nil # Non-fatal — worst case we re-process a few extra batches on next resume
+          end
+        end
 
         batch_duration = Time.now - batch_start_time
         records_per_sec = track_batch_performance(table_name_str, records.size, batch_duration)
@@ -1013,6 +1180,10 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
                   when 'PharmacyStockBalance', 'PharmacyStockVerification', 'Pharmacies'
                     # These tables skip duplicate checking - always insert
                     []
+                  when 'Observation'
+                    # Skip UUID pre-check for obs: insert_all (INSERT IGNORE) handles duplicates
+                    # silently without a pre-scan of the 30M+ row target table per batch.
+                    []
                   when 'Pharmacy'
                     records.map { |r| r[:pharmacy_module_id] }
                   else
@@ -1045,6 +1216,9 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
                         [c, i]
                       end.to_set
                     when 'PharmacyStockBalance', 'PharmacyStockVerification', 'Pharmacies'
+                      Set.new
+                    when 'Observation'
+                      # No pre-check: insert_all uses INSERT IGNORE to skip duplicates in-DB
                       Set.new
                     when 'Pharmacy'
                       target_model.unscoped.where(pharmacy_module_id: record_keys).pluck(:pharmacy_module_id).to_set
@@ -1219,8 +1393,22 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
     User.current = CURRENT_USER
     ActiveRecord::Base.connection_pool.with_connection do
       ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS = 0')
+      # Disable binary logging for bulk obs/drug_order inserts — migrated data doesn't need
+      # point-in-time recovery via binlog, and skipping it cuts write I/O significantly.
+      if %w[Observation DrugOrder].include?(target_model.to_s)
+        begin
+          ActiveRecord::Base.connection.execute('SET SESSION sql_log_bin=0')
+        rescue StandardError
+          nil
+        end
+      end
       begin
-        target_model.unscoped.insert_all!(insertable_records.compact)
+        if target_model.to_s == 'Observation'
+          # INSERT IGNORE: silently skips UUID-duplicate rows without aborting the whole batch
+          target_model.unscoped.insert_all(insertable_records.compact)
+        else
+          target_model.unscoped.insert_all!(insertable_records.compact)
+        end
       rescue ActiveRecord::RecordNotUnique, Mysql2::Error => e
         # Skip duplicate entries - they already exist
         if e.message.include?('Duplicate entry')
@@ -1237,6 +1425,14 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
         puts e.backtrace.first(5).join("\n")
       end
       ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS = 1')
+      # Re-enable binary logging after bulk insert
+      if %w[Observation DrugOrder].include?(target_model.to_s)
+        begin
+          ActiveRecord::Base.connection.execute('SET SESSION sql_log_bin=1')
+        rescue StandardError
+          nil
+        end
+      end
     end
   end
 end
@@ -1622,9 +1818,23 @@ end
 def backfill_orders_obs_ids(source_db)
   puts "\n🔄 Backfilling orders.obs_id after obs migration..."
 
-  total = ActiveRecord::Base.connection.select_value(
-    "SELECT COUNT(*) FROM #{source_db}.orders WHERE obs_id IS NOT NULL"
-  ).to_i
+  retries = 0
+  begin
+    total = ActiveRecord::Base.connection.select_value(
+      "SELECT COUNT(*) FROM #{source_db}.orders WHERE obs_id IS NOT NULL"
+    ).to_i
+  rescue ActiveRecord::DatabaseConnectionError, ActiveRecord::ConnectionNotEstablished, Mysql2::Error => e
+    retries += 1
+    if retries <= 5
+      puts "  ⚠ Connection error in backfill count, retry #{retries}/5: #{e.message}"
+      sleep(retries * 5)
+      ActiveRecord::Base.connection_pool.disconnect!
+      retry
+    else
+      puts "❌ Failed to connect for backfill after 5 retries: #{e.message}"
+      return
+    end
+  end
 
   if total.zero?
     puts '✓ No orders.obs_id records to backfill'
@@ -1635,16 +1845,30 @@ def backfill_orders_obs_ids(source_db)
 
   align_uuid_collations(source_db, %w[orders obs])
 
-  ActiveRecord::Base.connection.execute(<<~SQL)
-    UPDATE orders o
-    JOIN #{source_db}.orders src ON o.uuid = src.uuid
-    JOIN obs tgt ON tgt.uuid = (
-      SELECT uuid FROM #{source_db}.obs WHERE obs_id = src.obs_id LIMIT 1
-    )
-    SET o.obs_id = tgt.obs_id
-    WHERE src.obs_id IS NOT NULL
-      AND o.obs_id IS NULL
-  SQL
+  retries = 0
+  begin
+    ActiveRecord::Base.connection.execute(<<~SQL)
+      UPDATE orders o
+      JOIN #{source_db}.orders src ON o.uuid = src.uuid
+      JOIN obs tgt ON tgt.uuid = (
+        SELECT uuid FROM #{source_db}.obs WHERE obs_id = src.obs_id LIMIT 1
+      )
+      SET o.obs_id = tgt.obs_id
+      WHERE src.obs_id IS NOT NULL
+        AND o.obs_id IS NULL
+    SQL
+  rescue ActiveRecord::DatabaseConnectionError, ActiveRecord::ConnectionNotEstablished, Mysql2::Error => e
+    retries += 1
+    if retries <= 5
+      puts "  ⚠ Connection error during backfill UPDATE, retry #{retries}/5: #{e.message}"
+      sleep(retries * 5)
+      ActiveRecord::Base.connection_pool.disconnect!
+      retry
+    else
+      puts "❌ backfill_orders_obs_ids UPDATE failed after 5 retries: #{e.message}"
+      return
+    end
+  end
 
   updated = ActiveRecord::Base.connection.select_value(
     'SELECT COUNT(*) FROM orders WHERE obs_id IS NOT NULL'
@@ -1673,18 +1897,31 @@ def update_group_obs_ids(source_db, _foreign_keys = {})
   #   4. Find the corresponding target obs by that UUID to get the new obs_id.
   align_uuid_collations(source_db, %w[obs])
   ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS = 0')
-  ActiveRecord::Base.connection.execute(<<~SQL)
-    UPDATE obs o
-    JOIN #{source_db}.obs src
-      ON o.uuid = src.uuid
-    JOIN #{source_db}.obs src_parent
-      ON src_parent.obs_id = src.obs_group_id
-    JOIN obs tgt_parent
-      ON tgt_parent.uuid = src_parent.uuid
-    SET o.obs_group_id = tgt_parent.obs_id
-    WHERE src.obs_group_id IS NOT NULL
-      AND o.obs_group_id IS NULL
-  SQL
+  retries = 0
+  begin
+    ActiveRecord::Base.connection.execute(<<~SQL)
+      UPDATE obs o
+      JOIN #{source_db}.obs src
+        ON o.uuid = src.uuid
+      JOIN #{source_db}.obs src_parent
+        ON src_parent.obs_id = src.obs_group_id
+      JOIN obs tgt_parent
+        ON tgt_parent.uuid = src_parent.uuid
+      SET o.obs_group_id = tgt_parent.obs_id
+      WHERE src.obs_group_id IS NOT NULL
+        AND o.obs_group_id IS NULL
+    SQL
+  rescue ActiveRecord::DatabaseConnectionError, ActiveRecord::ConnectionNotEstablished, Mysql2::Error => e
+    retries += 1
+    if retries <= 5
+      puts "  ⚠ Connection error in obs_group_id update, retry #{retries}/5: #{e.message}"
+      sleep(retries * 5)
+      ActiveRecord::Base.connection_pool.disconnect!
+      retry
+    else
+      puts "❌ update_group_obs_ids failed after 5 retries: #{e.message}"
+    end
+  end
   ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS = 1')
 
   updated = ActiveRecord::Base.connection.select_value(
@@ -1697,7 +1934,15 @@ end
 # Main Execution
 prepare_centralized_db
 ensure_migration_indexes(source_db)
-populate_users(source_db)
+ensure_migration_progress_table
+
+resume_group = ENV['RESUME_FROM_GROUP'].to_i
+
+if resume_group >= 5
+  puts "⏭️  Skipping populate_users (RESUME_FROM_GROUP=#{resume_group})"
+else
+  populate_users(source_db)
+end
 
 # Load HIV program IDs for filtering clinical data
 puts "\n" + '=' * 80
@@ -1708,8 +1953,26 @@ puts '   ✓ ALL person and patient records will be migrated'
 puts '   ✓ ONLY HIV program clinical data will be migrated'
 puts '=' * 80 + "\n"
 
-load_hiv_patient_ids(source_db)
-load_hiv_encounter_ids(source_db)
+if resume_group >= 5
+  # Groups 5+ (obs, lims, drug_order) use SQL subquery filters, not in-memory Sets.
+  # Skip loading large HIV ID Sets (~1GB RAM) during resume.
+  puts '⏭️  Skipping HIV ID Set loading (Groups 5+ use SQL subquery filters)'
+else
+  load_hiv_patient_ids(source_db)
+  load_hiv_encounter_ids(source_db)
+end
+
+# Pre-build HIV encounter IDs cache table for fast SQL filtering on every obs/orders/drug_order batch.
+# This is idempotent: drops and recreates on each run. Takes ~30-60s but saves hours over 3000+ batches.
+create_hiv_encounter_ids_cache(source_db)
+
+# Build obs_pending: source HIV obs whose UUIDs are NOT yet in harmonized.obs.
+# This is the single correct resume mechanism for multi-site harmonized DBs:
+#   - Uses UUID (the stable identity key preserved across obs_id remapping) to diff source vs target.
+#   - Completely independent of target row counts, obs_id ordering, or other sites' data.
+#   - Rebuilt fresh on every restart so it always reflects current state.
+# Takes ~3-10 minutes for 60M obs but saves time by skipping already-migrated batches entirely.
+build_obs_pending_table(source_db) if resume_group >= 5
 
 # Clear caches that are no longer needed after a group completes to free memory.
 # Caches are cumulative — without clearing, they balloon across all groups.
@@ -1935,6 +2198,11 @@ if __FILE__ == $0
   ]
 
   groups.each do |group, group_name|
+    group_num = group_name.gsub('Group_', '').to_i
+    if resume_group > 0 && group_num < resume_group
+      puts "⏭️  Skipping #{group_name} (RESUME_FROM_GROUP=#{resume_group})"
+      next
+    end
     populate_group(group, group_name, source_db)
     clear_migrated_caches(group_name)
   end

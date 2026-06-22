@@ -13,8 +13,23 @@ class CouchdbChangesListener
     reconnect_delay: 5,
     max_retry_attempts: 3,
     batch_size: 100,
+    backfill_scan_page_size: 1000,
     timeout: 60000,
-    heartbeat: 30000
+    heartbeat: 30000,
+    # When true the listener is a thin dispatcher: it enqueues a Sync::CouchIngestJob
+    # per change (live feed + backfill) instead of processing inline. Preferred on
+    # TiDB, where concurrency beats single-threaded latency. Default false keeps the
+    # existing inline behaviour, so this is an opt-in, drop-in change.
+    fan_out: false
+  }.freeze
+
+  # db_name => [processor service class name, method]. Single source of truth used
+  # by both the dispatcher (rake) and the fan-out worker (Sync::CouchIngestJob).
+  PROCESSORS = {
+    'patients_records' => ['SavePatientRecordService', :create_patient_record],
+    'visits'           => ['VisitService', :create_update_visit],
+    'stages'           => ['StagesService', :create_stage],
+    'global_properties' => ['GlobalPropertyService', :create_or_update_from_couchdb]
   }.freeze
 
   attr_reader :db_name, :config, :processor_service, :processor_method
@@ -24,8 +39,23 @@ class CouchdbChangesListener
     @processor_service = processor_service
     @processor_method = processor_method
     @config = DEFAULT_CONFIG.merge(options)
-    
+
     validate_configuration!
+  end
+
+  # Build a listener for a registered database from its db_name alone, wiring the
+  # correct processor service. Used by the worker job and the launcher rake.
+  def self.build(db_name, **options)
+    registration = PROCESSORS[db_name.to_s]
+    raise ArgumentError, "No processor registered for CouchDB database '#{db_name}'" unless registration
+
+    service_class, method_name = registration
+    new(
+      db_name: db_name,
+      processor_service: service_class.constantize.new,
+      processor_method: method_name,
+      **options
+    )
   end
 
   def start
@@ -70,24 +100,18 @@ class CouchdbChangesListener
   end
 
   # Starts all listeners concurrently, each running full backfill + live feed.
-  def self.start_multiple(database_configs)
-    threads = database_configs.map do |db_config|
-      Thread.new do
-        listener = new(**db_config)
-        listener.start
-      end
+  def self.start_multiple(db_names, **options)
+    threads = db_names.map do |db_name|
+      Thread.new { build(db_name, **options).start }
     end
-    
+
     threads.each(&:join)
   end
 
   # Starts all listeners concurrently on live feed only — backfill already done sequentially.
-  def self.start_multiple_live_only(database_configs)
-    threads = database_configs.map do |db_config|
-      Thread.new do
-        listener = new(**db_config)
-        listener.start_live_only
-      end
+  def self.start_multiple_live_only(db_names, **options)
+    threads = db_names.map do |db_name|
+      Thread.new { build(db_name, **options).start_live_only }
     end
 
     threads.each(&:join)
@@ -95,46 +119,102 @@ class CouchdbChangesListener
 
   def process_all_unprocessed_documents
     Rails.logger.info("[CouchDB Listener] Processing all unprocessed documents in #{db_name}...")
-    
+    ensure_unprocessed_index!
+
+    return enqueue_all_unprocessed_documents if fan_out?
+
     begin
       total_processed = 0
       total_failed = 0
 
       loop do
-        unprocessed_docs = fetch_unprocessed_documents
+        scan_result = process_unprocessed_document_scan
 
-        if unprocessed_docs.empty?
+        if scan_result[:matched].zero?
           Rails.logger.info("[CouchDB Listener] No unprocessed documents found in #{db_name}")
           break
         end
 
-        Rails.logger.info("[CouchDB Listener] Found #{unprocessed_docs.length} unprocessed documents in #{db_name}")
+        total_processed += scan_result[:processed]
+        total_failed += scan_result[:failed]
 
-        batch_result = { processed: 0, failed: 0, failed_marked: 0 }
-        unprocessed_docs.each_slice(config[:batch_size]) do |batch|
-          result = process_document_batch(batch)
-          batch_result[:processed] += result[:processed]
-          batch_result[:failed] += result[:failed]
-          batch_result[:failed_marked] += result[:failed_marked]
-        end
-
-        total_processed += batch_result[:processed]
-        total_failed += batch_result[:failed]
-
-        if batch_result[:processed].zero? && batch_result[:failed].positive? && batch_result[:failed_marked].zero?
+        if scan_result[:processed].zero? && scan_result[:failed].positive? && scan_result[:failed_marked].zero?
           Rails.logger.error("[CouchDB Listener] No documents processed and no failures marked in latest pass for #{db_name}; stopping backfill to avoid a tight retry loop")
           break
         end
       end
 
       Rails.logger.info("[CouchDB Listener] Backfill pass finished for #{db_name}: processed=#{total_processed}, failed=#{total_failed}")
-      
+
     rescue StandardError => e
       Rails.logger.error("[CouchDB Listener] Error processing unprocessed documents in #{db_name}: #{e.message}")
     end
   end
-  
+
+  # Fan-out entry point (Sync::CouchIngestJob): fetch the current doc by id and
+  # process it inline, reusing the same path as the live listener. Idempotent —
+  # skips docs already processed, missing, or dead-lettered — and on failure marks
+  # the doc (retry/dead-letter) before re-raising so Sidekiq records the failure.
+  def ingest_document(doc_id)
+    doc = fetch_current_document(doc_id)
+    unless doc
+      Rails.logger.info("[CouchDB Listener] ingest: #{doc_id} not found in #{db_name}; skipping")
+      return :missing
+    end
+    return :already_processed if doc['processed_by_listener'] == true
+    return :dead_letter if listener_retry_exhausted?(doc)
+
+    begin
+      process_document(doc)
+      :processed
+    rescue StandardError => e
+      mark_processing_failure(doc, e, source_rev: doc['_rev'])
+      raise
+    end
+  end
+
   private
+
+  def fan_out?
+    config[:fan_out] == true
+  end
+
+  def enqueue_ingest(doc_id)
+    return if doc_id.blank? || doc_id.to_s.start_with?('_design/')
+
+    Sync::CouchIngestJob.perform_async(db_name, doc_id)
+  rescue StandardError => e
+    Rails.logger.error("[CouchDB Listener] Failed to enqueue ingest for #{doc_id} in #{db_name}: #{e.message}")
+  end
+
+  # Fan-out backfill: page through the unprocessed docs (via the Mango index) and
+  # enqueue one job each, then return. Bookmark pagination is safe under the
+  # workers concurrently marking docs processed — a doc removed before the scan
+  # reaches it was already handled, and new writes are caught by the live feed.
+  # Duplicate enqueues are deduped by the unique-jobs lock on (db_name, doc_id).
+  def enqueue_all_unprocessed_documents
+    total = 0
+    bookmark = nil
+
+    loop do
+      page = find_unprocessed_page(backfill_scan_page_size, bookmark)
+      docs = page['docs'] || []
+      break if docs.empty?
+
+      bookmark = page['bookmark']
+      docs.each do |doc|
+        next unless unprocessed_listener_document?(doc)
+
+        enqueue_ingest(doc['_id'])
+        total += 1
+      end
+
+      break if docs.size < backfill_scan_page_size
+    end
+
+    Rails.logger.info("[CouchDB Listener] Fan-out: enqueued #{total} unprocessed document(s) for #{db_name}")
+    total
+  end
 
   def validate_configuration!
     raise ArgumentError, "db_name is required" if db_name.blank?
@@ -206,8 +286,12 @@ class CouchdbChangesListener
           
           Rails.logger.debug("[CouchDB Listener] Received change for unprocessed doc: #{change['id']} in #{db_name}")
 
-          process_changed_document(doc)
-          
+          if fan_out?
+            enqueue_ingest(doc['_id'])
+          else
+            process_changed_document(doc)
+          end
+
         rescue JSON::ParserError => e
           Rails.logger.warn("[CouchDB Listener] Failed to parse JSON line in #{db_name}: #{line[0..100]}... Error: #{e.message}")
           next
@@ -216,60 +300,150 @@ class CouchdbChangesListener
     end
   end
 
-  def fetch_unprocessed_documents
-    username, password = couchdb_credentials
-    url = couchdb_url(db_name, '_find')
-    
-    query = {
-      selector: {
-        "$and" => [
-          {
-            "$or" => [
-              { "processed_by_listener" => false },
-            ]
-          },
-          {
-            "$or" => [
-              { "listener_retry_count" => { "$exists" => false } },
-              { "listener_retry_count" => { "$lt" => config[:max_retry_attempts] } }
-            ]
-          }
-        ]
-      },
-      limit: 1000,
-      execution_stats: false
-    }
-    
-    resource_options = {
-      headers: { 
-        accept: :json,
-        content_type: :json
-      }
-    }
-    
-    if username && password
-      resource_options[:user] = username
-      resource_options[:password] = password
-    end
-    
-    resource = RestClient::Resource.new(url, resource_options)
-    
-    begin
-      response = resource.post(query.to_json)
-      
-      if response.code == 200
-        data = JSON.parse(response.body)
-        Rails.logger.info("[CouchDB Listener] Found #{data['docs'].length} unprocessed documents using Mango query in #{db_name}")
-        return data['docs']
-      else
-        Rails.logger.error("[CouchDB Listener] Failed to fetch documents with Mango query in #{db_name}: HTTP #{response.code}")
-        return []
+  def process_unprocessed_document_scan
+    result = { scanned: 0, matched: 0, processed: 0, failed: 0, failed_marked: 0 }
+
+    # Re-query from the start each pass: processed docs flip to
+    # processed_by_listener:true and dead-lettered docs are excluded by the
+    # selector, so both drop out of the result set and the set drains to empty.
+    loop do
+      docs = fetch_unprocessed_documents(backfill_scan_page_size)
+      break if docs.empty?
+
+      result[:scanned] += docs.length
+
+      unprocessed_docs = docs.select { |doc| unprocessed_listener_document?(doc) }
+      break if unprocessed_docs.empty?
+
+      result[:matched] += unprocessed_docs.length
+
+      iter_processed = 0
+      iter_failed = 0
+      iter_failed_marked = 0
+      unprocessed_docs.each_slice(config[:batch_size]) do |batch|
+        batch_result = process_document_batch(batch)
+        iter_processed += batch_result[:processed]
+        iter_failed += batch_result[:failed]
+        iter_failed_marked += batch_result[:failed_marked]
       end
-      
-    rescue StandardError => e
-      Rails.logger.error("[CouchDB Listener] Error with Mango query in #{db_name}: #{e.message}")
-      return []
+
+      result[:processed] += iter_processed
+      result[:failed] += iter_failed
+      result[:failed_marked] += iter_failed_marked
+
+      # No forward progress this pass (nothing processed AND no failure advanced
+      # toward dead-letter) → the same docs would just be re-fetched, so stop.
+      break if iter_processed.zero? && iter_failed_marked.zero?
     end
+
+    Rails.logger.info(
+      "[CouchDB Listener] Backfill (_find) for #{db_name}: scanned=#{result[:scanned]}, matched=#{result[:matched]}, processed=#{result[:processed]}, failed=#{result[:failed]}"
+    )
+
+    result
+  end
+
+  # Docs still awaiting processing (re-query from the start; for the inline drain
+  # where processed docs flip to true and leave the result set).
+  def fetch_unprocessed_documents(limit)
+    find_unprocessed_page(limit)['docs'] || []
+  end
+
+  # One page of the Mango query for unprocessed, non-dead-lettered docs. Backed by
+  # the processed_by_listener index (correct even without it — just slower).
+  # Matches boolean false and the string "false" that some clients write, mirroring
+  # unprocessed_listener_document?. Returns the raw response (docs + bookmark) so
+  # the fan-out backfill can cursor through the whole set with the bookmark.
+  def find_unprocessed_page(limit, bookmark = nil)
+    username, password = couchdb_credentials
+    resource_options = { headers: { content_type: :json, accept: :json } }
+    resource_options[:user] = username if username
+    resource_options[:password] = password if password
+
+    body = {
+      selector: {
+        'processed_by_listener' => { '$in' => [false, 'false'] },
+        'listener_dead_letter' => { '$exists' => false }
+      },
+      limit: limit
+    }
+    body[:bookmark] = bookmark if bookmark.present?
+
+    response = RestClient::Resource.new(couchdb_url(db_name, '_find'), resource_options).post(body.to_json)
+    return {} unless response.code == 200
+
+    JSON.parse(response.body)
+  rescue StandardError => e
+    Rails.logger.error("[CouchDB Listener] _find for unprocessed docs failed in #{db_name}: #{e.message}")
+    {}
+  end
+
+  # Retry transient TiDB write failures (write conflicts, lock waits, deadlocks,
+  # stale schema, region/TiKV blips). On single-node MySQL these are rare; on
+  # distributed TiDB, concurrent writers hit them routinely, so the fan-out path
+  # must retry rather than dead-letter a perfectly good document.
+  TIDB_RETRYABLE = /try again later|write conflict|information schema is changed|tikv|region is unavailable|pd server timeout|lock|deadlock|\b(8002|8022|8027|9001|9005|9007)\b/i.freeze
+
+  def with_tidb_retry(max_attempts: 5)
+    attempt = 0
+    begin
+      yield
+    rescue ActiveRecord::Deadlocked, ActiveRecord::LockWaitTimeout => e
+      attempt += 1
+      raise if attempt >= max_attempts
+
+      Rails.logger.warn("[CouchDB Listener] TiDB transient #{e.class} in #{db_name} (attempt #{attempt}/#{max_attempts}); retrying")
+      sleep([0.05 * (2**(attempt - 1)), 2.0].min)
+      retry
+    rescue ActiveRecord::StatementInvalid => e
+      raise unless e.message.match?(TIDB_RETRYABLE)
+
+      attempt += 1
+      raise if attempt >= max_attempts
+
+      Rails.logger.warn("[CouchDB Listener] TiDB transient write error in #{db_name} (attempt #{attempt}/#{max_attempts}): #{e.message.to_s[0, 120]}")
+      sleep([0.05 * (2**(attempt - 1)), 2.0].min)
+      retry
+    end
+  end
+
+  # Create the Mango index that powers fetch_unprocessed_documents. Idempotent
+  # (CouchDB returns "exists" for a duplicate) and non-fatal — without it _find
+  # still returns correct results, just with a full scan.
+  def ensure_unprocessed_index!
+    return if @unprocessed_index_ensured
+
+    username, password = couchdb_credentials
+    resource_options = { headers: { content_type: :json, accept: :json } }
+    resource_options[:user] = username if username
+    resource_options[:password] = password if password
+
+    body = {
+      index: { fields: ['processed_by_listener'] },
+      name: 'processed_by_listener_idx',
+      ddoc: 'processed_by_listener_idx',
+      type: 'json'
+    }
+
+    RestClient::Resource.new(couchdb_url(db_name, '_index'), resource_options).post(body.to_json)
+    @unprocessed_index_ensured = true
+    Rails.logger.info("[CouchDB Listener] Ensured processed_by_listener index for #{db_name}")
+  rescue StandardError => e
+    Rails.logger.warn("[CouchDB Listener] Could not ensure processed_by_listener index for #{db_name}: #{e.message}")
+  end
+
+  def unprocessed_listener_document?(doc)
+    return false unless doc.is_a?(Hash)
+    return false if doc['_id'].to_s.start_with?('_design/')
+    return false unless doc['processed_by_listener'] == false || doc['processed_by_listener'].to_s.downcase == 'false'
+    return false if listener_retry_exhausted?(doc)
+
+    true
+  end
+
+  def backfill_scan_page_size
+    configured_size = config[:backfill_scan_page_size].to_i
+    configured_size.positive? ? configured_size : 1000
   end
 
   def listener_retry_exhausted?(doc)
@@ -323,7 +497,9 @@ class CouchdbChangesListener
       begin
         Thread.current['skip_couchdb_sync'] = true
         Thread.current[:skip_couchdb_sync] = true
-        processed_data = processor_service.send(processor_method, doc.with_indifferent_access)
+        processed_data = with_tidb_retry do
+          processor_service.send(processor_method, doc.with_indifferent_access)
+        end
       ensure
         Thread.current['skip_couchdb_sync'] = false
         Thread.current[:skip_couchdb_sync] = false
@@ -333,7 +509,9 @@ class CouchdbChangesListener
         raise "Patient record processing did not return a payload: #{processed_data.inspect}"
       end
       
-      update_couchdb_with_retry(doc_id, processed_data, source_rev: doc['_rev'])
+      unless update_couchdb_with_retry(doc_id, processed_data, source_rev: doc['_rev'])
+        raise "Failed to mark CouchDB document #{doc_id} as processed"
+      end
       
     rescue StandardError => e
       Rails.logger.error("[CouchDB Listener] Failed to process document #{doc_id} in #{db_name}: #{e.message}")
@@ -347,24 +525,24 @@ class CouchdbChangesListener
   end
 
   def update_couchdb_with_retry(doc_id, processed_data, attempt = 1, source_rev: nil)
-    return if attempt > config[:max_retry_attempts]
+    return false if attempt > config[:max_retry_attempts]
     
     begin
       current_doc = fetch_current_document(doc_id)
       
       unless current_doc
         Rails.logger.error("[CouchDB Listener] Could not fetch current document for #{doc_id} in #{db_name}")
-        return
+        return false
       end
       
       if current_doc["processed_by_listener"] == true
         Rails.logger.debug("[CouchDB Listener] Document #{doc_id} in #{db_name} already marked as processed, skipping update")
-        return
+        return true
       end
 
       if source_rev.present? && current_doc["_rev"] != source_rev
         Rails.logger.warn("[CouchDB Listener] Document #{doc_id} in #{db_name} changed while processing; skipping stale listener update")
-        return
+        return false
       end
       
       updated_doc = current_doc.dup
@@ -408,6 +586,8 @@ class CouchdbChangesListener
       if attempt < config[:max_retry_attempts]
         sleep(1)
         update_couchdb_with_retry(doc_id, processed_data, attempt + 1, source_rev: source_rev)
+      else
+        false
       end
     end
   end
@@ -434,7 +614,6 @@ class CouchdbChangesListener
     end
 
     update_couchdb_document_direct(doc_id, current_doc)
-    true
   rescue RestClient::Conflict, RestClient::PreconditionFailed
     Rails.logger.warn("[CouchDB Listener] Conflict while marking processing failure for #{doc_id} in #{db_name}")
     false
@@ -490,8 +669,10 @@ class CouchdbChangesListener
     if response.code == 201 || response.code == 200
       response_data = JSON.parse(response.body)
       Rails.logger.info("[CouchDB Listener] Successfully updated CouchDB document: #{doc_id} in #{db_name}, new rev: #{response_data['rev']}")
+      true
     else
       Rails.logger.error("[CouchDB Listener] Unexpected response code #{response.code} when updating document: #{doc_id} in #{db_name}")
+      false
     end
   end
 
@@ -514,8 +695,7 @@ class CouchdbChangesListener
       Rails.logger.error(
         "[CouchDB Listener] Cannot rename #{old_id} -> #{new_id} in #{db_name}: target id already exists. Updating old doc in place."
       )
-      update_couchdb_document_direct(old_id, document_data)
-      return
+      return update_couchdb_document_direct(old_id, document_data)
     end
 
     new_doc = document_data.reject { |key, _| key.to_s == '_id' || key.to_s == '_rev' }
@@ -525,6 +705,7 @@ class CouchdbChangesListener
 
     old_doc_rev = document_data['_rev']
     delete_couchdb_document_direct(old_id, old_doc_rev) if old_doc_rev.present?
+    true
   rescue RestClient::Conflict => e
     Rails.logger.warn("[CouchDB Listener] Conflict renaming #{old_id} -> #{new_id} in #{db_name}: #{e.message}. Will retry via update_couchdb_with_retry.")
     raise
@@ -548,6 +729,7 @@ class CouchdbChangesListener
     if response.code == 201 || response.code == 200
       response_data = JSON.parse(response.body)
       Rails.logger.info("[CouchDB Listener] Created CouchDB document: #{doc_id} in #{db_name}, rev: #{response_data['rev']}")
+      true
     else
       raise "Unexpected response code #{response.code} when creating document: #{doc_id} in #{db_name}"
     end

@@ -281,13 +281,21 @@ class NcdActivePatientService
     case category
     when "defaulters"
       cutoff = (Date.current - 60.days).strftime("%Y-%m-%d")
+      cutoff_120 = (Date.current - 120.days).strftime("%Y-%m-%d")
       <<~SQL.chomp
         AND EXISTS (
-          SELECT 1 FROM orders dro INNER JOIN drug_order drdo ON drdo.order_id = dro.order_id
-          WHERE dro.patient_id = pe.person_id AND dro.voided = 0 AND drdo.quantity > 0
+          SELECT 1 FROM orders dro
+          INNER JOIN drug_order drdo ON drdo.order_id = dro.order_id
+          INNER JOIN obs o ON o.order_id = dro.order_id AND o.voided = 0
+          INNER JOIN concept_name cn ON cn.concept_id = o.concept_id AND cn.name = 'AMOUNT DISPENSED'
+          WHERE dro.patient_id = pe.person_id AND dro.voided = 0
+          AND drdo.quantity IS NOT NULL
+          AND o.value_numeric IS NOT NULL
+          AND dro.start_date BETWEEN '#{cutoff_120}' AND '#{cutoff}'
         )
         AND NOT EXISTS (
-          SELECT 1 FROM orders dro2 INNER JOIN drug_order drdo2 ON drdo2.order_id = dro2.order_id
+          SELECT 1 FROM orders dro2
+          INNER JOIN drug_order drdo2 ON drdo2.order_id = dro2.order_id
           WHERE dro2.patient_id = pe.person_id AND dro2.start_date > '#{cutoff}' AND dro2.voided = 0
         )
       SQL
@@ -303,6 +311,7 @@ class NcdActivePatientService
         AND EXISTS (
           SELECT 1 FROM encounter ec2
           INNER JOIN encounter_type et ON et.encounter_type_id = ec2.encounter_type AND et.name = 'COMPLICATIONS'
+          INNER JOIN obs o ON o.encounter_id = ec2.encounter_id AND o.voided = 0
           WHERE ec2.patient_id = pe.person_id AND ec2.voided = 0
         )
       SQL
