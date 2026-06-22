@@ -463,7 +463,9 @@ module Sync
           'vitamin_a' => vitamin_a_section,
           'deworming' => deworming_section,
           'antibiotics_and_antifungals' => antibiotics_and_antifungals,
-          'eye_drugs' => eye_drugs
+          'eye_drugs' => eye_drugs,
+          'skin_drugs' => skin_drugs,
+          'iron_drugs' => iron_drugs
         }
       }
     end
@@ -584,7 +586,6 @@ module Sync
 
     def eye_drugs
       {
-        'description' => 'Other supportive drugs commonly used in NRU (e.g., analgesics, antiemetics, micronutrient supplements). Not an exhaustive list.',
         'drugs' => ['Tetracycline eye ointment 1%', 'Atropine sulphate eye ointment 1%',
                     'Atropine sulphate eye drops 0.5%', 'Atropine sulphate eye drops 1%'].map do |drug_name|
           drug = Drug.find_by(name: drug_name)
@@ -592,6 +593,7 @@ module Sync
 
           {
             'drug_id' => drug.drug_id,
+            'concept_id' => drug.concept_id,
             'drug_name' => drug.name,
             'strength' => extract_strength(drug.name),
             'units' => drug.units,
@@ -603,7 +605,42 @@ module Sync
     end
 
     def skin_drugs
-      
+      {
+        'drugs' => ['Potassium Permanganate(1% KMnO4)', 'Zinc Oxide 10% cream(100mg tube)',
+                    'Zinc oxide 15% ointment (in EO base)', 'Zinc oxide 15% ointment + sulphur 5%'].map do |drug_name|
+          drug = Drug.find_by(name: drug_name)
+          next unless drug
+
+          {
+            'drug_id' => drug.drug_id,
+            'concept_id' => drug.concept_id,
+            'drug_name' => drug.name,
+            'strength' => extract_strength(drug.name),
+            'units' => drug.units,
+            'dosage_form' => get_dosage_form_name(drug.dosage_form),
+            'route' => get_route_name(drug.route)
+          }
+        end.compact
+      }
+    end
+
+    def iron_drugs
+      {
+        'drugs' => ['Ferrous sulphate'].map do |drug_name|
+          drug = Drug.find_by(name: drug_name)
+          next unless drug
+
+          {
+            'drug_id' => drug.drug_id,
+            'drug_name' => drug.name,
+            'concept_id' => drug.concept_id,
+            'strength' => extract_strength(drug.name),
+            'units' => drug.units,
+            'dosage_form' => get_dosage_form_name(drug.dosage_form),
+            'route' => get_route_name(drug.route)
+          }
+        end.compact
+      }
     end
     # ---- CouchDB Views -------------------------------------------------
 

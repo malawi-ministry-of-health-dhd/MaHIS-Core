@@ -403,6 +403,16 @@ def create_nutrition_drugs
     puts "\n  Creating Fluconazole..."
     create_drug_and_link_to_set('Fluconazole', antifungal_set, 1, 'Tablet', 'Oral', 'tabs', 'Fluconazole')
 
+    # 6. Antiseptic Drug Concept Set
+    puts "\n6. Creating Antiseptic Drug Concept Set..."
+    antiseptic_set = create_drug_concept_set('Antiseptic', 'Antiseptic')
+
+    # Create antiseptic drugs
+    puts "\n  Creating Potassium Permanganate..."
+    create_drug_and_link_to_set('Potassium Permanganate(1% KMnO4)', antiseptic_set, 1, 'Solution', 'Topical', 'ml',
+                                'Potassium Permanganate medicinal')
+    Drug.find_by(name: 'Ferrous sulphate')&.update(concept_id: ConceptName.find_by(name: 'Ferrous sulfate')&.concept_id, dosage_form: get_dosage_form_concept('Tablet')&.concept_id, route: get_route_concept('Oral')&.concept_id, units: 'tabs')
+    Drug.find_by(name:'Tetracycline eye ointment 1%')&.update(concept_id: ConceptName.find_by(name: 'Tetracycline eye ointment 1%')&.concept_id, dosage_form: get_dosage_form_concept('Ointment')&.concept_id, route: get_route_concept('Topical')&.concept_id, units: 'g')
     puts "\n" + '=' * 80
     puts 'Successfully created all IMPOW nutrition drugs and concept sets!'
     puts '=' * 80
