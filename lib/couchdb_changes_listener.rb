@@ -28,7 +28,8 @@ class CouchdbChangesListener
   PROCESSORS = {
     'patients_records' => ['SavePatientRecordService', :create_patient_record],
     'visits'           => ['VisitService', :create_update_visit],
-    'stages'           => ['StagesService', :create_stage]
+    'stages'           => ['StagesService', :create_stage],
+    'global_properties' => ['GlobalPropertyService', :create_or_update_from_couchdb]
   }.freeze
 
   attr_reader :db_name, :config, :processor_service, :processor_method
