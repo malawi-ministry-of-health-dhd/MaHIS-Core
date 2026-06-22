@@ -273,7 +273,8 @@ module Sync
     end
 
     def malaria_drugs_section
-      drugs = ['DP 60mg/480mg', 'DP 80mg/640mg', 'DP 20mg/160mg', 'DP 30mg/240mg', 'DP 40mg/320mg', 'Rectal Artesunate', 'LA (Lumefantrine + arthemether)'].map do |drug_name|
+      drugs = ['DP 60mg/480mg', 'DP 80mg/640mg', 'DP 20mg/160mg', 'DP 30mg/240mg', 'DP 40mg/320mg',
+               'Rectal Artesunate', 'LA (Lumefantrine + arthemether)'].map do |drug_name|
         drug = Drug.find_by(name: drug_name)
         next unless drug
 
@@ -427,7 +428,8 @@ module Sync
     # ---- Vaccinations -----------------------------------------------
 
     def vaccine_section
-      drugs = ['BCG', 'Measles vaccine', 'ROTA Vaccination', 'PCV', 'Pentavalent Vaccination', 'Polio Vaccination'].map do |drug_name|
+      drugs = ['BCG', 'Measles vaccine', 'ROTA Vaccination', 'PCV', 'Pentavalent Vaccination',
+               'Polio Vaccination'].map do |drug_name|
         drug = Drug.find_by(name: drug_name)
         next unless drug
 
@@ -456,7 +458,12 @@ module Sync
         'drugs' => {
           'f75' => f75_section,
           'f100' => f100_section,
-          'rutf_nru' => rutf_nru_section
+          'rutf_nru' => rutf_nru_section,
+          'malaria_drugs' => malaria_drugs_section,
+          'vitamin_a' => vitamin_a_section,
+          'deworming' => deworming_section,
+          'antibiotics_and_antifungals' => antibiotics_and_antifungals,
+          'eye_drugs' => eye_drugs
         }
       }
     end
@@ -527,6 +534,77 @@ module Sync
       }
     end
 
+    # ----- All Antibiotics and antifungals -----------------------------------
+    def antibiotics_and_antifungals
+      # Find Antibiotics concept set
+      antibiotics_set = Concept.joins(:concept_names)
+                               .where(concept_names: { name: 'Antibiotics' })
+                               .first
+
+      # Find Antifungal concept set
+      antifungal_set = Concept.joins(:concept_names)
+                              .where(concept_names: { name: 'Antifungal' })
+                              .first
+
+      # Get all antibiotic drugs
+      antibiotic_drugs = Drug
+                         .from('drug drug')
+                         .joins(:concept)
+                         .joins('INNER JOIN concept_set cs ON cs.concept_id = drug.concept_id')
+                         .joins('INNER JOIN concept_name cn ON cn.concept_id = drug.concept_id')
+                         .where('cs.concept_set = ?', antibiotics_set.concept_id)
+                         .where('cn.name = drug.name')
+
+      # Get all antifungal drugs
+      antifungal_drugs = Drug
+                         .from('drug drug')
+                         .joins(:concept)
+                         .joins('INNER JOIN concept_set cs ON cs.concept_id = drug.concept_id')
+                         .joins('INNER JOIN concept_name cn ON cn.concept_id = drug.concept_id')
+                         .where('cs.concept_set = ?', antifungal_set.concept_id)
+                         .where('cn.name = drug.name')
+      # Combine and return results
+      {
+        antibiotics: {
+          concept_set: {
+            name: 'Antibiotics',
+            concept_id: antibiotics_set.concept_id
+          },
+          drugs: antibiotic_drugs
+        },
+        antifungals: {
+          concept_set: {
+            name: 'Antifungal',
+            concept_id: antifungal_set.concept_id
+          },
+          drugs: antifungal_drugs
+        }
+      }
+    end
+
+    def eye_drugs
+      {
+        'description' => 'Other supportive drugs commonly used in NRU (e.g., analgesics, antiemetics, micronutrient supplements). Not an exhaustive list.',
+        'drugs' => ['Tetracycline eye ointment 1%', 'Atropine sulphate eye ointment 1%',
+                    'Atropine sulphate eye drops 0.5%', 'Atropine sulphate eye drops 1%'].map do |drug_name|
+          drug = Drug.find_by(name: drug_name)
+          next unless drug
+
+          {
+            'drug_id' => drug.drug_id,
+            'drug_name' => drug.name,
+            'strength' => extract_strength(drug.name),
+            'units' => drug.units,
+            'dosage_form' => get_dosage_form_name(drug.dosage_form),
+            'route' => get_route_name(drug.route)
+          }
+        end.compact
+      }
+    end
+
+    def skin_drugs
+      
+    end
     # ---- CouchDB Views -------------------------------------------------
 
     def couchdb_views

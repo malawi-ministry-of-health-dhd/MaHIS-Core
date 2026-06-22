@@ -365,6 +365,44 @@ def create_nutrition_drugs
       create_drug_and_link_to_set(vaccine_name, otp_set, 25 + index, 'Vaccine', 'Oral', 'doses', vaccine_name)
     end
 
+    # 4. Antibiotics Drug Concept Set
+    puts "\n4. Creating Antibiotics Drug Concept Set..."
+    antibiotics_set = create_drug_concept_set('Antibiotics', 'Antibiotics')
+
+    # Create antibiotic drugs
+    antibiotics = [
+      { name: 'Amoxicillin', form: 'Tablet', route: 'Oral', units: 'tabs' },
+      { name: 'Ampicillin', form: 'Tablet', route: 'Oral', units: 'tabs' },
+      { name: 'BenzylPenicillin', form: 'Injection', route: 'Intramuscular (IM)', units: 'vials' },
+      { name: 'Ceftriaxone', form: 'Injection', route: 'Intramuscular (IM)', units: 'vials' },
+      { name: 'Cefotaxime', form: 'Injection', route: 'Intramuscular (IM)', units: 'vials' },
+      { name: 'Ciprofloxacin', form: 'Tablet', route: 'Oral', units: 'tabs' },
+      { name: 'Cloxacillin', form: 'Tablet', route: 'Oral', units: 'tabs' },
+      { name: 'Gentamicin', form: 'Injection', route: 'Intramuscular (IM)', units: 'vials' },
+      { name: 'Metronidazole', form: 'Tablet', route: 'Oral', units: 'tabs' }
+    ]
+
+    antibiotics.each_with_index do |antibiotic, index|
+      puts "\n  Creating #{antibiotic[:name]}..."
+      create_drug_and_link_to_set(
+        antibiotic[:name],
+        antibiotics_set,
+        index + 1,
+        antibiotic[:form],
+        antibiotic[:route],
+        antibiotic[:units],
+        antibiotic[:name]
+      )
+    end
+
+    # 5. Antifungal Drug Concept Set
+    puts "\n5. Creating Antifungal Drug Concept Set..."
+    antifungal_set = create_drug_concept_set('Antifungal', 'Antifungal')
+
+    # Create antifungal drugs
+    puts "\n  Creating Fluconazole..."
+    create_drug_and_link_to_set('Fluconazole', antifungal_set, 1, 'Tablet', 'Oral', 'tabs', 'Fluconazole')
+
     puts "\n" + '=' * 80
     puts 'Successfully created all IMPOW nutrition drugs and concept sets!'
     puts '=' * 80
