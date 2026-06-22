@@ -471,7 +471,7 @@ module Sync
     end
 
     def f75_section
-      concept_name = 'Therapeutic Milk'
+      concept_name = 'F-75 Therapeutic Milk (F75)'
       concept = ConceptName.find_by(name: concept_name)
       # F-75 is a specific drug name, not just any drug with this concept
       drug = Drug.find_by(name: 'F-75 Therapeutic Milk (F75)')
@@ -497,7 +497,7 @@ module Sync
     end
 
     def f100_section
-      concept_name = 'Therapeutic Milk'
+      concept_name = 'F-100 Therapeutic Milk (F100)'
       concept = ConceptName.find_by(name: concept_name)
       # F-100 is a specific drug name, not just any drug with this concept
       drug = Drug.find_by(name: 'F-100 Therapeutic Milk (F100)')

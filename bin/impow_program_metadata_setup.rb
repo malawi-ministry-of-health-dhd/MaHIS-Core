@@ -340,9 +340,9 @@ def create_nutrition_drugs
     puts "\n3. Creating NRU Drug Concept Set..."
     nru_set = create_drug_concept_set('Inpatient Therapeutic Service', 'NRU')
 
-    # F-75 and F-100 share the same "Therapeutic Milk" concept but are different drugs
-    create_drug_and_link_to_set('F-75 Therapeutic Milk (F75)', nru_set, 1, 'Powder', 'Oral', 'g', 'Therapeutic Milk')
-    create_drug_and_link_to_set('F-100 Therapeutic Milk (F100)', nru_set, 2, 'Powder', 'Oral', 'g', 'Therapeutic Milk')
+    # F-75 and F-100 each have their own concepts
+    create_drug_and_link_to_set('F-75 Therapeutic Milk (F75)', nru_set, 1, 'Powder', 'Oral', 'g', 'F-75 Therapeutic Milk (F75)')
+    create_drug_and_link_to_set('F-100 Therapeutic Milk (F100)', nru_set, 2, 'Powder', 'Oral', 'g', 'F-100 Therapeutic Milk (F100)')
     create_drug_and_link_to_set('Ready-to-Use Therapeutic Food (RUTF)', nru_set, 3, 'Sachet', 'Oral', 'Sachets')
 
     # Create malaria drugs and link to OTS and NRU sets
