@@ -226,7 +226,7 @@ OBS_ID_CACHE = {}
 # HIV Program filtering caches
 HIV_PATIENT_IDS = Set.new
 HIV_ENCOUNTER_IDS = Set.new
-HIV_PROGRAM_ID = 1 # HIV PROGRAM program_id
+HIV_PROGRAM_ID = Program.find_by(name: 'HIV PROGRAM').program_id.to_i # HIV PROGRAM program_id
 
 # Track orphaned references for data quality reporting
 ORPHANED_REFERENCES = Hash.new { |h, k| h[k] = [] }
@@ -1689,6 +1689,12 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
           Observation].include?(target_model.to_s)
       insertable_records.each do |record|
         record[:location_id] = SITE_ID if record.key?(:location_id)
+      end
+    end
+
+    if target_model.to_s == 'Encounter'
+      insertable_records.each do |record|
+        record[:program_id] ||= HIV_PROGRAM_ID
       end
     end
 
