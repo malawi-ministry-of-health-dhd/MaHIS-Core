@@ -162,9 +162,20 @@ module PatientRecordSearchFields
       'ncd_latest_primary_diagnosis' => ncd_latest_primary_diagnosis(record),
       'ncd_observation_quarters' => ncd_observation_quarters(record),
       'ncd_diagnosis_quarters' => ncd_diagnosis_quarters(record),
+      'NcdID' => fetch_value(record, :NcdID),
+      # Display subset for the drill-down patient list, so it can be served
+      # entirely from this index (mirrors the fields the frontend renders).
       'personInformation' => {
         'given_name' => fetch_value(info, :given_name),
-        'family_name' => fetch_value(info, :family_name)
+        'family_name' => fetch_value(info, :family_name),
+        'gender' => first_present(fetch_value(info, :gender), gender),
+        'birthdate' => fetch_value(info, :birthdate),
+        'current_village' => fetch_value(info, :current_village),
+        'current_district' => fetch_value(info, :current_district),
+        'occupation' => fetch_value(info, :occupation),
+        'education_level' => fetch_value(info, :education_level),
+        'religion' => fetch_value(info, :religion),
+        'marital_status' => fetch_value(info, :marital_status)
       }
     }
   end

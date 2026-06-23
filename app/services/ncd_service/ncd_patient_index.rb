@@ -23,6 +23,7 @@ module NcdService
 
     STATS_DDOC = '_design/ncd_dashboard_stats'
     STATS_VIEW = 'stats'
+    LIST_VIEW = 'patient_list'
 
     @index_cache = {}
 
@@ -79,6 +80,29 @@ module NcdService
                 }
               JAVASCRIPT
               reduce: '_sum'
+            },
+            # Ordered, paginatable patient lists per [location, category]. Static
+            # categories are ordered by last visit date; defaulters are keyed by
+            # last dispensation date so a date-range query selects the window.
+            LIST_VIEW => {
+              map: <<~JAVASCRIPT,
+                function(doc) {
+                  if (!doc.ncd_active || !doc.ncd_location_id) { return; }
+                  var loc = String(doc.ncd_location_id);
+                  var lv = doc.ncd_last_visit_date || "0000-00-00";
+                  var g = doc.ncd_gender || "";
+                  function emitCat(cat, sortVal) {
+                    emit([loc, cat, sortVal], null);
+                    if (g) { emit([loc, cat + "|" + g, sortVal], null); }
+                  }
+                  emitCat("active", lv);
+                  if (doc.ncd_has_complications === true) { emitCat("complications", lv); }
+                  if (doc.ncd_has_pending_dispensation === true) { emitCat("pending_dispensations", lv); }
+                  if (doc.ncd_pending_id === true) { emitCat("pending_ids", lv); }
+                  if (doc.ncd_last_dispensation_date) { emitCat("defaulters", doc.ncd_last_dispensation_date); }
+                }
+              JAVASCRIPT
+              reduce: '_count'
             }
           }
         }
@@ -148,6 +172,52 @@ module NcdService
           { accept: :json, params: params }
         )
         JSON.parse(response.body)
+      end
+
+      # Ordered, paginated patient list for a [location, category] via the
+      # patient_list view. Returns { count:, docs: } reading only the requested
+      # page (count comes from the view's reduce, not a full scan).
+      def list_by_category(location_id:, category:, offset:, limit:, gender: nil)
+        loc = location_id.to_s
+        category = category.to_s.presence || 'active'
+        # gender folds into the category key via the composite [loc, "cat|G"] emits.
+        key_cat = gender.present? ? "#{category}|#{gender.to_s.strip.upcase}" : category
+
+        if category == 'defaulters'
+          start_key = [loc, key_cat, (Date.current - 120).to_s]
+          end_key = [loc, key_cat, (Date.current - 60).to_s]
+          count = view_count(startkey: start_key, endkey: end_key)
+          rows = view(LIST_VIEW, reduce: false, include_docs: true, skip: offset, limit: limit,
+                              startkey: start_key.to_json, endkey: end_key.to_json).fetch('rows', [])
+        else
+          count = view_count(startkey: [loc, key_cat], endkey: [loc, key_cat, {}])
+          # descending so most-recent visit comes first
+          rows = view(LIST_VIEW, reduce: false, include_docs: true, descending: true, skip: offset, limit: limit,
+                              startkey: [loc, key_cat, {}].to_json, endkey: [loc, key_cat].to_json).fetch('rows', [])
+        end
+
+        { count: count, docs: rows.filter_map { |row| row['doc'] } }
+      end
+
+      def view_count(startkey:, endkey:)
+        view(LIST_VIEW, reduce: true, group: false, startkey: startkey.to_json, endkey: endkey.to_json)
+          .fetch('rows', []).first&.fetch('value', 0).to_i
+      end
+
+      # Fetch full projection documents for the given patient ids, preserving id
+      # order (CouchDB _all_docs returns rows in key order).
+      def fetch_by_ids(ids)
+        # _id values are always strings; patientID may be stored as an integer,
+        # so coerce to match or _all_docs returns no docs.
+        ids = Array(ids).compact.map(&:to_s)
+        return [] if ids.empty?
+
+        response = RestClient.post(
+          db_url('_all_docs?include_docs=true'),
+          { keys: ids }.to_json,
+          { content_type: :json, accept: :json }
+        )
+        JSON.parse(response.body).fetch('rows', []).filter_map { |row| row['doc'] }
       end
 
       private
