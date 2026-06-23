@@ -7,10 +7,14 @@ module MnhService
   # Memoizing only per query-instance (one instance per facility) meant the
   # same `ConceptName.find_by(name:)` ran thousands of times during a fan-out
   # run. Concept metadata is effectively static at runtime, so a shared cache
-  # is safe and removes the redundant lookups. Misses are cached too so absent
-  # concepts are not re-queried on every facility.
+  # is safe and removes the redundant lookups.
+  #
+  # IMPORTANT: only HITS are cached. Caching a miss permanently (process-wide,
+  # no TTL) is dangerous — if a long-lived worker ever resolves a concept to nil
+  # once (cold start before metadata is loaded, replication lag, a transient
+  # error), every later stats computation in that worker would silently return 0
+  # for the affected metric. Re-querying the rare genuine miss is cheap and safe.
   module ConceptCache
-    MISSING = :__concept_missing__
     CACHE = Concurrent::Map.new
 
     module_function
@@ -19,10 +23,12 @@ module MnhService
       key = name.to_s
       return nil if key.empty?
 
-      value = CACHE.compute_if_absent(key) do
-        ConceptName.unscoped.find_by(name: name)&.concept_id || MISSING
-      end
-      value == MISSING ? nil : value
+      cached = CACHE[key]
+      return cached unless cached.nil?
+
+      id = ConceptName.unscoped.find_by(name: name)&.concept_id
+      CACHE[key] = id unless id.nil?
+      id
     end
 
     def reset!
