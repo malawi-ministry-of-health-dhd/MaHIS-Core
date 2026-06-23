@@ -160,8 +160,7 @@ module MnhService
     end
 
     def concept_id_for(name)
-      @concept_ids_by_name ||= {}
-      @concept_ids_by_name[name] ||= ConceptName.unscoped.find_by(name: name)&.concept_id
+      MnhService::ConceptCache.concept_id(name)
     end
 
     def staff_conducting_delivery_concept_id

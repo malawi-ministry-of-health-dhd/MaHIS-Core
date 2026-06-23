@@ -16,6 +16,11 @@ module Sync
       'pnc' => ['PNC PROGRAM', 'POSTNATAL CARE PROGRAM']
     }.freeze
 
+    # How far back the changed-only dispatcher looks for MNH activity when
+    # deciding which facilities to refresh.
+    MNH_ACTIVITY_LOOKBACK = 48.hours
+    DDE_ACTIVATED_CACHE_KEY = 'mnh_stats:dde_activated_location_ids'
+
     def self.enqueue_for_encounter(encounter)
       return if encounter.blank?
 
@@ -110,8 +115,13 @@ module Sync
       nil
     end
 
-    def perform(date = nil, batch_size = DEFAULT_BULK_BATCH_SIZE, location_id = nil, program_key = nil)
+    def perform(date = nil, batch_size = DEFAULT_BULK_BATCH_SIZE, location_id = nil, program_key = nil, changed_only = false)
       return unless couchdb_configured?
+
+      # No specific facility => act as a dispatcher: fan out one job per
+      # facility so Sidekiq workers process them in parallel instead of
+      # grinding through every location in a single serial job.
+      return dispatch(date, batch_size, program_key, changed_only) if location_id.blank?
 
       normalized_date = normalize_date(date)
       rows = build_stats_rows(normalized_date, location_id, program_key)
@@ -137,6 +147,55 @@ module Sync
     end
 
     private
+
+    # Enqueue one per-location job for each facility that needs refreshing.
+    # changed_only restricts the fan-out to facilities with recent MNH activity.
+    def dispatch(date, batch_size, program_key, changed_only)
+      location_ids = target_location_ids(changed_only)
+
+      if location_ids.empty?
+        return Sidekiq.logger.info(
+          "MnhStatsSyncJob: no #{changed_only ? 'changed ' : ''}facilities to refresh"
+        )
+      end
+
+      location_ids.each do |loc_id|
+        self.class.perform_async(date, batch_size, loc_id.to_s, program_key)
+      end
+
+      Sidekiq.logger.info(
+        "MnhStatsSyncJob: dispatched #{location_ids.size} per-location jobs (changed_only=#{changed_only})"
+      )
+    end
+
+    def target_location_ids(changed_only)
+      activated = dde_activated_location_ids
+      return activated unless changed_only
+
+      activated & locations_with_recent_mnh_activity(MNH_ACTIVITY_LOOKBACK.ago)
+    end
+
+    # location_ids of DDE-activated facilities that had an MNH encounter or
+    # enrollment created/updated since the given cutoff.
+    def locations_with_recent_mnh_activity(since)
+      program_ids = mnh_program_ids
+      return [] if program_ids.empty?
+
+      encounter_locations = Encounter.unscoped
+                                     .where(program_id: program_ids)
+                                     .where('date_created >= :since OR date_changed >= :since', since: since)
+                                     .distinct.pluck(:location_id)
+      program_locations = PatientProgram.unscoped
+                                        .where(program_id: program_ids)
+                                        .where('date_created >= :since OR date_changed >= :since', since: since)
+                                        .distinct.pluck(:location_id)
+
+      (encounter_locations + program_locations).compact.map { |id| id.to_s.to_i }.uniq.reject(&:zero?)
+    end
+
+    def mnh_program_ids
+      @mnh_program_ids ||= Program.unscoped.where(name: PROGRAMS.values.flatten).pluck(:program_id)
+    end
 
     def build_stats_rows(date, location_id, program_key)
       programs = mnh_programs(program_key)
@@ -224,7 +283,12 @@ module Sync
     def dde_activated_location_ids
       return @dde_activated_location_ids if defined?(@dde_activated_location_ids)
 
-      @dde_activated_location_ids = fetch_dde_activated_location_ids
+      # Cached briefly so a fan-out burst of per-location jobs doesn't query
+      # the CouchDB facilities DB once per facility.
+      @dde_activated_location_ids =
+        Rails.cache.fetch(DDE_ACTIVATED_CACHE_KEY, expires_in: 10.minutes) do
+          fetch_dde_activated_location_ids
+        end
     end
 
     def fetch_dde_activated_location_ids
@@ -277,5 +341,7 @@ module Sync
 end
 
 # Usage:
-# Sync::MnhStatsSyncJob.perform_async                    # all-time MNH stats for each location
-# Sync::MnhStatsSyncJob.perform_async(Date.current.to_s) # date-scoped MNH stats for each location
+# Sync::MnhStatsSyncJob.perform_async                                 # dispatch: full rebuild, every facility (one job each)
+# Sync::MnhStatsSyncJob.perform_async(nil, 5000, nil, nil, true)      # dispatch: changed-only, facilities active in the last 48h
+# Sync::MnhStatsSyncJob.perform_async(Date.current.to_s)              # dispatch: date-scoped full rebuild
+# Sync::MnhStatsSyncJob.perform_async(nil, 5000, '42')               # compute one facility (location_id 42) directly

@@ -1,4 +1,4 @@
-:concurrency: 20
+:concurrency: <%= ENV.fetch("SIDEKIQ_CONCURRENCY", 10) %>
 :queues:
   - batch_sync
   - patient_sync
