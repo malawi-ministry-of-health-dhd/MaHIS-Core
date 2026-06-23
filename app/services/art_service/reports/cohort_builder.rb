@@ -771,7 +771,10 @@ module ArtService
           INSERT INTO #{temp_art_start_date}
           SELECT o.person_id, DATE(MIN(o.value_datetime)) value_datetime
           FROM encounter e
-          INNER JOIN obs o ON o.encounter_id = e.encounter_id AND o.concept_id = (SELECT concept_id FROM concept_name WHERE name = 'Date antiretrovirals started' AND voided = 0 LIMIT 1) AND e.encounter_type = 9 AND e.program_id = 1 AND e.voided = 0 AND e.encounter_datetime < DATE('#{end_date}') + INTERVAL 1 DAY
+          INNER JOIN obs o#{' '}
+          ON o.encounter_id = e.encounter_id#{' '}
+          AND o.concept_id = (SELECT concept_id FROM concept_name WHERE name = 'Date antiretrovirals started' AND voided = 0 LIMIT 1)#{' '}
+          AND e.encounter_type = 9 AND e.program_id = 1 AND e.voided = 0 AND e.encounter_datetime < DATE('#{end_date}') + INTERVAL 1 DAY
           AND o.obs_datetime < (DATE('#{end_date}') + INTERVAL 1 DAY) AND e.voided = 0
           WHERE e.voided = 0
           AND e.location_id = #{Location.current.location_id}
@@ -1192,29 +1195,40 @@ module ArtService
         family_planning_action_to_take_concept_id = concept('Family planning, action to take').concept_id
         none_concept_id = [concept('None').concept_id, concept('No').concept_id]
 
+        # Pre-aggregate max obs date per person as a derived table to eliminate the
+        # correlated subquery (previously O(n) lookups) and avoid DATE() on the indexed
+        # obs_datetime column. The derived table is computed once and then joined.
         results = ActiveRecord::Base.connection.select_all <<~SQL
           SELECT o.person_id
           FROM obs o
           INNER JOIN encounter e ON e.encounter_id = o.encounter_id
             AND e.encounter_type = #{hiv_clinic_consultation_encounter_type_id} AND e.voided = 0
             AND e.patient_id IN (#{patient_list.join(',')})
+          INNER JOIN (
+            SELECT person_id, MAX(DATE(obs_datetime)) AS max_obs_date
+            FROM obs
+            WHERE voided = 0
+              AND concept_id IN (#{family_planning_action_to_take_concept_id}, #{method_of_family_planning_concept_id})
+              AND e.encounter_type = #{hiv_clinic_consultation_encounter_type_id}
+              AND e.program_id = 1
+              AND obs_datetime >= '#{start_date.to_date.strftime('%Y-%m-%d 00:00:00')}'
+              AND obs_datetime <= '#{end_date.to_date.strftime('%Y-%m-%d 23:59:59')}'
+            GROUP BY person_id
+          ) max_fp ON max_fp.person_id = o.person_id
+            AND DATE(o.obs_datetime) = max_fp.max_obs_date
           WHERE o.voided = 0
           AND o.concept_id IN (#{family_planning_action_to_take_concept_id}, #{method_of_family_planning_concept_id})
           AND o.value_coded NOT IN (#{none_concept_id.join(',')})
           AND o.person_id IN (#{patient_list.join(',')})
           AND o.obs_datetime >= '#{start_date.to_date.strftime('%Y-%m-%d 00:00:00')}'
           AND o.obs_datetime <= '#{end_date.to_date.strftime('%Y-%m-%d 23:59:59')}'
-          AND DATE(o.obs_datetime) = (SELECT max(date(obs.obs_datetime)) FROM obs obs
-            WHERE obs.voided = 0
-            AND (obs.concept_id IN (#{family_planning_action_to_take_concept_id}, #{method_of_family_planning_concept_id}))
-            AND obs.obs_datetime >= '#{start_date.to_date.strftime('%Y-%m-%d 00:00:00')}'
-            AND obs.obs_datetime <= '#{end_date.to_date.strftime('%Y-%m-%d 23:59:59')}'
-            AND obs.person_id = o.person_id)
           GROUP BY o.person_id
         SQL
 
         begin
-          ((results.count.to_f / patient_list.count) * 100).to_i
+          pct = ((results.count.to_f / patient_list.count) * 100).to_i
+          Rails.logger.info("FP DEBUG MAHIS: num=#{results.count}, denom=#{patient_list.count}, pct=#{pct}")
+          pct
         rescue StandardError
           0
         end
