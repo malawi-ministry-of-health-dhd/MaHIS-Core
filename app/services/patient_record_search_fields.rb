@@ -13,12 +13,9 @@ module PatientRecordSearchFields
     { name: 'idx_full_name_search', fields: ['full_name_search'] },
     { name: 'idx_location_full_name_search', fields: ['location_id_search', 'full_name_search'] },
     { name: 'idx_location_given_name_search', fields: ['location_id_search', 'given_name_search'] },
-    { name: 'idx_location_family_name_search', fields: ['location_id_search', 'family_name_search'] },
-    { name: 'idx_ncd_location_active', fields: ['ncd_location_id', 'ncd_active'] },
-    { name: 'idx_ncd_location_pending_id', fields: ['ncd_location_id', 'ncd_active', 'ncd_pending_id'] },
-    { name: 'idx_ncd_location_pending_dispensation', fields: ['ncd_location_id', 'ncd_has_pending_dispensation'] },
-    { name: 'idx_ncd_location_complications', fields: ['ncd_location_id', 'ncd_has_complications'] },
-    { name: 'idx_ncd_location_last_dispensation', fields: ['ncd_location_id', 'ncd_last_dispensation_date'] }
+    { name: 'idx_location_family_name_search', fields: ['location_id_search', 'family_name_search'] }
+    # NCD dashboard indexes now live on the dedicated ncd_patient_index database
+    # (see NcdService::NcdPatientIndex), not on patients_records.
   ].freeze
 
   NCD_PROGRAM_ID = 32
@@ -74,7 +71,9 @@ module PatientRecordSearchFields
     record['full_name_with_middle_search'] = join_search_parts(given_search, middle_search, family_search)
     record['gender_search'] = normalize_text(gender)
     record['location_id_search'] = location_id.to_s.strip
-    normalize_ncd_summary!(record, gender: gender, location_id: location_id)
+    # NCD summary fields are no longer stamped onto patients_records documents.
+    # They are projected into the dedicated ncd_patient_index database instead
+    # (PatientRecordSearchFields.ncd_projection + NcdService::NcdPatientIndex).
 
     record
   end
@@ -122,19 +121,52 @@ module PatientRecordSearchFields
     values.find(&:present?)
   end
 
-  def normalize_ncd_summary!(record, gender:, location_id:)
-    ncd_active = ncd_patient?(record)
-    record['ncd_active'] = ncd_active
-    record['ncd_location_id'] = ncd_location_id(record, location_id).to_s.strip
-    record['ncd_gender'] = gender.to_s.strip
-    record['ncd_pending_id'] = ncd_active && ncd_pending_id?(record)
-    record['ncd_has_pending_dispensation'] = ncd_active && ncd_pending_dispensation?(record)
-    record['ncd_last_dispensation_date'] = ncd_active ? ncd_last_dispensation_date(record) : nil
-    record['ncd_has_complications'] = ncd_active && ncd_complications?(record)
-    record['ncd_last_visit_date'] = ncd_active ? ncd_last_visit_date(record) : nil
-    record['ncd_latest_primary_diagnosis'] = ncd_active ? ncd_latest_primary_diagnosis(record) : nil
-    record['ncd_observation_quarters'] = ncd_active ? ncd_observation_quarters(record) : []
-    record['ncd_diagnosis_quarters'] = ncd_active ? ncd_diagnosis_quarters(record) : {}
+  # Build a standalone NCD summary document for a patient record, suitable for
+  # storing in the dedicated `ncd_patient_index` CouchDB database instead of
+  # stamping these fields onto the (large) patients_records document. Returns
+  # nil when the record is not an NCD patient, so callers can delete/skip.
+  def ncd_projection(record)
+    return nil unless record.respond_to?(:[])
+    return nil unless ncd_patient?(record)
+
+    info = fetch_hash(record, :personInformation) || {}
+    person = fetch_hash(record, :person) || {}
+    gender = first_present(
+      fetch_value(info, :gender),
+      fetch_value(record, :gender),
+      fetch_value(person, :gender)
+    )
+    location_id = first_present(
+      fetch_value(record, :location_id),
+      fetch_value(record, :deleted_location_id)
+    )
+    patient_id = first_present(
+      fetch_value(record, :patientID),
+      fetch_value(record, :ID),
+      fetch_value(record, :_id)
+    )
+    return nil if patient_id.blank?
+
+    {
+      '_id' => patient_id.to_s,
+      'type' => 'ncd_patient',
+      'patientID' => patient_id,
+      'ncd_active' => true,
+      'ncd_location_id' => ncd_location_id(record, location_id).to_s.strip,
+      'ncd_gender' => gender.to_s.strip,
+      'ncd_pending_id' => ncd_pending_id?(record),
+      'ncd_has_pending_dispensation' => ncd_pending_dispensation?(record),
+      'ncd_last_dispensation_date' => ncd_last_dispensation_date(record),
+      'ncd_has_complications' => ncd_complications?(record),
+      'ncd_last_visit_date' => ncd_last_visit_date(record),
+      'ncd_latest_primary_diagnosis' => ncd_latest_primary_diagnosis(record),
+      'ncd_observation_quarters' => ncd_observation_quarters(record),
+      'ncd_diagnosis_quarters' => ncd_diagnosis_quarters(record),
+      'personInformation' => {
+        'given_name' => fetch_value(info, :given_name),
+        'family_name' => fetch_value(info, :family_name)
+      }
+    }
   end
 
   def ncd_patient?(record)

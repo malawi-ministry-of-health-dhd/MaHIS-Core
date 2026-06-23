@@ -38,8 +38,7 @@ module NcdService
 
       PAGE_SIZE = 10_000
       PENDING_PREVIEW_LIMIT = 5
-      STATS_DDOC = '_design/ncd_dashboard_stats'
-      STATS_VIEW = 'stats'
+      STATS_VIEW = NcdService::NcdPatientIndex::STATS_VIEW
 
       def self.find_report(start_date:, end_date:, **extra_kwargs)
         new.find_report(
@@ -63,76 +62,26 @@ module NcdService
         false
       end
 
+      # The dashboard now reads from the dedicated ncd_patient_index database
+      # (one compact projection per NCD patient) rather than scanning the large
+      # patients_records documents. Index/view setup and querying are delegated
+      # to NcdService::NcdPatientIndex.
       def self.ensure_indexes!
-        CouchdbPatientService.ensure_db_exists
-        PatientRecordSearchFields.ensure_couchdb_indexes!(
-          CouchdbPatientService.couchdb_url(CouchdbPatientService::PATIENTS_DB),
-          logger: Rails.logger
-        )
-        ensure_dashboard_views!
-      end
-
-      def self.ensure_dashboard_views!
-        db_url = CouchdbPatientService.couchdb_url(CouchdbPatientService::PATIENTS_DB)
-        desired = {
-          _id: STATS_DDOC,
-          views: {
-            STATS_VIEW => {
-              map: <<~JAVASCRIPT,
-                function(doc) {
-                  if (!doc.ncd_active || !doc.ncd_location_id) { return; }
-                  var loc = String(doc.ncd_location_id);
-                  emit([loc, "total"], 1);
-                  if (doc.ncd_gender) { emit([loc, "gender", doc.ncd_gender], 1); }
-                  if (doc.ncd_has_complications === true) { emit([loc, "complications"], 1); }
-                  if (doc.ncd_has_pending_dispensation === true) { emit([loc, "pending_dispensation"], 1); }
-                  if (doc.ncd_pending_id === true) { emit([loc, "pending_id"], 1); }
-                  if (doc.ncd_last_dispensation_date) {
-                    emit([loc, "last_dispensation", doc.ncd_last_dispensation_date], 1);
-                  }
-                }
-              JAVASCRIPT
-              reduce: '_sum'
-            }
-          },
-          language: 'javascript'
-        }
-
-        current = begin
-          JSON.parse(RestClient.get("#{db_url}/#{STATS_DDOC}").body)
-        rescue RestClient::NotFound
-          {}
-        end
-
-        desired[:_rev] = current['_rev'] if current['_rev'].present?
-        return if current['views'] == JSON.parse(desired[:views].to_json)
-
-        RestClient.put("#{db_url}/#{STATS_DDOC}", desired.to_json, { content_type: :json, accept: :json })
+        NcdService::NcdPatientIndex.ensure!
       end
 
       def self.query(selector:, limit:, fields:, bookmark: nil, use_index: nil)
-        body = {
+        NcdService::NcdPatientIndex.query(
           selector: selector,
           limit: limit,
-          fields: fields
-        }
-        body[:bookmark] = bookmark if bookmark.present?
-        body[:use_index] = use_index if use_index.present?
-
-        response = RestClient.post(
-          CouchdbPatientService.couchdb_url(CouchdbPatientService::PATIENTS_DB, '_find'),
-          body.to_json,
-          { content_type: :json, accept: :json }
+          fields: fields,
+          bookmark: bookmark,
+          use_index: use_index
         )
-        JSON.parse(response.body)
       end
 
       def self.view(view_name, params = {})
-        response = RestClient.get(
-          CouchdbPatientService.couchdb_url(CouchdbPatientService::PATIENTS_DB, "#{STATS_DDOC}/_view/#{view_name}"),
-          { accept: :json, params: params }
-        )
-        JSON.parse(response.body)
+        NcdService::NcdPatientIndex.view(view_name, params)
       end
 
       def find_report(start_date:, end_date:, sections: nil, **kwargs)
