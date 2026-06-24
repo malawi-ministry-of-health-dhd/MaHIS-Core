@@ -531,17 +531,21 @@ def create_numeric_concept(concept_name, concept_class_name, units = nil, allow_
     return concept
   end
 
-  ConceptNumeric.create!(
-    concept_id: concept.concept_id,
-    hi_absolute: nil,
-    hi_critical: nil,
-    hi_normal: nil,
-    low_absolute: nil,
-    low_critical: nil,
-    low_normal: nil,
-    units: units,
-    precise: allow_decimal ? 1 : 0
-  )
+  # Check if concept_numeric already exists
+  existing_numeric = ConceptNumeric.find_by(concept_id: concept.concept_id)
+  unless existing_numeric
+    ConceptNumeric.create!(
+      concept_id: concept.concept_id,
+      hi_absolute: nil,
+      hi_critical: nil,
+      hi_normal: nil,
+      low_absolute: nil,
+      low_critical: nil,
+      low_normal: nil,
+      units: units,
+      precise: allow_decimal ? 1 : 0
+    )
+  end
   puts "  Created numeric concept: #{concept_name} (#{concept_class_name}, units: #{units})"
 
   concept
