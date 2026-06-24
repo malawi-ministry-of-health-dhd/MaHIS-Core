@@ -16,10 +16,11 @@ module Sync
       'pnc' => ['PNC PROGRAM', 'POSTNATAL CARE PROGRAM']
     }.freeze
 
-    # How far back the changed-only dispatcher looks for MNH activity when
-    # deciding which facilities to refresh.
-    MNH_ACTIVITY_LOOKBACK = 48.hours
-    DDE_ACTIVATED_CACHE_KEY = 'mnh_stats:dde_activated_location_ids'
+    # Every facility in the facilities DB is refreshed on every run. DDE activation
+    # is no longer a gate (it was misleading: it silently refreshed nothing until a
+    # facility happened to be flagged). Cached briefly so a fan-out burst of
+    # per-location jobs doesn't re-query the facilities DB once per facility.
+    FACILITIES_CACHE_KEY = 'mnh_stats:facility_location_ids'
 
     def self.enqueue_for_encounter(encounter)
       return if encounter.blank?
@@ -168,33 +169,10 @@ module Sync
       )
     end
 
-    def target_location_ids(changed_only)
-      activated = dde_activated_location_ids
-      return activated unless changed_only
-
-      activated & locations_with_recent_mnh_activity(MNH_ACTIVITY_LOOKBACK.ago)
-    end
-
-    # location_ids of DDE-activated facilities that had an MNH encounter or
-    # enrollment created/updated since the given cutoff.
-    def locations_with_recent_mnh_activity(since)
-      program_ids = mnh_program_ids
-      return [] if program_ids.empty?
-
-      encounter_locations = Encounter.unscoped
-                                     .where(program_id: program_ids)
-                                     .where('date_created >= :since OR date_changed >= :since', since: since)
-                                     .distinct.pluck(:location_id)
-      program_locations = PatientProgram.unscoped
-                                        .where(program_id: program_ids)
-                                        .where('date_created >= :since OR date_changed >= :since', since: since)
-                                        .distinct.pluck(:location_id)
-
-      (encounter_locations + program_locations).compact.map { |id| id.to_s.to_i }.uniq.reject(&:zero?)
-    end
-
-    def mnh_program_ids
-      @mnh_program_ids ||= Program.unscoped.where(name: PROGRAMS.values.flatten).pluck(:program_id)
+    # Always every facility. changed_only is accepted for signature/cron stability
+    # but intentionally ignored — every run refreshes all facilities.
+    def target_location_ids(_changed_only = false)
+      all_facility_location_ids
     end
 
     def build_stats_rows(date, location_id, program_key)
@@ -265,35 +243,33 @@ module Sync
     end
 
     def locations(location_id = nil)
-      activated_ids = dde_activated_location_ids
-      if activated_ids.empty?
-        Sidekiq.logger.info('MnhStatsSyncJob: no DDE-activated facilities found; skipping MNH stats')
+      facility_ids = all_facility_location_ids
+      if facility_ids.empty?
+        Sidekiq.logger.info('MnhStatsSyncJob: no facilities found in the facilities DB; skipping MNH stats')
         return Location.none
       end
 
       scope = Location.unscoped
                       .where(retired: [0, false])
-                      .where(location_id: activated_ids)
+                      .where(location_id: facility_ids)
                       .select(:location_id, :name)
                       .order(:location_id)
       location_id.present? ? scope.where(location_id: location_id) : scope
     end
 
-    # location_ids of facilities flagged dde_activated in the CouchDB facilities DB.
-    def dde_activated_location_ids
-      return @dde_activated_location_ids if defined?(@dde_activated_location_ids)
+    # location_ids of every facility in the CouchDB facilities DB (no activation gate).
+    def all_facility_location_ids
+      return @all_facility_location_ids if defined?(@all_facility_location_ids)
 
-      # Cached briefly so a fan-out burst of per-location jobs doesn't query
-      # the CouchDB facilities DB once per facility.
-      @dde_activated_location_ids =
-        Rails.cache.fetch(DDE_ACTIVATED_CACHE_KEY, expires_in: 10.minutes) do
-          fetch_dde_activated_location_ids
+      @all_facility_location_ids =
+        Rails.cache.fetch(FACILITIES_CACHE_KEY, expires_in: 10.minutes) do
+          fetch_all_facility_location_ids
         end
     end
 
-    def fetch_dde_activated_location_ids
+    def fetch_all_facility_location_ids
       db_url = couchdb_url('facilities')
-      selector = { '$or' => [{ 'dde_activated' => true }, { 'dde_activated' => 'true' }] }
+      selector = {}
       ids = []
       bookmark = nil
 
@@ -309,12 +285,12 @@ module Sync
         break if docs.size < 1000
       end
 
-      ids.compact.map { |value| value.to_s.to_i }.uniq
+      ids.compact.map { |value| value.to_s.to_i }.uniq.reject(&:zero?)
     rescue RestClient::NotFound
-      Sidekiq.logger.warn("MnhStatsSyncJob: facilities DB not found; treating no facilities as DDE-activated")
+      Sidekiq.logger.warn('MnhStatsSyncJob: facilities DB not found; no facilities to refresh')
       []
     rescue StandardError => e
-      Sidekiq.logger.error("MnhStatsSyncJob: failed to load DDE-activated facilities: #{e.class}: #{e.message}")
+      Sidekiq.logger.error("MnhStatsSyncJob: failed to load facilities: #{e.class}: #{e.message}")
       []
     end
 
