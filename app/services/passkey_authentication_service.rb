@@ -11,6 +11,20 @@ module PasskeyAuthenticationService
   CREDENTIALS_PROP              = 'passkey_credentials'
   WEBAUTHN_ID_PROP              = 'webauthn_id'
 
+  # Biometric-only policy: restrict ceremonies to the device's built-in platform
+  # authenticator (Touch ID / Windows Hello / on-device fingerprint), which is the
+  # one gated by biometrics. Combined with user_verification: 'required' this forces
+  # the biometric/PIN check and removes the QR-code "use a phone" hybrid flow and
+  # roaming security keys from the browser dialog. 'client-device' is the matching
+  # WebAuthn L3 UI hint (ignored by browsers that don't support it).
+  CREDENTIAL_HINTS = %w[client-device].freeze
+
+  # Authentication (get) has no authenticator_attachment field, so we instead tag the
+  # allowed credentials as living on the platform authenticator. Without transports the
+  # browser assumes the credential might be on a phone and offers the QR/hybrid flow;
+  # 'internal' keeps login on the on-device biometric (Touch ID / Windows Hello).
+  PLATFORM_TRANSPORTS = %w[internal].freeze
+
   class << self
     def registration_options(user)
       webauthn_id = ensure_webauthn_id!(user)
@@ -23,6 +37,7 @@ module PasskeyAuthenticationService
         },
         exclude: active_credentials(user).map { |c| c['id'] },
         authenticator_selection: {
+          authenticator_attachment: 'platform',
           user_verification: 'required',
           resident_key: 'preferred'
         },
@@ -30,7 +45,7 @@ module PasskeyAuthenticationService
       )
 
       session_token = store_challenge(user, REGISTRATION_CHALLENGE_PROP, options.challenge)
-      { session_token:, options: options.as_json }
+      { session_token:, options: options.as_json.merge('hints' => CREDENTIAL_HINTS) }
     end
 
     def register(session_token:, credential:, nickname: nil)
@@ -64,8 +79,11 @@ module PasskeyAuthenticationService
         user_verification: 'required'
       )
 
+      json = options.as_json
+      json[:allowCredentials]&.each { |descriptor| descriptor[:transports] = PLATFORM_TRANSPORTS }
+
       session_token = store_challenge(user, AUTHENTICATION_CHALLENGE_PROP, options.challenge)
-      { session_token:, options: options.as_json }
+      { session_token:, options: json.merge('hints' => CREDENTIAL_HINTS) }
     end
 
     def authenticate(session_token:, credential:)
