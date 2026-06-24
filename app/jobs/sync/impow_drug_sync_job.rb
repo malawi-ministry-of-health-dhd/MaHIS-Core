@@ -465,7 +465,8 @@ module Sync
           'antibiotics_and_antifungals' => antibiotics_and_antifungals,
           'eye_drugs' => eye_drugs,
           'skin_drugs' => skin_drugs,
-          'iron_drugs' => iron_drugs
+          'iron_drugs' => iron_drugs,
+          'ors_drugs' => ors_drugs
         }
       }
     end
@@ -634,6 +635,22 @@ module Sync
             'drug_id' => drug.drug_id,
             'drug_name' => drug.name,
             'concept_id' => drug.concept_id,
+            'strength' => extract_strength(drug.name),
+            'units' => drug.units,
+            'dosage_form' => get_dosage_form_name(drug.dosage_form),
+            'route' => get_route_name(drug.route)
+          }
+        end.compact
+      }
+    end
+
+    def ors_drugs
+      {
+        'drugs' => Drug.where(concept_id: ConceptName.find_by(name: 'Oral rehydration salts')&.concept_id).map do |drug|
+          {
+            'drug_id' => drug.drug_id,
+            'concept_id' => drug.concept_id,
+            'drug_name' => drug.name,
             'strength' => extract_strength(drug.name),
             'units' => drug.units,
             'dosage_form' => get_dosage_form_name(drug.dosage_form),

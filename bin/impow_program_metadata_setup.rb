@@ -41,7 +41,11 @@ ENCOUNTER_TYPES_TO_CREATE = [
   { name: 'Triage', description: '' },
   { name: 'Medical Assessment', description: '' },
   { name: 'OTS Admission', description: 'Encounter type for admission to Outpatient Therapeutic Services' },
-  { name: 'Initial Assessment', description: 'Encounter type for initial assessment in NRU' }
+  { name: 'Initial Assessment', description: 'Encounter type for initial assessment in NRU' },
+  { name: 'Feeding Entry', description: 'Encounter type for feeding entry in NRU' },
+  { name: 'Advisory', description: 'Encounter type for advisory given to patients' },
+  { name: 'Violence Screening', description: 'Encounter type for screening for violence' },
+  { name: 'Immunization', description: 'Encounter type for immunization' }
 ]
 
 def create_concept(concept_name, datatype_id: 4, concept_class_id: 11, is_set: false)
@@ -1128,6 +1132,102 @@ def create_nutrition_concepts
     puts "\n114. Creating Current treatment phase concept..."
     create_coded_concept_with_answers('Current treatment phase', 'Finding',
                                       %w[Stabilization Transition Rehabilitation])
+
+    # Create Red eyes duration in days concept (Numeric, Finding)
+    puts "\n115. Creating Red eyes duration in days concept..."
+    create_numeric_concept('Red eyes duration in days', 'Finding', 'days', allow_decimal: false)
+
+    # Create Difficulty seeing concept (Coded, Finding)
+    puts "\n116. Creating Difficulty seeing concept..."
+    create_coded_concept_with_answers('Difficulty seeing', 'Finding', %w[Yes No])
+
+    # Create Difficulty seeing duration in days concept (Numeric, Finding)
+    puts "\n117. Creating Difficulty seeing duration in days concept..."
+    create_numeric_concept('Difficulty seeing duration in days', 'Finding', 'days', allow_decimal: false)
+
+    # Create At risk of TB concept (Coded, Finding)
+    puts "\n118. Creating At risk of TB concept..."
+    create_coded_concept_with_answers('At risk of TB', 'Finding', %w[Yes No])
+
+    # Create At risk of malnutrition concept (Coded, Finding)
+    puts "\n119. Creating At risk of malnutrition concept..."
+    create_coded_concept_with_answers('At risk of malnutrition', 'Finding', %w[Yes No])
+
+    # Create Treat at home concept (Coded, Procedure)
+    puts "\n120. Creating Treat at home concept..."
+    create_coded_concept_with_answers('Treat at home', 'Procedure', %w[Yes No])
+
+    # Create Increase fluids and continue feeding concept (Coded, Procedure)
+    puts "\n121. Creating Increase fluids and continue feeding concept..."
+    create_coded_concept_with_answers('Increase fluids and continue feeding', 'Procedure', %w[Yes No])
+
+    # Create Advise on when to return concept (Coded, Procedure)
+    puts "\n122. Creating Advise on when to return concept..."
+    create_coded_concept_with_answers('Advise on when to return', 'Procedure', %w[Yes No])
+
+    # Create Advise on use of ITN concept (Coded, Procedure)
+    puts "\n123. Creating Advise on use of ITN concept..."
+    create_coded_concept_with_answers('Advise on use of ITN', 'Procedure', %w[Yes No])
+
+    # Create Follow up on day 3 concept (Coded, Procedure)
+    puts "\n124. Creating Follow up on day 3 concept..."
+    create_coded_concept_with_answers('Follow up on day 3', 'Procedure', %w[Yes No])
+
+    # Create For SAM follow up in 7 days concept (Coded, Procedure)
+    puts "\n125. Creating For SAM follow up in 7 days concept..."
+    create_coded_concept_with_answers('For SAM follow up in 7 days', 'Procedure', %w[Yes No])
+
+    # Create Fully immunized concept (Coded, Finding)
+    puts "\n126. Creating Fully immunized concept..."
+    create_coded_concept_with_answers('Fully immunized', 'Finding', %w[Yes No])
+
+    # Create Missed Vaccines concept (Text, Finding)
+    puts "\n127. Creating Missed Vaccines concept..."
+    create_text_concept('Missed Vaccines', 'Finding')
+
+    # Create Immunisation status concept (Coded, Finding)
+    puts "\n128. Creating Immunisation status concept..."
+    create_coded_concept_with_answers('Immunisation status', 'Finding',
+                                      ['Fully immunized', 'Partially immunized', 'Not immunized', 'Unknown'])
+
+    # Create screened for violence or abuse concept (Coded, Procedure)
+    puts "\n129. Creating screened for violence or abuse concept..."
+    create_coded_concept_with_answers('screened for violence or abuse', 'Procedure', %w[Yes No])
+
+    # Create Type of abuse concept (Coded, Finding)
+    puts "\n130. Creating Type of abuse concept..."
+    create_coded_concept_with_answers('Type of abuse', 'Finding',
+                                      ['Physical', 'Sexual', 'Emotional', 'Neglect', 'Not applicable'])
+
+    # Create Emotional concept (Misc, N/A)
+    puts "\n131. Creating Emotional concept..."
+    emotional_concept = create_concept('Emotional', datatype_id: 4, concept_class_id: 11, is_set: false)
+    exists = ConceptName.where(concept_id: emotional_concept.id, name: 'Emotional',
+                               concept_name_type: 'FULLY_SPECIFIED').exists?
+    create_concept_name(emotional_concept, 'Emotional', type: 'FULLY_SPECIFIED') unless exists
+
+    # Create Social welfare (child protection worker) concept (Coded, Procedure)
+    puts "\n132. Creating Social welfare (child protection worker) concept..."
+    create_coded_concept_with_answers('Social welfare (child protection worker)', 'Procedure', %w[Yes No])
+
+    # Create NGO/CBO/Committees concept (Coded, Procedure)
+    puts "\n133. Creating NGO/CBO/Committees concept..."
+    create_coded_concept_with_answers('NGO/CBO/Committees', 'Procedure', %w[Yes No])
+
+    # Create Not referred concept (Misc, N/A)
+    puts "\n134. Creating Not referred concept..."
+    not_referred_concept = create_concept('Not referred', datatype_id: 4, concept_class_id: 11, is_set: false)
+    exists = ConceptName.where(concept_id: not_referred_concept.id, name: 'Not referred',
+                               concept_name_type: 'FULLY_SPECIFIED').exists?
+    create_concept_name(not_referred_concept, 'Not referred', type: 'FULLY_SPECIFIED') unless exists
+
+    # Create Refer (danger sign/cannot treat) concept (Coded, Procedure)
+    puts "\n135. Creating Refer (danger sign/cannot treat) concept..."
+    create_coded_concept_with_answers('Refer (danger sign/cannot treat)', 'Procedure', %w[Yes No])
+
+    # Create Stockout-Refer concept (Coded, Procedure)
+    puts "\n136. Creating Stockout-Refer concept..."
+    create_coded_concept_with_answers('Stockout-Refer', 'Procedure', %w[Yes No])
 
     puts "\n" + '=' * 80
     puts 'Successfully created nutrition concepts!'
