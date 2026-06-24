@@ -45,6 +45,8 @@ class BedManagementResponseBuilder
         voided: allocation.voided,
         given_name: person_name&.given_name,
         family_name: person_name&.family_name,
+        gender: allocation.patient&.person&.gender,
+        birthdate: allocation.patient&.person&.birthdate,
         bed_number: allocation.bed&.bed_number,
         section_name: section&.name,
         section_location_id: section&.location_id,
