@@ -569,12 +569,16 @@ class CouchdbChangesListener
 
       canonical_id = canonical_doc_id(updated_doc)
 
-      if canonical_id.present? && canonical_id != doc_id
-        rename_couchdb_document(doc_id, canonical_id, updated_doc)
-      else
-        update_couchdb_document_direct(doc_id, updated_doc)
-      end
-      
+      result =
+        if canonical_id.present? && canonical_id != doc_id
+          rename_couchdb_document(doc_id, canonical_id, updated_doc)
+        else
+          update_couchdb_document_direct(doc_id, updated_doc)
+        end
+
+      maintain_ncd_patient_index(updated_doc) if result && db_name == 'patients_records'
+      result
+
     rescue RestClient::Conflict, RestClient::PreconditionFailed => e
       Rails.logger.warn("[CouchDB Listener] Conflict on attempt #{attempt} for #{doc_id} in #{db_name}, retrying...")
       sleep(0.5 * (2 ** (attempt - 1)))
@@ -590,6 +594,18 @@ class CouchdbChangesListener
         false
       end
     end
+  end
+
+  # Keep the dedicated NCD patient projection (ncd_patient_index DB) in sync
+  # whenever a patient record is processed. NCD patients are upserted; non-NCD
+  # records yield no projection and are skipped. Best-effort — an index hiccup
+  # must never break the main listener flow.
+  def maintain_ncd_patient_index(patient_doc)
+    return unless db_name == 'patients_records'
+
+    NcdService::NcdPatientIndex.upsert_records([patient_doc])
+  rescue StandardError => e
+    Rails.logger.error("[CouchDB Listener] Failed to update NCD patient index for #{patient_doc&.dig('_id')}: #{e.message}")
   end
 
   def mark_processing_failure(doc, error, source_rev: nil)
