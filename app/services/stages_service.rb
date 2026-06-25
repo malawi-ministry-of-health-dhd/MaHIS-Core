@@ -49,6 +49,7 @@ class StagesService
     stage.location_id = location_id
     stage.status = true
     assign_arrival_time(stage, stage_params)
+    assign_stage_metadata(stage, stage_params)
 
     if stage.stage != stage_name
       stage.stage = stage_name
@@ -151,6 +152,7 @@ class StagesService
   def apply_stage_updates(stage, stage_params)
     stage_name = normalize_stage(stage_params[:stage])
     assign_arrival_time(stage, stage_params)
+    assign_stage_metadata(stage, stage_params)
 
     if stage.stage != stage_name
       stage.stage = stage_name
@@ -184,6 +186,13 @@ class StagesService
   def assign_arrival_time(stage, params)
     arrival_time = payload_arrival_time(params)
     stage.arrival_time = arrival_time if arrival_time.present?
+  end
+
+  def assign_stage_metadata(stage, params)
+    %i[disposition_type patient_care_area department destination].each do |field|
+      value = params[field].presence || params[field.to_s].presence
+      stage.public_send("#{field}=", value) if value.present?
+    end
   end
 
   def normalize_stage(stage)
