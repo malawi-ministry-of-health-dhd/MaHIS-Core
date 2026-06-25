@@ -120,42 +120,15 @@ module Sync
     end
 
     def rusf_sfp_section
-      concept_name = 'Ready-to-Use Supplementary Food (RUSF)'
-      concept = ConceptName.find_by(name: concept_name)
-      drugs = get_drugs_by_concept_name(concept_name)
-
-      {
-        'concept_id' => concept&.concept_id,
-        'concept_name' => concept_name,
-        'concept_set' => 'Supplementary Feeding Services',
-        'drugs' => drugs
-      }
+      build_simple_section('Ready-to-Use Supplementary Food (RUSF)', 'Supplementary Feeding Services')
     end
 
     def csb_plus_section
-      concept_name = 'Corn Soy Blend Plus (CSB+)'
-      concept = ConceptName.find_by(name: concept_name)
-      drugs = get_drugs_by_concept_name(concept_name)
-
-      {
-        'concept_id' => concept&.concept_id,
-        'concept_name' => concept_name,
-        'concept_set' => 'Supplementary Feeding Services',
-        'drugs' => drugs
-      }
+      build_simple_section('Corn Soy Blend Plus (CSB+)', 'Supplementary Feeding Services')
     end
 
     def csb_plus_plus_section
-      concept_name = 'Corn Soy Blend Plus Plus (CSB++)'
-      concept = ConceptName.find_by(name: concept_name)
-      drugs = get_drugs_by_concept_name(concept_name)
-
-      {
-        'concept_id' => concept&.concept_id,
-        'concept_name' => concept_name,
-        'concept_set' => 'Supplementary Feeding Services',
-        'drugs' => drugs
-      }
+      build_simple_section('Corn Soy Blend Plus Plus (CSB++)', 'Supplementary Feeding Services')
     end
 
     # ---- OTS (Outpatient Therapeutic Services) -------------------------
@@ -190,6 +163,10 @@ module Sync
         {
           'drug_id' => drug.drug_id,
           'drug_name' => drug.name,
+          'concept' => {
+            'concept_id' => concept.concept_id,
+            'name' => concept_name
+          },
           'strength' => extract_strength(drug.name),
           'units' => drug.units,
           'dosage_form' => get_dosage_form_name(drug.dosage_form),
@@ -218,29 +195,66 @@ module Sync
       match ? match[1] : nil
     end
 
-    # ---- RUTF ----------------------------------------------------------
+    # Helper method to build a single drug hash with concept information
+    def build_drug_hash(drug, concept_name = nil)
+      concept = concept_name ? ConceptName.find_by(name: concept_name) : ConceptName.find_by(concept_id: drug.concept_id)
 
-    def rutf_section
-      concept_name = 'Ready-to-Use Therapeutic Food (RUTF)'
+      {
+        'drug_id' => drug.drug_id,
+        'drug_name' => drug.name,
+        'concept' => {
+          'concept_id' => drug.concept_id,
+          'name' => concept&.name
+        },
+        'strength' => extract_strength(drug.name),
+        'units' => drug.units,
+        'dosage_form' => get_dosage_form_name(drug.dosage_form),
+        'route' => get_route_name(drug.route)
+      }
+    end
+
+    # Helper method to get drugs by a list of drug names
+    def get_drugs_by_names(drug_names)
+      drug_names.map do |drug_name|
+        drug = Drug.find_by(name: drug_name)
+        next unless drug
+
+        build_drug_hash(drug)
+      end.compact
+    end
+
+    # Helper method to build a simple section structure
+    def build_simple_section(concept_name, concept_set, additional_fields = {})
       concept = ConceptName.find_by(name: concept_name)
       drugs = get_drugs_by_concept_name(concept_name)
 
       {
         'concept_id' => concept&.concept_id,
         'concept_name' => concept_name,
-        'concept_set' => 'Outpatient Therapeutic Services',
-        'drugs' => drugs,
-        'dose_basis' => '165 kcal/kg/day',
-        'note' => 'Dose given per day and per week based on weight band',
-        'weight_bands' => Impow::OtsDrugDosageService.all_rutf_weight_bands.map do |band|
-          {
-            'min_kg' => band[:min],
-            'max_kg' => band[:max] == Float::INFINITY ? nil : band[:max],
-            'sachets_per_day' => band[:day],
-            'sachets_per_week' => band[:week]
-          }
-        end
-      }
+        'concept_set' => concept_set,
+        'drugs' => drugs
+      }.merge(additional_fields)
+    end
+
+    # ---- RUTF ----------------------------------------------------------
+
+    def rutf_section
+      build_simple_section(
+        'Ready-to-Use Therapeutic Food (RUTF)',
+        'Outpatient Therapeutic Services',
+        {
+          'dose_basis' => '165 kcal/kg/day',
+          'note' => 'Dose given per day and per week based on weight band',
+          'weight_bands' => Impow::OtsDrugDosageService.all_rutf_weight_bands.map do |band|
+            {
+              'min_kg' => band[:min],
+              'max_kg' => band[:max] == Float::INFINITY ? nil : band[:max],
+              'sachets_per_day' => band[:day],
+              'sachets_per_week' => band[:week]
+            }
+          end
+        }
+      )
     end
 
     # ---- Amoxicillin ---------------------------------------------------
@@ -273,40 +287,27 @@ module Sync
     end
 
     def malaria_drugs_section
-      drugs = ['DP 60mg/480mg', 'DP 80mg/640mg', 'DP 20mg/160mg', 'DP 30mg/240mg', 'DP 40mg/320mg',
-               'Rectal Artesunate', 'LA (Lumefantrine + arthemether)'].map do |drug_name|
-        drug = Drug.find_by(name: drug_name)
-        next unless drug
-
-        {
-          'drug_id' => drug.drug_id,
-          'drug_name' => drug.name,
-          'strength' => extract_strength(drug.name),
-          'units' => drug.units,
-          'dosage_form' => get_dosage_form_name(drug.dosage_form),
-          'route' => get_route_name(drug.route)
-        }
-      end.compact
+      drugs = get_drugs_by_names([
+                                   'DP 60mg/480mg', 'DP 80mg/640mg', 'DP 20mg/160mg', 'DP 30mg/240mg', 'DP 40mg/320mg',
+                                   'Rectal Artesunate', 'LA (Lumefantrine + arthemether)'
+                                 ])
       drugs.empty? ? [] : drugs
     end
 
     # Helper method to build antibiotic sections (e.g., Amoxicillin, Ampicillin) since they have similar structure
     def build_antibiotic_section(concept_name:, dose_range:, frequency:, duration_days:, note:, weight_bands:)
-      concept = ConceptName.find_by(name: concept_name)
-      drugs = get_drugs_by_concept_name(concept_name)
-
-      {
-        'concept_id' => concept&.concept_id,
-        'concept_name' => concept_name,
-        'concept_set' => 'Outpatient Therapeutic Services',
-        'drugs' => drugs,
-        'dose_range_mg_per_kg_per_day' => dose_range,
-        'frequency' => frequency,
-        'duration_days' => duration_days,
-        'when_given' => '1 dose at admission + 7 days at home for new enrollees only',
-        'note' => note,
-        'weight_bands' => weight_bands
-      }
+      build_simple_section(
+        concept_name,
+        'Outpatient Therapeutic Services',
+        {
+          'dose_range_mg_per_kg_per_day' => dose_range,
+          'frequency' => frequency,
+          'duration_days' => duration_days,
+          'when_given' => '1 dose at admission + 7 days at home for new enrollees only',
+          'note' => note,
+          'weight_bands' => weight_bands
+        }
+      )
     end
 
     def format_weight_band(band, drug_name)
@@ -400,48 +401,34 @@ module Sync
     # ---- Vitamin A -----------------------------------------------------
 
     def vitamin_a_section
-      concept_name = 'Vitamin A'
-      concept = ConceptName.find_by(name: concept_name)
-      drugs = get_drugs_by_concept_name(concept_name)
-
-      {
-        'concept_id' => concept&.concept_id,
-        'concept_name' => concept_name,
-        'concept_set' => 'Outpatient Therapeutic Services',
-        'drugs' => drugs,
-        'route' => 'Oral',
-        'dosage_form' => 'Capsule',
-        'units' => 'IU',
-        'when_given' => '1 dose on the 4th week (4th visit) — all patients',
-        'age_bands' => Impow::OtsDrugDosageService.all_vitamin_a_age_bands.map do |band|
-          {
-            'label' => age_band_label(band[:min_months], band[:max_months]),
-            'min_age_months' => band[:min_months],
-            'max_age_months' => band[:max_months],
-            'dose_iu' => band[:dose_iu],
-            'dose_description' => band[:dose_description]
-          }
-        end
-      }
+      build_simple_section(
+        'Vitamin A',
+        'Outpatient Therapeutic Services',
+        {
+          'route' => 'Oral',
+          'dosage_form' => 'Capsule',
+          'units' => 'IU',
+          'when_given' => '1 dose on the 4th week (4th visit) — all patients',
+          'age_bands' => Impow::OtsDrugDosageService.all_vitamin_a_age_bands.map do |band|
+            {
+              'label' => age_band_label(band[:min_months], band[:max_months]),
+              'min_age_months' => band[:min_months],
+              'max_age_months' => band[:max_months],
+              'dose_iu' => band[:dose_iu],
+              'dose_description' => band[:dose_description]
+            }
+          end
+        }
+      )
     end
 
     # ---- Vaccinations -----------------------------------------------
 
     def vaccine_section
-      drugs = ['BCG', 'Measles vaccine', 'ROTA Vaccination', 'PCV', 'Pentavalent Vaccination',
-               'Polio Vaccination'].map do |drug_name|
-        drug = Drug.find_by(name: drug_name)
-        next unless drug
-
-        {
-          'drug_id' => drug.drug_id,
-          'drug_name' => drug.name,
-          'strength' => extract_strength(drug.name),
-          'units' => drug.units,
-          'dosage_form' => get_dosage_form_name(drug.dosage_form),
-          'route' => get_route_name(drug.route)
-        }
-      end.compact
+      drugs = get_drugs_by_names([
+                                   'BCG', 'Measles vaccine', 'ROTA Vaccination', 'PCV', 'Pentavalent Vaccination',
+                                   'Polio Vaccination'
+                                 ])
       drugs.empty? ? [] : drugs
     end
 
@@ -473,68 +460,38 @@ module Sync
 
     def f75_section
       concept_name = 'F-75 Therapeutic Milk (F75)'
-      concept = ConceptName.find_by(name: concept_name)
-      # F-75 is a specific drug name, not just any drug with this concept
-      drug = Drug.find_by(name: 'F-75 Therapeutic Milk (F75)')
+      drug = Drug.find_by(name: concept_name)
 
-      {
-        'concept_id' => concept&.concept_id,
-        'concept_name' => 'F-75 Therapeutic Milk (F75)',
-        'concept_set' => 'Inpatient Therapeutic Service',
-        'drugs' => if drug
-                     [{
-                       'drug_id' => drug.drug_id,
-                       'drug_name' => drug.name,
-                       'strength' => extract_strength(drug.name),
-                       'units' => drug.units,
-                       'dosage_form' => get_dosage_form_name(drug.dosage_form),
-                       'route' => get_route_name(drug.route)
-                     }]
-                   else
-                     []
-                   end,
-        'description' => 'Low protein therapeutic milk for initial stabilization phase'
-      }
+      build_simple_section(
+        concept_name,
+        'Inpatient Therapeutic Service',
+        {
+          'drugs' => drug ? [build_drug_hash(drug, concept_name)] : [],
+          'description' => 'Low protein therapeutic milk for initial stabilization phase'
+        }
+      )
     end
 
     def f100_section
       concept_name = 'F-100 Therapeutic Milk (F100)'
-      concept = ConceptName.find_by(name: concept_name)
-      # F-100 is a specific drug name, not just any drug with this concept
-      drug = Drug.find_by(name: 'F-100 Therapeutic Milk (F100)')
+      drug = Drug.find_by(name: concept_name)
 
-      {
-        'concept_id' => concept&.concept_id,
-        'concept_name' => 'F-100 Therapeutic Milk (F100)',
-        'concept_set' => 'Inpatient Therapeutic Service',
-        'drugs' => if drug
-                     [{
-                       'drug_id' => drug.drug_id,
-                       'drug_name' => drug.name,
-                       'strength' => extract_strength(drug.name),
-                       'units' => drug.units,
-                       'dosage_form' => get_dosage_form_name(drug.dosage_form),
-                       'route' => get_route_name(drug.route)
-                     }]
-                   else
-                     []
-                   end,
-        'description' => 'High protein therapeutic milk for transition and rehabilitation phase'
-      }
+      build_simple_section(
+        concept_name,
+        'Inpatient Therapeutic Service',
+        {
+          'drugs' => drug ? [build_drug_hash(drug, concept_name)] : [],
+          'description' => 'High protein therapeutic milk for transition and rehabilitation phase'
+        }
+      )
     end
 
     def rutf_nru_section
-      concept_name = 'Ready-to-Use Therapeutic Food (RUTF)'
-      concept = ConceptName.find_by(name: concept_name)
-      drugs = get_drugs_by_concept_name(concept_name)
-
-      {
-        'concept_id' => concept&.concept_id,
-        'concept_name' => concept_name,
-        'concept_set' => 'Inpatient Therapeutic Service',
-        'drugs' => drugs,
-        'description' => 'Used during rehabilitation phase in NRU'
-      }
+      build_simple_section(
+        'Ready-to-Use Therapeutic Food (RUTF)',
+        'Inpatient Therapeutic Service',
+        { 'description' => 'Used during rehabilitation phase in NRU' }
+      )
     end
 
     # ----- All Antibiotics and antifungals -----------------------------------
@@ -587,77 +544,28 @@ module Sync
 
     def eye_drugs
       {
-        'drugs' => ['Tetracycline eye ointment 1%', 'Atropine sulphate eye ointment 1%',
-                    'Atropine sulphate eye drops 0.5%', 'Atropine sulphate eye drops 1%'].map do |drug_name|
-          drug = Drug.find_by(name: drug_name)
-          next unless drug
-
-          {
-            'drug_id' => drug.drug_id,
-            'concept_id' => drug.concept_id,
-            'drug_name' => drug.name,
-            'strength' => extract_strength(drug.name),
-            'units' => drug.units,
-            'dosage_form' => get_dosage_form_name(drug.dosage_form),
-            'route' => get_route_name(drug.route)
-          }
-        end.compact
+        'drugs' => get_drugs_by_names([
+                                        'Tetracycline eye ointment 1%', 'Atropine sulphate eye ointment 1%',
+                                        'Atropine sulphate eye drops 0.5%', 'Atropine sulphate eye drops 1%'
+                                      ])
       }
     end
 
     def skin_drugs
       {
-        'drugs' => ['Potassium Permanganate(1% KMnO4)', 'Zinc Oxide 10% cream(100mg tube)',
-                    'Zinc oxide 15% ointment (in EO base)', 'Zinc oxide 15% ointment + sulphur 5%'].map do |drug_name|
-          drug = Drug.find_by(name: drug_name)
-          next unless drug
-
-          {
-            'drug_id' => drug.drug_id,
-            'concept_id' => drug.concept_id,
-            'drug_name' => drug.name,
-            'strength' => extract_strength(drug.name),
-            'units' => drug.units,
-            'dosage_form' => get_dosage_form_name(drug.dosage_form),
-            'route' => get_route_name(drug.route)
-          }
-        end.compact
+        'drugs' => get_drugs_by_names([
+                                        'Potassium Permanganate(1% KMnO4)', 'Zinc Oxide 10% cream(100mg tube)',
+                                        'Zinc oxide 15% ointment (in EO base)', 'Zinc oxide 15% ointment + sulphur 5%'
+                                      ])
       }
     end
 
     def iron_drugs
-      {
-        'drugs' => ['Ferrous sulphate'].map do |drug_name|
-          drug = Drug.find_by(name: drug_name)
-          next unless drug
-
-          {
-            'drug_id' => drug.drug_id,
-            'drug_name' => drug.name,
-            'concept_id' => drug.concept_id,
-            'strength' => extract_strength(drug.name),
-            'units' => drug.units,
-            'dosage_form' => get_dosage_form_name(drug.dosage_form),
-            'route' => get_route_name(drug.route)
-          }
-        end.compact
-      }
+      { 'drugs' => get_drugs_by_names(['Ferrous sulphate']) }
     end
 
     def ors_drugs
-      {
-        'drugs' => Drug.where(concept_id: ConceptName.find_by(name: 'Oral rehydration salts')&.concept_id).map do |drug|
-          {
-            'drug_id' => drug.drug_id,
-            'concept_id' => drug.concept_id,
-            'drug_name' => drug.name,
-            'strength' => extract_strength(drug.name),
-            'units' => drug.units,
-            'dosage_form' => get_dosage_form_name(drug.dosage_form),
-            'route' => get_route_name(drug.route)
-          }
-        end.compact
-      }
+      { 'drugs' => get_drugs_by_concept_name('Oral rehydration salts') }
     end
     # ---- CouchDB Views -------------------------------------------------
 
