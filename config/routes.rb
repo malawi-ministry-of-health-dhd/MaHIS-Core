@@ -397,6 +397,8 @@ Rails.application.routes.draw do
 
       post '/save_patient_record' => 'patients#save_patient_record'
       get '/couchdb/config', to: 'couchdb_configurations#show'
+      get '/mium/config', to: 'mium_configurations#show'
+      post '/mium/token', to: 'mium_configurations#token'
       # drugs_cms routes
       get '/drug_cms/search', to: 'drug_cms#search'
       resources :drug_cms, only: %i[index]
