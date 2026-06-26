@@ -44,6 +44,8 @@ module CreateConcepts
       { name: 'Treated', datatype: 'N/A', class: 'Misc' },
       { name: 'Blood loss ≥300ml + one abnormal observation', datatype: 'N/A', class: 'Misc' },
       { name: 'Blood loss ≥500ml', datatype: 'N/A', class: 'Misc' },
+      { name: 'ICD-11 diagnosis code', datatype: 'Text', class: 'Misc' },
+      { name: 'ICD-11 selected text', datatype: 'Text', class: 'Misc' },
     ].freeze
 
     PRESENTING_COMPLAINTS_CONCEPTS = [
