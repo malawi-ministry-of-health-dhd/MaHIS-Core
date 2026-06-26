@@ -44,8 +44,8 @@ module CreateConcepts
       { name: 'Treated', datatype: 'N/A', class: 'Misc' },
       { name: 'Blood loss ≥300ml + one abnormal observation', datatype: 'N/A', class: 'Misc' },
       { name: 'Blood loss ≥500ml', datatype: 'N/A', class: 'Misc' },
+      { name: 'ICD-11 diagnosis', datatype: 'Coded', class: 'Misc', update_existing: true },
       { name: 'ICD-11 diagnosis code', datatype: 'Text', class: 'Misc' },
-      { name: 'ICD-11 selected text', datatype: 'Text', class: 'Misc' },
     ].freeze
 
     PRESENTING_COMPLAINTS_CONCEPTS = [
@@ -89,6 +89,7 @@ module CreateConcepts
                                 .first
 
       if existing_concept
+        ensure_concept_metadata!(existing_concept, concept_data) if concept_data[:update_existing]
         puts "Concept '#{concept_name}' already exists (concept_id: #{existing_concept.concept_id})"
         return existing_concept
       end
@@ -125,6 +126,24 @@ module CreateConcepts
 
       puts "Created concept '#{concept_name}' (concept_id: #{concept.concept_id})"
       concept
+    end
+
+    def ensure_concept_metadata!(concept, concept_data)
+      datatype = ConceptDatatype.find_by(name: concept_data[:datatype])
+      klass = ConceptClass.find_by(name: concept_data[:class])
+
+      unless datatype && klass
+        raise "Missing concept datatype (#{concept_data[:datatype]}) or concept class (#{concept_data[:class]})"
+      end
+
+      updates = {}
+      updates[:datatype_id] = datatype.concept_datatype_id if concept.datatype_id != datatype.concept_datatype_id
+      updates[:class_id] = klass.concept_class_id if concept.class_id != klass.concept_class_id
+
+      return if updates.empty?
+
+      concept.update!(updates)
+      puts "Updated concept '#{concept_data[:name]}' metadata"
     end
 
     def add_numeric_metadata(concept, units)
