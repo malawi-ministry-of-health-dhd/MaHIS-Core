@@ -6,9 +6,9 @@ module Api
       before_action :authenticate
 
       def index
-        filters = params.permit(:name)
+        filters = params.permit(:id, :name)
 
-        render json: paginate(service.find_diagnosis(filters[:name]))
+        render json: paginate(service.find_diagnosis(filters[:name], concept_set_id: filters[:id]))
       end
 
       private
