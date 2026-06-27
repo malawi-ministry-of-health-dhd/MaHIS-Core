@@ -30,7 +30,7 @@ module CouchdbListenerRakeLogging
 end
 
 namespace :couchdb do
-  desc "Start CouchDB listeners for all databases"
+  desc 'Start CouchDB listeners for all databases'
   task start_all_listeners: :environment do
     CouchdbListenerRakeLogging.enable_stdout!
 
@@ -49,7 +49,7 @@ namespace :couchdb do
       Rails.logger.info("[CouchDB Listener] Backfill complete for #{db_name}.")
     end
 
-    Rails.logger.info("[CouchDB Listener] All backfills done. Starting live change-feed listeners...")
+    Rails.logger.info('[CouchDB Listener] All backfills done. Starting live change-feed listeners...')
 
     Thread.new { FacilityDdeActivationListener.new.start }
 
@@ -57,8 +57,8 @@ namespace :couchdb do
     CouchdbChangesListener.start_multiple_live_only(db_names, fan_out: fan_out)
   end
 
-  desc "Start listener for specific database"
-  task :start_listener, [:db_name] => :environment do |task, args|
+  desc 'Start listener for specific database'
+  task :start_listener, [:db_name] => :environment do |_task, args|
     CouchdbListenerRakeLogging.enable_stdout!
 
     db_name = args[:db_name]

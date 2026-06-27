@@ -7,7 +7,9 @@ default: &default
   collation: utf8_unicode_ci
   username: your_scoped_username
   password: your_secret_password
-  pool: <%= ENV.fetch("DB_POOL") { ENV.fetch("RAILS_MAX_THREADS") { 5 } } %>
+  # Must be >= Sidekiq concurrency (see config/sidekiq.yml) so fan-out jobs do
+  # not block on connection checkout. Env vars still override the default.
+  pool: <%= ENV.fetch("DB_POOL") { ENV.fetch("RAILS_MAX_THREADS") { 10 } } %>
   checkout_timeout: <%= ENV.fetch("DB_CHECKOUT_TIMEOUT") { 5 } %>
   variables:
     sql_mode: STRICT_TRANS_TABLES

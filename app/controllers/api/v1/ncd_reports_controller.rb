@@ -7,8 +7,10 @@ module Api
         filters = params.permit(%i[given_name middle_name family_name birthdate gender per_page page last_visited_after category])
         @location_id = User.current.location_id
 
-        query_service = NcdActivePatientService.new(@location_id)
-        results = query_service.get_active_patients(filters.merge(location_id: @location_id).to_h)
+        # Fast path: serve from the ncd_patient_index CouchDB read model.
+        # Falls back to the MySQL cohort query when the index is unavailable.
+        results = NcdService::ActivePatientsReport.call(location_id: @location_id, filters: filters.to_h)
+        results ||= NcdActivePatientService.new(@location_id).get_active_patients(filters.merge(location_id: @location_id).to_h)
 
         render json: results, status: :ok
       rescue StandardError => e

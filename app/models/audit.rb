@@ -25,7 +25,7 @@ class Audit < ApplicationRecord
     case action
     when 'update'
       json.map { |key, value| { key => { previous: value[0], current: value[1] } } }
-    when 'create'
+    when 'create', 'supervision'
       json.reject { |_, value| value.nil? }
           .map { |key, value| { key => { previous: nil, current: value } } }
     when 'destroy'

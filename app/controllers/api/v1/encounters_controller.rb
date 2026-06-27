@@ -201,7 +201,9 @@ module Api
           normalized.merge!(build_value_for_concept(concept_id, raw['value'] || raw[:value]))
         end
 
-        group_members = raw['groupMembers'] || raw[:groupMembers] || raw['group_members'] || raw[:group_members]
+        group_members = raw['groupMembers'] || raw[:groupMembers] ||
+                        raw['group_members'] || raw[:group_members] ||
+                        raw['child'] || raw[:child] || raw['children'] || raw[:children]
         if group_members.present?
           normalized[:child] = group_members.map { |child| normalize_observation(child) }
         end

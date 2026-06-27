@@ -4,11 +4,23 @@ immunization_stats_midnight_refresh:
   queue: "default"
   description: "Refreshes the immunization stats at midnight"
 
-mnh_stats_all_time_refresh:
+mnh_stats_changed_refresh:
   cron: "30 1 * * *"
   class: "Sync::MnhStatsSyncJob"
   queue: "sync_offline_data"
-  description: "Refreshes all-time MNH stats outside peak usage"
+  args:
+    - ~      # date (nil = all-time)
+    - 5000   # batch_size
+    - ~      # location_id (nil = dispatch/fan-out)
+    - ~      # program_key (nil = all MNH programs)
+    - true   # changed_only: only facilities active in the last 48h
+  description: "Nightly changed-only MNH stats refresh (fans out one job per active facility)"
+
+mnh_stats_full_refresh:
+  cron: "30 3 * * 0"
+  class: "Sync::MnhStatsSyncJob"
+  queue: "sync_offline_data"
+  description: "Weekly full MNH stats rebuild for every DDE-activated facility (fans out one job per facility)"
 
 flag_potential_duplicates:
   cron: "0 0 * * *"

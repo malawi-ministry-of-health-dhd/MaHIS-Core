@@ -3,6 +3,11 @@
 class DiagnosisService
   def find_diagnosis(query)
     q = query.to_s.strip
+    return ConceptName.none if q.blank?
+
+    # Match the term anywhere in the name/code (start, middle or end), and
+    # escape LIKE wildcards so a literal % or _ in the query is searched as-is.
+    term = "%#{q.gsub(/[\\%_]/) { |c| "\\#{c}" }}%"
 
     ConceptName
       .joins(concept_maps: :concept_source)
@@ -12,8 +17,8 @@ class DiagnosisService
         voided: 0
       )
       .where(
-        'concept_name.name LIKE :q OR concept_map.concept_code LIKE :q',
-        q: "#{q}%"
+        'concept_name.name LIKE :term OR concept_map.concept_code LIKE :term',
+        term: term
       )
       .select(
         'concept_name.concept_id',

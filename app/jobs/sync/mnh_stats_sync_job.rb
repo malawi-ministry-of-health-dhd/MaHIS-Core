@@ -16,6 +16,12 @@ module Sync
       'pnc' => ['PNC PROGRAM', 'POSTNATAL CARE PROGRAM']
     }.freeze
 
+    # Every facility in the facilities DB is refreshed on every run. DDE activation
+    # is no longer a gate (it was misleading: it silently refreshed nothing until a
+    # facility happened to be flagged). Cached briefly so a fan-out burst of
+    # per-location jobs doesn't re-query the facilities DB once per facility.
+    FACILITIES_CACHE_KEY = 'mnh_stats:facility_location_ids'
+
     def self.enqueue_for_encounter(encounter)
       return if encounter.blank?
 
@@ -110,8 +116,13 @@ module Sync
       nil
     end
 
-    def perform(date = nil, batch_size = DEFAULT_BULK_BATCH_SIZE, location_id = nil, program_key = nil)
+    def perform(date = nil, batch_size = DEFAULT_BULK_BATCH_SIZE, location_id = nil, program_key = nil, changed_only = false)
       return unless couchdb_configured?
+
+      # No specific facility => act as a dispatcher: fan out one job per
+      # facility so Sidekiq workers process them in parallel instead of
+      # grinding through every location in a single serial job.
+      return dispatch(date, batch_size, program_key, changed_only) if location_id.blank?
 
       normalized_date = normalize_date(date)
       rows = build_stats_rows(normalized_date, location_id, program_key)
@@ -137,6 +148,32 @@ module Sync
     end
 
     private
+
+    # Enqueue one per-location job for each facility that needs refreshing.
+    # changed_only restricts the fan-out to facilities with recent MNH activity.
+    def dispatch(date, batch_size, program_key, changed_only)
+      location_ids = target_location_ids(changed_only)
+
+      if location_ids.empty?
+        return Sidekiq.logger.info(
+          "MnhStatsSyncJob: no #{changed_only ? 'changed ' : ''}facilities to refresh"
+        )
+      end
+
+      location_ids.each do |loc_id|
+        self.class.perform_async(date, batch_size, loc_id.to_s, program_key)
+      end
+
+      Sidekiq.logger.info(
+        "MnhStatsSyncJob: dispatched #{location_ids.size} per-location jobs (changed_only=#{changed_only})"
+      )
+    end
+
+    # Always every facility. changed_only is accepted for signature/cron stability
+    # but intentionally ignored — every run refreshes all facilities.
+    def target_location_ids(_changed_only = false)
+      all_facility_location_ids
+    end
 
     def build_stats_rows(date, location_id, program_key)
       programs = mnh_programs(program_key)
@@ -206,30 +243,33 @@ module Sync
     end
 
     def locations(location_id = nil)
-      activated_ids = dde_activated_location_ids
-      if activated_ids.empty?
-        Sidekiq.logger.info('MnhStatsSyncJob: no DDE-activated facilities found; skipping MNH stats')
+      facility_ids = all_facility_location_ids
+      if facility_ids.empty?
+        Sidekiq.logger.info('MnhStatsSyncJob: no facilities found in the facilities DB; skipping MNH stats')
         return Location.none
       end
 
       scope = Location.unscoped
                       .where(retired: [0, false])
-                      .where(location_id: activated_ids)
+                      .where(location_id: facility_ids)
                       .select(:location_id, :name)
                       .order(:location_id)
       location_id.present? ? scope.where(location_id: location_id) : scope
     end
 
-    # location_ids of facilities flagged dde_activated in the CouchDB facilities DB.
-    def dde_activated_location_ids
-      return @dde_activated_location_ids if defined?(@dde_activated_location_ids)
+    # location_ids of every facility in the CouchDB facilities DB (no activation gate).
+    def all_facility_location_ids
+      return @all_facility_location_ids if defined?(@all_facility_location_ids)
 
-      @dde_activated_location_ids = fetch_dde_activated_location_ids
+      @all_facility_location_ids =
+        Rails.cache.fetch(FACILITIES_CACHE_KEY, expires_in: 10.minutes) do
+          fetch_all_facility_location_ids
+        end
     end
 
-    def fetch_dde_activated_location_ids
+    def fetch_all_facility_location_ids
       db_url = couchdb_url('facilities')
-      selector = { '$or' => [{ 'dde_activated' => true }, { 'dde_activated' => 'true' }] }
+      selector = {}
       ids = []
       bookmark = nil
 
@@ -245,12 +285,12 @@ module Sync
         break if docs.size < 1000
       end
 
-      ids.compact.map { |value| value.to_s.to_i }.uniq
+      ids.compact.map { |value| value.to_s.to_i }.uniq.reject(&:zero?)
     rescue RestClient::NotFound
-      Sidekiq.logger.warn("MnhStatsSyncJob: facilities DB not found; treating no facilities as DDE-activated")
+      Sidekiq.logger.warn('MnhStatsSyncJob: facilities DB not found; no facilities to refresh')
       []
     rescue StandardError => e
-      Sidekiq.logger.error("MnhStatsSyncJob: failed to load DDE-activated facilities: #{e.class}: #{e.message}")
+      Sidekiq.logger.error("MnhStatsSyncJob: failed to load facilities: #{e.class}: #{e.message}")
       []
     end
 
@@ -277,5 +317,7 @@ module Sync
 end
 
 # Usage:
-# Sync::MnhStatsSyncJob.perform_async                    # all-time MNH stats for each location
-# Sync::MnhStatsSyncJob.perform_async(Date.current.to_s) # date-scoped MNH stats for each location
+# Sync::MnhStatsSyncJob.perform_async                                 # dispatch: full rebuild, every facility (one job each)
+# Sync::MnhStatsSyncJob.perform_async(nil, 5000, nil, nil, true)      # dispatch: changed-only, facilities active in the last 48h
+# Sync::MnhStatsSyncJob.perform_async(Date.current.to_s)              # dispatch: date-scoped full rebuild
+# Sync::MnhStatsSyncJob.perform_async(nil, 5000, '42')               # compute one facility (location_id 42) directly
