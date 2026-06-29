@@ -16,7 +16,7 @@ class AddLabIdentifiersToNotificationAlerts < ActiveRecord::Migration[8.1]
     unless foreign_key_exists?(
       :notification_alert, column: :test_type_id
     )
-      add_foreign_key :notification_alert, :concept_name, column: :test_type_id,
+      add_foreign_key :notification_alert, :concept, column: :test_type_id,
                                                           primary_key: :concept_id
     end
     add_foreign_key :notification_alert, :orders, column: :order_id, primary_key: :order_id unless foreign_key_exists?(
