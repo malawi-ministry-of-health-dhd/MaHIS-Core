@@ -36,8 +36,8 @@ GITHUB_METADATA_URL = ENV.fetch(
 ).freeze
 
 SEED_CONCEPT_WORD_STOP_WORDS = %w[A AND AT BUT BY FOR HAS OF THE TO].freeze
-SEED_CONCEPT_WORD_REGEX_LARGE = /[!"#$%&'()*,+\-.\/:;<=>?@\[\]\\^_`{|}~]/
-SEED_CONCEPT_WORD_REGEX_SMALL = /[!"#$%&'()*,.\/:;<=>?@\[\]\\^_`{|}~]/
+SEED_CONCEPT_WORD_REGEX_LARGE = %r{[!"#$%&'()*,+\-./:;<=>?@\[\]\\^_`{|}~]}
+SEED_CONCEPT_WORD_REGEX_SMALL = %r{[!"#$%&'()*,./:;<=>?@\[\]\\^_`{|}~]}
 
 def mysql_import_command(username:, password:, host:, port:, database:)
   command = ['mysql', '-u', username.to_s]
@@ -51,7 +51,7 @@ end
 def fetch_metadata_from_github!(url, local_path)
   FileUtils.mkdir_p(local_path.dirname)
 
-  puts "Downloading latest metadata from GitHub..."
+  puts 'Downloading latest metadata from GitHub...'
   URI.open(url, open_timeout: 30, read_timeout: 300) do |remote|
     File.open(local_path, 'wb') do |file|
       IO.copy_stream(remote, file)
@@ -260,7 +260,7 @@ def extract_routine_blocks_from_skeleton(skeleton_path:, routine_names:)
 
   IO.popen(['gunzip', '-c', skeleton_path.to_s], 'r') do |io|
     io.each_line do |line|
-      if !capturing
+      unless capturing
         match = line.match(%r{^/\*!50003 DROP (FUNCTION|PROCEDURE) IF EXISTS `([^`]+)` \*/;})
         next unless match
 
@@ -275,7 +275,9 @@ def extract_routine_blocks_from_skeleton(skeleton_path:, routine_names:)
 
       current_lines << line
 
-      next unless line.match?(%r{^/\*!50003 SET collation_connection[[:space:]]*=[[:space:]]*@saved_col_connection[[:space:]]*\*/[[:space:]]*;})
+      unless line.match?(%r{^/\*!50003 SET collation_connection[[:space:]]*=[[:space:]]*@saved_col_connection[[:space:]]*\*/[[:space:]]*;})
+        next
+      end
 
       blocks << current_lines.join if current_routine && routine_names_downcase.include?(current_routine)
       capturing = false
@@ -287,7 +289,8 @@ def extract_routine_blocks_from_skeleton(skeleton_path:, routine_names:)
   blocks
 end
 
-def import_targeted_routines_from_skeleton!(skeleton_path:, routine_names:, username:, password:, host:, port:, database:)
+def import_targeted_routines_from_skeleton!(skeleton_path:, routine_names:, username:, password:, host:, port:,
+                                            database:)
   blocks = extract_routine_blocks_from_skeleton(skeleton_path: skeleton_path, routine_names: routine_names)
   return if blocks.empty?
 
@@ -643,7 +646,8 @@ def ensure_last_password_updated!(conn, user_id)
   SQL
 end
 
-def ensure_openmrs_user!(conn:, username:, password:, gender:, location_id:, preferred_user_id: nil, given_name: nil, family_name: nil)
+def ensure_openmrs_user!(conn:, username:, password:, gender:, location_id:, preferred_user_id: nil, given_name: nil,
+                         family_name: nil)
   existing_user_id = conn.select_value(<<~SQL)
     SELECT user_id
     FROM users
@@ -815,9 +819,9 @@ def ensure_bootstrap_users!
 end
 
 local_sql_files = Dir.glob([
-  Rails.root.join('db', 'data', '*.sql').to_s,
-  Rails.root.join('db', 'data', '*.sql.gz').to_s
-]).sort
+                             Rails.root.join('db', 'data', '*.sql').to_s,
+                             Rails.root.join('db', 'data', '*.sql.gz').to_s
+                           ]).sort
 
 if local_sql_files.any?
   local_sql_files.each_with_index do |file_path, idx|
