@@ -1205,15 +1205,18 @@ module ArtService
             AND e.encounter_type = #{hiv_clinic_consultation_encounter_type_id} AND e.voided = 0
             AND e.patient_id IN (#{patient_list.join(',')})
           INNER JOIN (
-            SELECT person_id, MAX(DATE(obs_datetime)) AS max_obs_date
-            FROM obs
-            WHERE voided = 0
-              AND concept_id IN (#{family_planning_action_to_take_concept_id}, #{method_of_family_planning_concept_id})
-              AND e.encounter_type = #{hiv_clinic_consultation_encounter_type_id}
-              AND e.program_id = 1
-              AND obs_datetime >= '#{start_date.to_date.strftime('%Y-%m-%d 00:00:00')}'
-              AND obs_datetime <= '#{end_date.to_date.strftime('%Y-%m-%d 23:59:59')}'
-            GROUP BY person_id
+            SELECT o2.person_id, MAX(DATE(o2.obs_datetime)) AS max_obs_date
+            FROM obs o2
+            INNER JOIN encounter e2 ON e2.encounter_id = o2.encounter_id
+              AND e2.encounter_type = #{hiv_clinic_consultation_encounter_type_id}
+              AND e2.program_id = 1
+              AND e2.voided = 0
+              AND e2.patient_id IN (#{patient_list.join(',')})
+            WHERE o2.voided = 0
+              AND o2.concept_id IN (#{family_planning_action_to_take_concept_id}, #{method_of_family_planning_concept_id})
+              AND o2.obs_datetime >= '#{start_date.to_date.strftime('%Y-%m-%d 00:00:00')}'
+              AND o2.obs_datetime <= '#{end_date.to_date.strftime('%Y-%m-%d 23:59:59')}'
+            GROUP BY o2.person_id
           ) max_fp ON max_fp.person_id = o.person_id
             AND DATE(o.obs_datetime) = max_fp.max_obs_date
           WHERE o.voided = 0
