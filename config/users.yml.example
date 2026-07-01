@@ -1,0 +1,15 @@
+test:
+  target_url: "https://mahistest.health.gov.mw"
+  admin:
+    username: "admin@example.com"
+    password: "CHANGE_ME"
+  users_file: "data/mahistest-users.xlsx"
+  require_confirmation: false
+
+production:
+  target_url: "https://mahis.health.gov.mw"
+  admin:
+    username: "admin@example.com"
+    password: "CHANGE_ME"
+  users_file: "data/mahis-users.xlsx"
+  require_confirmation: true
