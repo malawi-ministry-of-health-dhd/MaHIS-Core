@@ -12,7 +12,8 @@ RSpec.describe FacilityReferralService do
       expect(sql).to include('NOT EXISTS')
       expect(sql).to include('referred_facility_encounter.patient_id = e.patient_id')
       expect(sql).to include('referred_facility_encounter.encounter_datetime > e.encounter_datetime')
-      expect(sql).to include('CAST(referred_facility_encounter.location_id AS UNSIGNED) = COALESCE')
+      expect(sql).to include('referred_facility_encounter_obs.encounter_id = referred_facility_encounter.encounter_id')
+      expect(sql).to include('CAST(referred_facility_encounter_obs.location_id AS UNSIGNED) = COALESCE')
     end
   end
 end
