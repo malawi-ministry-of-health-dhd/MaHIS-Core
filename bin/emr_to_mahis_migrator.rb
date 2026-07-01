@@ -8,6 +8,9 @@ require 'sys/filesystem'
 require 'sys/memory'
 require 'csv'
 
+$stdout.sync = true
+$stderr.sync = true
+
 include Sys
 
 NON_RESET_MODELS = %w[Patient DrugOrder GlobalProperty UserRole UserProperty DrugIngredient
@@ -24,6 +27,18 @@ end
 
 # Retrieve location_id using the new workflow
 def get_validated_location_id(source_db)
+  # Allow fully non-interactive runs by supplying LOCATION_ID=<id> directly.
+  if ENV['LOCATION_ID']
+    loc_id = ENV['LOCATION_ID'].to_i
+    location = Location.find_by_location_id(loc_id)
+    if location
+      puts "✓ Using LOCATION_ID=#{loc_id} from environment: #{location.name}"
+      return loc_id
+    else
+      puts "✗ Error: LOCATION_ID=#{loc_id} not found in locations table — falling back to auto-detect"
+    end
+  end
+
   puts 'Retrieving location_id from source database...'
 
   # Step 1: Get location_id from source database global_property
@@ -93,9 +108,12 @@ def get_validated_location_id(source_db)
 
   puts "✓ Target location found: #{location.name} (ID: #{target_location_id})"
 
-  # Auto-confirm if running non-interactively
-  if ENV['AUTO_CONFIRM'] == 'true'
-    puts 'Auto-confirming (AUTO_CONFIRM=true)'
+  # Auto-confirm when explicitly requested or when there is no interactive terminal.
+  # Without this guard $stdin.gets blocks forever when stdin is not a TTY
+  # (e.g. nohup, pipes, background jobs, cron).
+  if ENV['AUTO_CONFIRM'] == 'true' || !$stdin.isatty
+    label = ENV['AUTO_CONFIRM'] == 'true' ? 'AUTO_CONFIRM=true' : 'non-interactive (no TTY)'
+    puts "Auto-confirming (#{label})"
     return target_location_id
   end
 
@@ -113,9 +131,15 @@ end
 
 # Manual location_id entry (fallback method)
 def get_validated_location_id_manual
+  unless $stdin.isatty
+    puts '✗ Error: Manual location entry requires an interactive terminal.'
+    puts '  Set LOCATION_ID=<id> (preferred) or AUTO_CONFIRM=true environment variable.'
+    exit 1
+  end
+
   loop do
     print 'Enter the location_id for the site: '
-    location_id = gets.chomp.to_i
+    location_id = $stdin.gets.chomp.to_i
 
     if location_id <= 0
       puts 'Invalid location_id. Please enter a positive integer.'
@@ -126,14 +150,14 @@ def get_validated_location_id_manual
     if location
       puts "✓ Location found: #{location.name} (ID: #{location_id})"
       print 'Is this correct? (yes/no): '
-      confirmation = gets.chomp.downcase
+      confirmation = $stdin.gets.chomp.downcase
       return location_id if %w[yes y].include?(confirmation)
 
       puts 'Please enter the correct location_id.'
     else
       puts "✗ Location with ID #{location_id} not found in the database."
       print 'Would you like to try again? (yes/no): '
-      retry_choice = gets.chomp.downcase
+      retry_choice = $stdin.gets.chomp.downcase
       exit unless %w[yes y].include?(retry_choice)
     end
   end
@@ -174,10 +198,21 @@ else
   CONCEPT_ID_MAP = {}
 end
 
+# Thread-safe cache for unmapped concepts encountered during migration.
+# Flushed to log/unmapped_concepts.log at the end of the run.
+UNMAPPED_CONCEPTS_CACHE = Concurrent::Array.new
+
+# Maximum reconnect-and-retry rounds for a table that failed with a connection error.
+MAX_CONN_RETRIES = 5
+
 Location.current = Location.find_by_location_id(SITE_ID)
+# Users table may be empty on a fresh DB — populate_users runs first and creates them.
+# We defer User.current assignment until after populate_users below.
 user = User.unscoped.first
-user.location_id = SITE_ID
-User.current = user
+if user
+  user.location_id = SITE_ID
+  User.current = user
+end
 CURRENT_USER = User.current
 
 # Initialize caches for frequently accessed mappings to reduce database queries
@@ -191,10 +226,13 @@ OBS_ID_CACHE = {}
 # HIV Program filtering caches
 HIV_PATIENT_IDS = Set.new
 HIV_ENCOUNTER_IDS = Set.new
-HIV_PROGRAM_ID = 1 # HIV PROGRAM program_id
+HIV_PROGRAM_ID = Program.find_by(name: 'HIV PROGRAM').program_id.to_i # HIV PROGRAM program_id
 
 # Track orphaned references for data quality reporting
 ORPHANED_REFERENCES = Hash.new { |h, k| h[k] = [] }
+
+# Track per-group and per-table migration outcomes for the final summary report
+MIGRATION_RESULTS = { groups: {}, failed_tables: Concurrent::Array.new }
 
 # Track performance metrics for bottleneck identification
 PERFORMANCE_METRICS = {
@@ -382,14 +420,30 @@ end
 #   - info_schema.tables.table_rows counts ALL sites → wrong for per-site offset.
 #   - This table records the highest SOURCE obs_id successfully batch-committed for this site.
 def ensure_migration_progress_table
-  ActiveRecord::Base.connection.execute(<<~SQL)
+  conn = ActiveRecord::Base.connection
+  conn.execute(<<~SQL)
     CREATE TABLE IF NOT EXISTS #{DEST_DB}.migration_progress (
-      table_name  VARCHAR(64)  NOT NULL,
-      last_source_id  BIGINT   NOT NULL DEFAULT 0,
-      updated_at  TIMESTAMP   NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      PRIMARY KEY (table_name)
+      site_id        INT          NOT NULL,
+      table_name     VARCHAR(64)  NOT NULL,
+      last_source_id BIGINT       NOT NULL DEFAULT 0,
+      updated_at     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (site_id, table_name)
     ) ENGINE=InnoDB
   SQL
+
+  # Migrate existing rows that pre-date the site_id column (assign site 0 = unknown).
+  # Safe to run on every startup — IF NOT EXISTS above is idempotent.
+  begin
+    cols = conn.execute("SHOW COLUMNS FROM #{DEST_DB}.migration_progress").map { |r| r[0] }
+    unless cols.include?('site_id')
+      conn.execute("ALTER TABLE #{DEST_DB}.migration_progress ADD COLUMN site_id INT NOT NULL DEFAULT 0 FIRST")
+      conn.execute("ALTER TABLE #{DEST_DB}.migration_progress DROP PRIMARY KEY, ADD PRIMARY KEY (site_id, table_name)")
+      puts '  ↳ Migrated migration_progress schema: added site_id column'
+    end
+  rescue StandardError
+    nil # Non-fatal — table may already be in the new shape
+  end
+
   puts '✅ migration_progress tracking table ready'
 rescue StandardError => e
   puts "⚠️  Could not create migration_progress table: #{e.message}"
@@ -512,6 +566,249 @@ rescue StandardError => e
   -1
 end
 
+# ---------------------------------------------------------------------------
+# SQL-based bulk migration helpers
+# ---------------------------------------------------------------------------
+# Build six small mapping tables in the target DB that translate every
+# source FK id to its target id.  A single one-time cost (~30-60 s) that
+# replaces the Ruby per-record UUID lookup loop for obs and drug_order.
+#
+# Tables created:
+#   mig_enc_id_map      source.encounter_id  → target.encounter_id
+#   mig_person_id_map   source.person_id     → target.person_id
+#   mig_order_id_map    source.order_id      → target.order_id
+#   mig_drug_id_map     source.drug_id       → target.drug_id  (name-match)
+#   mig_user_id_map     source.user_id       → target.user_id
+#   mig_concept_id_map  source.concept_id    → target.concept_id (from JSON)
+# ---------------------------------------------------------------------------
+def build_migration_id_maps(source_db)
+  conn = ActiveRecord::Base.connection
+  puts "\n🗃️  Building SQL FK mapping tables for fast obs/drug_order migration..."
+  start = Time.now
+
+  # Align uuid collations on all tables used in UUID-join mapping queries.
+  # Without this, a mismatch between utf8mb3_unicode_ci (source) and
+  # utf8mb3_general_ci (target) causes "Illegal mix of collations" errors.
+  align_uuid_collations(source_db, %w[encounter person orders users obs])
+
+  [
+    ['mig_enc_id_map',
+     "SELECT s.encounter_id AS source_id, t.encounter_id AS target_id
+      FROM #{source_db}.encounter s
+      JOIN #{DEST_DB}.encounter t ON t.uuid = s.uuid"],
+
+    ['mig_person_id_map',
+     "SELECT s.person_id AS source_id, t.person_id AS target_id
+      FROM #{source_db}.person s
+      JOIN #{DEST_DB}.person t ON t.uuid = s.uuid"],
+
+    ['mig_order_id_map',
+     "SELECT s.order_id AS source_id, t.order_id AS target_id
+      FROM #{source_db}.orders s
+      JOIN #{DEST_DB}.orders t ON t.uuid = s.uuid"],
+
+    ['mig_drug_id_map',
+     "SELECT sd.drug_id AS source_id, MIN(td.drug_id) AS target_id
+      FROM #{source_db}.drug sd
+      JOIN #{DEST_DB}.drug td
+        ON LOWER(TRIM(td.name)) = LOWER(TRIM(sd.name)) AND td.retired = 0
+      GROUP BY sd.drug_id"],
+
+    ['mig_user_id_map',
+     "SELECT s.user_id AS source_id, t.user_id AS target_id
+      FROM #{source_db}.users s
+      JOIN #{DEST_DB}.users t ON t.uuid = s.uuid"]
+  ].each do |tbl, query|
+    conn.execute("DROP TABLE IF EXISTS #{DEST_DB}.#{tbl}")
+    conn.execute(<<~SQL)
+      CREATE TABLE #{DEST_DB}.#{tbl} (
+        source_id INT NOT NULL,
+        target_id INT NOT NULL,
+        PRIMARY KEY (source_id)
+      ) ENGINE=InnoDB
+      AS #{query}
+    SQL
+    cnt = conn.select_value("SELECT COUNT(*) FROM #{DEST_DB}.#{tbl}").to_i
+    puts "  ✓ #{tbl}: #{cnt} rows"
+  end
+
+  # Concept ID map: from the pre-loaded CONCEPT_ID_MAP hash → SQL table
+  conn.execute("DROP TABLE IF EXISTS #{DEST_DB}.mig_concept_id_map")
+  conn.execute(<<~SQL)
+    CREATE TABLE #{DEST_DB}.mig_concept_id_map (
+      source_id INT NOT NULL,
+      target_id INT NOT NULL,
+      PRIMARY KEY (source_id)
+    ) ENGINE=InnoDB
+  SQL
+  if CONCEPT_ID_MAP.any?
+    CONCEPT_ID_MAP.each_slice(5000) do |batch|
+      vals = batch.map { |src, tgt| "(#{src.to_i}, #{tgt.to_i})" }.join(',')
+      conn.execute("INSERT INTO #{DEST_DB}.mig_concept_id_map (source_id, target_id) VALUES #{vals}")
+    end
+    cnt = conn.select_value("SELECT COUNT(*) FROM #{DEST_DB}.mig_concept_id_map").to_i
+    puts "  ✓ mig_concept_id_map: #{cnt} rows"
+  else
+    puts '  ⚠️  CONCEPT_ID_MAP is empty — concept mapping table will be empty'
+  end
+
+  puts "✅ FK mapping tables ready (#{(Time.now - start).round(1)}s)"
+rescue StandardError => e
+  puts "❌ build_migration_id_maps failed: #{e.message}"
+  raise
+end
+
+# Migrate the obs table using pure SQL INSERT...SELECT joined against the
+# pre-built FK mapping tables.  ~100× faster than the Ruby per-record path
+# because all FK resolution happens inside the MySQL engine.
+#
+# Pre-requisites: build_migration_id_maps + build_obs_pending_table called first.
+# Resume-safe: uses obs_pending (UUID diff) so only unmigrated rows are touched.
+def migrate_obs_via_sql(source_db)
+  conn = ActiveRecord::Base.connection
+  puts "\n🚀 Fast SQL obs migration (bypassing Ruby FK mapping loop)..."
+
+  # Determine columns common to source obs and target obs
+  target_cols = Observation.column_names
+  source_cols = conn.select_values(
+    "SELECT COLUMN_NAME FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = '#{source_db}' AND TABLE_NAME = 'obs'"
+  )
+  common_cols = (target_cols & source_cols) - ['obs_id']
+
+  # For each column: use the mapped FK expression or a plain passthrough
+  fk_map = {
+    'encounter_id' => 'enc.target_id',
+    'person_id' => 'per.target_id',
+    'order_id' => 'ord.target_id',
+    'concept_id' => 'cpt.target_id',
+    'value_coded' => 'val.target_id',
+    'value_drug' => 'drg.target_id',
+    'creator' => 'COALESCE(crt.target_id, 1)',
+    'voided_by' => 'vby.target_id',
+    'obs_group_id' => 'NULL', # resolved later by update_group_obs_ids
+    'location_id' => SITE_ID.to_s
+  }
+
+  col_list    = common_cols.map { |c| "`#{c}`" }.join(', ')
+  select_expr = common_cols.map { |c| "#{fk_map[c] || "o.`#{c}`"} AS `#{c}`" }.join(', ')
+
+  # Check obs_pending
+  pending_count = conn.select_value("SELECT COUNT(*) FROM #{DEST_DB}.obs_pending").to_i
+  if pending_count == 0
+    puts '✅ obs_pending empty — all obs already migrated, skipping'
+    return
+  end
+
+  range = conn.select_one("SELECT MIN(obs_id) AS mn, MAX(obs_id) AS mx FROM #{DEST_DB}.obs_pending")
+  pending_min = range['mn'].to_i
+  pending_max = range['mx'].to_i
+  puts "  📋 #{pending_count} obs to migrate (source obs_id #{pending_min}..#{pending_max})"
+
+  sql_batch  = (ENV['SQL_OBS_BATCH'] || 500_000).to_i
+  inserted   = 0
+  batch_num  = 0
+
+  conn.execute('SET FOREIGN_KEY_CHECKS = 0')
+  conn.execute('SET SESSION net_read_timeout=7200, net_write_timeout=7200, wait_timeout=86400, interactive_timeout=86400')
+  begin; conn.execute('SET SESSION sql_log_bin = 0'); rescue StandardError; nil; end
+
+  batch_start = pending_min
+  while batch_start <= pending_max
+    batch_end  = [batch_start + sql_batch - 1, pending_max].min
+    batch_num += 1
+    t = Time.now
+
+    rows = conn.update(<<~SQL)
+      INSERT IGNORE INTO #{DEST_DB}.obs (#{col_list})
+      SELECT #{select_expr}
+      FROM #{source_db}.obs o
+      JOIN #{DEST_DB}.obs_pending p
+        ON p.obs_id = o.obs_id AND o.obs_id BETWEEN #{batch_start} AND #{batch_end}
+      JOIN #{DEST_DB}.mig_enc_id_map     enc ON enc.source_id = o.encounter_id
+      JOIN #{DEST_DB}.mig_person_id_map  per ON per.source_id = o.person_id
+      JOIN #{DEST_DB}.mig_concept_id_map cpt ON cpt.source_id = o.concept_id
+      LEFT JOIN #{DEST_DB}.mig_order_id_map   ord ON ord.source_id = o.order_id
+      LEFT JOIN #{DEST_DB}.mig_concept_id_map val ON val.source_id = o.value_coded
+      LEFT JOIN #{DEST_DB}.mig_drug_id_map    drg ON drg.source_id = o.value_drug
+      LEFT JOIN #{DEST_DB}.mig_user_id_map    crt ON crt.source_id = o.creator
+      LEFT JOIN #{DEST_DB}.mig_user_id_map    vby ON vby.source_id = o.voided_by
+    SQL
+
+    inserted += rows
+    elapsed   = (Time.now - t).round(1)
+    speed     = (rows / [elapsed, 0.1].max).round(0)
+    pct       = (inserted.to_f / [pending_count, 1].max * 100).round(1)
+    puts "  obs SQL batch #{batch_num}: +#{rows} rows in #{elapsed}s (#{speed} rec/s) — #{pct}% complete"
+
+    # Record progress for crash-resume
+    begin
+      conn.execute(<<~SQL)
+        INSERT INTO #{DEST_DB}.migration_progress (site_id, table_name, last_source_id)
+        VALUES (#{SITE_ID}, 'obs', #{batch_end})
+        ON DUPLICATE KEY UPDATE last_source_id = GREATEST(last_source_id, VALUES(last_source_id))
+      SQL
+    rescue StandardError; nil
+    end
+
+    batch_start = batch_end + 1
+  end
+
+  conn.execute('SET FOREIGN_KEY_CHECKS = 1')
+  begin; conn.execute('SET SESSION sql_log_bin = 1'); rescue StandardError; nil; end
+
+  total = conn.select_value("SELECT COUNT(*) FROM #{DEST_DB}.obs").to_i
+  puts "✅ SQL obs migration complete: #{inserted} inserted this run, #{total} total obs"
+rescue StandardError => e
+  puts "❌ SQL obs migration failed: #{e.message}"
+  begin; conn.execute('SET FOREIGN_KEY_CHECKS = 1'); rescue StandardError; nil; end
+  raise
+end
+
+# Migrate drug_order via pure SQL INSERT...SELECT.
+# drug_order.order_id is both the PK and the FK to orders (NON_RESET_MODEL) —
+# we must supply the mapped target order_id, not NULL it out.
+def migrate_drug_orders_via_sql(source_db)
+  conn = ActiveRecord::Base.connection
+  puts "\n🚀 Fast SQL drug_order migration..."
+  start = Time.now
+
+  target_cols = DrugOrder.column_names
+  source_cols = conn.select_values(
+    "SELECT COLUMN_NAME FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = '#{source_db}' AND TABLE_NAME = 'drug_order'"
+  )
+  common_cols = target_cols & source_cols
+
+  fk_map = {
+    'order_id' => 'ord.target_id',
+    'drug_inventory_id' => 'COALESCE(drg.target_id, do_src.drug_inventory_id)'
+  }
+
+  col_list    = common_cols.map { |c| "`#{c}`" }.join(', ')
+  select_expr = common_cols.map { |c| "#{fk_map[c] || "do_src.`#{c}`"} AS `#{c}`" }.join(', ')
+
+  conn.execute('SET FOREIGN_KEY_CHECKS = 0')
+  begin; conn.execute('SET SESSION sql_log_bin = 0'); rescue StandardError; nil; end
+
+  rows = conn.update(<<~SQL)
+    INSERT IGNORE INTO #{DEST_DB}.drug_order (#{col_list})
+    SELECT #{select_expr}
+    FROM #{source_db}.drug_order do_src
+    JOIN #{DEST_DB}.mig_order_id_map ord ON ord.source_id = do_src.order_id
+    LEFT JOIN #{DEST_DB}.mig_drug_id_map drg ON drg.source_id = do_src.drug_inventory_id
+  SQL
+
+  conn.execute('SET FOREIGN_KEY_CHECKS = 1')
+  begin; conn.execute('SET SESSION sql_log_bin = 1'); rescue StandardError; nil; end
+
+  puts "✅ SQL drug_order migration: #{rows} rows inserted (#{(Time.now - start).round(1)}s)"
+rescue StandardError => e
+  puts "❌ SQL drug_order migration failed: #{e.message}"
+  begin; conn.execute('SET FOREIGN_KEY_CHECKS = 1'); rescue StandardError; nil; end
+  raise
+end
+
 # Check if a table should be filtered for HIV program only
 def hiv_filter_required?(table_name)
   %w[patient_program patient_identifier encounter patient_state orders obs drug_order
@@ -537,6 +834,59 @@ def build_hiv_filter_clause(table_name, source_db)
   when 'drug_order'
     "order_id IN (SELECT o.order_id FROM #{source_db}.orders o JOIN #{DEST_DB}.hiv_enc_ids_cache h ON h.encounter_id = o.encounter_id)"
   end
+end
+
+# Consolidate duplicate drug records created by older migrator runs that incorrectly
+# inserted drug rows from the source DB instead of reusing canonical destination drugs.
+#
+# For each set of drugs sharing the same name, keeps the lowest drug_id (canonical) and:
+#   1. Remaps drug_order.drug_inventory_id from duplicate IDs to the canonical ID.
+#   2. Remaps obs.value_drug from duplicate IDs to the canonical ID.
+#   3. Deletes the duplicate drug rows.
+#
+# Safe to run repeatedly — skips drug names that have no duplicates.
+def consolidate_duplicate_drugs
+  conn = ActiveRecord::Base.connection
+
+  # Find names with more than one non-retired drug_id
+  duplicates = conn.select_all(<<~SQL).to_a
+    SELECT name, MIN(drug_id) AS canonical_id, GROUP_CONCAT(drug_id ORDER BY drug_id) AS all_ids
+    FROM drug
+    WHERE name IS NOT NULL AND retired = 0
+    GROUP BY name
+    HAVING COUNT(*) > 1
+  SQL
+
+  if duplicates.empty?
+    puts '  ✓ No duplicate drug records found — nothing to consolidate'
+    return
+  end
+
+  puts "\n  Consolidating #{duplicates.size} duplicate drug name(s)..."
+  duplicates.each do |row|
+    canonical_id = row['canonical_id'].to_i
+    duplicate_ids = row['all_ids'].split(',').map(&:to_i) - [canonical_id]
+
+    dup_list = duplicate_ids.join(',')
+
+    # Remap drug_order references
+    affected_orders = conn.update(
+      "UPDATE drug_order SET drug_inventory_id = #{canonical_id} WHERE drug_inventory_id IN (#{dup_list})"
+    )
+
+    # Remap obs.value_drug references
+    affected_obs = conn.update(
+      "UPDATE obs SET value_drug = #{canonical_id} WHERE value_drug IN (#{dup_list})"
+    )
+
+    # Delete the duplicate drug rows (drug_ingredient rows may reference these — handle gracefully)
+    conn.execute("DELETE FROM drug_ingredient WHERE concept_id IN (#{dup_list}) OR ingredient_id IN (#{dup_list})")
+    conn.execute("DELETE FROM drug WHERE drug_id IN (#{dup_list})")
+
+    puts "    #{row['name'].truncate(60)}: canonical=#{canonical_id}, removed=#{duplicate_ids.join(',')} " \
+         "(remapped #{affected_orders} drug_order, #{affected_obs} obs rows)"
+  end
+  puts '  ✓ Drug consolidation complete'
 end
 
 # Report data quality issues found during migration
@@ -939,8 +1289,8 @@ def optimal_threads
 end
 
 # Constant batch size used across all tables.
-# Override with BATCH_SIZE env var, e.g. BATCH_SIZE=20000.
-DEFAULT_BATCH_SIZE = (ENV['BATCH_SIZE'] || 20_000).to_i
+# Override with BATCH_SIZE env var, e.g. BATCH_SIZE=100000.
+DEFAULT_BATCH_SIZE = (ENV['BATCH_SIZE'] || 100_000).to_i
 
 # Process in Batches with Dynamic Threads and Percentage Tracking
 def process_in_batches(source_db, table_name, batch_size = nil, target_model = nil)
@@ -951,7 +1301,7 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
   # Use smaller batches for large memory-intensive tables (reduces per-batch footprint and connection hold time).
   # Override with OBS_BATCH_SIZE env var. Only applies when BATCH_SIZE not explicitly set.
   if %w[obs drug_order].include?(table_name_str) && !ENV['BATCH_SIZE']
-    batch_size = (ENV['OBS_BATCH_SIZE'] || 10_000).to_i
+    batch_size = (ENV['OBS_BATCH_SIZE'] || 100_000).to_i
   end
   # Test mode: only process 10 records per table
   test_limit = ENV['TEST_MODE'] == 'true' ? 10 : nil
@@ -1087,8 +1437,8 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
           batch_end = batch_range.last
           begin
             ActiveRecord::Base.connection.execute(<<~SQL)
-              INSERT INTO #{DEST_DB}.migration_progress (table_name, last_source_id)
-              VALUES ('obs', #{batch_end})
+              INSERT INTO #{DEST_DB}.migration_progress (site_id, table_name, last_source_id)
+              VALUES (#{SITE_ID}, 'obs', #{batch_end})
               ON DUPLICATE KEY UPDATE last_source_id = GREATEST(last_source_id, VALUES(last_source_id))
             SQL
           rescue StandardError
@@ -1103,15 +1453,18 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
         percentage = ((processed_records.to_f / total_records) * 100).round(2)
         puts "Processing #{table_name_str}: #{percentage}% (#{processed_records}/#{total_records}) @ #{records_per_sec} rec/s"
       end
-    rescue Mysql2::Error::ConnectionError, Mysql2::Error, ActiveRecord::StatementInvalid => e
-      conn_error = e.message.match?(/Lost connection|gone away|hostname|connecting with/i)
+    rescue Mysql2::Error::ConnectionError, Mysql2::Error, ActiveRecord::StatementInvalid,
+           ActiveRecord::DatabaseConnectionError, ActiveRecord::ConnectionNotEstablished => e
+      conn_error = connection_error?(e) || e.message.match?(/Lost connection|gone away|hostname|connecting with/i)
       if conn_error && retry_count < max_retries
         retry_count += 1
         wait = retry_count * 5
         puts "⚠️  Connection error on #{table_name_str} [#{batch_range.first}-#{batch_range.last}]," \
              " retry #{retry_count}/#{max_retries} in #{wait}s: #{e.message.lines.first.strip}"
+        # Full pool reconnect — release_connection alone is not enough when the TCP
+        # socket is dead (e.g. "There is an issue connecting with your hostname").
         begin
-          ActiveRecord::Base.connection_pool.release_connection
+          ActiveRecord::Base.connection_pool.disconnect!
         rescue StandardError
           nil
         end
@@ -1339,6 +1692,12 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
       end
     end
 
+    if target_model.to_s == 'Encounter'
+      insertable_records.each do |record|
+        record[:program_id] ||= HIV_PROGRAM_ID
+      end
+    end
+
     # Force-set location_id for GlobalProperty (source table may not have this column)
     if target_model.to_s == 'GlobalProperty'
       insertable_records.each do |record|
@@ -1448,7 +1807,7 @@ def populate_users(source_db)
   if User.unscoped.exists?(uuid: admin_user['uuid'])
     admin_user = User.unscoped.find_by(uuid: admin_user['uuid'])
   else
-    next_user_id = User.unscoped.maximum(:user_id) + 1
+    next_user_id = (User.unscoped.maximum(:user_id) || 0) + 1
     admin_user['user_id'] = next_user_id
     admin_user['creator'] = next_user_id
     admin_user['changed_by'] = next_user_id
@@ -1611,11 +1970,17 @@ def fetch_new_ids_by_name(records, source_db, table_name, id_column, name_column
   # Escape single quotes in names for SQL safety
   escaped_names = names.map { |name| "'#{ActiveRecord::Base.connection.quote_string(name)}'" }.join(',')
 
-  # Build a case-insensitive name map: lowercase name => [actual_name, id]
-  name_to_id_map = model.unscoped.where("LOWER(TRIM(#{name_column})) IN (#{escaped_names.downcase})")
+  # Build a case-insensitive name map: lowercase name => id
+  # When duplicate names exist (e.g. migrated drug rows with same name as canonical),
+  # always prefer the minimum (canonical) id so drug_order resolution is stable.
+  # Exclude retired records when the model supports it (e.g. Drug) so we never
+  # resolve a reference to a retired destination record.
+  base_condition = "LOWER(TRIM(#{name_column})) IN (#{escaped_names.downcase})"
+  base_condition += ' AND retired = 0' if model.column_names.include?('retired')
+  name_to_id_map = model.unscoped.where(base_condition)
+                        .order(id_column => :asc)
                         .pluck(name_column, id_column)
-                        .map { |name, id| [name.downcase.strip, id] }
-                        .to_h
+                        .each_with_object({}) { |(name, id), h| h[name.downcase.strip] ||= id }
 
   records.compact.each do |record|
     next if record[new_id_key].blank?
@@ -1726,8 +2091,9 @@ def get_concept_ids(records, key, _source_db)
     if destination_concept_id
       record[key] = destination_concept_id
     elsif %i[value_coded discontinued_reason].include?(key)
-      # For optional concept fields, set to nil; for required ones, mark for removal
-      record[key] = nil
+      # Concept answer not in mapping — cache for end-of-run log write and skip the record.
+      UNMAPPED_CONCEPTS_CACHE << { key: key, concept_id: source_concept_id }
+      records_to_remove << record
     else
       records_to_remove << record
     end
@@ -1783,6 +2149,46 @@ def create_users_persons(records, source_db)
   end
 
   records
+end
+
+# Returns true when an exception is a transient database connection error that
+# warrants a reconnect-and-retry rather than a hard abort.
+def connection_error?(error)
+  return true if error.is_a?(ActiveRecord::DatabaseConnectionError)
+  return true if error.is_a?(ActiveRecord::ConnectionNotEstablished)
+  return true if error.is_a?(Mysql2::Error::ConnectionError)
+  return true if error.is_a?(Mysql2::Error) &&
+                 error.message.match?(/Lost connection|gone away|hostname|connecting with|server has gone away|Can't connect/i)
+
+  false
+end
+
+# Disconnect the entire connection pool and attempt to re-establish a connection
+# using exponential backoff.  Returns true when a live connection is confirmed,
+# false when all attempts are exhausted.
+#
+# max_attempts : maximum number of reconnect tries
+# base_delay   : initial wait in seconds (doubles each attempt, capped at 60 s)
+def reconnect_with_backoff(max_attempts: 10, base_delay: 5)
+  attempts = 0
+  loop do
+    attempts += 1
+    delay = [base_delay * (2**(attempts - 1)), 60].min # 5, 10, 20, 40, 60, 60 …
+    puts "  🔄 DB reconnect attempt #{attempts}/#{max_attempts} — waiting #{delay}s before retry..."
+    sleep(delay)
+
+    begin
+      # Tear down every connection in the pool so stale sockets are not reused.
+      ActiveRecord::Base.connection_pool.disconnect!
+      # Grabbing a connection from the pool forces a fresh TCP handshake.
+      ActiveRecord::Base.connection.verify!
+      puts "  ✅ DB reconnect successful (attempt #{attempts})"
+      return true
+    rescue StandardError => e
+      puts "  ⚠️  Reconnect attempt #{attempts} failed: #{e.message.lines.first.strip}"
+      return false if attempts >= max_attempts
+    end
+  end
 end
 
 # Align uuid column collation across source and target tables to allow index usage in JOINs.
@@ -1944,6 +2350,19 @@ else
   populate_users(source_db)
 end
 
+# Re-seed User.current now that users exist (handles fresh-DB case where
+# User.unscoped.first returned nil at startup).
+if User.current.nil?
+  seed_user = User.unscoped.first
+  if seed_user
+    seed_user.location_id = SITE_ID
+    User.current = seed_user
+    puts "✓ User.current seeded after populate_users: #{seed_user.username}"
+  else
+    puts '⚠️  WARNING: No users found after populate_users — some operations may fail'
+  end
+end
+
 # Load HIV program IDs for filtering clinical data
 puts "\n" + '=' * 80
 puts 'HIV PROGRAM FILTERING ENABLED'
@@ -1966,33 +2385,88 @@ end
 # This is idempotent: drops and recreates on each run. Takes ~30-60s but saves hours over 3000+ batches.
 create_hiv_encounter_ids_cache(source_db)
 
-# Build obs_pending: source HIV obs whose UUIDs are NOT yet in harmonized.obs.
-# This is the single correct resume mechanism for multi-site harmonized DBs:
-#   - Uses UUID (the stable identity key preserved across obs_id remapping) to diff source vs target.
-#   - Completely independent of target row counts, obs_id ordering, or other sites' data.
-#   - Rebuilt fresh on every restart so it always reflects current state.
-# Takes ~3-10 minutes for 60M obs but saves time by skipping already-migrated batches entirely.
-build_obs_pending_table(source_db) if resume_group >= 5
+# -----------------------------------------------------------------------
+# PRE-FLIGHT: Verify concept mapping covers all concept_id and value_coded
+# values that appear in source HIV obs. Abort before touching any data if
+# gaps are found — a missing mapping causes silent data corruption (obs
+# inserted with value_coded=NULL, or obs dropped entirely).
+# -----------------------------------------------------------------------
+if CONCEPT_ID_MAP.any? && ENV['SKIP_PREFLIGHT'] != 'true'
+  puts "\n🔍 Pre-flight concept mapping coverage check..."
+  conn = ActiveRecord::Base.connection
+
+  # Collect all distinct concept_ids used as obs question in source HIV obs
+  question_ids = conn.execute(<<~SQL).map { |r| r[0].to_i }
+    SELECT DISTINCT o.concept_id
+    FROM #{source_db}.obs o
+    INNER JOIN #{DEST_DB}.hiv_enc_ids_cache h ON h.encounter_id = o.encounter_id
+    WHERE o.voided = 0
+  SQL
+
+  # Collect all distinct value_coded values used as obs answer in source HIV obs
+  answer_ids = conn.execute(<<~SQL).map { |r| r[0].to_i }
+    SELECT DISTINCT o.value_coded
+    FROM #{source_db}.obs o
+    INNER JOIN #{DEST_DB}.hiv_enc_ids_cache h ON h.encounter_id = o.encounter_id
+    WHERE o.voided = 0 AND o.value_coded IS NOT NULL
+  SQL
+
+  missing_questions = question_ids.reject { |id| CONCEPT_ID_MAP.key?(id) }
+  missing_answers   = answer_ids.reject   { |id| CONCEPT_ID_MAP.key?(id) }
+
+  if missing_questions.any? || missing_answers.any?
+    puts "\n" + ('=' * 80)
+    puts '⚠️  CONCEPT MAPPING INCOMPLETE — unmapped concepts will be skipped during migration'
+    puts '=' * 80
+    if missing_questions.any?
+      puts "\n  Unmapped obs question concept_ids (#{missing_questions.size}):"
+      missing_questions.each do |id|
+        name = conn.execute(
+          "SELECT name FROM #{source_db}.concept_name WHERE concept_id=#{id} " \
+          "AND concept_name_type='FULLY_SPECIFIED' LIMIT 1"
+        ).first&.[](0) || '(unknown)'
+        puts "    #{id}  \"#{name}\""
+      end
+    end
+    if missing_answers.any?
+      puts "\n  Unmapped obs answer value_coded concept_ids (#{missing_answers.size}):"
+      missing_answers.each do |id|
+        name = conn.execute(
+          "SELECT name FROM #{source_db}.concept_name WHERE concept_id=#{id} " \
+          "AND concept_name_type='FULLY_SPECIFIED' LIMIT 1"
+        ).first&.[](0) || '(unknown)'
+        puts "    #{id}  \"#{name}\""
+      end
+    end
+    puts "\n  Note: run bin/generate_concept_mapping.rb to add missing mappings."
+    puts '=' * 80
+  else
+    puts "  ✓ All #{question_ids.size} question concepts and #{answer_ids.size} answer concepts are mapped"
+  end
+end
+
+# obs_pending and FK mapping tables are built inside populate_group at the start of Group_5.
+# For manual resume at Group_5+, they are rebuilt there automatically on every run.
 
 # Clear caches that are no longer needed after a group completes to free memory.
 # Caches are cumulative — without clearing, they balloon across all groups.
 def clear_migrated_caches(completed_group_name)
   case completed_group_name
   when 'Group_4'
-    # orders + patient_state done; order and program ID mappings no longer needed
-    # Keep ENCOUNTER, PERSON, USER caches — still needed by obs/drug_order
+    # orders + patient_state done; KEEP ORDER_ID_CACHE — obs (Group_5) references order_id FKs.
+    # Only clear program ID mappings which are no longer needed.
     CACHE_MUTEX.synchronize do
-      ORDER_ID_CACHE.clear
       PROGRAM_ID_CACHE.clear
     end
-    puts "🧹 Cleared ORDER_ID_CACHE and PROGRAM_ID_CACHE after #{completed_group_name}"
+    puts "🧹 Cleared PROGRAM_ID_CACHE after #{completed_group_name} (ORDER_ID_CACHE kept for Group_5)"
   when 'Group_5'
-    # obs done; obs IDs still needed for backfill and update_group_obs_ids — keep OBS_ID_CACHE
-    # Encounter IDs no longer needed for SQL filtering after obs and orders are done
+    # obs done; obs IDs still needed for backfill and update_group_obs_ids — keep OBS_ID_CACHE.
+    # ORDER_ID_CACHE no longer needed after obs completes — clear it now.
     CACHE_MUTEX.synchronize do
       ENCOUNTER_ID_CACHE.clear
+      ORDER_ID_CACHE.clear
     end
-    puts "🧹 Cleared ENCOUNTER_ID_CACHE after #{completed_group_name}"
+    puts "🧹 Cleared ENCOUNTER_ID_CACHE and ORDER_ID_CACHE after #{completed_group_name}"
   when 'Group_6'
     # All clinical tables done — clear everything
     CACHE_MUTEX.synchronize do
@@ -2009,23 +2483,130 @@ def populate_group(group, group_name, source_db)
   start_time = Time.now
   capture_memory_snapshot("Before #{group_name}")
 
+  # For Group_5: build SQL FK mapping tables and obs_pending before processing tasks.
+  # This one-time setup (~60s) enables the fast SQL obs migration path and avoids
+  # per-batch Ruby UUID lookup overhead for the 1.75M+ obs table.
+  if group_name == 'Group_5'
+    build_migration_id_maps(source_db)
+    build_obs_pending_table(source_db)
+  end
+
   tasks = group.map { |table, (model, dependencies)| [table, model, source_db, dependencies] }
 
-  Parallel.each(tasks, in_threads: optimal_threads) do |(table, model, src_db, dependencies)|
+  failed_tables  = Concurrent::Array.new
+  success_tables = Concurrent::Array.new
+
+  # Process tables SEQUENTIALLY within a group.
+  # Each table's process_in_batches already parallelises its batches internally
+  # (Parallel.each with up to OBS_THREADS/optimal_threads workers). Running
+  # multiple tables in parallel on top of that creates nested parallelism:
+  #   outer_threads × inner_threads concurrent DB connections
+  # which exceeds the connection pool, causes checkout timeouts, and makes the
+  # process hang or OOM. Sequential outer iteration eliminates this entirely.
+  tasks.each do |(table, model, src_db, dependencies)|
     ActiveRecord::Base.connection_pool.with_connection do
-      populate_records(table, model, src_db, dependencies)
+      # Route large tables to the fast pure-SQL path that bypasses the Ruby
+      # per-record UUID FK lookup loop (~100× faster for obs/drug_order).
+      case table.to_s
+      when 'obs'
+        migrate_obs_via_sql(src_db)
+      when 'drug_order'
+        migrate_drug_orders_via_sql(src_db)
+      else
+        populate_records(table, model, src_db, dependencies)
+      end
+      success_tables << table.to_s
     end
   rescue StandardError => e
-    puts "❌ Error processing #{table}: #{e.message}"
-    puts e.backtrace.first(10).join("\n")
+    failed_tables << { table: table.to_s, error: e.message, backtrace: e.backtrace.first(5),
+                       conn_error: connection_error?(e) }
+    puts "❌ Error processing #{table}: #{e.message.lines.first.strip}"
+    puts e.backtrace.first(5).join("\n")
   end
+
+  # ── Retry pass ── attempt each failed table once, sequentially ──────────
+  # Connection failures get up to MAX_CONN_RETRIES extra rounds with full pool
+  # reconnection before each attempt.  Other errors get one sequential retry.
+  if failed_tables.any?
+    puts "\n⚠️  #{group_name}: #{failed_tables.size} table(s) failed — retrying sequentially..."
+    still_failed = Concurrent::Array.new
+
+    failed_tables.each do |entry|
+      table      = entry[:table]
+      model, dep = group[table.to_sym] || group[table]
+      unless model
+        puts "  ↳ #{table}: cannot retry — table not found in group definition"
+        still_failed << entry
+        next
+      end
+
+      # Determine how many retry rounds to give this table
+      max_rounds = entry[:conn_error] ? MAX_CONN_RETRIES : 1
+      round      = 0
+      succeeded  = false
+
+      while round < max_rounds && !succeeded
+        round += 1
+
+        # For connection errors: reconnect the pool before each round
+        if entry[:conn_error]
+          puts "  🔌 #{table}: connection failure detected — reconnecting pool (round #{round}/#{max_rounds})..."
+          unless reconnect_with_backoff(max_attempts: 8, base_delay: 5)
+            puts "  ❌ #{table}: DB did not come back after #{round * 8} attempts — giving up"
+            break
+          end
+        end
+
+        puts "  ↳ Retrying #{table} (round #{round})..."
+        begin
+          ActiveRecord::Base.connection_pool.with_connection do
+            case table.to_s
+            when 'obs' then migrate_obs_via_sql(source_db)
+            when 'drug_order' then migrate_drug_orders_via_sql(source_db)
+            else                   populate_records(table, model, source_db, dep)
+            end
+            success_tables << table
+            succeeded = true
+            puts "  ✅ #{table} succeeded on retry round #{round}"
+          end
+        rescue StandardError => e
+          entry = entry.merge(error: e.message, backtrace: e.backtrace.first(5),
+                              conn_error: connection_error?(e))
+          puts "  ❌ #{table} round #{round} failed: #{e.message.lines.first.strip}"
+        end
+      end
+
+      still_failed << entry unless succeeded
+    end
+
+    failed_tables.replace(still_failed)
+  end
+  # ────────────────────────────────────────────────────────────────────────
 
   duration = Time.now - start_time
   capture_memory_snapshot("After #{group_name}")
 
   CACHE_MUTEX.synchronize do
     PERFORMANCE_METRICS[:group_timings][group_name] = duration
+    MIGRATION_RESULTS[:groups][group_name] = {
+      succeeded: success_tables.to_a,
+      failed: failed_tables.to_a,
+      duration: duration.round(2)
+    }
+    failed_tables.each { |f| MIGRATION_RESULTS[:failed_tables] << "#{group_name}::#{f[:table]}" }
   end
+
+  # ── Per-group summary banner ─────────────────────────────────────────────
+  puts "\n" + '─' * 65
+  status_icon = failed_tables.empty? ? '✅' : '❌'
+  puts "#{status_icon}  #{group_name} complete in #{format_duration(duration)}"
+  puts "   Succeeded (#{success_tables.size}): #{success_tables.join(', ')}" if success_tables.any?
+  if failed_tables.any?
+    puts "   Failed    (#{failed_tables.size}):"
+    failed_tables.each { |f| puts "     • #{f[:table]}: #{f[:error].lines.first.strip}" }
+  end
+  puts '─' * 65 + "\n"
+  # ─────────────────────────────────────────────────────────────────────────
 ensure
   # Release connections but don't disconnect the pool between groups
   ActiveRecord::Base.connection_pool.release_connection if ActiveRecord::Base.connection_pool.active_connection?
@@ -2207,6 +2788,29 @@ if __FILE__ == $0
     clear_migrated_caches(group_name)
   end
 
+  # ── Final group-by-group migration summary ─────────────────────────────
+  puts "\n" + '=' * 65
+  puts '📊  MIGRATION GROUP SUMMARY'
+  puts '=' * 65
+  overall_success = MIGRATION_RESULTS[:groups].values.all? { |r| r[:failed].empty? }
+  MIGRATION_RESULTS[:groups].each do |gname, result|
+    icon = result[:failed].empty? ? '✅' : '❌'
+    puts "  #{icon}  #{gname.ljust(10)} " \
+         "#{result[:succeeded].size} ok  " \
+         "#{result[:failed].size} failed  " \
+         "(#{format_duration(result[:duration])})"
+    result[:failed].each { |f| puts "        ↳ #{f[:table]}: #{f[:error].lines.first.strip}" }
+  end
+  if overall_success
+    puts "\n  ✅  All groups migrated successfully."
+  else
+    puts "\n  ⚠️   Some groups had failures:"
+    MIGRATION_RESULTS[:failed_tables].each { |t| puts "       • #{t}" }
+    puts "\n  Re-run with RESUME_FROM_GROUP=<n> to retry a specific group."
+  end
+  puts '=' * 65 + "\n"
+  # ────────────────────────────────────────────────────────────────────────
+
   # Backfill orders.obs_id now that obs have been migrated in Group_5
   backfill_orders_obs_ids(source_db)
 
@@ -2217,6 +2821,26 @@ if __FILE__ == $0
 
   # Report performance metrics
   report_performance_metrics
+
+  # Flush unmapped concept cache to log file
+  unless UNMAPPED_CONCEPTS_CACHE.empty?
+    unmapped_log = Rails.root.join('log', 'unmapped_concepts.log')
+    # Deduplicate by concept_id only before writing
+    unique_concept_ids = UNMAPPED_CONCEPTS_CACHE.map { |e| e[:concept_id] }.uniq
+    File.open(unmapped_log, 'w') do |f|
+      f.puts "\n# Unmapped concepts from migration run at #{Time.now.iso8601} (#{unique_concept_ids.size} unique concept_ids)"
+      unique_concept_ids.each do |concept_id|
+        f.puts "UNMAPPED concept_id=#{concept_id} — not in #{CONCEPT_MAPPING_FILE}. Update the metadata server and regenerate mapping to migrate these records."
+      end
+    end
+    puts "\n⚠ #{unique_concept_ids.size} unmapped concept_id(s) skipped — see log/unmapped_concepts.log"
+  end
+
+  # Consolidate duplicate drug records: remap drug_order references to canonical
+  # (lowest) drug_id per name, then delete the duplicate rows. This ensures sites
+  # migrated with older migrator versions (which created duplicate drug rows) are
+  # cleaned up automatically. Safe to run repeatedly — no-op when no duplicates exist.
+  consolidate_duplicate_drugs
 
   # Final cleanup: Clear all active connections
   puts "\n✓ Migration complete! Cleaning up connections..."

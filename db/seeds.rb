@@ -36,8 +36,31 @@ GITHUB_METADATA_URL = ENV.fetch(
 ).freeze
 
 SEED_CONCEPT_WORD_STOP_WORDS = %w[A AND AT BUT BY FOR HAS OF THE TO].freeze
-SEED_CONCEPT_WORD_REGEX_LARGE = /[!"#$%&'()*,+\-.\/:;<=>?@\[\]\\^_`{|}~]/
-SEED_CONCEPT_WORD_REGEX_SMALL = /[!"#$%&'()*,.\/:;<=>?@\[\]\\^_`{|}~]/
+SEED_CONCEPT_WORD_REGEX_LARGE = %r{[!"#$%&'()*,+\-./:;<=>?@\[\]\\^_`{|}~]}
+SEED_CONCEPT_WORD_REGEX_SMALL = %r{[!"#$%&'()*,./:;<=>?@\[\]\\^_`{|}~]}
+LOCATION_METADATA_TABLES = %w[
+  location
+  location_attribute
+  location_attribute_type
+  location_tag
+  location_tag_map
+].freeze
+LOCATION_METADATA_STAGING_PREFIX = '_seed_metadata_'
+LOCATION_METADATA_PRIMARY_KEYS = {
+  'location' => %w[location_id],
+  'location_attribute' => %w[location_attribute_id],
+  'location_attribute_type' => %w[location_attribute_type_id],
+  'location_tag' => %w[location_tag_id],
+  'location_tag_map' => %w[location_id location_tag_id]
+}.freeze
+LOCATION_METADATA_SYNC_ORDER = %w[
+  location_attribute_type
+  location_tag
+  location
+  location_attribute
+  location_tag_map
+].freeze
+LOCATION_METADATA_RETIRE_REASON = 'Retired by metadata seed sync because it is no longer present in source metadata'
 
 def mysql_import_command(username:, password:, host:, port:, database:)
   command = ['mysql', '-u', username.to_s]
@@ -51,7 +74,7 @@ end
 def fetch_metadata_from_github!(url, local_path)
   FileUtils.mkdir_p(local_path.dirname)
 
-  puts "Downloading latest metadata from GitHub..."
+  puts 'Downloading latest metadata from GitHub...'
   URI.open(url, open_timeout: 30, read_timeout: 300) do |remote|
     File.open(local_path, 'wb') do |file|
       IO.copy_stream(remote, file)
@@ -177,6 +200,15 @@ ensure
   tmp_file&.unlink if defined?(tmp_file) && tmp_file && File.exist?(tmp_file.path)
 end
 
+def location_metadata_seed_file?(file_path)
+  %w[locations.sql locations.sql.gz].include?(File.basename(file_path.to_s))
+end
+
+def live_location_metadata_present?
+  conn = ActiveRecord::Base.connection
+  conn.table_exists?('location') && conn.select_value('SELECT COUNT(*) FROM location').to_i.positive?
+end
+
 def strip_definer_clauses(sql)
   sql.gsub(/\bDEFINER\s*=\s*`[^`]+`@`[^`]+`\s*/i, '')
 end
@@ -203,6 +235,611 @@ def cleanup_prepared_sql_file!(original_path:, prepared_path:)
   return unless File.exist?(prepared_path.to_s)
 
   File.delete(prepared_path.to_s)
+end
+
+def location_metadata_staging_table(table_name)
+  "#{LOCATION_METADATA_STAGING_PREFIX}#{table_name}"
+end
+
+def location_metadata_table_block_pattern(table_name)
+  /
+    (?:--\n--\ Table\ structure\ for\ table\ `#{Regexp.escape(table_name)}`\n--\n\n)?
+    DROP\ TABLE\ IF\ EXISTS\ `#{Regexp.escape(table_name)}`;
+    .*?
+    UNLOCK\ TABLES;\n?
+  /mx
+end
+
+def extract_location_metadata_blocks(file_path)
+  sql = File.read(file_path)
+
+  LOCATION_METADATA_TABLES.each_with_object({}) do |table_name, blocks|
+    match = sql.match(location_metadata_table_block_pattern(table_name))
+    blocks[table_name] = match[0] if match
+  end
+end
+
+def remove_foreign_keys_from_create_table_sql(sql)
+  sql
+    .gsub(/^\s*(?:CONSTRAINT\s+`[^`]+`\s+)?FOREIGN KEY\b.*\n/i, '')
+    .gsub(/,\n\) ENGINE=/, "\n) ENGINE=")
+end
+
+def location_metadata_live_table_charset_options(conn, table_name)
+  collation = conn.select_value(<<~SQL)
+    SELECT TABLE_COLLATION
+    FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = #{conn.quote(table_name)}
+    LIMIT 1
+  SQL
+  collation ||= conn.select_value('SELECT @@collation_database')
+
+  charset = conn.select_value(<<~SQL)
+    SELECT CHARACTER_SET_NAME
+    FROM information_schema.COLLATIONS
+    WHERE COLLATION_NAME = #{conn.quote(collation)}
+    LIMIT 1
+  SQL
+  charset ||= conn.select_value('SELECT @@character_set_database')
+
+  { charset: charset, collation: collation }
+end
+
+def normalize_location_metadata_staging_charset(sql, charset:, collation:)
+  sql
+    .gsub(/\bDEFAULT CHARSET=\w+(?:\s+COLLATE=?\w+)?/i, "DEFAULT CHARSET=#{charset} COLLATE=#{collation}")
+    .gsub(/\bCHARACTER SET\s+\w+/i, "CHARACTER SET #{charset}")
+    .gsub(/\bCOLLATE\s+\w+/i, "COLLATE #{collation}")
+    .gsub(/\bCOLLATE=\w+/i, "COLLATE=#{collation}")
+end
+
+def build_location_metadata_staging_sql(conn, blocks)
+  sql = +"SET FOREIGN_KEY_CHECKS=0;\nSET UNIQUE_CHECKS=0;\n\n"
+
+  LOCATION_METADATA_TABLES.each do |table_name|
+    block = blocks.fetch(table_name).dup
+    staging_table = location_metadata_staging_table(table_name)
+    charset_options = location_metadata_live_table_charset_options(conn, table_name)
+
+    block.gsub!(/`#{Regexp.escape(table_name)}`/, "`#{staging_table}`")
+    block = remove_foreign_keys_from_create_table_sql(block)
+    block = normalize_location_metadata_staging_charset(block, **charset_options)
+
+    sql << block << "\n"
+  end
+
+  sql << "SET UNIQUE_CHECKS=1;\nSET FOREIGN_KEY_CHECKS=1;\n"
+end
+
+def strip_location_metadata_blocks!(file_path)
+  sql = File.read(file_path)
+  removed_tables = []
+
+  LOCATION_METADATA_TABLES.each do |table_name|
+    pattern = location_metadata_table_block_pattern(table_name)
+    next unless sql.match?(pattern)
+
+    sql.gsub!(pattern, "\n-- #{table_name} is handled by safe incremental location metadata sync.\n\n")
+    removed_tables << table_name
+  end
+
+  return false if removed_tables.empty?
+
+  File.write(file_path, sql)
+  puts "Removed destructive location metadata blocks from import: #{removed_tables.join(', ')}."
+  true
+end
+
+def column_names_for(conn, table_name)
+  conn.select_values("SHOW COLUMNS FROM #{conn.quote_table_name(table_name)}")
+end
+
+def column_metadata_for(conn, table_name)
+  conn.select_all(<<~SQL).to_a.index_by { |column| column['COLUMN_NAME'] }
+    SELECT COLUMN_NAME, COLUMN_DEFAULT, DATA_TYPE, EXTRA, IS_NULLABLE
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = #{conn.quote(table_name)}
+  SQL
+end
+
+def location_metadata_current_time_default?(default_value)
+  default_value.to_s.upcase.match?(/\ACURRENT_TIMESTAMP(?:\(\))?\z/)
+end
+
+def location_metadata_column_default_sql(conn, column_metadata)
+  default_value = column_metadata['COLUMN_DEFAULT']
+  return nil if default_value.nil?
+  return 'CURRENT_TIMESTAMP' if location_metadata_current_time_default?(default_value)
+
+  conn.quote(default_value)
+end
+
+def location_metadata_required_column_fallback_sql(conn, column_metadata)
+  default_sql = location_metadata_column_default_sql(conn, column_metadata)
+  return default_sql if default_sql.present?
+
+  case column_metadata['DATA_TYPE'].to_s
+  when /int/, 'decimal', 'double', 'float', 'bit'
+    '0'
+  when 'date'
+    conn.quote('1900-01-01')
+  when 'datetime', 'timestamp'
+    conn.quote('1900-01-01 00:00:00')
+  when 'time'
+    conn.quote('00:00:00')
+  else
+    conn.quote('')
+  end
+end
+
+def location_metadata_insert_value_expression(conn, table_columns, column_name, staging_alias:)
+  column = conn.quote_column_name(column_name)
+  expression = "#{staging_alias}.#{column}"
+  column_metadata = table_columns[column_name]
+  return expression if column_metadata.blank?
+  return expression if column_metadata['IS_NULLABLE'] == 'YES'
+  return expression if column_metadata['EXTRA'].to_s.include?('auto_increment')
+
+  "COALESCE(#{expression}, #{location_metadata_required_column_fallback_sql(conn, column_metadata)})"
+end
+
+def location_metadata_update_value_expression(conn, table_columns, column_name, live_alias:, staging_alias:)
+  column = conn.quote_column_name(column_name)
+  expression = "#{staging_alias}.#{column}"
+  column_metadata = table_columns[column_name]
+  return expression if column_metadata.blank? || column_metadata['IS_NULLABLE'] == 'YES'
+
+  "COALESCE(#{expression}, #{live_alias}.#{column})"
+end
+
+def location_metadata_join_condition(conn, primary_key, live_alias:, staging_alias:)
+  primary_key.map do |column_name|
+    column = conn.quote_column_name(column_name)
+    "#{live_alias}.#{column} = #{staging_alias}.#{column}"
+  end.join(' AND ')
+end
+
+def location_metadata_changed_condition(conn, columns, live_alias:, staging_alias:)
+  columns.map do |column_name|
+    column = conn.quote_column_name(column_name)
+    "NOT (#{live_alias}.#{column} <=> #{staging_alias}.#{column})"
+  end.join(' OR ')
+end
+
+def location_metadata_source_owned_condition(conn, table_name, live_alias:)
+  primary_key = LOCATION_METADATA_PRIMARY_KEYS.fetch(table_name)
+
+  conditions = primary_key.filter_map do |column_name|
+    max_value = location_metadata_high_water_value(conn, table_name, column_name)
+    next if max_value.blank?
+
+    "#{live_alias}.#{conn.quote_column_name(column_name)} <= #{max_value.to_i}"
+  end
+
+  return nil if conditions.empty?
+
+  conditions.join(' AND ')
+end
+
+def seed_actor_user_id(conn)
+  return nil unless conn.table_exists?('users')
+
+  conn.select_value('SELECT user_id FROM users ORDER BY user_id ASC LIMIT 1')
+end
+
+def location_metadata_high_water_property(table_name, column_name)
+  "seed.location_metadata.high_water.#{table_name}.#{column_name}"
+end
+
+def location_metadata_source_max(conn, table_name, column_name)
+  conn.select_value(<<~SQL)
+    SELECT MAX(#{conn.quote_column_name(column_name)})
+    FROM #{conn.quote_table_name(location_metadata_staging_table(table_name))}
+  SQL
+end
+
+def saved_location_metadata_high_water(conn, table_name, column_name)
+  return nil unless conn.table_exists?('global_property')
+
+  property = location_metadata_high_water_property(table_name, column_name)
+  conn.select_value(<<~SQL)
+    SELECT property_value
+    FROM global_property
+    WHERE property = #{conn.quote(property)}
+      AND location_id IS NULL
+    LIMIT 1
+  SQL
+end
+
+def location_metadata_high_water_value(conn, table_name, column_name)
+  [
+    location_metadata_source_max(conn, table_name, column_name),
+    saved_location_metadata_high_water(conn, table_name, column_name)
+  ].compact.map(&:to_i).max
+end
+
+def save_location_metadata_high_water!(conn, table_name, column_name)
+  return unless conn.table_exists?('global_property')
+
+  property = location_metadata_high_water_property(table_name, column_name)
+  high_water_value = location_metadata_high_water_value(conn, table_name, column_name)
+  return if high_water_value.blank?
+
+  existing = conn.select_value(<<~SQL).to_i
+    SELECT COUNT(*)
+    FROM global_property
+    WHERE property = #{conn.quote(property)}
+      AND location_id IS NULL
+  SQL
+
+  if existing.positive?
+    conn.execute <<~SQL
+      UPDATE global_property
+      SET property_value = #{conn.quote(high_water_value.to_s)}
+      WHERE property = #{conn.quote(property)}
+        AND location_id IS NULL
+    SQL
+  else
+    conn.execute <<~SQL
+      INSERT INTO global_property (property, property_value, uuid)
+      VALUES (#{conn.quote(property)}, #{conn.quote(high_water_value.to_s)}, UUID())
+    SQL
+  end
+end
+
+def upsert_location_metadata_table!(conn, table_name, defer_columns: [])
+  staging_table = location_metadata_staging_table(table_name)
+  primary_key = LOCATION_METADATA_PRIMARY_KEYS.fetch(table_name)
+  live_columns = column_names_for(conn, table_name)
+  staging_columns = column_names_for(conn, staging_table)
+  live_column_metadata = column_metadata_for(conn, table_name)
+  common_columns = staging_columns & live_columns
+  deferred_columns = defer_columns & common_columns
+  insert_columns = common_columns - deferred_columns
+  update_columns = insert_columns - primary_key
+  join_condition = location_metadata_join_condition(
+    conn,
+    primary_key,
+    live_alias: 'live_table',
+    staging_alias: 'staging_table'
+  )
+
+  inserted = conn.select_value(<<~SQL).to_i
+    SELECT COUNT(*)
+    FROM #{conn.quote_table_name(staging_table)} staging_table
+    LEFT JOIN #{conn.quote_table_name(table_name)} live_table
+      ON #{join_condition}
+    WHERE live_table.#{conn.quote_column_name(primary_key.first)} IS NULL
+  SQL
+
+  updated =
+    if update_columns.empty?
+      0
+    else
+      changed_condition = location_metadata_changed_condition(
+        conn,
+        update_columns,
+        live_alias: 'live_table',
+        staging_alias: 'staging_table'
+      )
+
+      conn.select_value(<<~SQL).to_i
+        SELECT COUNT(*)
+        FROM #{conn.quote_table_name(staging_table)} staging_table
+        INNER JOIN #{conn.quote_table_name(table_name)} live_table
+          ON #{join_condition}
+        WHERE #{changed_condition}
+      SQL
+    end
+
+  quoted_insert_columns = insert_columns.map { |column_name| conn.quote_column_name(column_name) }
+  staging_select_columns = insert_columns.map do |column_name|
+    location_metadata_insert_value_expression(
+      conn,
+      live_column_metadata,
+      column_name,
+      staging_alias: 'staging_table'
+    )
+  end
+
+  if inserted.positive?
+    conn.execute <<~SQL
+      INSERT INTO #{conn.quote_table_name(table_name)} (#{quoted_insert_columns.join(', ')})
+      SELECT #{staging_select_columns.join(', ')}
+      FROM #{conn.quote_table_name(staging_table)} staging_table
+      LEFT JOIN #{conn.quote_table_name(table_name)} live_table
+        ON #{join_condition}
+      WHERE live_table.#{conn.quote_column_name(primary_key.first)} IS NULL
+    SQL
+  end
+
+  if updated.positive?
+    assignments = update_columns.map do |column_name|
+      column = conn.quote_column_name(column_name)
+      value_expression = location_metadata_update_value_expression(
+        conn,
+        live_column_metadata,
+        column_name,
+        live_alias: 'live_table',
+        staging_alias: 'staging_table'
+      )
+      "live_table.#{column} = #{value_expression}"
+    end
+
+    conn.execute <<~SQL
+      UPDATE #{conn.quote_table_name(table_name)} live_table
+      INNER JOIN #{conn.quote_table_name(staging_table)} staging_table
+        ON #{join_condition}
+      SET #{assignments.join(', ')}
+      WHERE #{location_metadata_changed_condition(conn, update_columns, live_alias: 'live_table', staging_alias: 'staging_table')}
+    SQL
+  end
+
+  { table: table_name, inserted: inserted, updated: updated, deferred: 0 }
+end
+
+def update_deferred_location_metadata_columns!(conn, table_name, columns)
+  staging_table = location_metadata_staging_table(table_name)
+  primary_key = LOCATION_METADATA_PRIMARY_KEYS.fetch(table_name)
+  live_columns = column_names_for(conn, table_name)
+  staging_columns = column_names_for(conn, staging_table)
+  update_columns = columns & live_columns & staging_columns
+  return 0 if update_columns.empty?
+
+  join_condition = location_metadata_join_condition(
+    conn,
+    primary_key,
+    live_alias: 'live_table',
+    staging_alias: 'staging_table'
+  )
+  changed_condition = location_metadata_changed_condition(
+    conn,
+    update_columns,
+    live_alias: 'live_table',
+    staging_alias: 'staging_table'
+  )
+
+  updated = conn.select_value(<<~SQL).to_i
+    SELECT COUNT(*)
+    FROM #{conn.quote_table_name(table_name)} live_table
+    INNER JOIN #{conn.quote_table_name(staging_table)} staging_table
+      ON #{join_condition}
+    WHERE #{changed_condition}
+  SQL
+
+  return 0 if updated.zero?
+
+  assignments = update_columns.map do |column_name|
+    column = conn.quote_column_name(column_name)
+    "live_table.#{column} = staging_table.#{column}"
+  end
+
+  conn.execute <<~SQL
+    UPDATE #{conn.quote_table_name(table_name)} live_table
+    INNER JOIN #{conn.quote_table_name(staging_table)} staging_table
+      ON #{join_condition}
+    SET #{assignments.join(', ')}
+    WHERE #{changed_condition}
+  SQL
+
+  updated
+end
+
+def delete_missing_location_metadata_rows!(conn, table_name)
+  staging_table = location_metadata_staging_table(table_name)
+  primary_key = LOCATION_METADATA_PRIMARY_KEYS.fetch(table_name)
+  source_owned_condition = location_metadata_source_owned_condition(conn, table_name, live_alias: 'live_table')
+  return 0 if source_owned_condition.blank?
+
+  join_condition = location_metadata_join_condition(
+    conn,
+    primary_key,
+    live_alias: 'live_table',
+    staging_alias: 'staging_table'
+  )
+  missing_condition = "staging_table.#{conn.quote_column_name(primary_key.first)} IS NULL"
+
+  deleted = conn.select_value(<<~SQL).to_i
+    SELECT COUNT(*)
+    FROM #{conn.quote_table_name(table_name)} live_table
+    LEFT JOIN #{conn.quote_table_name(staging_table)} staging_table
+      ON #{join_condition}
+    WHERE #{source_owned_condition}
+      AND #{missing_condition}
+  SQL
+
+  return 0 if deleted.zero?
+
+  conn.execute <<~SQL
+    DELETE live_table
+    FROM #{conn.quote_table_name(table_name)} live_table
+    LEFT JOIN #{conn.quote_table_name(staging_table)} staging_table
+      ON #{join_condition}
+    WHERE #{source_owned_condition}
+      AND #{missing_condition}
+  SQL
+
+  deleted
+end
+
+def retire_missing_location_metadata_rows!(conn, table_name)
+  live_columns = column_names_for(conn, table_name)
+  return 0 unless live_columns.include?('retired')
+
+  staging_table = location_metadata_staging_table(table_name)
+  primary_key = LOCATION_METADATA_PRIMARY_KEYS.fetch(table_name)
+  source_owned_condition = location_metadata_source_owned_condition(conn, table_name, live_alias: 'live_table')
+  return 0 if source_owned_condition.blank?
+
+  join_condition = location_metadata_join_condition(
+    conn,
+    primary_key,
+    live_alias: 'live_table',
+    staging_alias: 'staging_table'
+  )
+  missing_condition = "staging_table.#{conn.quote_column_name(primary_key.first)} IS NULL"
+  active_condition = 'COALESCE(live_table.`retired`, 0) = 0'
+
+  retired = conn.select_value(<<~SQL).to_i
+    SELECT COUNT(*)
+    FROM #{conn.quote_table_name(table_name)} live_table
+    LEFT JOIN #{conn.quote_table_name(staging_table)} staging_table
+      ON #{join_condition}
+    WHERE #{source_owned_condition}
+      AND #{missing_condition}
+      AND #{active_condition}
+  SQL
+
+  return 0 if retired.zero?
+
+  assignments = ['live_table.`retired` = 1']
+  assignments << 'live_table.`date_retired` = COALESCE(live_table.`date_retired`, NOW())' if live_columns.include?('date_retired')
+  if live_columns.include?('retire_reason')
+    assignments << <<~SQL.squish
+      live_table.`retire_reason` =
+        CASE
+          WHEN live_table.`retire_reason` IS NULL OR TRIM(live_table.`retire_reason`) = ''
+          THEN #{conn.quote(LOCATION_METADATA_RETIRE_REASON)}
+          ELSE live_table.`retire_reason`
+        END
+    SQL
+  end
+
+  actor_user_id = seed_actor_user_id(conn)
+  assignments << "live_table.`retired_by` = COALESCE(live_table.`retired_by`, #{actor_user_id.to_i})" if actor_user_id.present? && live_columns.include?('retired_by')
+
+  conn.execute <<~SQL
+    UPDATE #{conn.quote_table_name(table_name)} live_table
+    LEFT JOIN #{conn.quote_table_name(staging_table)} staging_table
+      ON #{join_condition}
+    SET #{assignments.join(', ')}
+    WHERE #{source_owned_condition}
+      AND #{missing_condition}
+      AND #{active_condition}
+  SQL
+
+  retired
+end
+
+def drop_location_metadata_staging_tables!(conn)
+  LOCATION_METADATA_TABLES.each do |table_name|
+    conn.execute("DROP TABLE IF EXISTS #{conn.quote_table_name(location_metadata_staging_table(table_name))}")
+  end
+end
+
+def save_location_metadata_high_water_marks!(conn)
+  LOCATION_METADATA_PRIMARY_KEYS.each do |table_name, primary_key|
+    primary_key.each do |column_name|
+      save_location_metadata_high_water!(conn, table_name, column_name)
+    end
+  end
+end
+
+def sync_location_metadata_tables!(conn)
+  stats = []
+
+  LOCATION_METADATA_SYNC_ORDER.each do |table_name|
+    defer_columns = table_name == 'location' ? %w[parent_location] : []
+    stats << upsert_location_metadata_table!(conn, table_name, defer_columns: defer_columns)
+
+    next unless table_name == 'location'
+
+    stats.last[:deferred] = update_deferred_location_metadata_columns!(conn, 'location', %w[parent_location])
+  end
+
+  deleted_attributes = delete_missing_location_metadata_rows!(conn, 'location_attribute')
+  deleted_tag_maps = delete_missing_location_metadata_rows!(conn, 'location_tag_map')
+  retired_attribute_types = retire_missing_location_metadata_rows!(conn, 'location_attribute_type')
+  retired_tags = retire_missing_location_metadata_rows!(conn, 'location_tag')
+  retired_locations = retire_missing_location_metadata_rows!(conn, 'location')
+  save_location_metadata_high_water_marks!(conn)
+
+  stats.each do |stat|
+    deferred_text = stat[:deferred].positive? ? ", deferred_updates=#{stat[:deferred]}" : ''
+    puts "Location metadata sync #{stat[:table]}: inserted=#{stat[:inserted]}, updated=#{stat[:updated]}#{deferred_text}"
+  end
+
+  puts "Location metadata sync deletions: location_attribute=#{deleted_attributes}, location_tag_map=#{deleted_tag_maps}"
+  puts "Location metadata sync retirements: location=#{retired_locations}, location_attribute_type=#{retired_attribute_types}, location_tag=#{retired_tags}"
+end
+
+def sync_location_metadata_from_dump!(file_path:, username:, password:, host:, port:, database:)
+  conn = ActiveRecord::Base.connection
+  missing_live_tables = LOCATION_METADATA_TABLES.reject { |table_name| conn.table_exists?(table_name) }
+
+  if missing_live_tables.any?
+    raise "Cannot safely sync location metadata because live tables are missing: #{missing_live_tables.join(', ')}"
+  end
+
+  blocks = extract_location_metadata_blocks(file_path)
+  missing_blocks = LOCATION_METADATA_TABLES - blocks.keys
+  raise "Metadata file is missing expected location table blocks: #{missing_blocks.join(', ')}" if missing_blocks.any?
+
+  FileUtils.mkdir_p(Rails.root.join('tmp'))
+  staging_file = Tempfile.new(['location_metadata_staging_', '.sql'], Rails.root.join('tmp'))
+  staging_file.write(build_location_metadata_staging_sql(conn, blocks))
+  staging_file.flush
+  staging_file.close
+
+  puts 'Synchronizing location metadata without dropping live location tables...'
+  import_sql_file!(
+    file_path: staging_file.path,
+    username: username,
+    password: password,
+    host: host,
+    port: port,
+    database: database
+  )
+
+  ActiveRecord::Base.transaction do
+    sync_location_metadata_tables!(conn)
+  end
+  true
+ensure
+  staging_file&.unlink if defined?(staging_file) && staging_file && File.exist?(staging_file.path)
+  drop_location_metadata_staging_tables!(conn) if defined?(conn) && conn
+end
+
+def sync_location_metadata_from_seed_file!(file_path:, username:, password:, host:, port:, database:)
+  file_path = file_path.to_s
+
+  unless File.extname(file_path) == '.gz'
+    return sync_location_metadata_from_dump!(
+      file_path: file_path,
+      username: username,
+      password: password,
+      host: host,
+      port: port,
+      database: database
+    )
+  end
+
+  FileUtils.mkdir_p(Rails.root.join('tmp'))
+  tmp_file = Tempfile.new(['location_metadata_seed_', '.sql'], Rails.root.join('tmp'))
+  tmp_file.close
+
+  command = <<~BASH
+    set -o pipefail
+    gunzip -c #{Shellwords.escape(file_path)} > #{Shellwords.escape(tmp_file.path)}
+  BASH
+
+  unless system('bash', '-lc', command)
+    exit_code = $?.respond_to?(:exitstatus) ? $?.exitstatus : 'unknown'
+    raise "Failed to decompress #{File.basename(file_path)} (exit code: #{exit_code})"
+  end
+
+  sync_location_metadata_from_dump!(
+    file_path: tmp_file.path,
+    username: username,
+    password: password,
+    host: host,
+    port: port,
+    database: database
+  )
+ensure
+  tmp_file&.unlink if defined?(tmp_file) && tmp_file && File.exist?(tmp_file.path)
 end
 
 def routine_exists?(routine_name)
@@ -260,7 +897,7 @@ def extract_routine_blocks_from_skeleton(skeleton_path:, routine_names:)
 
   IO.popen(['gunzip', '-c', skeleton_path.to_s], 'r') do |io|
     io.each_line do |line|
-      if !capturing
+      unless capturing
         match = line.match(%r{^/\*!50003 DROP (FUNCTION|PROCEDURE) IF EXISTS `([^`]+)` \*/;})
         next unless match
 
@@ -275,7 +912,9 @@ def extract_routine_blocks_from_skeleton(skeleton_path:, routine_names:)
 
       current_lines << line
 
-      next unless line.match?(%r{^/\*!50003 SET collation_connection[[:space:]]*=[[:space:]]*@saved_col_connection[[:space:]]*\*/[[:space:]]*;})
+      unless line.match?(%r{^/\*!50003 SET collation_connection[[:space:]]*=[[:space:]]*@saved_col_connection[[:space:]]*\*/[[:space:]]*;})
+        next
+      end
 
       blocks << current_lines.join if current_routine && routine_names_downcase.include?(current_routine)
       capturing = false
@@ -287,7 +926,8 @@ def extract_routine_blocks_from_skeleton(skeleton_path:, routine_names:)
   blocks
 end
 
-def import_targeted_routines_from_skeleton!(skeleton_path:, routine_names:, username:, password:, host:, port:, database:)
+def import_targeted_routines_from_skeleton!(skeleton_path:, routine_names:, username:, password:, host:, port:,
+                                            database:)
   blocks = extract_routine_blocks_from_skeleton(skeleton_path: skeleton_path, routine_names: routine_names)
   return if blocks.empty?
 
@@ -643,7 +1283,8 @@ def ensure_last_password_updated!(conn, user_id)
   SQL
 end
 
-def ensure_openmrs_user!(conn:, username:, password:, gender:, location_id:, preferred_user_id: nil, given_name: nil, family_name: nil)
+def ensure_openmrs_user!(conn:, username:, password:, gender:, location_id:, preferred_user_id: nil, given_name: nil,
+                         family_name: nil)
   existing_user_id = conn.select_value(<<~SQL)
     SELECT user_id
     FROM users
@@ -814,19 +1455,34 @@ def ensure_bootstrap_users!
   end
 end
 
+# Location metadata rows reference user_id=1 in their creator columns. Create
+# the daemon user before safe location sync so foreign keys stay enforced.
+ensure_bootstrap_users!
+
 local_sql_files = Dir.glob([
-  Rails.root.join('db', 'data', '*.sql').to_s,
-  Rails.root.join('db', 'data', '*.sql.gz').to_s
-]).sort
+                             Rails.root.join('db', 'data', '*.sql').to_s,
+                             Rails.root.join('db', 'data', '*.sql.gz').to_s
+                           ]).sort
 
 if local_sql_files.any?
   local_sql_files.each_with_index do |file_path, idx|
     puts "Importing local SQL file #{idx + 1}/#{local_sql_files.size}: #{File.basename(file_path)}..."
 
-    next if %w[locations.sql locations.sql.gz].include?(File.basename(file_path)) &&
-            defined?(Location) &&
-            Location.table_exists? &&
-            Location.count.positive?
+    if location_metadata_seed_file?(file_path)
+      if live_location_metadata_present?
+        puts 'Skipping bundled location metadata because live locations already exist; GitHub metadata sync will handle changes.'
+      else
+        sync_location_metadata_from_seed_file!(
+          file_path: file_path,
+          username: username,
+          password: password,
+          host: host,
+          port: port,
+          database: database
+        )
+      end
+      next
+    end
 
     import_sql_or_gzip_file!(
       file_path: file_path,
@@ -854,6 +1510,15 @@ begin
 
   fetch_metadata_from_github!(GITHUB_METADATA_URL, tmp_file)
   apply_metadata_compatibility_fixes!(tmp_file)
+  location_metadata_synced = sync_location_metadata_from_dump!(
+    file_path: tmp_file,
+    username: username,
+    password: password,
+    host: host,
+    port: port,
+    database: database
+  )
+  strip_location_metadata_blocks!(tmp_file) if location_metadata_synced
 
   import_sql_file!(
     file_path: tmp_file,
