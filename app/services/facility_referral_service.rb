@@ -196,13 +196,7 @@ class FacilityReferralService
           AND referred_facility_encounter.voided = 0
           AND referred_facility_encounter.encounter_id <> e.encounter_id
           AND referred_facility_encounter.encounter_datetime > e.encounter_datetime
-          AND EXISTS (
-            SELECT 1
-            FROM obs referred_facility_encounter_obs
-            WHERE referred_facility_encounter_obs.encounter_id = referred_facility_encounter.encounter_id
-              AND referred_facility_encounter_obs.voided = 0
-              AND CAST(referred_facility_encounter_obs.location_id AS UNSIGNED) = #{REFERRED_FACILITY_ID_SQL}
-          )
+          AND CAST(referred_facility_encounter.location_id AS UNSIGNED) = #{REFERRED_FACILITY_ID_SQL}
       )
     SQL
   end
