@@ -59,7 +59,7 @@ gem 'rswag-api'
 gem 'rswag-ui'
 
 gem 'emr_ohsp_interface', '~> 3.0.1'
-gem 'his_emr_api_lab', '= 2.3.8'
+gem 'his_emr_api_lab', '= 2.4.1'
 # gem 'his_emr_api_lab', path: '../his_emr_api_lab'
 gem 'his_emr_api_radiology', '~> 2.0.0'
 
@@ -86,6 +86,7 @@ group :development do
   gem 'listen'
   # gem 'spring-watcher-listen', '~> 2.0.0'
   gem 'web-console', '>= 3.3.0'
+  gem 'ruby-lsp', require: false
 end
 
 # Windows does not include zoneinfo files, so bundle the tzinfo-data gem

@@ -97,6 +97,13 @@ ohsp:
   username : user_admin
   password : pass_district
 
+# Configuration for MIUM/MEMIS integration. These service credentials are used
+# server-side by MaHIS-Core so they are not shipped in the frontend config.json.
+mium:
+  url: https://mahistest.health.gov.mw/memis2/api
+  username: username
+  password: password
+
 # Configuration for IDSR SMS service
 idsr_sms:
   url : ipaddress:8186/submit

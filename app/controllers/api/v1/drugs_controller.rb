@@ -140,6 +140,16 @@ module Api
         render json: drug, status: :ok
       end
 
+      def impow_drugs_and_references
+        job = Sync::ImpowDrugSyncJob.new
+        reference_doc = job.send(:build_reference_document)
+
+        # Remove CouchDB views from response
+        reference_doc.delete('views')
+
+        render json: reference_doc, status: :ok
+      end
+
       private
 
       def drug

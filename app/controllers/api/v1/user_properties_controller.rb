@@ -79,13 +79,30 @@ module Api
       def validate_cross_user_property_update(provider)
         return true if provider.to_i == User.current.user_id.to_i
 
-        target_user = User.includes(:roles).find(provider)
+        target_user = manageable_user(provider)
         return true if can_manage_sensitive_user?(target_user)
 
         render json: {
           errors: ['You are not authorised to update properties for this user']
         }, status: :forbidden
         false
+      rescue ActiveRecord::RecordNotFound
+        render json: {
+          errors: ["User #{provider} was not found or is outside your managed locations"]
+        }, status: :not_found
+        false
+      end
+
+      def manageable_user(user_id)
+        users = User.includes(:roles)
+
+        if User.current.global_superuser?
+          users.unscope(where: :location_id).find(user_id)
+        elsif User.current.district_superuser?
+          users.unscope(where: :location_id).where(location_id: User.current.managed_location_ids).find(user_id)
+        else
+          users.find(user_id)
+        end
       end
 
       def can_manage_sensitive_user?(target_user)

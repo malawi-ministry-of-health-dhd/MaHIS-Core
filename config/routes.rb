@@ -325,6 +325,7 @@ Rails.application.routes.draw do
       get '/arv_drugs' => 'drugs#arv_drugs'
       get '/tb_drugs' => 'drugs#tb_drugs'
       get '/bp_drugs' => 'drugs#bp_drugs'
+      get '/impow_drugs_and_references' => 'drugs#impow_drugs_and_references'
 
       resources :drug_orders
       resources :orders do
@@ -397,6 +398,8 @@ Rails.application.routes.draw do
 
       post '/save_patient_record' => 'patients#save_patient_record'
       get '/couchdb/config', to: 'couchdb_configurations#show'
+      get '/mium/config', to: 'mium_configurations#show'
+      post '/mium/token', to: 'mium_configurations#token'
       # drugs_cms routes
       get '/drug_cms/search', to: 'drug_cms#search'
       resources :drug_cms, only: %i[index]

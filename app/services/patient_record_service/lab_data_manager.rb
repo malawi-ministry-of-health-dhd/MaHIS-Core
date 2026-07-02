@@ -126,6 +126,16 @@ module PatientRecordService
 
     def save_lab_results(data_type, patient_id, record, offline_id = nil, test_obs_id = nil)
       lab_orders = operation_value_for(record, :labOrders) || {}
+
+      # Prune result entries that carry no measures. They represent nothing to
+      # save (typically stale entries left in the record from an aborted/empty
+      # submission). Removing them from the record stops them being re-submitted
+      # and re-reported on every sync, and keeps a single empty entry from
+      # flipping the whole operation to "failed" (which would block the
+      # labOrders rebuild that clears processed results).
+      results_ref = operation_value_for(lab_orders, :results)
+      results_ref.reject! { |result| result.respond_to?(:key?) && lab_result_measures_blank?(result) } if results_ref.is_a?(Array)
+
       unsaved_data = Array.wrap(operation_value_for(lab_orders, :results)).flatten(1).compact
 
       if offline_id.present? && unsaved_data.any?
@@ -224,6 +234,10 @@ module PatientRecordService
       yield
     ensure
       Thread.current[:skip_lab_patient_record_rebuild] = previous
+    end
+
+    def lab_result_measures_blank?(result)
+      Array.wrap(operation_value_for(result, :measures)).flatten(1).compact.empty?
     end
 
     def lab_result_payload(order_params, encounter_id)

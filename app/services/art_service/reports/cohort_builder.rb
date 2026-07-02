@@ -80,7 +80,7 @@ module ArtService
       end
 
       def init_temporary_tables(start_date, end_date, occupation, force_rebuild: false,
-                                  ws_name: nil, ws_location_id: nil)
+                                ws_name: nil, ws_location_id: nil)
         bcast_name     = ws_name || @ws_name
         bcast_loc      = ws_location_id || @ws_location_id
         shared_loaded = !force_rebuild && shared_cohort_tables_populated?
@@ -631,8 +631,8 @@ module ArtService
         load_data_into_temp_cohort_members_table(end_date)
         ActiveRecord::Base.connection.execute <<~SQL
           INSERT INTO #{temp_earliest_start_date}
-          SELECT patient_id, date_enrolled, earliest_start_date, recorded_start_date, 
-          birthdate, birthdate_estimated, death_date, gender, age_at_initiation, 
+          SELECT patient_id, date_enrolled, earliest_start_date, recorded_start_date,#{' '}
+          birthdate, birthdate_estimated, death_date, gender, age_at_initiation,#{' '}
           age_in_days, reason_for_starting_art
           FROM #{temp_cohort_members} #{occupation_filter(occupation:, field_name: 'occupation')}
         SQL
@@ -650,38 +650,62 @@ module ArtService
 
         ActiveRecord::Base.connection.execute <<~SQL
           INSERT INTO #{temp_cohort_members}
+          WITH reason_concept AS (
+            SELECT concept_id FROM concept_name WHERE name = 'Reason for ART eligibility' LIMIT 1
+          ),
+          latest_reason AS (
+            SELECT
+              o.person_id,
+              o.value_coded
+            FROM obs o
+            JOIN (
+              -- build a deterministic sort key and take the max per person
+              SELECT
+                person_id,
+                MAX(CONCAT(DATE_FORMAT(obs_datetime, '%Y-%m-%d %H:%i:%s'),
+                          LPAD(UNIX_TIMESTAMP(date_created), 20, '0'),
+                          LPAD(obs_id, 20, '0'))) AS sortkey
+              FROM obs
+              WHERE concept_id = (SELECT concept_id FROM reason_concept)
+                AND voided = 0
+                AND obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
+              GROUP BY person_id
+            ) m ON o.person_id = m.person_id
+              AND CONCAT(DATE_FORMAT(o.obs_datetime, '%Y-%m-%d %H:%i:%s'),
+                          LPAD(UNIX_TIMESTAMP(o.date_created), 20, '0'),
+                          LPAD(o.obs_id, 20, '0')) = m.sortkey
+            WHERE o.concept_id = (SELECT concept_id FROM reason_concept)
+              AND o.voided = 0
+              AND o.obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
+          )
           SELECT patient_program.patient_id,
-                 DATE(MIN(art_order.start_date)) AS date_enrolled,
-                 DATE(COALESCE(MIN(art_start_date_obs.value_datetime), MIN(art_order.start_date))) AS earliest_start_date,
-                 DATE(MIN(art_start_date_obs.value_datetime)) AS recorded_start_date,
-                 person.birthdate,
-                 person.birthdate_estimated,
-                 person.death_date,
-                 LEFT(person.gender, 1) gender,
-                 IF(person.birthdate IS NOT NULL, TIMESTAMPDIFF(YEAR, person.birthdate,  DATE(COALESCE(art_start_date_obs.value_datetime, MIN(art_order.start_date)))), NULL) AS age_at_initiation,
-                 IF(person.birthdate IS NOT NULL, TIMESTAMPDIFF(DAY, person.birthdate,  DATE(COALESCE(art_start_date_obs.value_datetime, MIN(art_order.start_date)))), NULL) AS age_in_days,
-                 (SELECT value_coded FROM obs
-                  WHERE concept_id = (SELECT concept_id FROM concept_name WHERE name = 'Reason for ART eligibility' LIMIT 1) AND person_id = patient_program.patient_id AND voided = 0
-                  AND obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
-                  ORDER BY obs_datetime DESC, date_created DESC LIMIT 1) AS reason_for_starting_art,
-                 pa.value AS occupation
+                DATE(MIN(art_order.start_date)) AS date_enrolled,
+                DATE(COALESCE(MIN(art_start_date_obs.value_datetime), MIN(art_order.start_date))) AS earliest_start_date,
+                DATE(MIN(art_start_date_obs.value_datetime)) AS recorded_start_date,
+                person.birthdate,
+                person.birthdate_estimated,
+                person.death_date,
+                LEFT(person.gender, 1) AS gender,
+                IF(person.birthdate IS NOT NULL, TIMESTAMPDIFF(YEAR, person.birthdate, DATE(COALESCE(art_start_date_obs.value_datetime, MIN(art_order.start_date)))), NULL) AS age_at_initiation,
+                IF(person.birthdate IS NOT NULL, TIMESTAMPDIFF(DAY, person.birthdate, DATE(COALESCE(art_start_date_obs.value_datetime, MIN(art_order.start_date)))), NULL) AS age_in_days,
+                lr.value_coded AS reason_for_starting_art,
+                pa.value AS occupation
           FROM patient_program
           INNER JOIN person ON person.person_id = patient_program.patient_id AND person.voided = 0
           LEFT JOIN (#{current_occupation_query}) pa ON pa.person_id = patient_program.patient_id
-          LEFT JOIN patient_state AS outcome
-            ON outcome.patient_program_id = patient_program.patient_program_id
-          LEFT JOIN #{temp_art_start_date} AS art_start_date_obs
-            ON art_start_date_obs.patient_id = patient_program.patient_id
-           /* TODO: Re-enable the following condition. Has been removed because LLH and PIH
-              were noted to be dropping patients because of it. Seems these sites may have orders
-              without corresponding encounters. Adding this condition bumps up performance a bit. */
-           /* INNER JOIN encounter AS prescription_encounter
-            ON prescription_encounter.patient_id = patient_program.patient_id
-            AND prescription_encounter.program_id = patient_program.program_id
-            AND prescription_encounter.encounter_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
-            AND prescription_encounter.encounter_type IN (SELECT encounter_type_id FROM encounter_type WHERE name LIKE 'Treatment')
-            AND prescription_encounter.voided = 0 */
+          LEFT JOIN patient_state AS outcome ON outcome.patient_program_id = patient_program.patient_program_id
+          LEFT JOIN #{temp_art_start_date} AS art_start_date_obs ON art_start_date_obs.patient_id = patient_program.patient_id
+            /* TODO: Re-enable the following condition. Has been removed because LLH and PIH
+                were noted to be dropping patients because of it. Seems these sites may have orders
+                without corresponding encounters. Adding this condition bumps up performance a bit. */
+            /* INNER JOIN encounter AS prescription_encounter
+              ON prescription_encounter.patient_id = patient_program.patient_id
+              AND prescription_encounter.program_id = patient_program.program_id
+              AND prescription_encounter.encounter_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
+              AND prescription_encounter.encounter_type IN (SELECT encounter_type_id FROM encounter_type WHERE name LIKE 'Treatment')
+              AND prescription_encounter.voided = 0 */
           INNER JOIN #{temp_order_details} AS art_order ON art_order.patient_id = patient_program.patient_id AND art_order.start_date <= DATE(#{end_date})
+          LEFT JOIN latest_reason lr ON lr.person_id = patient_program.patient_id
           WHERE patient_program.voided = 0
             AND outcome.voided = 0
             AND patient_program.program_id = 1
@@ -699,8 +723,10 @@ module ArtService
               AND e.encounter_type IN (SELECT encounter_type_id FROM encounter_type WHERE name = 'REGISTRATION' AND retired = 0)
               GROUP BY e.patient_id
             )*/
-          GROUP by patient_program.patient_id HAVING reason_for_starting_art IS NOT NULL
+          GROUP BY patient_program.patient_id#{' '}
+          HAVING reason_for_starting_art IS NOT NULL
         SQL
+
         remove_drug_refills_and_external_consultation(end_date)
       end
       # rubocop:enable Metrics/MethodLength
@@ -745,7 +771,10 @@ module ArtService
           INSERT INTO #{temp_art_start_date}
           SELECT o.person_id, DATE(MIN(o.value_datetime)) value_datetime
           FROM encounter e
-          INNER JOIN obs o ON o.encounter_id = e.encounter_id AND o.concept_id = (SELECT concept_id FROM concept_name WHERE name = 'Date antiretrovirals started' AND voided = 0 LIMIT 1) AND e.encounter_type = 9 AND e.program_id = 1 AND e.voided = 0 AND e.encounter_datetime < DATE('#{end_date}') + INTERVAL 1 DAY
+          INNER JOIN obs o#{' '}
+          ON o.encounter_id = e.encounter_id#{' '}
+          AND o.concept_id = (SELECT concept_id FROM concept_name WHERE name = 'Date antiretrovirals started' AND voided = 0 LIMIT 1)#{' '}
+          AND e.encounter_type = 9 AND e.program_id = 1 AND e.voided = 0 AND e.encounter_datetime < DATE('#{end_date}') + INTERVAL 1 DAY
           AND o.obs_datetime < (DATE('#{end_date}') + INTERVAL 1 DAY) AND e.voided = 0
           WHERE e.voided = 0
           AND e.location_id = #{Location.current.location_id}
@@ -984,7 +1013,8 @@ module ArtService
                                                         'WHO STAGE 3']).pluck(:concept_id)
         pregnant_concepts = ConceptName.where(name: ['PATIENT PREGNANT', 'Is patient pregnant at initiation?',
                                                      'Patient pregnant state', 'Is patient pregnant?']).pluck(:concept_id)
-        breastfeeding_concepts = ConceptName.where(name: 'Breastfeeding').pluck(:concept_id)
+        breastfeeding_concepts = ConceptName.where(name: ['Breastfeeding',
+                                                          'Currently breastfeeding child']).pluck(:concept_id)
         who_stage_2_concepts = ConceptName.where(name: ['CD4 COUNT LESS THAN OR EQUAL TO 750',
                                                         'CD4 count less than or equal to 500', 'CD4 COUNT LESS THAN OR EQUAL TO 350', 'CD4 count less than 350', 'CD4 count less than 250', 'CD4 COUNT LESS THAN OR EQUAL TO 250']).pluck(:concept_id)
         pcr_concepts = ConceptName.where(name: 'HIV PCR').pluck(:concept_id)
@@ -1165,29 +1195,43 @@ module ArtService
         family_planning_action_to_take_concept_id = concept('Family planning, action to take').concept_id
         none_concept_id = [concept('None').concept_id, concept('No').concept_id]
 
+        # Pre-aggregate max obs date per person as a derived table to eliminate the
+        # correlated subquery (previously O(n) lookups) and avoid DATE() on the indexed
+        # obs_datetime column. The derived table is computed once and then joined.
         results = ActiveRecord::Base.connection.select_all <<~SQL
           SELECT o.person_id
           FROM obs o
           INNER JOIN encounter e ON e.encounter_id = o.encounter_id
             AND e.encounter_type = #{hiv_clinic_consultation_encounter_type_id} AND e.voided = 0
             AND e.patient_id IN (#{patient_list.join(',')})
+          INNER JOIN (
+            SELECT o2.person_id, MAX(DATE(o2.obs_datetime)) AS max_obs_date
+            FROM obs o2
+            INNER JOIN encounter e2 ON e2.encounter_id = o2.encounter_id
+              AND e2.encounter_type = #{hiv_clinic_consultation_encounter_type_id}
+              AND e2.program_id = 1
+              AND e2.voided = 0
+              AND e2.patient_id IN (#{patient_list.join(',')})
+            WHERE o2.voided = 0
+              AND o2.concept_id IN (#{family_planning_action_to_take_concept_id}, #{method_of_family_planning_concept_id})
+              AND o2.obs_datetime >= '#{start_date.to_date.strftime('%Y-%m-%d 00:00:00')}'
+              AND o2.obs_datetime <= '#{end_date.to_date.strftime('%Y-%m-%d 23:59:59')}'
+            GROUP BY o2.person_id
+          ) max_fp ON max_fp.person_id = o.person_id
+            AND DATE(o.obs_datetime) = max_fp.max_obs_date
           WHERE o.voided = 0
           AND o.concept_id IN (#{family_planning_action_to_take_concept_id}, #{method_of_family_planning_concept_id})
           AND o.value_coded NOT IN (#{none_concept_id.join(',')})
           AND o.person_id IN (#{patient_list.join(',')})
           AND o.obs_datetime >= '#{start_date.to_date.strftime('%Y-%m-%d 00:00:00')}'
           AND o.obs_datetime <= '#{end_date.to_date.strftime('%Y-%m-%d 23:59:59')}'
-          AND DATE(o.obs_datetime) = (SELECT max(date(obs.obs_datetime)) FROM obs obs
-            WHERE obs.voided = 0
-            AND (obs.concept_id IN (#{family_planning_action_to_take_concept_id}, #{method_of_family_planning_concept_id}))
-            AND obs.obs_datetime >= '#{start_date.to_date.strftime('%Y-%m-%d 00:00:00')}'
-            AND obs.obs_datetime <= '#{end_date.to_date.strftime('%Y-%m-%d 23:59:59')}'
-            AND obs.person_id = o.person_id)
           GROUP BY o.person_id
         SQL
 
         begin
-          ((results.count.to_f / patient_list.count) * 100).to_i
+          pct = ((results.count.to_f / patient_list.count) * 100).to_i
+          Rails.logger.info("FP DEBUG MAHIS: num=#{results.count}, denom=#{patient_list.count}, pct=#{pct}")
+          pct
         rescue StandardError
           0
         end
@@ -1249,7 +1293,8 @@ module ArtService
                          total_pregnant_women.map { |woman| woman['person_id'].to_i }
                        end
 
-        breastfeeding_concept_ids = ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding'])
+        breastfeeding_concept_ids = ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding',
+                                                             'Is patient breast feeding?', 'Currently breastfeeding child'])
                                                .pluck(:concept_id)
         return [] if breastfeeding_concept_ids.empty?
 
@@ -1257,7 +1302,7 @@ module ArtService
           SELECT t.patient_id AS person_id, t.value_coded
           FROM #{temp_obs_last_visit} t
           WHERE t.concept_id IN (#{breastfeeding_concept_ids.join(',')})
-            AND t.patient_id NOT IN (#{pregnant_ids.join(',')})
+          AND t.patient_id NOT IN (#{pregnant_ids.join(',')})
         SQL
       end
 
@@ -1667,18 +1712,28 @@ module ArtService
         patients_with_current_tb_episode = [0] if patients_with_current_tb_episode.blank?
 
         # Pulmonary tuberculosis within the last 2 years
+        # Three concept names covering both native MaHIS entries and data migrated from BHT-EMR-API:
+        #   40236 - 'Pulmonary tuberculosis within the last 2 years' / 'Ptb within the past two years'
+        #   189   - 'Tuberculosis (PTB or EPTB) within the last 2 years' (BHT migrated data)
         pulmonary_tb_within_last_2yrs_concept_id = concept('Pulmonary tuberculosis within the last 2 years').concept_id
         ptb_within_the_past_two_yrs_concept_id = concept('Ptb within the past two years').concept_id
+        tb_eptb_within_last_2yrs_concept_id = concept('Tuberculosis (PTB or EPTB) within the last 2 years').concept_id
         who_stages_criteria = concept('Who stages criteria present').concept_id
         yes_concept_id = concept('Yes').concept_id
+
+        tb_2yrs_concept_ids = [
+          pulmonary_tb_within_last_2yrs_concept_id,
+          ptb_within_the_past_two_yrs_concept_id,
+          tb_eptb_within_last_2yrs_concept_id
+        ].uniq.join(',')
 
         ActiveRecord::Base.connection.select_all(
           "SELECT * FROM #{temp_earliest_start_date} t
           INNER JOIN obs ON t.patient_id = obs.person_id
           WHERE date_enrolled BETWEEN '#{start_date}' AND '#{end_date}'
-            AND ((value_coded IN (#{pulmonary_tb_within_last_2yrs_concept_id}, #{ptb_within_the_past_two_yrs_concept_id})
+            AND ((value_coded IN (#{tb_2yrs_concept_ids})
             AND concept_id = #{who_stages_criteria})
-            OR (concept_id IN (#{pulmonary_tb_within_last_2yrs_concept_id}, #{ptb_within_the_past_two_yrs_concept_id}) AND value_coded = #{yes_concept_id}))
+            OR (concept_id IN (#{tb_2yrs_concept_ids}) AND value_coded = #{yes_concept_id}))
             AND patient_id NOT IN (#{patients_with_current_tb_episode.join(',')})
             AND voided = 0 AND DATE(obs_datetime) <= DATE(date_enrolled) GROUP BY patient_id"
         )
@@ -1973,14 +2028,16 @@ module ArtService
                                           .pluck(:encounter_type_id)
         pregnant_concept_ids = ConceptName.where(name: ['Is patient pregnant?', 'patient pregnant'])
                                           .pluck(:concept_id)
-        breastfeeding_concept_ids = ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding'])
+        breastfeeding_concept_ids = ConceptName.where(name: ['Breast feeding?', 'Breast feeding', 'Breastfeeding',
+                                                             'Is patient breast feeding?',
+                                                             'Currently breastfeeding child'])
                                                .pluck(:concept_id)
         yes_concept_id = ConceptName.find_by(name: 'Yes')&.concept_id
 
         all_concept_ids = (pregnant_concept_ids + breastfeeding_concept_ids).uniq
         return if all_concept_ids.empty? || encounter_type_ids.empty? || yes_concept_id.nil?
 
-        quoted_end = ActiveRecord::Base.connection.quote(end_date.to_s)
+        ActiveRecord::Base.connection.quote(end_date.to_s)
 
         ActiveRecord::Base.connection.execute "DROP TABLE IF EXISTS #{temp_obs_last_visit}"
         ActiveRecord::Base.connection.execute "DROP TABLE IF EXISTS #{tmp_preg_max_dt}"
@@ -2011,11 +2068,14 @@ module ArtService
           INNER JOIN #{temp_earliest_start_date} e
             ON e.patient_id = tpo.patient_id
             AND LEFT(e.gender, 1) = 'F'
+          JOIN #{temp_max_drug_orders} tmdol#{' '}
+            ON tpo.patient_id = tmdol.patient_id#{' '}
           INNER JOIN obs ON obs.person_id = tpo.patient_id
             AND obs.concept_id IN (#{all_concept_ids.join(',')})
             AND obs.voided = 0
-            AND obs.obs_datetime >= DATE(#{quoted_end}) - INTERVAL 2 YEAR
-            AND obs.obs_datetime <= #{quoted_end}
+            AND obs.value_coded = #{yes_concept_id}
+            AND obs.obs_datetime >= DATE(tmdol.start_date)#{' '}
+            AND obs.obs_datetime < DATE(tmdol.start_date) + INTERVAL 1 DAY
           WHERE tpo.moh_cum_outcome = 'On antiretrovirals'
           GROUP BY obs.person_id, obs.concept_id
         SQL
@@ -2137,7 +2197,7 @@ module ArtService
 
         date_art_cid   = date_art_last_taken_concept_id
         reg_enc_type   = hiv_clinic_registration_encounter_type_id
-        return ActiveRecord::Base.connection.select_all("SELECT NULL LIMIT 0") unless date_art_cid && reg_enc_type
+        return ActiveRecord::Base.connection.select_all('SELECT NULL LIMIT 0') unless date_art_cid && reg_enc_type
 
         ActiveRecord::Base.connection.select_all <<~SQL
           SELECT tesd.patient_id
@@ -2164,7 +2224,7 @@ module ArtService
 
       def re_initiated_on_art(start_date, end_date)
         date_art_cid = date_art_last_taken_concept_id
-        return ActiveRecord::Base.connection.select_all("SELECT NULL LIMIT 0") unless date_art_cid
+        return ActiveRecord::Base.connection.select_all('SELECT NULL LIMIT 0') unless date_art_cid
 
         ActiveRecord::Base.connection.select_all(<<~SQL)
           SELECT tesd.patient_id
@@ -2396,17 +2456,17 @@ module ArtService
       end
 
       STEP_LABELS = {
-        1  => 'Loading patient types',
-        2  => 'Loading registration dates',
-        3  => 'Loading prescription orders',
-        4  => 'Loading ART start dates',
-        5  => 'Indexing earliest start dates',
-        6  => 'Computing demographics & patient types',
-        7  => 'Computing pregnancy & gender data',
-        8  => 'Computing eligibility & TB status',
-        9  => 'Computing regimen categories',
+        1 => 'Loading patient types',
+        2 => 'Loading registration dates',
+        3 => 'Loading prescription orders',
+        4 => 'Loading ART start dates',
+        5 => 'Indexing earliest start dates',
+        6 => 'Computing demographics & patient types',
+        7 => 'Computing pregnancy & gender data',
+        8 => 'Computing eligibility & TB status',
+        9 => 'Computing regimen categories',
         10 => 'Computing side effects & adherence',
-        11 => 'Finalizing report',
+        11 => 'Finalizing report'
       }.freeze
 
       CACHED_STEP_LABELS = STEP_LABELS.transform_values { |v| "Cached: #{v}" }.freeze
