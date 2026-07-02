@@ -19,6 +19,11 @@ Gemfile.lock
 !/log/.keep
 !/tmp/.keep
 
+# MaHIS bulk user import secrets/data
+config/users.yml
+data/*.xlsx
+log/mahis-user-import-*.log
+
 # Ignore uploaded files in development
 /storage/*
 !/storage/.keep
@@ -72,4 +77,3 @@ db/hts_metadata/*.json
 
 # f bups
 db/data/facilities/backups/
-
