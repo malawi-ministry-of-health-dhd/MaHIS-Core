@@ -234,6 +234,7 @@ Rails.application.routes.draw do
       resources :observations
 
       resources :patient_programs, only: %i[create index show destroy]
+      resources :regimen_names, only: %i[index]
 
       resources :programs do
         resources :program_workflows, path: :workflows
