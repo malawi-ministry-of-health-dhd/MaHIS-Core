@@ -1,4 +1,35 @@
 # frozen_string_literal: true
+#
+# Usage:
+#   rails icd10_volume3:import_diagnoses
+#
+# Optional:
+#   SOURCE_PATH=/path/to/icd10-volume3-index.json rails icd10_volume3:import_diagnoses
+#   LIMIT=100 rails icd10_volume3:import_diagnoses
+#   BATCH_SIZE=1000 rails icd10_volume3:import_diagnoses
+#   DRY_RUN=true rails icd10_volume3:import_diagnoses
+#
+# Example:
+#   DRY_RUN=true LIMIT=100 rails icd10_volume3:import_diagnoses
+#
+# Notes:
+#   - Imports cleaned diagnosis concept names from ICD-10 Volume 3.
+#   - Does not create ICD-10 codes or concept maps.
+#   - Creates/updates the concept set: "ICD-10 Volume 3 Diagnosis".
+#   - Keeps the JSON file as the raw ICD-10 Volume 3 index source.
+#
+# Source URLs:
+#   WHO ICD-10 Volume 3 PDF:
+#   https://doc.ukdataservice.ac.uk/doc/8763/mrdoc/pdf/icd-10_international_statistical_classification_of_diseases_and_related_health_problems-v3-eng.pdf
+#
+#   NHS ICD-10 Volume 3 browser:
+#   https://classbrowser.nhs.uk/ICD-10-5TH-Edition/vol3/KRA_H.html
+#
+#   NHS site license:
+#   https://classbrowser.nhs.uk/license.html
+#
+#   WHO ICD-11 implementation FAQ:
+#   https://www.who.int/standards/classifications/frequently-asked-questions/icd-11-implementation
 
 require 'json'
 require 'pathname'
@@ -32,12 +63,13 @@ class Icd10Volume3DiagnosisImporter
     names = diagnosis_names
     skipped_names = overlong_names(names)
     names -= skipped_names
+
     set_concept = find_set_concept
     existing_by_name = existing_concepts_by_name(names)
     missing_names = names.reject { |name| existing_by_name.key?(name) }
 
     puts "ICD-10 Volume 3 source: #{@path}"
-    puts "Unique diagnosis names: #{names.length}"
+    puts "Unique cleaned diagnosis names: #{names.length}"
     puts "Skipped overlong names: #{skipped_names.length}"
     puts "Existing concepts: #{existing_by_name.length}"
     puts "Concepts to create: #{missing_names.length}"
@@ -82,19 +114,73 @@ class Icd10Volume3DiagnosisImporter
 
     total_members = ConceptSet.where(concept_set: set_concept.concept_id).distinct.count(:concept_id)
     puts "Imported '#{SET_NAME}' with #{total_members} members"
-    puts 'No ICD-10 codes or concept maps were created; only diagnosis concept names were imported.'
+    puts 'No ICD-10 codes or concept maps were created; only cleaned diagnosis concept names were imported.'
   end
 
   private
 
   def diagnosis_names
     payload = JSON.parse(File.read(@path))
+
     names = Array(payload['terms'])
-            .map { |term| normalize_name(term['name']) }
+            .map { |term| diagnosis_name_from_term(term) }
             .reject(&:blank?)
             .uniq
 
     @limit ? names.first(@limit) : names
+  end
+
+  def diagnosis_name_from_term(term)
+    lead_term = clean_index_text(term['leadTerm'])
+    modifiers = Array(term['modifiers'])
+                .map { |modifier| clean_index_text(modifier) }
+                .reject(&:blank?)
+
+    return nil if lead_term.blank?
+    return normalize_name(preferred_lead_name(lead_term)) if modifiers.empty?
+
+    meaningful_modifiers = modifiers.reject { |modifier| skip_modifier?(modifier) }
+    return normalize_name(preferred_lead_name(lead_term)) if meaningful_modifiers.empty?
+
+    build_readable_diagnosis_name(lead_term, meaningful_modifiers)
+  end
+
+  def clean_index_text(value)
+    value.to_s
+         .gsub(/\([^)]*\)/, '')
+         .gsub(/\bNEC\b/i, '')
+         .gsub(/\s+/, ' ')
+         .strip
+  end
+
+  def skip_modifier?(modifier)
+    text = modifier.downcase.strip
+
+    text.blank? ||
+      text == 'continued' ||
+      text == 'for' ||
+      text.start_with?('see ') ||
+      text.include?(' see ') ||
+      text.include?('fetus or newborn') ||
+      text.include?('affecting fetus or newborn')
+  end
+
+  def build_readable_diagnosis_name(lead_term, modifiers)
+    lead = preferred_lead_name(lead_term)
+
+    name = "#{modifiers.join(' ')} #{lead}"
+    normalize_name(title_case_first_word(name))
+  end
+
+  def preferred_lead_name(lead_term)
+    lead_term.to_s.split(',').first.to_s.strip
+  end
+
+  def title_case_first_word(value)
+    value = value.to_s.strip
+    return value if value.blank?
+
+    value[0].upcase + value[1..]
   end
 
   def normalize_name(value)
