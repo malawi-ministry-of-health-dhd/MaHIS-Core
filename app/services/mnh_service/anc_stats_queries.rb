@@ -6,7 +6,7 @@ module MnhService
     include MnhService::LocationScope
 
     LOGGER = Rails.logger
-    ANC_ENROLLMENT_ENCOUNTER_TYPE_IDS = [217, 237].freeze
+    QUICK_CHECK_ENCOUNTER_TYPE_ID = 187
     MIN_ANC_CONTACTS_FOR_4_PLUS = 4
 
     def initialize(program_id = nil, date = nil, location_id: nil, start_date: nil, end_date: nil)
@@ -47,9 +47,7 @@ module MnhService
     def new_and_continuing_anc_clients
       return 0 if anc_program_id.nil?
 
-      @new_and_continuing_anc_clients ||= (
-        anc_enrollment_encounter_type_ids.present? ? count_by_anc_enrollment_encounter : count_by_patient_program
-      )
+      @new_and_continuing_anc_clients ||= count_active_patient_program(anc_program_id)
     end
 
     def women_with_ultrasound_scanning
@@ -155,10 +153,6 @@ module MnhService
       @anc_program_id ||= @program_id.presence || Program.unscoped.find_by(name: 'ANC PROGRAM')&.id
     end
 
-    def anc_enrollment_encounter_type_ids
-      @anc_enrollment_encounter_type_ids ||= ANC_ENROLLMENT_ENCOUNTER_TYPE_IDS
-    end
-
     def concept_id_for(name)
       MnhService::ConceptCache.concept_id(name)
     end
@@ -196,41 +190,20 @@ module MnhService
       apply_date_scope(scoped_encounters_for(anc_program_id), 'encounter_datetime')
     end
 
-    def count_by_anc_enrollment_encounter
-      anc_encounters_scope
-        .where(encounter_type: anc_enrollment_encounter_type_ids)
-        .distinct
-        .count(:patient_id)
-    end
-
-    def count_by_patient_program
-      scope = PatientProgram.unscoped.where(program_id: anc_program_id, voided: 0)
-      scope = scope.where(location_filter) if resolved_location_id.present?
-      # Apply date range to patient program if scoping by date
-      if @start_date.present? || @end_date.present?
-        scope = apply_date_scope(scope, 'date_enrolled')
-      end
-      scope.count(:patient_id)
-    end
-
     def count_women_with_ultrasound_scan
       count_clients_with_text_or_coded_value('Ultrasound scan status', 'Ultrasound scan conducted')
     end
 
+    # A woman has "4+ ANC contacts" when she has at least four Quick Check
+    # visits (encounter type 187) in the ANC program within the date scope.
     def count_women_with_4_plus_anc_contacts
-      previous_contacts_id = concept_id_for('Number of previous anc contacts')
-      return 0 if previous_contacts_id.nil?
-
-      scope = anc_encounter_scope.where(concept_id: previous_contacts_id)
-      sql = scope
-            .select('obs.person_id')
-            .group('obs.person_id')
-            .having(
-              'MAX(COALESCE(obs.value_numeric, CAST(NULLIF(TRIM(obs.value_text), \'\') AS UNSIGNED), 0)) >= ?',
-              MIN_ANC_CONTACTS_FOR_4_PLUS
-            )
+      sql = anc_encounters_scope
+            .where(encounter_type: QUICK_CHECK_ENCOUNTER_TYPE_ID)
+            .select('patient_id')
+            .group('patient_id')
+            .having('COUNT(*) >= ?', MIN_ANC_CONTACTS_FOR_4_PLUS)
             .to_sql
-      result = Observation.connection.select_one("SELECT COUNT(*) AS cnt FROM (#{sql}) t")
+      result = Encounter.connection.select_one("SELECT COUNT(*) AS cnt FROM (#{sql}) t")
       result ? result['cnt'].to_i : 0
     end
 
