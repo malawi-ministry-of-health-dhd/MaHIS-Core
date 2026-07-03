@@ -40,7 +40,7 @@ module PatientRecordService
               raise "Lab order returned no tests for offline_id=#{order_params[:offline_id]}" if first_test.blank?
 
               if order_params[:offline_id].present?
-                result = save_lab_results(:labResults, patient_id, record, order_params[:offline_id], first_test[:id])
+                result = save_lab_results(:labResults, patient_id, record, order_params[:offline_id], first_test[:id], tests)
                 collected_errors.concat(result.errors) if result.errors.any?
                 record[:labOrders][:results]&.reject! { |entry| entry[:offline_id] == order_params[:offline_id] }
               end
@@ -124,7 +124,7 @@ module PatientRecordService
       nil
     end
 
-    def save_lab_results(data_type, patient_id, record, offline_id = nil, test_obs_id = nil)
+    def save_lab_results(data_type, patient_id, record, offline_id = nil, test_obs_id = nil, order_tests = nil)
       lab_orders = operation_value_for(record, :labOrders) || {}
 
       # Prune result entries that carry no measures. They represent nothing to
@@ -155,7 +155,7 @@ module PatientRecordService
             payload: order_params,
             target_type: 'LabResult'
           ) do
-            effective_test_id = test_obs_id.presence || operation_value_for(order_params, :test_id)
+            effective_test_id = resolve_result_test_id(order_params, order_tests, test_obs_id)
 
             if effective_test_id.blank?
               collected_errors << "Skipped result offline_id=#{operation_value_for(order_params, :offline_id)}: test_id missing"
@@ -183,6 +183,24 @@ module PatientRecordService
       OperationResult.new(success: true, errors: collected_errors)
     rescue StandardError => e
       log_and_fail("Failed to save #{data_type} information", e)
+    end
+
+    # Offline results carry no per-test obs id. For a multi-test order every
+    # result would otherwise collapse onto the first test (test_obs_id). Match
+    # each result back to its test by concept when the client provided one,
+    # falling back to the first test (legacy behaviour) for single-test orders
+    # or older records that predate test_concept_id.
+    def resolve_result_test_id(order_params, order_tests, fallback_test_id)
+      concept_id = operation_value_for(order_params, :test_concept_id)
+      if concept_id.present? && order_tests.present?
+        match = Array.wrap(order_tests).find do |test|
+          operation_value_for(test, :concept_id).to_s == concept_id.to_s
+        end
+        matched_id = match && operation_value_for(match, :id)
+        return matched_id if matched_id.present?
+      end
+
+      fallback_test_id.presence || operation_value_for(order_params, :test_id)
     end
 
     def void_lab_order(_patient_id, record)
