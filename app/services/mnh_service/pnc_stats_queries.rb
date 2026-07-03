@@ -182,10 +182,6 @@ module MnhService
       apply_date_scope(scoped_observations_for(pnc_program_id))
     end
 
-    def pnc_encounter_scope
-      apply_date_scope(scoped_encounters_for(pnc_program_id), 'encounter_datetime')
-    end
-
     def count_babies_receiving_bcg
       return 0 if immunisation_given_concept_id.nil? || bcg_concept_ids.empty?
 
@@ -228,7 +224,7 @@ module MnhService
     end
 
     def count_total_postnatal_mothers
-      pnc_encounter_scope.distinct.count(:patient_id)
+      count_active_patient_program(pnc_program_id)
     end
 
     def count_mothers_checked_within_seven_days

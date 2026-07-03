@@ -220,12 +220,8 @@ module MnhService
       apply_date_scope(scoped_observations_for(labour_program_id))
     end
 
-    def labour_encounters_scope
-      apply_date_scope(scoped_encounters_for(labour_program_id), 'encounter_datetime')
-    end
-
     def count_total_labour_mothers
-      labour_encounters_scope.distinct.count(:patient_id)
+      count_active_patient_program(labour_program_id)
     end
 
     def percentage_of(count, total)
