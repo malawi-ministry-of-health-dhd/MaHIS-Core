@@ -124,9 +124,11 @@ The import reads the first worksheet, skips duplicate usernames that appear more
 - WATCH=0 rails sync:all # enqueue only, no dashboard
 - rails sync:doctor # check for common issues
 
-# Run only one job (e.g. StageSyncJob)
+# Run only one sync job
 
 - rails "sync:run[StageSyncJob]"
+- rails "sync:run[DdeIdsSyncJob]" # DDE IDs for all DDE-activated facilities
+- rails "sync:run[DdeIdsSyncJob,100,800]" # DDE IDs for one facility location_id
 
 # Start all listeners
 
