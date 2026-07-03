@@ -4,7 +4,10 @@
 # This job is triggered by ActiveSupport::Notifications from the his_emr_api_lab gem
 class RebuildPatientLabDataJob < ApplicationJob
   include CouchdbSync
-  
+
+  PATIENTS_DB = 'patients_records'
+  COUCHDB_UPDATE_ATTEMPTS = 3
+
   queue_as :patient_records
 
   # Retry with exponential backoff on failures
@@ -17,35 +20,17 @@ class RebuildPatientLabDataJob < ApplicationJob
     start_time = Time.current
 
     begin
-      # Step 1: Rebuild lab orders data
-      lab_orders_data = BuildPatientRecordService.build_lab_orders_data(patient_id)
-      Rails.logger.debug("RebuildPatientLabDataJob: Lab orders rebuilt - #{lab_orders_data[:saved]&.count || 0} orders")
+      lab_orders_data = BuildPatientRecordService.build_lab_orders_data(patient_id).as_json
+      Rails.logger.debug("RebuildPatientLabDataJob: Lab orders rebuilt - #{Array(lab_orders_data['saved']).count} orders")
 
-      # Step 2: Get encounter type IDs
-      lab_orders_type_id = EncounterType.find_by_name('LAB ORDERS')&.encounter_type_id
-      lab_results_type_id = EncounterType.find_by_name('LAB RESULTS')&.encounter_type_id
-
-      # Step 3: Rebuild observations for lab encounters
-      encounter_types = [lab_orders_type_id, lab_results_type_id].compact
-      if encounter_types.any?
-        observations = BuildPatientRecordService.build_all_observations(patient_id, encounter_types)
-        Rails.logger.debug("RebuildPatientLabDataJob: Observations rebuilt - #{observations&.count || 0} observations")
-      end
-
-      # Step 4: Rebuild complete patient record
-      patient_record = BuildPatientRecordService.build_patient_record(patient_id)
-      
-      unless patient_record
-        Rails.logger.warn("RebuildPatientLabDataJob: No patient record found for patient #{patient_id}")
+      unless couchdb_configured?
+        Rails.logger.warn("RebuildPatientLabDataJob: CouchDB not configured; skipping labOrders update for patient #{patient_id}")
         return
       end
 
-      # Step 5: Sync to CouchDB if configured
-      if couchdb_configured?
-        patient_record["_id"] = patient_record["ID"]
-        sync_to_couchdb(patient_record, "patients_records", patient_record["ID"])
-        Rails.logger.info("RebuildPatientLabDataJob: Synced to CouchDB for patient #{patient_id}")
-      end
+      document_id = patient_document_id(patient_id)
+      update_couchdb_lab_orders(document_id, lab_orders_data)
+      Rails.logger.info("RebuildPatientLabDataJob: Updated labOrders in CouchDB for patient #{patient_id}")
 
       duration = (Time.current - start_time).round(3)
       Rails.logger.info("RebuildPatientLabDataJob: Successfully completed for patient #{patient_id} in #{duration}s")
@@ -56,7 +41,7 @@ class RebuildPatientLabDataJob < ApplicationJob
     rescue StandardError => e
       Rails.logger.error("RebuildPatientLabDataJob: Failed for patient #{patient_id}: #{e.message}")
       Rails.logger.error("RebuildPatientLabDataJob: Backtrace - #{e.backtrace.first(10).join("\n")}")
-      
+
       # Re-raise to trigger retry mechanism
       raise
     end
@@ -64,15 +49,45 @@ class RebuildPatientLabDataJob < ApplicationJob
 
   private
 
-  def couchdb_configured?
-    # Check if CouchDB is configured and available
-    return false unless defined?(CouchdbSync)
-    return false unless ENV['COUCHDB_URL'].present? || ENV['couchdb_url'].present?
-    
-    true
-  rescue StandardError => e
-    Rails.logger.error("RebuildPatientLabDataJob: CouchDB configuration check failed: #{e.message}")
-    false
+  def patient_document_id(patient_id)
+    patient = Patient.includes(:patient_identifiers).find_by(patient_id: patient_id)
+    raise "Patient not found for labOrders rebuild: #{patient_id}" unless patient
+
+    identifiers_by_type = BuildPatientRecordService.patient_identifiers_by_type(patient)
+    document_id = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 3, patient_id)
+    raise "Patient record ID missing for labOrders rebuild: #{patient_id}" if document_id.blank?
+
+    document_id
+  end
+
+  def update_couchdb_lab_orders(document_id, lab_orders_data)
+    ensure_db_exists(PATIENTS_DB)
+
+    doc_url = couchdb_url(PATIENTS_DB, URI.encode_www_form_component(document_id.to_s))
+    attempt = 1
+
+    begin
+      document = JSON.parse(RestClient.get(doc_url).body)
+      document['labOrders'] = lab_orders_data
+
+      RestClient.put(
+        doc_url,
+        document.to_json,
+        { content_type: :json, accept: :json }
+      )
+    rescue RestClient::Conflict, RestClient::PreconditionFailed
+      raise if attempt >= COUCHDB_UPDATE_ATTEMPTS
+
+      attempt += 1
+      Rails.logger.warn(
+        "RebuildPatientLabDataJob: CouchDB conflict updating #{document_id}; " \
+        "retrying attempt #{attempt}/#{COUCHDB_UPDATE_ATTEMPTS}"
+      )
+      sleep(0.1 * attempt)
+      retry
+    end
+  rescue RestClient::NotFound
+    raise "Patient CouchDB document #{document_id} not found; cannot update labOrders only"
   end
 
   def track_rebuild_event(patient_id, trigger, _metadata, duration)

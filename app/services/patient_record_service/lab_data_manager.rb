@@ -14,7 +14,8 @@ module PatientRecordService
     end
 
     def save_lab_order(data_type, patient_id, record)
-      unsaved_data = record.dig(:labOrders, :unsaved)
+      lab_orders = operation_value_for(record, :labOrders) || {}
+      unsaved_data = operation_value_for(lab_orders, :unsaved)
       return ok unless unsaved_data&.any?
 
       data_key         = data_type.to_s.underscore.to_sym
@@ -37,12 +38,13 @@ module PatientRecordService
               order         = without_lab_patient_record_rebuild { Lab::OrdersService.order_test(order_params) }
               tests         = order.fetch(:tests)
               first_test    = tests.first
-              raise "Lab order returned no tests for offline_id=#{order_params[:offline_id]}" if first_test.blank?
+              raise "Lab order returned no tests for offline_id=#{operation_value_for(order_params, :offline_id)}" if first_test.blank?
 
-              if order_params[:offline_id].present?
-                result = save_lab_results(:labResults, patient_id, record, order_params[:offline_id], first_test[:id], tests)
+              offline_id = operation_value_for(order_params, :offline_id)
+              if offline_id.present?
+                result = save_lab_results(:labResults, patient_id, record, offline_id, first_test[:id], tests)
                 collected_errors.concat(result.errors) if result.errors.any?
-                record[:labOrders][:results]&.reject! { |entry| entry[:offline_id] == order_params[:offline_id] }
+                operation_value_for(lab_orders, :results)&.reject! { |entry| operation_value_for(entry, :offline_id) == offline_id } if result.success?
               end
 
               person_making_request = ConceptName.find_by(name: "Person making request")&.concept_id
@@ -84,13 +86,13 @@ module PatientRecordService
 
             next if result.skipped?
           rescue StandardError => e
-            log_error("Failed to save lab order for order_params=#{order_params[:offline_id]}", e)
-            collected_errors << "Lab order #{order_params[:offline_id]}: #{e.message}"
+            log_error("Failed to save lab order for order_params=#{operation_value_for(order_params, :offline_id)}", e)
+            collected_errors << "Lab order #{operation_value_for(order_params, :offline_id)}: #{e.message}"
             # continues to next order
           end
         end
 
-        record[data_type][:unsaved] = []
+        assign_nested_operation_value(record, data_type, :unsaved, [])
         OperationResult.new(success: true, errors: collected_errors)
       rescue StandardError => e
         log_and_fail("Failed to save #{data_type} information", e)
@@ -126,6 +128,7 @@ module PatientRecordService
 
     def save_lab_results(data_type, patient_id, record, offline_id = nil, test_obs_id = nil, order_tests = nil)
       lab_orders = operation_value_for(record, :labOrders) || {}
+      hydrate_lab_result_measures!(lab_orders)
 
       # Prune result entries that carry no measures. They represent nothing to
       # save (typically stale entries left in the record from an aborted/empty
@@ -258,6 +261,77 @@ module PatientRecordService
       Array.wrap(operation_value_for(result, :measures)).flatten(1).compact.empty?
     end
 
+    def hydrate_lab_result_measures!(lab_orders)
+      results_ref = operation_value_for(lab_orders, :results)
+      return unless results_ref.is_a?(Array)
+
+      results_ref.each do |result|
+        next unless result.respond_to?(:[]=)
+        next unless lab_result_measures_blank?(result)
+
+        measures = lab_result_measures_from_matching_test(lab_orders, result)
+        assign_operation_value(result, :measures, measures) if measures.present?
+      end
+    end
+
+    def lab_result_measures_from_matching_test(lab_orders, result)
+      test = find_lab_result_test(lab_orders, result)
+      Array.wrap(operation_value_for(test, :result)).flatten(1).compact
+    end
+
+    def find_lab_result_test(lab_orders, result)
+      result_test_id = operation_value_for(result, :test_id).presence
+      return find_lab_test_by_id(lab_orders, result_test_id) if result_test_id.present?
+
+      offline_id = operation_value_for(result, :offline_id).presence
+      return nil if offline_id.blank?
+
+      order = lab_orders_for_result(lab_orders).find { |candidate| operation_value_for(candidate, :offline_id).to_s == offline_id.to_s }
+      return nil unless order
+
+      tests = Array.wrap(operation_value_for(order, :tests)).compact
+      concept_id = operation_value_for(result, :test_concept_id).presence
+      if concept_id.present?
+        concept_match = tests.find { |test| operation_value_for(test, :concept_id).to_s == concept_id.to_s }
+        return concept_match if concept_match
+      end
+
+      tests_with_results = tests.select { |test| Array.wrap(operation_value_for(test, :result)).flatten(1).compact.any? }
+      tests_with_results.one? ? tests_with_results.first : nil
+    end
+
+    def find_lab_test_by_id(lab_orders, test_id)
+      lab_orders_for_result(lab_orders).each do |order|
+        Array.wrap(operation_value_for(order, :tests)).each do |test|
+          return test if operation_value_for(test, :id).to_s == test_id.to_s
+        end
+      end
+
+      nil
+    end
+
+    def lab_orders_for_result(lab_orders)
+      Array.wrap(operation_value_for(lab_orders, :saved)) + Array.wrap(operation_value_for(lab_orders, :unsaved))
+    end
+
+    def assign_operation_value(container, key, value)
+      return unless container.respond_to?(:[]=)
+
+      target_key = if container.respond_to?(:key?) && container.key?(key.to_s)
+                     key.to_s
+                   else
+                     key
+                   end
+      container[target_key] = value
+    end
+
+    def assign_nested_operation_value(container, parent_key, child_key, value)
+      parent = operation_value_for(container, parent_key)
+      return unless parent.respond_to?(:[]=)
+
+      assign_operation_value(parent, child_key, value)
+    end
+
     def lab_result_payload(order_params, encounter_id)
       params = normalize_lab_result_value(order_params)
       measures = Array.wrap(operation_value_for(params, :measures)).flatten(1).compact
@@ -285,6 +359,19 @@ module PatientRecordService
       else
         value
       end
+    end
+
+    def operation_value_for(container, key)
+      return nil if container.nil? || !container.respond_to?(:[])
+
+      if container.respond_to?(:key?)
+        return container[key] if container.key?(key)
+        return container[key.to_s] if container.key?(key.to_s)
+      end
+
+      container[key] || container[key.to_s]
+    rescue TypeError
+      nil
     end
   end
 end

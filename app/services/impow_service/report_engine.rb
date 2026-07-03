@@ -9,7 +9,7 @@ module ImpowService
     LOGGER = Rails.logger
 
     REPORTS = {
-      'APPOINTMENTS' => ImpowService::Reports::AppointmentsReport
+      'APPOINTMENTS' => ''#ImpowService::Reports::AppointmentsReport
     }.freeze
 
     def generate_report(type:, **kwargs)
