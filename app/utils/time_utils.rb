@@ -35,9 +35,10 @@ module TimeUtils
 
     # Returns a time object comprising the given date plus the current time.
     def retro_timestamp(date)
-      return nil unless date
+      return nil if date.blank?
 
       date = date.to_time
+      return nil unless date
       "#{date.strftime('%Y-%m-%d')} #{Time.now.strftime('%H:%M:%S')}".to_time
     end
 

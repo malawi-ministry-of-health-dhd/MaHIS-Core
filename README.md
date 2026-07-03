@@ -68,6 +68,53 @@ The `INITIAL_SETUP=true` environment variable ensures proper initialization of t
 rails server
 ```
 
+## Bulk MaHIS User Creation
+
+Create a local config file and fill in the target instance, admin username, admin password, and Excel path:
+
+```bash
+cp config/users.yml.example config/users.yml
+```
+
+Put the Excel workbook for test at:
+
+```bash
+data/mahistest-users.xlsx
+```
+
+Put the Excel workbook for production at:
+
+```bash
+data/mahis-users.xlsx
+```
+
+The location columns in the workbook are `district` and `facility`.
+
+The admin credentials are the MaHIS login credentials for `target_url`; the task logs in through the target instance API and does not use those credentials against your local Rails database.
+
+Run a dry-run first:
+
+```bash
+rails 'mahis:users:create[test,true]'
+```
+
+Then run the actual import:
+
+```bash
+rails 'mahis:users:create[test]'
+```
+
+For production, dry-run first and then confirm the actual import when prompted:
+
+```bash
+rails 'mahis:users:create[production,true]'
+rails 'mahis:users:create[production]'
+```
+
+The import reads the first worksheet, skips duplicate usernames that appear more than once in the workbook, validates roles/programs/district/facility records against the target MaHIS instance, creates missing users through the target backend API, and updates properties for matching existing users at the expected facility. It writes a detailed log to `log/mahis-user-import-YYYYMMDD-HHMMSS.log`. Passwords are never printed in terminal output or import logs.
+
+`target_url` is shown in the import and production confirmation output so operators can verify they are working against the intended instance.
+
 ## OFFLINE
 
 # sync all records with couchDB
