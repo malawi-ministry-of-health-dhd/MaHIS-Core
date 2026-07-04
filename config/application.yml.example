@@ -140,3 +140,5 @@ DHIS2_TEI_IDENTIFIER_SYSTEM: "https://dhis2.org/trackedEntityInstance"
 COUCHDB_URL: "http://username:password@127.0.0.1:5984"
 
 DDE_LOCATION_ID: 700
+# Number of unassigned DDE IDs to maintain per activated facility.
+DDE_TARGET_ID_COUNT: 200
