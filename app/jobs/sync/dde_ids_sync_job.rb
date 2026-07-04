@@ -2,9 +2,11 @@
 module Sync
   class DdeIdsSyncJob < BaseSyncJob
     
-    TARGET_ID_COUNT = 50 # Always maintain exactly 50 unassigned IDs per facility
     FACILITIES_DB_NAME = 'facilities' # Name of the facilities database
-    CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
+    CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml'))) || {}
+    DEFAULT_TARGET_ID_COUNT = 200
+    configured_target_id_count = CONFIG['DDE_TARGET_ID_COUNT'].to_i
+    TARGET_ID_COUNT = configured_target_id_count.positive? ? configured_target_id_count : DEFAULT_TARGET_ID_COUNT
     DDE_LOCATION_ID = CONFIG['DDE_LOCATION_ID']
     
     # Sync DDE IDs to CouchDB for all DDE-activated facilities
