@@ -85,6 +85,8 @@ module PatientRecordService
             end
 
             next if result.skipped?
+
+            enqueue_lab_push_order(result.value.fetch(:order_id), operation_value_for(order_params, :offline_id))
           rescue StandardError => e
             log_error("Failed to save lab order for order_params=#{operation_value_for(order_params, :offline_id)}", e)
             collected_errors << "Lab order #{operation_value_for(order_params, :offline_id)}: #{e.message}"
@@ -112,6 +114,9 @@ module PatientRecordService
       end
 
       Lab::PushOrderJob.perform_later(order_id)
+      Rails.logger.info("Enqueued Lab::PushOrderJob for order_id=#{order_id} offline_id=#{offline_id}")
+    rescue StandardError => e
+      Rails.logger.error("Failed to enqueue Lab::PushOrderJob for order_id=#{order_id} offline_id=#{offline_id}: #{e.message}")
     end
 
     def specimen_catalogue_name(order_id)

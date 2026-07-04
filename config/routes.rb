@@ -579,6 +579,7 @@ Rails.application.routes.draw do
       resources :facilities do
         member do
           get 'nearby', to: 'facilities#nearby'
+          post 'dde_activation', to: 'facilities#dde_activation'
         end
 
         # Optional: Collection routes if you need them
