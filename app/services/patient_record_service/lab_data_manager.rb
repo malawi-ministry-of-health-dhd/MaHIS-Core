@@ -35,7 +35,19 @@ module PatientRecordService
             ) do
               encounter_id ||= create_encounter(patient_id, encounter_type.id, record)
               order_params  = order_params.merge(encounter_id: encounter_id)
+              accession_pool_service.validate_usable!(
+                accession_number: operation_value_for(order_params, :accession_number),
+                offline_id: operation_value_for(order_params, :offline_id),
+                location_id: operation_value_for(record, :location_id)
+              )
               order         = without_lab_patient_record_rebuild { Lab::OrdersService.order_test(order_params) }
+              accession_pool_service.consume!(
+                accession_number: operation_value_for(order_params, :accession_number),
+                offline_id: operation_value_for(order_params, :offline_id),
+                patient_id: patient_id,
+                order_id: order.fetch(:order_id),
+                location_id: operation_value_for(record, :location_id)
+              )
               tests         = order.fetch(:tests)
               first_test    = tests.first
               raise "Lab order returned no tests for offline_id=#{operation_value_for(order_params, :offline_id)}" if first_test.blank?
@@ -129,6 +141,10 @@ module PatientRecordService
     rescue StandardError => e
       Rails.logger.warn("Failed to resolve specimen catalogue name for order_id=#{order_id}: #{e.message}")
       nil
+    end
+
+    def accession_pool_service
+      @accession_pool_service ||= LabAccessionNumberPoolService.new
     end
 
     def save_lab_results(data_type, patient_id, record, offline_id = nil, test_obs_id = nil, order_tests = nil)
