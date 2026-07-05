@@ -369,6 +369,7 @@ Rails.application.routes.draw do
       get '/dde/patients/sync_npids', to: 'dde#sync_npids'
       post '/lab/accession_numbers/top_up', to: 'lab_accession_numbers#top_up'
       post '/lab/accession_numbers/top_up_all', to: 'lab_accession_numbers#top_up_all'
+      post '/lab/accession_numbers/reserve', to: 'lab_accession_numbers#reserve'
 
       get '/labels/location', to: 'locations#print_label'
       get '/location_attribute/:id', to: 'location_attribute#show'

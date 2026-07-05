@@ -47,6 +47,34 @@ class LabAccessionNumberPoolService
     end
   end
 
+  def reserve_for_device(location_id:, device_id:, count: 25)
+    location_id = normalize_location_id(location_id)
+    device_id = device_id.to_s.strip
+    count = positive_integer(count, 25)
+
+    raise AccessionPoolError, 'location_id is required' if location_id.blank?
+    raise AccessionPoolError, 'device_id is required' if device_id.blank?
+
+    facility_prefix = facility_prefix_for!(location_id)
+    date = Date.current
+    reserved_at = Time.current.iso8601
+
+    next_accession_numbers(date, facility_prefix, count).map do |accession_number|
+      {
+        '_id' => accession_number,
+        'type' => DOC_TYPE,
+        'accession_number' => accession_number,
+        'facility_prefix' => facility_prefix,
+        'location_id' => location_id.to_s,
+        'date' => date.iso8601,
+        'status' => 'reserved',
+        'assigned_to_device_id' => device_id,
+        'assigned_at' => reserved_at,
+        'reservation_source' => 'api'
+      }
+    end
+  end
+
   def validate_usable!(accession_number:, offline_id:, location_id:)
     accession_number = accession_number.to_s.strip
     return true if accession_number.blank?
