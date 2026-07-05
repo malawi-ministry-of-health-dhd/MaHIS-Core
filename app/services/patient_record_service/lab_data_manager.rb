@@ -33,6 +33,7 @@ module PatientRecordService
               payload: order_params,
               target_type: 'LabOrder'
             ) do
+              order_params  = normalize_lab_order_params(order_params)
               encounter_id ||= create_encounter(patient_id, encounter_type.id, record)
               order_params  = order_params.merge(encounter_id: encounter_id)
               accession_pool_service.validate_usable!(
@@ -48,9 +49,9 @@ module PatientRecordService
                 order_id: order.fetch(:order_id),
                 location_id: operation_value_for(record, :location_id)
               )
-              tests         = order.fetch(:tests)
+              tests         = Array.wrap(order.fetch(:tests)).compact
               first_test    = tests.first
-              raise "Lab order returned no tests for offline_id=#{operation_value_for(order_params, :offline_id)}" if first_test.blank?
+              raise "Lab order returned no tests for offline_id=#{operation_value_for(order_params, :offline_id)}" if tests.blank?
 
               offline_id = operation_value_for(order_params, :offline_id)
               if offline_id.present?
@@ -70,12 +71,14 @@ module PatientRecordService
                 obs_datetime:   record[:encounter_datetime],
                 location_id:    record[:location_id]
               })
-              create_observation(encounter_id, {
-                concept_id:   test_type,
-                value_coded:  first_test[:concept_id],
-                obs_datetime: record[:encounter_datetime],
-                location_id:  record[:location_id]
-              })
+              tests.each do |test|
+                create_observation(encounter_id, {
+                                     concept_id:   test_type,
+                                     value_coded:  operation_value_for(test, :concept_id),
+                                     obs_datetime: record[:encounter_datetime],
+                                     location_id:  record[:location_id]
+                                   })
+              end
               create_observation(encounter_id, {
                 concept_id:   reason_for_test,
                 value_coded:  order_params[:reason_for_test_id],
@@ -84,13 +87,15 @@ module PatientRecordService
               })
 
               if order_params[:referral] == "referral"
-                create_observation(encounter_id, {
-                  concept_id:   refer_to_htc,
-                  value_text:   first_test[:name],
-                  order_id:     order.fetch(:order_id),
-                  obs_datetime: record[:encounter_datetime],
-                  location_id:  record[:location_id]
-                })
+                tests.each do |test|
+                  create_observation(encounter_id, {
+                                       concept_id:   refer_to_htc,
+                                       value_text:   operation_value_for(test, :name),
+                                       order_id:     order.fetch(:order_id),
+                                       obs_datetime: record[:encounter_datetime],
+                                       location_id:  record[:location_id]
+                                     })
+                end
               end
 
               order
@@ -145,6 +150,14 @@ module PatientRecordService
 
     def accession_pool_service
       @accession_pool_service ||= LabAccessionNumberPoolService.new
+    end
+
+    def normalize_lab_order_params(order_params)
+      params = normalize_lab_result_value(order_params).with_indifferent_access
+      tests = Array.wrap(operation_value_for(params, :tests)).compact
+      tests = [{ concept_id: operation_value_for(params, :concept_id), name: operation_value_for(params, :name) }] if tests.blank?
+      params[:tests] = tests.map { |test| normalize_lab_result_value(test).with_indifferent_access }
+      params
     end
 
     def save_lab_results(data_type, patient_id, record, offline_id = nil, test_obs_id = nil, order_tests = nil)
