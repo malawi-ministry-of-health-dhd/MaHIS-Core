@@ -67,14 +67,12 @@ module OpdService
     }.freeze
 
     def load_user_activities
-      activities = "Clinical Assessment,Investigations,Diagnosis,Treatment,Outcome"     
-      # activities = user_property('OPD_activities')&.property_value
-      # activities = 'Patient registration,Social history,Vitals' if activities.blank?
+      activities = user_property('OPD_activities')&.property_value.presence ||
+                   'Clinical Assessment,Investigations,Diagnosis,Treatment,Outcome'
 
       LOGGER.debug "Re-map activities to encounters: #{activities}"
       encounters = (activities&.split(',') || []).collect do |activity|
         # Re-map activities to encounters
-        puts activity
         case activity
         when /Vitals/i
           VITALS

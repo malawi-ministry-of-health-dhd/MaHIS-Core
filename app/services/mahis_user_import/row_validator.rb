@@ -3,7 +3,8 @@
 module MahisUserImport
   class RowValidator
     DEFAULT_PASSWORD = 'Change@2026'
-    LIST_SEPARATOR = /[,;|]/
+    LIST_SEPARATOR = /[,;|\/\r\n]+/
+    NAME_FORMAT = /\A\s*[A-Za-z]+([\s'-][A-Za-z]+)*\s*\z/
     PROTECTED_ROLES = ['Superuser', 'Global Superuser', 'District Superuser', 'Facility Superuser'].freeze
     GLOBAL_ONLY_ROLES = ['Global Superuser', 'District Superuser'].freeze
 
@@ -32,6 +33,7 @@ module MahisUserImport
 
       attributes = extract_attributes
       validate_required_attributes(attributes)
+      validate_names(attributes)
       validate_username(attributes[:username])
       validate_password(attributes[:password])
       resolve_references(attributes)
@@ -62,7 +64,11 @@ module MahisUserImport
         facility_input: value(:facility),
         password: value(:password).presence || DEFAULT_PASSWORD,
         waiting_list_access: normalize_waiting_list_access(value(:waiting_list_access)),
-        activities: normalize_list_value(value(:activities))
+        activities: normalize_list_value(value(:activities)),
+        opd_activities: normalize_list_value(value(:opd_activities)),
+        aetc_activities: normalize_list_value(value(:aetc_activities)),
+        ncd_activities: normalize_list_value(value(:ncd_activities)),
+        opd_waiting_list: normalize_list_value(value(:opd_waiting_list))
       }
     end
 
@@ -99,6 +105,7 @@ module MahisUserImport
       attributes[:district_name] = attributes[:district]&.name
       attributes[:facility_id] = attributes[:facility]&.location_id
       attributes[:facility_name] = attributes[:facility]&.name
+      ActivityDefaults.apply(attributes)
     end
 
     def validate_required_attributes(attributes)
@@ -111,6 +118,21 @@ module MahisUserImport
       add_error('program is required') if attributes[:program_inputs].empty?
       add_error('district is required') if attributes[:district_input].blank?
       add_error('facility is required') if attributes[:facility_input].blank?
+    end
+
+    def validate_names(attributes)
+      validate_person_name(:first_name, attributes[:given_name])
+      validate_person_name(:last_name, attributes[:family_name])
+    end
+
+    def validate_person_name(field, value)
+      return if value.blank?
+
+      if !value.length.between?(2, 30)
+        add_error("#{field} must be at least 2 and at most 30 characters long")
+      elsif !(value.match?(NAME_FORMAT) || value.match?('N/A'))
+        add_error("#{field} does not look like a valid name")
+      end
     end
 
     def validate_username(username)
