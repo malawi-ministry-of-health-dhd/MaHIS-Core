@@ -96,10 +96,8 @@ module MahisUserImport
         username: validation.username,
         messages: [
           "user_id=#{user_id_from(user)}",
-          "facility=#{validation.attributes[:facility_name]}",
-          "roles=#{validation.attributes[:role_names].join('|')}",
-          "programs=#{validation.attributes[:program_names].join('|')}"
-        ]
+          "facility=#{validation.attributes[:facility_name]}"
+        ] + assignment_messages(validation.attributes)
       )
     rescue StandardError => e
       @summary[:failed_rows] += 1
@@ -125,7 +123,7 @@ module MahisUserImport
           "user_id=#{user_id}",
           "facility=#{validation.attributes[:facility_name]}",
           'properties=updated'
-        ]
+        ] + property_messages(validation.attributes)
       )
     rescue StandardError => e
       @summary[:failed_rows] += 1
@@ -148,7 +146,7 @@ module MahisUserImport
         messages: [
           "user_id=#{user_id_from(user)}",
           "would_update_properties_at_facility=#{validation.attributes[:facility_name]}"
-        ]
+        ] + property_messages(validation.attributes)
       )
     rescue StandardError => e
       @summary[:dry_run_invalid_rows] += 1
@@ -207,10 +205,61 @@ module MahisUserImport
 
     def dry_run_messages(attributes)
       [
-        "would_create_at_facility=#{attributes[:facility_name]}",
+        "would_create_at_facility=#{attributes[:facility_name]}"
+      ] + assignment_messages(attributes)
+    end
+
+    def assignment_messages(attributes)
+      [
         "roles=#{attributes[:role_names].join('|')}",
         "programs=#{attributes[:program_names].join('|')}"
-      ]
+      ] + property_messages(attributes)
+    end
+
+    def property_messages(attributes)
+      messages = []
+      messages << "waiting_list_access=#{attributes[:waiting_list_access]}" if attributes[:waiting_list_access].present?
+      messages << "OPD_waiting_list=#{attributes[:opd_waiting_list]}" if attributes[:opd_waiting_list].present?
+      messages << "Activities=#{attributes[:activities]}" if attributes[:activities].present?
+
+      opd_activity_values = opd_activities(attributes)
+      messages << "OPD_activities=#{opd_activity_values}" if opd_program?(attributes) && opd_activity_values.present?
+
+      aetc_activity_values = aetc_activities(attributes)
+      messages << "AETC_activities=#{aetc_activity_values}" if aetc_program?(attributes) && aetc_activity_values.present?
+
+      ncd_activity_values = ncd_activities(attributes)
+      messages << "NCD_activities=#{ncd_activity_values}" if ncd_program?(attributes) && ncd_activity_values.present?
+
+      messages
+    end
+
+    def opd_activities(attributes)
+      attributes[:opd_activities].presence || attributes[:activities].presence
+    end
+
+    def aetc_activities(attributes)
+      attributes[:aetc_activities].presence || attributes[:activities].presence
+    end
+
+    def ncd_activities(attributes)
+      attributes[:ncd_activities].presence
+    end
+
+    def opd_program?(attributes)
+      program_name_match?(attributes, /opd/i)
+    end
+
+    def aetc_program?(attributes)
+      program_name_match?(attributes, /aetc/i)
+    end
+
+    def ncd_program?(attributes)
+      program_name_match?(attributes, /ncd/i)
+    end
+
+    def program_name_match?(attributes, pattern)
+      attributes[:program_names].any? { |name| name.match?(pattern) }
     end
 
     def authenticate_admin!(config)
