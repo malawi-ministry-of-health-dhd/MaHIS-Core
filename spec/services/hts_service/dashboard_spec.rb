@@ -46,6 +46,25 @@ RSpec.describe HtsService::Dashboard do
     end
   end
 
+  describe '.dashboard_stats' do
+    it 'does not day-bound the awaiting-results list by the dashboard date' do
+      allow(described_class).to receive_messages(
+        total_clients_count: 0,
+        clients_with_conclusive_results: 0,
+        clients_tested_on: 0,
+        clients_referred_to_art: 0,
+        visits_scheduled_on: 0
+      )
+      expect(described_class).to receive(:find_orders)
+        .with(hash_excluding(:date))
+        .and_return([])
+
+      result = described_class.dashboard_stats(order_type_id: '13', date: '2026-07-06')
+
+      expect(result[:patient_data]).to eq([])
+    end
+  end
+
   describe '.dashboard_patients' do
     it 'returns an empty page for an unknown category without touching the database' do
       result = described_class.dashboard_patients(category: 'nonsense', date: '2024-01-01')
