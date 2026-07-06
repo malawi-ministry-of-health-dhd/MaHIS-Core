@@ -18,8 +18,9 @@ module PatientRecordService
       unsaved_data = operation_value_for(lab_orders, :unsaved)
       return ok unless unsaved_data&.any?
 
-      data_key         = data_type.to_s.underscore.to_sym
-      collected_errors = []
+      data_key            = data_type.to_s.underscore.to_sym
+      collected_errors    = []
+      hts_dashboard_dirty = false
 
       begin
         encounter_type = encounter_type_for!(data_key)
@@ -103,6 +104,7 @@ module PatientRecordService
 
             next if result.skipped?
 
+            hts_dashboard_dirty ||= hts_order_type?(operation_value_for(order_params, :order_type_id))
             enqueue_lab_push_order(result.value.fetch(:order_id), operation_value_for(order_params, :offline_id))
           rescue StandardError => e
             log_error("Failed to save lab order for order_params=#{operation_value_for(order_params, :offline_id)}", e)
@@ -112,10 +114,27 @@ module PatientRecordService
         end
 
         assign_nested_operation_value(record, data_type, :unsaved, [])
+        # An HTS-typed lab order is HTS activity wherever it was raised (e.g.
+        # "Send to HTS" from an OPD consult files it under the OPD program), so
+        # refresh the HTS dashboard regardless of the record's program.
+        HtsDashboardChannel.broadcast_changed if hts_dashboard_dirty
         OperationResult.new(success: true, errors: collected_errors)
       rescue StandardError => e
         log_and_fail("Failed to save #{data_type} information", e)
       end
+    end
+
+    def hts_order_type?(order_type_id)
+      return false if order_type_id.blank?
+
+      hts_order_type_ids.include?(order_type_id.to_i)
+    end
+
+    def hts_order_type_ids
+      @hts_order_type_ids ||=
+        OrderType.unscoped
+                 .where('LOWER(name) = ?', HtsService::Dashboard::HTS_ORDER_TYPE_NAME)
+                 .pluck(:order_type_id).presence || [HtsService::Dashboard::DEFAULT_HTS_ORDER_TYPE_ID]
     end
 
     def create_observation(encounter_id, params)

@@ -43,10 +43,9 @@ module HtsService
     end
 
     # Lightweight summary for the dashboard initial load: only the counts shown
-    # on the cards/header plus the day-bounded "awaiting results" list. The
-    # per-card patient lists are fetched lazily (see #dashboard_patients) when a
-    # card is clicked, so we never build/ship the unbounded "all HTS clients"
-    # list on every load.
+    # on the cards/header plus the "awaiting results" list. The per-card patient
+    # lists are fetched lazily (see #dashboard_patients) when a card is clicked,
+    # so we never build/ship the unbounded "all HTS clients" list on every load.
     def self.dashboard_stats(filters)
       filters = filters.to_h.symbolize_keys
       dashboard_date = parse_dashboard_date(filters[:date]) || Date.current
@@ -57,7 +56,10 @@ module HtsService
         clients_tested_today: clients_tested_on(dashboard_date, filters[:order_type_id]),
         clients_referred_to_ART: clients_referred_to_art(dashboard_date),
         visit_scheduled_today: visits_scheduled_on(dashboard_date),
-        patient_data: find_orders(filters)
+        # The date only scopes the "today" counters above — the awaiting list
+        # must include every client with pending results, whatever the order
+        # date, or it is empty on any day without fresh unresulted orders.
+        patient_data: find_orders(filters.except(:date))
       }
     end
 
@@ -234,28 +236,46 @@ module HtsService
       clients_tested_on_patient_ids(dashboard_date, raw_order_type_id).length
     end
 
+    # An HTS-typed lab order (order types named "hts lab") is HTS activity
+    # wherever it was raised — e.g. "Send to HTS" from an OPD consult files the
+    # order under the OPD program encounter. Keying on the order type (not the
+    # encounter program) keeps this count consistent with the awaiting list and
+    # with how those orders reach HTS.
     def self.clients_tested_on_patient_ids(dashboard_date, raw_order_type_id = nil)
       Order
-        .joins('INNER JOIN encounter e ON e.encounter_id = orders.encounter_id AND e.voided = 0')
         .where(
           voided: 0,
           order_type_id: resolve_order_type_ids(raw_order_type_id),
           start_date: dashboard_date.beginning_of_day..dashboard_date.end_of_day
         )
-        .where('e.program_id = ?', HTS_PROGRAM_ID)
         .distinct
         .pluck(:patient_id)
         .compact
     end
 
+    # HTS clients are patients enrolled via an HTS-program encounter OR who have
+    # an HTS-typed lab order (the latter covers orders raised from other programs,
+    # e.g. "Send to HTS" from OPD — see #clients_tested_on_patient_ids).
     def self.total_client_patient_ids
-      Encounter.where(program_id: HTS_PROGRAM_ID).distinct.pluck(:patient_id).compact
+      by_program = Encounter.where(program_id: HTS_PROGRAM_ID).distinct.pluck(:patient_id)
+      by_order = Order.where(voided: 0, order_type_id: resolve_order_type_ids(nil)).distinct.pluck(:patient_id)
+      (by_program + by_order).compact.uniq
     end
 
     # COUNT(DISTINCT ...) at the DB instead of plucking every id into Ruby just
     # to take .length — the "total clients" set is unbounded and grows forever.
     def self.total_clients_count
-      Encounter.where(program_id: HTS_PROGRAM_ID).distinct.count(:patient_id)
+      sql = <<-SQL
+        SELECT COUNT(*) FROM (
+          SELECT patient_id FROM encounter WHERE program_id = ? AND patient_id IS NOT NULL
+          UNION
+          SELECT patient_id FROM orders WHERE voided = 0 AND order_type_id IN (?) AND patient_id IS NOT NULL
+        ) AS hts_clients
+      SQL
+
+      ActiveRecord::Base.connection.select_value(
+        ActiveRecord::Base.send(:sanitize_sql_array, [sql, HTS_PROGRAM_ID, resolve_order_type_ids(nil)])
+      ).to_i
     end
 
     DEFAULT_PATIENT_ROWS_PER_PAGE = 50
