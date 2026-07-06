@@ -135,6 +135,25 @@ class LabAccessionNumberPoolService
     false
   end
 
+  # Resolves the local order_id that #consume! recorded against the given
+  # offline_id. Lets the result-save path recover a test for a result that only
+  # carries an offline_id (no per-test obs id) when its order was already saved
+  # in an earlier sync. Returns nil when unknown.
+  def order_id_for_offline_id(offline_id)
+    offline_id = offline_id.to_s.strip
+    return nil if offline_id.blank? || !couchdb_configured?
+
+    response = RestClient.post(
+      couchdb_url(DB_NAME, '_find'),
+      { selector: { used_by_offline_id: offline_id }, fields: %w[order_id], limit: 1 }.to_json,
+      { content_type: :json, accept: :json }
+    )
+    JSON.parse(response.body).fetch('docs', []).first&.dig('order_id')
+  rescue StandardError => e
+    log(:warn, "Could not resolve order for offline_id #{offline_id}: #{e.message}")
+    nil
+  end
+
   private
 
   def positive_integer(value, fallback)
@@ -225,6 +244,7 @@ class LabAccessionNumberPoolService
     create_index(%w[type location_id status], 'idx_type_location_status')
     create_index(%w[assigned_to_device_id status], 'idx_assigned_device_status')
     create_index(%w[status], 'idx_status')
+    create_index(%w[used_by_offline_id], 'idx_used_by_offline_id')
   end
 
   def create_index(fields, name)
