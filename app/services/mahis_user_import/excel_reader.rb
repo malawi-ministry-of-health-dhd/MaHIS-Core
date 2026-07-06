@@ -19,17 +19,36 @@ module MahisUserImport
       password
       waiting_list_access
       activities
+      opd_activities
+      aetc_activities
+      ncd_activities
+      opd_waiting_list
     ].freeze
-    OPTIONAL_COLUMNS = %w[username password waiting_list_access activities].freeze
+    OPTIONAL_COLUMNS = %w[
+      username
+      password
+      waiting_list_access
+      activities
+      opd_activities
+      aetc_activities
+      ncd_activities
+      opd_waiting_list
+    ].freeze
     REQUIRED_COLUMNS = (EXPECTED_COLUMNS - OPTIONAL_COLUMNS).freeze
     HEADER_SCAN_ROWS = 10
     HEADER_ALIASES = {
       'program_in_mahis' => 'program',
       'role_in_mahis' => 'role',
-      'activities_in_mahis' => 'activities'
+      'activities_in_mahis' => 'activities',
+      'opd_activities_in_mahis' => 'opd_activities',
+      'aetc_activities_in_mahis' => 'aetc_activities',
+      'ncd_activities_in_mahis' => 'ncd_activities',
+      'opd_waiting_lists' => 'opd_waiting_list',
+      'opd_waiting_list_in_mahis' => 'opd_waiting_list',
+      'opd_waiting_lists_in_mahis' => 'opd_waiting_list'
     }.freeze
 
-    Row = Struct.new(:number, :data, keyword_init: true)
+    Row = Struct.new(:number, :sheet_name, :sheet_index, :row_number, :data, keyword_init: true)
 
     def initialize(file_path)
       @file_path = Pathname(file_path)
@@ -37,24 +56,39 @@ module MahisUserImport
 
     def read
       workbook = Roo::Spreadsheet.open(@file_path.to_s)
-      sheet = workbook.sheet(0)
-      raise ArgumentError, "Excel file is empty: #{@file_path}" if sheet.last_row.blank? || sheet.last_row < 1
+      rows = workbook.sheets.each_with_index.flat_map do |sheet_name, sheet_index|
+        read_sheet(workbook.sheet(sheet_name), sheet_name, sheet_index)
+      end
 
-      header_row_number = find_header_row_number(sheet)
+      raise ArgumentError, "Excel file is empty: #{@file_path}" if rows.empty?
+
+      rows
+    end
+
+    private
+
+    def read_sheet(sheet, sheet_name, sheet_index)
+      return [] if sheet.last_row.blank? || sheet.last_row < 1
+
+      header_row_number = find_header_row_number(sheet, sheet_name)
       headers = normalized_headers(sheet, header_row_number)
-      validate_headers!(headers, header_row_number)
+      validate_headers!(headers, header_row_number, sheet_name)
 
       ((header_row_number + 1)..sheet.last_row).filter_map do |row_number|
         data = row_data(sheet, headers, row_number)
         next if data.values.all?(&:blank?)
 
-        Row.new(number: row_number, data: data)
+        Row.new(
+          number: row_label(sheet_name, row_number),
+          sheet_name: sheet_name,
+          sheet_index: sheet_index,
+          row_number: row_number,
+          data: data
+        )
       end
     end
 
-    private
-
-    def find_header_row_number(sheet)
+    def find_header_row_number(sheet, sheet_name)
       max_row = [sheet.last_row, HEADER_SCAN_ROWS].compact.min
       candidates = (1..max_row).map do |row_number|
         headers = normalized_headers(sheet, row_number)
@@ -67,7 +101,7 @@ module MahisUserImport
       best_row_number, best_headers = candidates.max_by { |_row_number, _headers, match_count| match_count }
       missing = REQUIRED_COLUMNS - best_headers
       raise ArgumentError,
-            "Excel header row was not found in the first #{HEADER_SCAN_ROWS} rows. " \
+            "Excel header row was not found in sheet '#{sheet_name}' in the first #{HEADER_SCAN_ROWS} rows. " \
             "Best candidate row #{best_row_number} is missing required columns: #{missing.join(', ')}"
     end
 
@@ -77,15 +111,21 @@ module MahisUserImport
       end
     end
 
-    def validate_headers!(headers, header_row_number)
+    def validate_headers!(headers, header_row_number, sheet_name)
       present_headers = headers.reject(&:blank?)
       missing = REQUIRED_COLUMNS - present_headers
       if missing.any?
-        raise ArgumentError, "Excel header row #{header_row_number} is missing required columns: #{missing.join(', ')}"
+        raise ArgumentError,
+              "Excel header row #{header_row_number} in sheet '#{sheet_name}' is missing required columns: " \
+              "#{missing.join(', ')}"
       end
 
       duplicates = present_headers.tally.select { |_header, count| count > 1 }.keys
-      raise ArgumentError, "Excel header row #{header_row_number} has duplicate columns: #{duplicates.join(', ')}" if duplicates.any?
+      if duplicates.any?
+        raise ArgumentError,
+              "Excel header row #{header_row_number} in sheet '#{sheet_name}' has duplicate columns: " \
+              "#{duplicates.join(', ')}"
+      end
     end
 
     def row_data(sheet, headers, row_number)
@@ -120,6 +160,10 @@ module MahisUserImport
       else
         value.to_s.strip.presence
       end
+    end
+
+    def row_label(sheet_name, row_number)
+      "#{sheet_name.to_s.squish.tr(' ', '_')}:#{row_number}"
     end
   end
 end

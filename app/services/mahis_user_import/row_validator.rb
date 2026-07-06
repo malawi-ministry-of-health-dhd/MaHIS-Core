@@ -62,7 +62,11 @@ module MahisUserImport
         facility_input: value(:facility),
         password: value(:password).presence || DEFAULT_PASSWORD,
         waiting_list_access: normalize_waiting_list_access(value(:waiting_list_access)),
-        activities: normalize_list_value(value(:activities))
+        activities: normalize_list_value(value(:activities)),
+        opd_activities: normalize_list_value(value(:opd_activities)),
+        aetc_activities: normalize_list_value(value(:aetc_activities)),
+        ncd_activities: normalize_list_value(value(:ncd_activities)),
+        opd_waiting_list: normalize_list_value(value(:opd_waiting_list))
       }
     end
 
@@ -99,6 +103,7 @@ module MahisUserImport
       attributes[:district_name] = attributes[:district]&.name
       attributes[:facility_id] = attributes[:facility]&.location_id
       attributes[:facility_name] = attributes[:facility]&.name
+      ActivityDefaults.apply(attributes)
     end
 
     def validate_required_attributes(attributes)
