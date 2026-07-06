@@ -86,7 +86,8 @@ module MahisUserImport
     def update_user_assignments!(user_id:, attributes:)
       put("/api/v1/users/#{user_id}", {
         roles: attributes[:role_names],
-        programs: attributes[:program_ids]
+        programs: attributes[:program_ids],
+        phone: attributes[:phone]
       })
     end
 

@@ -211,6 +211,8 @@ module UserService
     # Update programs if any
     replace_user_programs(user, params[:programs]) if params.key?(:programs)
 
+    person_service.update_person_attributes(user.person, cell_phone_number: params[:phone]) if params.key?(:phone)
+
     user
   end
 

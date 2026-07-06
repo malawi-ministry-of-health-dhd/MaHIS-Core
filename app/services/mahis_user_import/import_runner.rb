@@ -214,7 +214,9 @@ module MahisUserImport
       [
         "roles=#{attributes[:role_names].join('|')}",
         "programs=#{attributes[:program_names].join('|')}"
-      ] + property_messages(attributes)
+      ].tap do |messages|
+        messages << 'phone_number=present' if attributes[:phone].present?
+      end + property_messages(attributes)
     end
 
     def property_messages(attributes)
