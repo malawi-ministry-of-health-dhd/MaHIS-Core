@@ -8,6 +8,11 @@ module HtsService
     HIV_PROGRAM_ID = 1
     DEFAULT_HTS_ORDER_TYPE_ID = 13
     HTS_ORDER_TYPE_NAME = 'hts lab'
+    # An order is "resulted" only when it has an actual "Lab test result" obs.
+    # A "Lab Test Status: Drawn" child obs is NOT a result — counting it made
+    # freshly-drawn (still-awaiting) orders look resulted and drop off the list.
+    LAB_TEST_RESULT_CONCEPT_NAME = 'Lab test result'
+    DEFAULT_LAB_TEST_RESULT_CONCEPT_ID = 55_488
     APPOINTMENT_ENCOUNTER_NAME = 'appointment'
     APPOINTMENT_DATE_CONCEPT_NAME = 'Appointment date'
     LEGACY_REFERRAL_CONCEPT_NAME = 'Referrals ordered'
@@ -115,6 +120,7 @@ module HtsService
           FROM orders o
           LEFT JOIN obs test_obs ON test_obs.order_id = o.order_id AND test_obs.voided = 0
           LEFT JOIN obs result_obs ON result_obs.obs_group_id = test_obs.obs_id AND result_obs.voided = 0
+            AND result_obs.concept_id IN (?)
           WHERE o.voided = 0
             AND o.order_type_id IN (?)
           GROUP BY o.order_id
@@ -124,12 +130,15 @@ module HtsService
           AND lo.order_type_id IN (?)
       SQL
 
-      # First bind feeds the orders_without_results sub-query (which appears
-      # first in the SQL text), the second feeds the outer WHERE. Scoping the
-      # sub-query to the same order types is result-equivalent (it is only ever
-      # joined to HTS orders) but stops it scanning every order/obs in the DB.
+      # Binds feed the SQL in text order: (1) the concepts that count as an
+      # actual result in the sub-query, (2) the sub-query order types, (3) the
+      # outer WHERE order types. A "result" is a real "Lab test result" obs — NOT
+      # a "Lab Test Status: Drawn" status obs, which would otherwise make a
+      # freshly-drawn (still-awaiting) order look resulted. Scoping the sub-query
+      # to the same order types is result-equivalent (it is only ever joined to
+      # HTS orders) but stops it scanning every order/obs in the DB.
       where_conditions = []
-      bind_values = [order_type_ids, order_type_ids]
+      bind_values = [lab_test_result_concept_ids, order_type_ids, order_type_ids]
 
       if filters[:patient_id]
         where_conditions << 'p.person_id = ?'
@@ -381,6 +390,11 @@ module HtsService
 
     def self.referral_concept_ids
       ConceptName.unscoped.where(name: LEGACY_REFERRAL_CONCEPT_NAME).pluck(:concept_id)
+    end
+
+    def self.lab_test_result_concept_ids
+      ConceptName.unscoped.where(name: LAB_TEST_RESULT_CONCEPT_NAME)
+                 .pluck(:concept_id).presence || [DEFAULT_LAB_TEST_RESULT_CONCEPT_ID]
     end
 
     def self.art_program_ids
