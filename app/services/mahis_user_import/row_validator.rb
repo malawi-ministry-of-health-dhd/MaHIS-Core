@@ -3,7 +3,7 @@
 module MahisUserImport
   class RowValidator
     DEFAULT_PASSWORD = 'Change@2026'
-    LIST_SEPARATOR = /[,;|]/
+    LIST_SEPARATOR = /[,;|\/\r\n]+/
     NAME_FORMAT = /\A\s*[A-Za-z]+([\s'-][A-Za-z]+)*\s*\z/
     PROTECTED_ROLES = ['Superuser', 'Global Superuser', 'District Superuser', 'Facility Superuser'].freeze
     GLOBAL_ONLY_ROLES = ['Global Superuser', 'District Superuser'].freeze

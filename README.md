@@ -88,15 +88,22 @@ Put the Excel workbook for production at:
 data/mahis-users.xlsx
 ```
 
-The location columns in the workbook are `district` and `facility`.
+The location columns in the workbook are `district` and `facility`. The importer reads `phone_number` and stores it as the user's Cell Phone Number person attribute.
 
-Use the optional `activities` column to assign workflow activities. Separate multiple activities with a comma, semicolon, or pipe, for example:
+Separate multiple roles, programs, or activities with a comma, semicolon, pipe, slash, or line break. For example:
+
+```text
+Clinician | Provider
+OPD | HIV | NCD
+```
+
+Use the optional `activities` column to assign workflow activities, for example:
 
 ```text
 Clinical Assessment,Investigations,Diagnosis,Treatment
 ```
 
-The importer stores activities as user properties. It writes `Activities` from the `activities` column. For OPD, NCD, and AETC users, it also writes `OPD_activities`, `NCD_activities`, or `AETC_activities`; use optional workbook columns named `opd_activities`, `ncd_activities`, and `aetc_activities` when those program-specific values should differ from the general `activities` value.
+The importer stores activities as user properties. It writes `Activities` from the `activities` column. For OPD, NCD, and AETC users, it also writes `OPD_activities`, `NCD_activities`, or `AETC_activities`; use optional workbook columns named `opd_activities`, `ncd_activities`, and `hiv_activities` when those program-specific values should differ from the general `activities` value.
 
 When activity columns are blank, the importer automatically assigns role-based defaults for OPD, NCD, and HIV users. It also writes OPD dashboard access to `OPD_waiting_list`; override that with an optional `opd_waiting_list` workbook column when needed.
 
@@ -123,7 +130,7 @@ rails 'mahis:users:create[production,true]'
 rails 'mahis:users:create[production]'
 ```
 
-The import reads every worksheet in the workbook. Each worksheet must have the same header row format; row log entries include the sheet name, such as `row=OPD:7`. It skips duplicate usernames that appear more than once in the workbook, validates roles/programs/district/facility records against the target MaHIS instance, creates missing users through the target backend API, and updates properties for matching existing users at the expected facility. It writes a detailed log to `log/mahis-user-import-YYYYMMDD-HHMMSS.log`. Passwords are never printed in terminal output or import logs.
+The import reads every worksheet in the workbook. Each worksheet must have the same header row format; row log entries include the sheet name, such as `row=OPD:7`. It skips duplicate usernames that appear more than once in the workbook, validates roles/programs/district/facility records against the target MaHIS instance, creates missing users through the target backend API, and updates assignments, phone number, and properties for matching existing users at the expected facility. It writes a detailed log to `log/mahis-user-import-YYYYMMDD-HHMMSS.log`. Passwords are never printed in terminal output or import logs.
 
 `target_url` is shown in the import and production confirmation output so operators can verify they are working against the intended instance.
 
