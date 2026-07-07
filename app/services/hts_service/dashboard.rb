@@ -288,13 +288,16 @@ module HtsService
       scope.distinct.pluck(:patient_id).compact
     end
 
-    # HTS clients are patients enrolled via an HTS-program encounter OR who have
-    # an HTS-typed lab order (the latter covers orders raised from other programs,
-    # e.g. "Send to HTS" from OPD — see #clients_tested_on_patient_ids).
+    # HTS clients are patients with an HTS-typed lab order OR an observation
+    # recorded under an HTS-program encounter. Keying the program arm on
+    # observations (not the bare encounter) excludes patients merely registered
+    # into HTS with no test/observation yet, keeping this in step with the
+    # offline dashboard (which counts by observation/order, not by encounter).
     def self.total_client_patient_ids(location_id = nil)
-      program_scope = Encounter.where(program_id: HTS_PROGRAM_ID)
-      program_scope = program_scope.where(location_id: location_id) if location_id
-      by_program = program_scope.distinct.pluck(:patient_id)
+      program_scope = Observation
+                      .joins('INNER JOIN encounter ON encounter.encounter_id = obs.encounter_id AND encounter.voided = 0')
+                      .where(encounter: hts_encounter_scope(location_id))
+      by_program = program_scope.distinct.pluck(:person_id)
 
       order_scope = Order.where(voided: 0, order_type_id: resolve_order_type_ids(nil))
       if location_id
@@ -309,17 +312,20 @@ module HtsService
 
     # COUNT(DISTINCT ...) at the DB instead of plucking every id into Ruby just
     # to take .length — the "total clients" set is unbounded and grows forever.
-    # orders carry no location_id, so the order arm is scoped via its encounter.
+    # The program arm requires an observation under an HTS encounter (so bare
+    # registrations don't count); orders carry no location_id so both arms scope
+    # location via the encounter.
     def self.total_clients_count(location_id = nil)
-      encounter_location = location_id ? 'AND e.location_id = ?' : ''
+      obs_location = location_id ? 'AND e.location_id = ?' : ''
       order_location = location_id ? 'AND oe.location_id = ?' : ''
 
       sql = <<-SQL
         SELECT COUNT(*) FROM (
-          SELECT e.patient_id FROM encounter e
-            WHERE e.program_id = ? AND e.patient_id IS NOT NULL #{encounter_location}
+          SELECT ob.person_id AS pid FROM obs ob
+            INNER JOIN encounter e ON e.encounter_id = ob.encounter_id AND e.voided = 0
+            WHERE e.program_id = ? AND ob.voided = 0 AND ob.person_id IS NOT NULL #{obs_location}
           UNION
-          SELECT o.patient_id FROM orders o
+          SELECT o.patient_id AS pid FROM orders o
             INNER JOIN encounter oe ON oe.encounter_id = o.encounter_id AND oe.voided = 0
             WHERE o.voided = 0 AND o.order_type_id IN (?) AND o.patient_id IS NOT NULL #{order_location}
         ) AS hts_clients
@@ -485,6 +491,13 @@ module HtsService
     def self.normalize_location_id(raw)
       id = raw.to_i
       id.positive? ? id : nil
+    end
+
+    # Encounter filter for HTS-program work, optionally scoped to a facility.
+    def self.hts_encounter_scope(location_id = nil)
+      scope = { program_id: HTS_PROGRAM_ID }
+      scope[:location_id] = location_id if location_id
+      scope
     end
 
   end
