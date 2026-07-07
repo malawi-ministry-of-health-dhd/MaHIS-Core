@@ -15,11 +15,17 @@ module Sync
       program_id = 14 # OPD Program - adjust as needed
       normalized_batch_size = normalize_batch_size(batch_size)
       normalized_location_id = normalize_location_id(location_id)
-      
+
+      # Register a progress row up front so the sync dashboard always shows DDE,
+      # even when every facility is already at target and no IDs get appended
+      # (the per-facility append path is the only other place that registers).
+      SyncProgress.start(db_name, 0)
+
       begin
         dde_service = DdeService.new(program: Program.find(program_id))
       rescue ActiveRecord::RecordNotFound
         Sidekiq.logger.error "Program with ID #{program_id} not found. Cannot initialize DDE service."
+        SyncProgress.fail(db_name, "Program not found: #{program_id}")
         raise "Program not found: #{program_id}"
       end
       
@@ -35,6 +41,7 @@ module Sync
       if dde_facilities.empty?
         facility_filter = normalized_location_id.present? ? " for facility #{normalized_location_id}" : ''
         Sidekiq.logger.info "No DDE-activated facilities found#{facility_filter}. No sync needed."
+        SyncProgress.finish(db_name)
         return
       end
       
@@ -56,7 +63,8 @@ module Sync
         # Small delay between facilities to avoid overwhelming the DDE service
         sleep(1) if index < dde_facilities.length - 1
       end
-      
+
+      SyncProgress.finish(db_name)
       Sidekiq.logger.info "Completed DDE sync for all facilities at location #{DDE_LOCATION_ID}"
     end
     
