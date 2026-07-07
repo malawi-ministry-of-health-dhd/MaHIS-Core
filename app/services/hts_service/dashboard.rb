@@ -54,13 +54,17 @@ module HtsService
     def self.dashboard_stats(filters)
       filters = filters.to_h.symbolize_keys
       dashboard_date = parse_dashboard_date(filters[:date]) || Date.current
+      # Facility-scoped like the offline dashboard: when a location is supplied
+      # (the caller passes the user's current location) every figure counts only
+      # activity at that facility. nil => global (all facilities).
+      location_id = normalize_location_id(filters[:location_id])
 
       {
-        total_clients: total_clients_count,
-        clients_with_conclusive_results: clients_with_conclusive_results,
-        clients_tested_today: clients_tested_on(dashboard_date, filters[:order_type_id]),
-        clients_referred_to_ART: clients_referred_to_art(dashboard_date),
-        visit_scheduled_today: visits_scheduled_on(dashboard_date),
+        total_clients: total_clients_count(location_id),
+        clients_with_conclusive_results: clients_with_conclusive_results(location_id),
+        clients_tested_today: clients_tested_on(dashboard_date, filters[:order_type_id], location_id),
+        clients_referred_to_ART: clients_referred_to_art(dashboard_date, location_id),
+        visit_scheduled_today: visits_scheduled_on(dashboard_date, location_id),
         # The date only scopes the "today" counters above — the awaiting list
         # must include every client with pending results, whatever the order
         # date, or it is empty on any day without fresh unresulted orders.
@@ -79,12 +83,13 @@ module HtsService
       per_page = 50 if per_page <= 0
       per_page = [per_page, 200].min
 
+      location_id = normalize_location_id(filters[:location_id])
       patient_ids =
         case filters[:category].to_s
-        when 'total_clients'           then total_client_patient_ids
-        when 'clients_tested_today'    then clients_tested_on_patient_ids(dashboard_date, filters[:order_type_id])
-        when 'clients_referred_to_ART' then clients_referred_to_art_patient_ids(dashboard_date)
-        when 'visit_scheduled_today'   then visits_scheduled_on_patient_ids(dashboard_date)
+        when 'total_clients'           then total_client_patient_ids(location_id)
+        when 'clients_tested_today'    then clients_tested_on_patient_ids(dashboard_date, filters[:order_type_id], location_id)
+        when 'clients_referred_to_ART' then clients_referred_to_art_patient_ids(dashboard_date, location_id)
+        when 'visit_scheduled_today'   then visits_scheduled_on_patient_ids(dashboard_date, location_id)
         else []
         end
 
@@ -95,6 +100,7 @@ module HtsService
       filters = filters.to_h.symbolize_keys
       date = parse_dashboard_date(filters.delete(:date))
       order_type_ids = resolve_order_type_ids(filters.delete(:order_type_id))
+      location_id = normalize_location_id(filters.delete(:location_id))
 
       query = <<-SQL
         SELECT DISTINCT
@@ -104,6 +110,10 @@ module HtsService
           p.gender AS patient_gender,
           COUNT(DISTINCT lo.order_id) AS total_orders,
           MAX(lo.start_date) AS most_recent_order_date,
+          -- Earliest still-pending order's creation time: how long the patient has
+          -- been waiting for results. Uses date_created (real wall-clock time)
+          -- rather than start_date, which is stored at midnight.
+          MIN(CASE WHEN orders_without_results.order_id IS NOT NULL THEN lo.date_created END) AS waiting_since,
           COUNT(DISTINCT CASE WHEN orders_without_results.order_id IS NOT NULL THEN lo.order_id END) AS orders_without_results,
 
           GROUP_CONCAT(DISTINCT CASE WHEN orders_without_results.order_id IS NOT NULL THEN prog.program_id END ORDER BY prog.program_id SEPARATOR ', ') AS program_ids,
@@ -150,6 +160,11 @@ module HtsService
         bind_values << filters[:accession_number]
       end
 
+      if location_id
+        where_conditions << 'e.location_id = ?'
+        bind_values << location_id
+      end
+
       query += " AND #{where_conditions.join(' AND ')}" unless where_conditions.empty?
 
       query += <<-SQL
@@ -177,6 +192,7 @@ module HtsService
             patient_gender: row['patient_gender'],
             total_orders: row['total_orders'],
             most_recent_order_date: row['most_recent_order_date'],
+            waiting_since: row['waiting_since'],
             orders_without_results: row['orders_without_results'],
             program_ids: row['program_ids'],
             program_names: row['program_names']
@@ -185,7 +201,7 @@ module HtsService
       end
     end
 
-    def self.clients_with_conclusive_results
+    def self.clients_with_conclusive_results(location_id = nil)
       concepts = {
         9774 => 'Yes',
         223 => 'Positive',
@@ -193,20 +209,23 @@ module HtsService
         10_051 => 'Positive'
       }
 
-      Observation
-        .where(concepts.map { |concept_id, value| "(concept_id = #{concept_id} AND value_text = '#{value}')" }.join(' OR '))
-        .distinct
-        .count(:person_id)
+      scope = Observation
+              .where(concepts.map { |concept_id, value| "(concept_id = #{concept_id} AND value_text = '#{value}')" }.join(' OR '))
+      scope = scope.where(location_id: location_id) if location_id
+      scope.distinct.count(:person_id)
     end
 
-    def self.clients_referred_to_art(dashboard_date)
-      clients_referred_to_art_patient_ids(dashboard_date).length
+    def self.clients_referred_to_art(dashboard_date, location_id = nil)
+      clients_referred_to_art_patient_ids(dashboard_date, location_id).length
     end
 
-    def self.clients_referred_to_art_patient_ids(dashboard_date)
+    def self.clients_referred_to_art_patient_ids(dashboard_date, location_id = nil)
+      encounter_scope = { program_id: HTS_PROGRAM_ID }
+      encounter_scope[:location_id] = location_id if location_id
+
       Observation
         .joins('INNER JOIN encounter ON encounter.encounter_id = obs.encounter_id AND encounter.voided = 0')
-        .where(encounter: { program_id: HTS_PROGRAM_ID })
+        .where(encounter: encounter_scope)
         .where('obs.obs_datetime BETWEEN ? AND ?', *TimeUtils.day_bounds(dashboard_date))
         .where(
           '(obs.concept_id = :referral_concept_id AND obs.value_numeric IN (:art_program_ids)) OR ' \
@@ -221,18 +240,21 @@ module HtsService
         .compact
     end
 
-    def self.visits_scheduled_on(dashboard_date)
-      visits_scheduled_on_patient_ids(dashboard_date).length
+    def self.visits_scheduled_on(dashboard_date, location_id = nil)
+      visits_scheduled_on_patient_ids(dashboard_date, location_id).length
     end
 
-    def self.visits_scheduled_on_patient_ids(dashboard_date)
+    def self.visits_scheduled_on_patient_ids(dashboard_date, location_id = nil)
+      encounter_scope = {
+        program_id: HTS_PROGRAM_ID,
+        encounter_type: appointment_encounter_type_ids
+      }
+      encounter_scope[:location_id] = location_id if location_id
+
       Observation
         .joins('INNER JOIN encounter ON encounter.encounter_id = obs.encounter_id AND encounter.voided = 0')
         .where(
-          encounter: {
-            program_id: HTS_PROGRAM_ID,
-            encounter_type: appointment_encounter_type_ids
-          },
+          encounter: encounter_scope,
           concept_id: appointment_date_concept_ids,
           value_datetime: dashboard_date.beginning_of_day..dashboard_date.end_of_day
         )
@@ -241,8 +263,8 @@ module HtsService
         .compact
     end
 
-    def self.clients_tested_on(dashboard_date, raw_order_type_id = nil)
-      clients_tested_on_patient_ids(dashboard_date, raw_order_type_id).length
+    def self.clients_tested_on(dashboard_date, raw_order_type_id = nil, location_id = nil)
+      clients_tested_on_patient_ids(dashboard_date, raw_order_type_id, location_id).length
     end
 
     # An HTS-typed lab order (order types named "hts lab") is HTS activity
@@ -250,40 +272,66 @@ module HtsService
     # order under the OPD program encounter. Keying on the order type (not the
     # encounter program) keeps this count consistent with the awaiting list and
     # with how those orders reach HTS.
-    def self.clients_tested_on_patient_ids(dashboard_date, raw_order_type_id = nil)
-      Order
-        .where(
-          voided: 0,
-          order_type_id: resolve_order_type_ids(raw_order_type_id),
-          start_date: dashboard_date.beginning_of_day..dashboard_date.end_of_day
-        )
-        .distinct
-        .pluck(:patient_id)
-        .compact
+    def self.clients_tested_on_patient_ids(dashboard_date, raw_order_type_id = nil, location_id = nil)
+      scope = Order
+              .where(
+                voided: 0,
+                order_type_id: resolve_order_type_ids(raw_order_type_id),
+                start_date: dashboard_date.beginning_of_day..dashboard_date.end_of_day
+              )
+      # orders carry no location_id, so scope via the order's encounter.
+      if location_id
+        scope = scope
+                .joins('INNER JOIN encounter e ON e.encounter_id = orders.encounter_id AND e.voided = 0')
+                .where('e.location_id = ?', location_id)
+      end
+      scope.distinct.pluck(:patient_id).compact
     end
 
     # HTS clients are patients enrolled via an HTS-program encounter OR who have
     # an HTS-typed lab order (the latter covers orders raised from other programs,
     # e.g. "Send to HTS" from OPD — see #clients_tested_on_patient_ids).
-    def self.total_client_patient_ids
-      by_program = Encounter.where(program_id: HTS_PROGRAM_ID).distinct.pluck(:patient_id)
-      by_order = Order.where(voided: 0, order_type_id: resolve_order_type_ids(nil)).distinct.pluck(:patient_id)
+    def self.total_client_patient_ids(location_id = nil)
+      program_scope = Encounter.where(program_id: HTS_PROGRAM_ID)
+      program_scope = program_scope.where(location_id: location_id) if location_id
+      by_program = program_scope.distinct.pluck(:patient_id)
+
+      order_scope = Order.where(voided: 0, order_type_id: resolve_order_type_ids(nil))
+      if location_id
+        order_scope = order_scope
+                      .joins('INNER JOIN encounter e ON e.encounter_id = orders.encounter_id AND e.voided = 0')
+                      .where('e.location_id = ?', location_id)
+      end
+      by_order = order_scope.distinct.pluck(:patient_id)
+
       (by_program + by_order).compact.uniq
     end
 
     # COUNT(DISTINCT ...) at the DB instead of plucking every id into Ruby just
     # to take .length — the "total clients" set is unbounded and grows forever.
-    def self.total_clients_count
+    # orders carry no location_id, so the order arm is scoped via its encounter.
+    def self.total_clients_count(location_id = nil)
+      encounter_location = location_id ? 'AND e.location_id = ?' : ''
+      order_location = location_id ? 'AND oe.location_id = ?' : ''
+
       sql = <<-SQL
         SELECT COUNT(*) FROM (
-          SELECT patient_id FROM encounter WHERE program_id = ? AND patient_id IS NOT NULL
+          SELECT e.patient_id FROM encounter e
+            WHERE e.program_id = ? AND e.patient_id IS NOT NULL #{encounter_location}
           UNION
-          SELECT patient_id FROM orders WHERE voided = 0 AND order_type_id IN (?) AND patient_id IS NOT NULL
+          SELECT o.patient_id FROM orders o
+            INNER JOIN encounter oe ON oe.encounter_id = o.encounter_id AND oe.voided = 0
+            WHERE o.voided = 0 AND o.order_type_id IN (?) AND o.patient_id IS NOT NULL #{order_location}
         ) AS hts_clients
       SQL
 
+      binds = [HTS_PROGRAM_ID]
+      binds << location_id if location_id
+      binds << resolve_order_type_ids(nil)
+      binds << location_id if location_id
+
       ActiveRecord::Base.connection.select_value(
-        ActiveRecord::Base.send(:sanitize_sql_array, [sql, HTS_PROGRAM_ID, resolve_order_type_ids(nil)])
+        ActiveRecord::Base.send(:sanitize_sql_array, [sql] + binds)
       ).to_i
     end
 
@@ -430,6 +478,13 @@ module HtsService
       Date.parse(raw_date.to_s)
     rescue ArgumentError
       nil
+    end
+
+    # nil => no location scoping (global). A positive id scopes every figure to
+    # that facility. Blank/zero/negative values are treated as "no scope".
+    def self.normalize_location_id(raw)
+      id = raw.to_i
+      id.positive? ? id : nil
     end
 
   end
