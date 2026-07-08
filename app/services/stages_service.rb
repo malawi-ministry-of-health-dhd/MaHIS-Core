@@ -5,7 +5,7 @@ class StagesService
     patient_id = resolve_patient_id(stage_params)
     raise InvalidParameterError, 'Patient not found' if patient_id.blank?
 
-    active_visit = find_active_visit(patient_id)
+    active_visit = find_active_visit(patient_id, stage_params[:program_id])
     raise InvalidParameterError, "No active visit found for patient #{patient_id}" unless active_visit
 
     result = PatientRecordOperationGuard.run!(
@@ -217,8 +217,15 @@ class StagesService
     patient&.person&.uuid || patient&.uuid
   end
 
-  def find_active_visit(patient_id)
-    Visit.find_by(patient_id: patient_id, date_stopped: nil)
+  def find_active_visit(patient_id, program_id = nil)
+    scope = Visit.where(patient_id: patient_id, date_stopped: nil)
+    # A stage belongs to a visit of the same program. Without this filter a
+    # stage requested for one program (e.g. OPD=14) silently attaches to an
+    # open visit of a different program (e.g. AETC=30), leaving the stage and
+    # its visit disagreeing on program. Legacy visits with a NULL program_id
+    # are still matched so they keep working.
+    scope = scope.where('program_id = ? OR program_id IS NULL', program_id) if program_id.present?
+    scope.first
   end
 
   def latest_visit_encounter(stage)
