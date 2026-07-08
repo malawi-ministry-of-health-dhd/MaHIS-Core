@@ -4,6 +4,7 @@ class LabAccessionNumberPoolService
   include CouchdbSync
 
   DB_NAME = 'lab_accession_numbers'
+  FACILITIES_DB_NAME = 'facilities'
   DOC_TYPE = 'lab_accession_number'
   DEFAULT_TARGET_COUNT = 200
   DAY_NUMBERING_SYSTEM = %w[1 2 3 4 5 6 7 8 9 A B C E F G H Y J K Z M N O P Q R S T V W X].freeze
@@ -15,6 +16,7 @@ class LabAccessionNumberPoolService
     raise AccessionPoolError, 'location_id is required' if location_id.blank?
     raise AccessionPoolError, 'CouchDB is not configured' unless couchdb_configured?
 
+    ensure_location_eligible!(location_id)
     ensure_database_and_indexes
     facility_prefix = facility_prefix_for!(location_id)
     target_count = positive_integer(target_count, DEFAULT_TARGET_COUNT)
@@ -55,6 +57,7 @@ class LabAccessionNumberPoolService
     raise AccessionPoolError, 'location_id is required' if location_id.blank?
     raise AccessionPoolError, 'device_id is required' if device_id.blank?
 
+    ensure_location_eligible!(location_id)
     facility_prefix = facility_prefix_for!(location_id)
     date = Date.current
     reserved_at = Time.current.iso8601
@@ -129,10 +132,30 @@ class LabAccessionNumberPoolService
       'order_id' => order_id,
       'consumed_at' => Time.current.iso8601
     ))
+    top_up_after_consume(location_id)
     true
   rescue StandardError => e
     log(:warn, "Could not mark accession number #{accession_number} consumed: #{e.message}")
     false
+  end
+
+  # Resolves the local order_id that #consume! recorded against the given
+  # offline_id. Lets the result-save path recover a test for a result that only
+  # carries an offline_id (no per-test obs id) when its order was already saved
+  # in an earlier sync. Returns nil when unknown.
+  def order_id_for_offline_id(offline_id)
+    offline_id = offline_id.to_s.strip
+    return nil if offline_id.blank? || !couchdb_configured?
+
+    response = RestClient.post(
+      couchdb_url(DB_NAME, '_find'),
+      { selector: { used_by_offline_id: offline_id }, fields: %w[order_id], limit: 1 }.to_json,
+      { content_type: :json, accept: :json }
+    )
+    JSON.parse(response.body).fetch('docs', []).first&.dig('order_id')
+  rescue StandardError => e
+    log(:warn, "Could not resolve order for offline_id #{offline_id}: #{e.message}")
+    nil
   end
 
   private
@@ -150,8 +173,7 @@ class LabAccessionNumberPoolService
 
   def facility_prefix_for!(location_id)
     property = GlobalProperty.find_by(property: 'site_prefix', location_id: location_id) ||
-               GlobalProperty.find_by(property: 'site_prefix', location_id: location_id.to_i) ||
-               GlobalProperty.find_by(property: 'site_prefix')
+               GlobalProperty.find_by(property: 'site_prefix', location_id: location_id.to_i)
     value = property&.property_value.to_s.strip
 
     raise AccessionPoolError, "Global property 'site_prefix' not set for location #{location_id}" if value.blank?
@@ -160,18 +182,64 @@ class LabAccessionNumberPoolService
   end
 
   def location_ids_for_site_prefixes
-    location_ids = GlobalProperty.where(property: 'site_prefix')
-                                 .where.not(property_value: [nil, ''])
-                                 .pluck(:location_id)
-                                 .compact
-                                 .map(&:to_s)
-                                 .reject(&:blank?)
-                                 .uniq
+    site_prefix_location_ids & dde_activated_location_ids
+  end
 
-    return location_ids if location_ids.any?
+  def site_prefix_location_ids
+    @site_prefix_location_ids ||= GlobalProperty.where(property: 'site_prefix')
+                                                .where.not(property_value: [nil, ''])
+                                                .pluck(:location_id)
+                                                .compact
+                                                .map(&:to_s)
+                                                .reject(&:blank?)
+                                                .uniq
+  end
 
-    fallback = GlobalProperty.find_by(property: 'current_health_center_id')&.property_value
-    fallback.present? ? [fallback.to_s] : []
+  def ensure_location_eligible!(location_id)
+    unless site_prefix_location_ids.include?(location_id.to_s)
+      raise AccessionPoolError, "Global property 'site_prefix' not set for location #{location_id}"
+    end
+
+    return if dde_activated_location_ids.include?(location_id.to_s)
+
+    raise AccessionPoolError, "DDE activation is not enabled for location #{location_id}"
+  end
+
+  def dde_activated_location_ids
+    return @dde_activated_location_ids if defined?(@dde_activated_location_ids)
+    return [] unless couchdb_configured?
+
+    response = RestClient::Request.execute(
+      method: :get,
+      url: "#{couchdb_url(FACILITIES_DB_NAME)}/_all_docs?include_docs=true",
+      timeout: 5,
+      open_timeout: 5
+    )
+    result = JSON.parse(response.body)
+
+    @dde_activated_location_ids = result.fetch('rows', []).filter_map do |row|
+      doc = row['doc']
+      next unless doc
+      next if doc['_id'].to_s.start_with?('_design/')
+      next unless dde_activated?(doc)
+
+      facility_location_id(doc)
+    end.map(&:to_s).reject(&:blank?).uniq
+  rescue RestClient::NotFound
+    log(:warn, "Facilities database '#{FACILITIES_DB_NAME}' not found; lab accession number top-up skipped")
+    @dde_activated_location_ids = []
+  rescue StandardError => e
+    log(:warn, "Could not fetch DDE-activated facilities for lab accession number top-up: #{e.message}")
+    @dde_activated_location_ids = []
+  end
+
+  def facility_location_id(doc)
+    doc['location_id'].presence || doc['_id'].to_s[/\Afacility_(.+)\z/, 1]
+  end
+
+  def dde_activated?(doc)
+    value = doc['dde_activated']
+    value == true || value.to_s.strip.casecmp('true').zero?
   end
 
   def generate_documents(location_id, facility_prefix, count)
@@ -190,6 +258,20 @@ class LabAccessionNumberPoolService
         'generated_at' => generated_at
       }
     end
+  end
+
+  def top_up_after_consume(location_id)
+    ensure_pool_for_location(location_id: location_id, target_count: configured_target_count)
+  rescue StandardError => e
+    log(:warn, "Could not top up lab accession numbers after consuming one for location #{location_id}: #{e.message}")
+  end
+
+  def configured_target_count
+    value = if defined?(CouchdbSync::CONFIG)
+              CouchdbSync::CONFIG['LAB_ACCESSION_TARGET_COUNT']
+            end
+
+    positive_integer(value, DEFAULT_TARGET_COUNT)
   end
 
   def next_accession_numbers(date, facility_prefix, count)
@@ -225,6 +307,7 @@ class LabAccessionNumberPoolService
     create_index(%w[type location_id status], 'idx_type_location_status')
     create_index(%w[assigned_to_device_id status], 'idx_assigned_device_status')
     create_index(%w[status], 'idx_status')
+    create_index(%w[used_by_offline_id], 'idx_used_by_offline_id')
   end
 
   def create_index(fields, name)

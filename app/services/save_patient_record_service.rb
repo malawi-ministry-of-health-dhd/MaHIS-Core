@@ -18,6 +18,7 @@ class SavePatientRecordService
   def create_patient_record(record)
     strip_derived_patient_fields!(record)
     ensure_encounter_datetime!(record)
+    should_top_up_dde_ids = should_top_up_dde_ids_after_save?(record)
 
     required_fields = extract_required_fields(record)
     return "required fields missing" unless required_fields_present?(required_fields)
@@ -61,6 +62,7 @@ class SavePatientRecordService
       patient_record["_id"] = patient_record["ID"]
       sync_to_couchdb(patient_record, "patients_records", "#{patient_record["ID"]}")
     end
+    enqueue_dde_id_top_up(patient_record, record) if should_top_up_dde_ids && couchdb_configured?
 
     patient_record
   end
@@ -408,6 +410,28 @@ class SavePatientRecordService
   rescue StandardError => e
     Rails.logger.error(
       "Failed to enqueue patient-record post-save side effects for patient #{patient_id}: #{e.class}: #{e.message}"
+    )
+  end
+
+  def should_top_up_dde_ids_after_save?(record)
+    record_value(record, :saveStatusPersonInformation).to_s == 'pending' &&
+      record_value(record, :ID).to_s.strip.present?
+  end
+
+  def enqueue_dde_id_top_up(patient_record, source_record)
+    location_id = record_value(source_record, :location_id).presence ||
+                  record_value(patient_record, :location_id).presence ||
+                  User.current&.location_id
+    identifier = record_value(patient_record, :ID).to_s.strip
+    return if location_id.blank? || identifier.blank?
+
+    job_id = Sync::DdeIdsSyncJob.perform_async(100, location_id.to_s)
+    Rails.logger.info(
+      "Queued DDE ID top-up job #{job_id} for location #{location_id} after saving patient record #{identifier}"
+    )
+  rescue StandardError => e
+    Rails.logger.warn(
+      "Failed to enqueue DDE ID top-up after saving patient record #{record_value(patient_record, :ID)}: #{e.class}: #{e.message}"
     )
   end
 

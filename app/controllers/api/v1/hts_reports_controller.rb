@@ -20,16 +20,25 @@ module Api
       end
 
       def daily_stats
-        filters = params.permit(%i[order_type_id patient_id accession_number date status])
+        filters = params.permit(%i[order_type_id patient_id accession_number date status location_id])
+        filters[:location_id] ||= dashboard_location_id
         render json: HtsService::Dashboard.dashboard_stats(filters)
       end
 
       def daily_stats_patients
-        filters = params.permit(%i[category order_type_id date search page per_page])
+        filters = params.permit(%i[category order_type_id date search page per_page location_id])
+        filters[:location_id] ||= dashboard_location_id
         render json: HtsService::Dashboard.dashboard_patients(filters)
       end
 
       private
+
+      # Facility scope for the HTS dashboard: the caller's current location, so
+      # the online dashboard counts the same per-facility population the offline
+      # dashboard does. Falls back to the authenticated user's location.
+      def dashboard_location_id
+        Location.current&.id || User.current&.location_id
+      end
 
       def validate_params
         permitted = params.permit(%i[start_date end_date name quarter year]).to_h

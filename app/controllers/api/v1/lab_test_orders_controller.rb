@@ -4,6 +4,7 @@ module Api
   module V1
     class LabTestOrdersController < ApplicationController
       include LabTestsEngineLoader
+      include HtsDashboardBroadcaster
 
       def index
         if params[:accession_number]
@@ -40,6 +41,7 @@ module Api
                                     date:,
                                     requesting_clinician:)
 
+        broadcast_hts_dashboard_changed
         render json: order, status: :created
       end
 

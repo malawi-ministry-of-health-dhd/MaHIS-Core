@@ -18,8 +18,9 @@ module PatientRecordService
       unsaved_data = operation_value_for(lab_orders, :unsaved)
       return ok unless unsaved_data&.any?
 
-      data_key         = data_type.to_s.underscore.to_sym
-      collected_errors = []
+      data_key            = data_type.to_s.underscore.to_sym
+      collected_errors    = []
+      hts_dashboard_dirty = false
 
       begin
         encounter_type = encounter_type_for!(data_key)
@@ -103,6 +104,7 @@ module PatientRecordService
 
             next if result.skipped?
 
+            hts_dashboard_dirty ||= hts_order_type?(operation_value_for(order_params, :order_type_id))
             enqueue_lab_push_order(result.value.fetch(:order_id), operation_value_for(order_params, :offline_id))
           rescue StandardError => e
             log_error("Failed to save lab order for order_params=#{operation_value_for(order_params, :offline_id)}", e)
@@ -112,10 +114,27 @@ module PatientRecordService
         end
 
         assign_nested_operation_value(record, data_type, :unsaved, [])
+        # An HTS-typed lab order is HTS activity wherever it was raised (e.g.
+        # "Send to HTS" from an OPD consult files it under the OPD program), so
+        # refresh the HTS dashboard regardless of the record's program.
+        HtsDashboardChannel.broadcast_changed if hts_dashboard_dirty
         OperationResult.new(success: true, errors: collected_errors)
       rescue StandardError => e
         log_and_fail("Failed to save #{data_type} information", e)
       end
+    end
+
+    def hts_order_type?(order_type_id)
+      return false if order_type_id.blank?
+
+      hts_order_type_ids.include?(order_type_id.to_i)
+    end
+
+    def hts_order_type_ids
+      @hts_order_type_ids ||=
+        OrderType.unscoped
+                 .where('LOWER(name) = ?', HtsService::Dashboard::HTS_ORDER_TYPE_NAME)
+                 .pluck(:order_type_id).presence || [HtsService::Dashboard::DEFAULT_HTS_ORDER_TYPE_ID]
     end
 
     def create_observation(encounter_id, params)
@@ -229,15 +248,46 @@ module PatientRecordService
     # or older records that predate test_concept_id.
     def resolve_result_test_id(order_params, order_tests, fallback_test_id)
       concept_id = operation_value_for(order_params, :test_concept_id)
-      if concept_id.present? && order_tests.present?
-        match = Array.wrap(order_tests).find do |test|
+
+      # In the inline path `order_tests` is the just-created order's tests. In the
+      # standalone path (a result whose order was saved in an earlier sync) it is
+      # nil, so recover the order's test observations from the result's offline_id
+      # — otherwise a result carrying only offline_id + test_concept_id (no test
+      # id, e.g. from the new-order flow) is skipped as "test_id missing".
+      effective_tests = order_tests.presence || tests_for_result_offline_id(order_params)
+
+      if concept_id.present? && effective_tests.present?
+        match = Array.wrap(effective_tests).find do |test|
           operation_value_for(test, :concept_id).to_s == concept_id.to_s
         end
         matched_id = match && operation_value_for(match, :id)
         return matched_id if matched_id.present?
       end
 
-      fallback_test_id.presence || operation_value_for(order_params, :test_id)
+      fallback = fallback_test_id.presence || operation_value_for(order_params, :test_id)
+      return fallback if fallback.present?
+
+      # No concept match and no explicit id: safe only when the order has exactly
+      # one test, so there is no ambiguity about which test the result belongs to.
+      effective_tests.length == 1 ? operation_value_for(effective_tests.first, :id) : nil
+    end
+
+    # Test observations ({ concept_id:, id: }) of the already-saved order that
+    # consumed the result's offline_id, used to map an id-less result back to its
+    # test by concept. Returns [] when the order can't be resolved.
+    def tests_for_result_offline_id(order_params)
+      offline_id = operation_value_for(order_params, :offline_id)
+      return [] if offline_id.blank?
+
+      order_id = accession_pool_service.order_id_for_offline_id(offline_id)
+      return [] if order_id.blank?
+
+      test_type_concept_ids = ConceptName.where(name: 'Test type').pluck(:concept_id)
+      return [] if test_type_concept_ids.empty?
+
+      Observation.where(order_id: order_id, voided: 0, concept_id: test_type_concept_ids)
+                 .pluck(:value_coded, :obs_id)
+                 .map { |value_coded, obs_id| { 'concept_id' => value_coded, 'id' => obs_id } }
     end
 
     def void_lab_order(_patient_id, record)
