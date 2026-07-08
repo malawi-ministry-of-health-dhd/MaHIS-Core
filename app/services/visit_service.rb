@@ -38,8 +38,15 @@ class VisitService
       patient_id = patient_identifier[:patient_id] if patient_identifier.present?
     end
 
-    # Check if visit already exists
-    checkVisit = Visit.where(patient_id: patient_id, date_stopped: nil).first
+    # Check if visit already exists. Scope by program so a patient with an open
+    # visit in another program (e.g. AETC=30) still gets their own visit for the
+    # requested program (e.g. OPD=14) instead of silently reusing the other one —
+    # which used to leave the new stage attached to a different-program visit.
+    # This mirrors openVisit's guard, which only blocks a same-program active
+    # visit. Legacy visits with a NULL program_id are still treated as a match.
+    checkVisit = Visit.where(patient_id: patient_id, date_stopped: nil)
+    checkVisit = checkVisit.where('program_id = ? OR program_id IS NULL', visit_params[:program_id]) if visit_params[:program_id].present?
+    checkVisit = checkVisit.first
     if checkVisit.present?
       visit_data = checkVisit.attributes
       visit_data[:identifier] = identifier if identifier.present?
