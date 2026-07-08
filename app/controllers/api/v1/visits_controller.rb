@@ -95,13 +95,18 @@ module Api
       def filter_by_program(visits, program_id)
         return visits.where('EXISTS (SELECT 1 FROM encounter WHERE encounter.visit_id = visit.visit_id)') if program_id.blank?
 
+        # Prefer the visit's own program_id (set on creation, backfilled for old
+        # rows) so a visit — even an encounter-less, just-started one — is counted
+        # only for its own program. For legacy rows still missing it, fall back to
+        # matching an encounter under the program.
         visits.where(
-          'EXISTS ('\
+          'visit.program_id = :program_id '\
+          'OR (visit.program_id IS NULL AND EXISTS ('\
           'SELECT 1 FROM encounter '\
           'WHERE encounter.visit_id = visit.visit_id '\
-          'AND encounter.program_id = ?'\
-          ')',
-          program_id
+          'AND encounter.program_id = :program_id'\
+          '))',
+          program_id: program_id
         )
       end
 

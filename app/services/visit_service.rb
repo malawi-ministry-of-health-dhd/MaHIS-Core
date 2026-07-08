@@ -61,6 +61,7 @@ class VisitService
     # Optional fields
     visit.date_stopped = visit_params[:date_stopped] if visit_params[:date_stopped].present?
     visit.location_id = visit_params[:location_id] if visit_params[:location_id].present?
+    visit.program_id = visit_params[:program_id] if visit_params[:program_id].present?
     visit.indication_concept_id = visit_params[:indication_concept_id] if visit_params[:indication_concept_id].present?
 
     if visit.save
