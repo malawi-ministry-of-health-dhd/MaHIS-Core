@@ -176,6 +176,9 @@ Rails.application.routes.draw do
       get '/fhir/patient/*id', to: 'fhir#patient'
       post '/fhir/observations/mark_imported', to: 'fhir#mark_imported_observations'
 
+      #NRU
+      get '/nru/dashboard', to: 'nru#dashboard'
+
       # Locations
       resources :locations do
         get('/label', to: redirect do |params, _request|
