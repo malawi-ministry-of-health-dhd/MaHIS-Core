@@ -41,6 +41,25 @@ class PatientIdentifier < VoidableRecord
     nil
   end
 
+  NCD_NUMBER_RANGE_DEFAULT = 100_000
+
+  # Lowest unused NCD sequence number (gap-filling) for the given site prefix.
+  # Uses `unscoped` so voided identifiers still count as taken — voided NCD
+  # numbers are never reused. Returns an Integer. Callers format the final
+  # identifier string themselves (the suggestion and save paths differ).
+  def self.next_available_ncd_number(site_prefix)
+    type = PatientIdentifierType.find_by_name('NCD Number')
+    raise 'Patient identifier type `NCD Number` not found' unless type
+
+    assigned = unscoped.where(identifier_type: type.patient_identifier_type_id).filter_map do |identifier|
+      Regexp.last_match(1).to_i if identifier.identifier =~ /#{site_prefix}-NCD- *(\d+)/
+    end
+    return 1 if assigned.empty?
+
+    range = GlobalProperty.find_by(property: 'ncd_number_range')&.property_value&.to_i || NCD_NUMBER_RANGE_DEFAULT
+    (Array.new(range) { |i| i + 1 } - assigned.sort).first
+  end
+
   # def self.next_available_arv_number
   #   current_arv_code = self.site_prefix
   #   type = PatientIdentifierType.find_by_name('ARV Number').id
