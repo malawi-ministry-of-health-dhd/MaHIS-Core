@@ -24,6 +24,7 @@ module BuildPatientRecordService
 
         aggregated_observations = {}
         observations_by_encounter, children_by_parent, concept_names_by_id = preload_observation_data(encounters.map(&:encounter_id))
+        provider_names_by_id = build_provider_name_map(encounters.map(&:provider_id))
 
         encounters.each do |encounter|
           encounter_type_name = encounter_type_names[encounter.encounter_type]
@@ -33,13 +34,13 @@ module BuildPatientRecordService
               encounter_type: encounter.encounter_type,
               visit_id: encounter.visit_id,
               status: status,
-              obs: [], 
+              obs: [],
             }
           end
           parent_observations = observations_by_encounter[encounter.encounter_id] || []
 
           parent_observations.each do |observation|
-            obs_hash = build_observation_hash(observation, encounter, children_by_parent, concept_names_by_id)
+            obs_hash = build_observation_hash(observation, encounter, children_by_parent, concept_names_by_id, provider_names_by_id)
             aggregated_observations[encounter_type_name][:obs] << obs_hash if obs_hash
           end
         end
@@ -75,6 +76,29 @@ module BuildPatientRecordService
       [observations_by_encounter, children_by_parent, concept_names_by_id]
     end
 
+    # Provider (encounter.provider_id) is a person_id. Offline records only carried
+    # the numeric id, so the frontend had no way to display the referring clinician
+    # (it showed "Unknown"). Resolve the names in one query so the built record
+    # carries the same provider name the REST API serializes online.
+    def build_provider_name_map(provider_ids)
+      ids = provider_ids.compact.uniq
+      return {} if ids.empty?
+
+      names_by_person = Hash.new { |hash, key| hash[key] = [] }
+      PersonName.where(person_id: ids)
+                .order(:person_id, :date_created)
+                .each { |person_name| names_by_person[person_name.person_id] << person_name }
+
+      names_by_person.each_with_object({}) do |(person_id, person_names), map|
+        latest = person_names.last
+        full_name = [latest&.given_name, latest&.middle_name, latest&.family_name]
+                    .map { |part| part.to_s.strip }
+                    .reject(&:empty?)
+                    .join(' ')
+        map[person_id] = full_name unless full_name.empty?
+      end
+    end
+
     def build_concept_name_map(concept_ids)
       return {} if concept_ids.empty?
 
@@ -90,10 +114,10 @@ module BuildPatientRecordService
       concept_names
     end
 
-    def build_observation_hash(observation, encounter, children_by_parent, concept_names_by_id)
+    def build_observation_hash(observation, encounter, children_by_parent, concept_names_by_id, provider_names_by_id = {})
       begin
         children = (children_by_parent[observation.obs_id] || []).map do |child|
-          build_observation_hash(child, encounter, children_by_parent, concept_names_by_id)
+          build_observation_hash(child, encounter, children_by_parent, concept_names_by_id, provider_names_by_id)
         end.compact
 
         {
@@ -107,6 +131,7 @@ module BuildPatientRecordService
           value_numeric: observation.value_numeric,
           value_datetime: observation.value_datetime,
           provider_id: encounter.provider_id,
+          provider_name: provider_names_by_id[encounter.provider_id] || '',
           location_id: encounter.location_id,
           program_id: encounter.program_id,
           encounter_id: encounter.encounter_id,
