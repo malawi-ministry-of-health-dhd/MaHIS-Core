@@ -12,8 +12,28 @@ module HtsDashboardBroadcaster
   private
 
   def broadcast_hts_dashboard_changed
-    return unless params[:program_id].to_i == HtsService::Dashboard::HTS_PROGRAM_ID
+    return unless hts_dashboard_program_id?(params[:program_id])
 
     HtsDashboardChannel.broadcast_changed
+  end
+
+  def hts_dashboard_program_id?(program_id)
+    program_id = program_id.to_i
+    program_id.positive? && hts_dashboard_program_ids.include?(program_id)
+  end
+
+  def hts_dashboard_program_ids
+    @hts_dashboard_program_ids ||= begin
+      ids = [HtsService::Dashboard::HTS_PROGRAM_ID]
+      ids.concat(
+        Program.unscoped
+               .where('UPPER(name) IN (?)', ['HTS PROGRAM', 'HTC PROGRAM'])
+               .pluck(:program_id)
+      )
+      ids.compact.map(&:to_i).uniq
+    rescue StandardError => e
+      Rails.logger.warn("HTS dashboard program lookup failed: #{e.message}")
+      [HtsService::Dashboard::HTS_PROGRAM_ID]
+    end
   end
 end
