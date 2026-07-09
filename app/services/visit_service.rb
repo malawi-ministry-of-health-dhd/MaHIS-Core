@@ -110,19 +110,20 @@ class VisitService
       patient_id = patient_identifier[:patient_id] if patient_identifier.present?
     end
 
-    patient_id = visit_params[:patient_id] || visit_params[:patient_id] unless patient_id.present?
+    patient_id ||= visit_params[:patient_id]
 
-    visit = Visit.find_by(patient_id: patient_id, date_stopped: nil)
+    visit = find_visit_to_close(patient_id, visit_params)
 
     unless visit.present?
       Rails.logger.warn("No open visit found for patient #{patient_id}")
       return
     end
 
-    existing_stage = Stage.find_by(
+    existing_stage = Stage.where(
       patient_id: visit.patient_id,
+      visit_id: visit.visit_id,
       location_id: visit_params[:location_id] || (User.current&.location_id)
-    )
+    ).order(updated_at: :desc).first
     if existing_stage.present?
       StagesService.new.broadcast_stage_deletion(existing_stage)
       existing_stage.destroy
@@ -160,6 +161,19 @@ class VisitService
   end
 
   private
+
+  def find_visit_to_close(patient_id, visit_params)
+    requested_visit_id = visit_params[:visit_id].presence || visit_params[:id].presence
+    if requested_visit_id.present?
+      return Visit.find_by(visit_id: requested_visit_id, date_stopped: nil)
+    end
+
+    scope = Visit.where(patient_id: patient_id, date_stopped: nil)
+    if visit_params[:program_id].present?
+      scope = scope.where('program_id = ? OR program_id IS NULL', visit_params[:program_id])
+    end
+    scope.first
+  end
 
   def skipped_visit_payload(receipt, visit_params)
     visit = Visit.find_by(visit_id: receipt&.target_id)
