@@ -102,10 +102,17 @@ module PatientRecordService
               order
             end
 
-            next if result.skipped?
+            if result.skipped?
+              # A replayed order was not re-created here, so the captured list
+              # no longer represents everything saved; force the caller back
+              # onto the full labOrders rebuild.
+              @created_lab_orders_incomplete = true
+              next
+            end
 
             hts_dashboard_dirty ||= hts_order_type?(operation_value_for(order_params, :order_type_id))
             enqueue_lab_push_order(result.value.fetch(:order_id), operation_value_for(order_params, :offline_id))
+            capture_created_lab_order(result.value.fetch(:order_id))
           rescue StandardError => e
             log_error("Failed to save lab order for order_params=#{operation_value_for(order_params, :offline_id)}", e)
             collected_errors << "Lab order #{operation_value_for(order_params, :offline_id)}: #{e.message}"
@@ -140,6 +147,31 @@ module PatientRecordService
     def create_observation(encounter_id, params)
       encounter = Encounter.unscoped.find(encounter_id)
       observation_service.create_observation(encounter, params)
+    end
+
+    # Serialized orders created during this save, used by
+    # SavePatientRecordService to merge into the response record instead of
+    # rebuilding the patient's entire lab order history. Returns [] when the
+    # capture is known to be incomplete so the caller falls back to a full
+    # rebuild.
+    def created_lab_orders
+      return [] if @created_lab_orders_incomplete
+
+      @created_lab_orders || []
+    end
+
+    def capture_created_lab_order(order_id)
+      order = Lab::LabOrder.prefetch_relationships.find_by(order_id: order_id)
+      raise "Lab order #{order_id} not found for response capture" unless order
+
+      # Re-serialize after inline results/observations were attached, and
+      # carry date_created to match what safe_get_lab_orders returns.
+      serialized = Lab::LabOrderSerializer.serialize_order(order)
+      serialized[:date_created] = order.date_created
+      (@created_lab_orders ||= []) << serialized
+    rescue StandardError => e
+      @created_lab_orders_incomplete = true
+      Rails.logger.warn("Failed to capture created lab order order_id=#{order_id}: #{e.class}: #{e.message}")
     end
 
     def enqueue_lab_push_order(order_id, offline_id = nil)

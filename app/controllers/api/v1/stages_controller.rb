@@ -63,6 +63,7 @@ module Api
           :arrival_time,
           :location_id,
           :program_id,
+          :referring_program_id,
           :disposition_type,
           :patient_care_area,
           :department,

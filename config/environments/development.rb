@@ -68,8 +68,12 @@ Rails.application.configure do
 
   config.action_mailer.perform_caching = false
 
-  # Use inline adapter for development (runs jobs immediately, raises errors for debugging)
-  config.active_job.queue_adapter = :inline
+  # Use sidekiq like production. The :inline adapter runs "background" jobs
+  # (Lab::PushOrderJob NLIMS pushes, RebuildPatientLabDataJob CouchDB rebuilds)
+  # synchronously inside the HTTP request, which makes lab order saves take
+  # seconds on any server running in development mode. Requires a running
+  # sidekiq process (bundle exec sidekiq).
+  config.active_job.queue_adapter = :sidekiq
 
   # Disable retries - fail immediately on error
   config.active_job.retry_jitter = 0.0
