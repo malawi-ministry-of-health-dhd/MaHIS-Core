@@ -79,8 +79,13 @@ class VisitService
       visit_data[:location_id] = visit_params[:location_id].to_s
 
       if stage_params.present?
-        data = StagesService.new.create_stage(stage_params)
-        sync_to_couchdb(data, "stages", data[:identifier]) if data.present?
+        stages_service = StagesService.new
+        data = stages_service.create_stage(stage_params)
+        # Match the stages controller's keying (identifier + program) so this
+        # visit-creation path does not clobber a patient's stage in another
+        # program. Keying by bare identifier dropped OPD stages when the same
+        # patient later got an HTS stage under the same identifier.
+        sync_to_couchdb(data, "stages", stages_service.couchdb_doc_id(data)) if data.present?
       end
       
       # Create encounter first
