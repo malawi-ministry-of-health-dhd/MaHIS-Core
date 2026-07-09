@@ -4,6 +4,7 @@ module Api
   module V1
     class LabTestResultsController < ApplicationController
       include LabTestsEngineLoader
+      include HtsDashboardBroadcaster
 
       def index
         render json: engine.results(params[:accession_number])
@@ -11,6 +12,7 @@ module Api
 
       def create
         result = engine.save_result(params[:lab_test_result])
+        broadcast_hts_dashboard_changed
         render json: result, status: :created
       end
 
@@ -21,6 +23,7 @@ module Api
         result[:tracking_number] = order[:lims_order]['tracking_number']
         result = engine.save_result(result)
 
+        broadcast_hts_dashboard_changed
         render json: { order:, result: }, status: :created
       end
 

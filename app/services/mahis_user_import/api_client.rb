@@ -83,6 +83,14 @@ module MahisUserImport
       response['user'] || response
     end
 
+    def update_user_assignments!(user_id:, attributes:)
+      put("/api/v1/users/#{user_id}", {
+        roles: attributes[:role_names],
+        programs: attributes[:program_ids],
+        phone: attributes[:phone]
+      })
+    end
+
     def upsert_user_property!(user_id:, property:, property_value:)
       post('/api/v1/user_properties', {
         user_id: user_id,
@@ -147,6 +155,14 @@ module MahisUserImport
     def post(path, body, authenticate: true)
       uri = uri_for(path)
       request = Net::HTTP::Post.new(uri)
+      request['Content-Type'] = 'application/json'
+      request.body = body.to_json
+      perform(request, uri, authenticate: authenticate)
+    end
+
+    def put(path, body, authenticate: true)
+      uri = uri_for(path)
+      request = Net::HTTP::Put.new(uri)
       request['Content-Type'] = 'application/json'
       request.body = body.to_json
       perform(request, uri, authenticate: authenticate)

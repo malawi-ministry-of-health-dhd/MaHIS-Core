@@ -27,6 +27,11 @@ module MahisUserImport
       end
     end
 
+    def update_existing_user!(user_id, attributes)
+      @api_client.update_user_assignments!(user_id: user_id, attributes: attributes)
+      assign_user_properties!(user_id, attributes)
+    end
+
     private
 
     def user_properties(attributes)
@@ -42,14 +47,41 @@ module MahisUserImport
         properties['waiting_list_access'] = attributes[:waiting_list_access]
         properties['OPD_waiting_list_access'] = attributes[:waiting_list_access] if opd_program?(attributes)
       end
+      properties['OPD_waiting_list'] = attributes[:opd_waiting_list] if attributes[:opd_waiting_list].present?
 
       if attributes[:activities].present?
         properties['Activities'] = attributes[:activities]
-        properties['OPD_activities'] = attributes[:activities] if opd_program?(attributes)
-        properties['AETC_activities'] = attributes[:activities] if aetc_program?(attributes)
       end
 
+      opd_activity_values = opd_activities(attributes)
+      properties['OPD_activities'] = opd_activity_values if opd_program?(attributes) && opd_activity_values.present?
+
+      aetc_activity_values = aetc_activities(attributes)
+      properties['AETC_activities'] = aetc_activity_values if aetc_program?(attributes) && aetc_activity_values.present?
+
+      ncd_activity_values = ncd_activities(attributes)
+      properties['NCD_activities'] = ncd_activity_values if ncd_program?(attributes) && ncd_activity_values.present?
+
       properties.compact
+    end
+
+    def opd_activities(attributes)
+      attributes[:opd_activities].presence || single_program_activities(attributes, /opd/i)
+    end
+
+    def aetc_activities(attributes)
+      attributes[:aetc_activities].presence || single_program_activities(attributes, /aetc/i)
+    end
+
+    def ncd_activities(attributes)
+      attributes[:ncd_activities].presence
+    end
+
+    def single_program_activities(attributes, pattern)
+      return unless attributes[:activities].present?
+      return unless attributes[:program_names].one? && attributes[:program_names].first.match?(pattern)
+
+      attributes[:activities]
     end
 
     def upsert_user_properties!(user_id, properties)
@@ -89,6 +121,10 @@ module MahisUserImport
 
     def aetc_program?(attributes)
       program_name_match?(attributes, /aetc/i)
+    end
+
+    def ncd_program?(attributes)
+      program_name_match?(attributes, /ncd/i)
     end
 
     def program_name_match?(attributes, pattern)

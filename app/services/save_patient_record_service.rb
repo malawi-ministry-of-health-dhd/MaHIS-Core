@@ -18,6 +18,7 @@ class SavePatientRecordService
   def create_patient_record(record)
     strip_derived_patient_fields!(record)
     ensure_encounter_datetime!(record)
+    should_top_up_dde_ids = should_top_up_dde_ids_after_save?(record)
 
     required_fields = extract_required_fields(record)
     return "required fields missing" unless required_fields_present?(required_fields)
@@ -53,19 +54,37 @@ class SavePatientRecordService
       raise
     end
 
-    patient_record = build_and_save_patient_record(patient_id, record, operation_results, overall_sync_status)
+    patient_record = build_and_save_patient_record(patient_id, record, operation_results, overall_sync_status,
+                                                   created_lab_orders: managers[:lab_data_manager].created_lab_orders)
     ensure_primary_identifier_persisted!(patient_id, patient_record)
     enqueue_post_save_side_effects(patient_id, record, operation_results)
 
     if couchdb_configured?
       patient_record["_id"] = patient_record["ID"]
       sync_to_couchdb(patient_record, "patients_records", "#{patient_record["ID"]}")
+      # Refresh the NCD read model synchronously so the live (REST) save path
+      # reflects NCD number assignment/updates immediately. The CouchDB changes
+      # listener only maintains this index for listener-processed docs, so a
+      # patient just given a number would otherwise linger in "Pending NCD".
+      refresh_ncd_patient_index(patient_record)
     end
+    enqueue_dde_id_top_up(patient_record, record) if should_top_up_dde_ids && couchdb_configured?
 
     patient_record
   end
 
   private
+
+  # Best-effort synchronous update of the ncd_patient_index projection for the
+  # saved record. Mirrors CouchdbChangesListener#maintain_ncd_patient_index for
+  # the REST path. Non-NCD records yield no projection and are skipped.
+  def refresh_ncd_patient_index(patient_record)
+    return unless NcdService::NcdPatientIndex.configured?
+
+    NcdService::NcdPatientIndex.upsert_records([patient_record])
+  rescue StandardError => e
+    Rails.logger.error("[NCD] Failed to refresh NCD patient index for #{patient_record['ID']}: #{e.message}")
+  end
 
   def extract_required_fields(record)
     RequiredFields.new(
@@ -197,7 +216,7 @@ class SavePatientRecordService
     }
   end
 
-  def build_and_save_patient_record(patient_id, patient_data, operation_results, overall_sync_status)
+  def build_and_save_patient_record(patient_id, patient_data, operation_results, overall_sync_status, created_lab_orders: [])
     patient          = BuildPatientRecordService.find_patient(patient_id)
     person           = patient&.person
     latest_encounter = BuildPatientRecordService.find_latest_encounter(patient_id)
@@ -241,7 +260,24 @@ class SavePatientRecordService
       when :enroll_program
         patient_data[:activePrograms] = BuildPatientRecordService.fetch_active_programs(patient_id)
 
-      when :save_lab_orders_data, :save_lab_results_data, :void_lab_order
+      when :save_lab_orders_data
+        # Rebuilding the entire lab order history here costs ~25 queries per
+        # historical order and grows with patient history, so merge just the
+        # newly created orders into the record instead. A delayed
+        # RebuildPatientLabDataJob trues up the CouchDB copy from MySQL. Falls
+        # back to the full rebuild when the created-order capture is
+        # incomplete. Results/voids (below) still rebuild because their
+        # changes touch existing saved orders.
+        if created_lab_orders.present?
+          merge_created_lab_orders!(patient_data, created_lab_orders)
+          enqueue_lab_orders_couchdb_true_up(patient_id)
+        else
+          patient_data[:labOrders] = BuildPatientRecordService.build_lab_orders_data(patient_id)
+        end
+        allowed_encounter_types << get_encounter_id('LAB ORDERS')
+        allowed_encounter_types << get_encounter_id('LAB RESULTS')
+
+      when :save_lab_results_data, :void_lab_order
         patient_data[:labOrders] = BuildPatientRecordService.build_lab_orders_data(patient_id)
         allowed_encounter_types << get_encounter_id('LAB ORDERS')
         allowed_encounter_types << get_encounter_id('LAB RESULTS')
@@ -360,6 +396,37 @@ class SavePatientRecordService
     nil
   end
 
+  # Append the orders created during this save to labOrders.saved, replacing
+  # any stale copies of the same order the client may have sent.
+  def merge_created_lab_orders!(patient_data, created_lab_orders)
+    lab_orders = record_value(patient_data, :labOrders)
+    unless lab_orders.respond_to?(:[]=)
+      lab_orders = {}
+      patient_data[:labOrders] = lab_orders
+    end
+
+    created_ids = created_lab_orders.map { |order| record_value(order, :order_id) }.compact
+    existing = Array.wrap(record_value(lab_orders, :saved)).reject do |order|
+      created_ids.include?(record_value(order, :order_id))
+    end
+
+    saved_key = lab_orders.respond_to?(:key?) && lab_orders.key?('saved') ? 'saved' : :saved
+    lab_orders[saved_key] = existing + created_lab_orders
+  end
+
+  # The synchronous full labOrders rebuild used to make the CouchDB copy
+  # authoritative on every save. Preserve that invariant off-request: the
+  # delay lets create_patient_record finish its own CouchDB sync first.
+  def enqueue_lab_orders_couchdb_true_up(patient_id)
+    RebuildPatientLabDataJob.set(wait: 30.seconds).perform_later(
+      patient_id,
+      trigger: 'save_patient_record_lab_orders_true_up',
+      metadata: {}
+    )
+  rescue StandardError => e
+    Rails.logger.warn("Failed to enqueue labOrders CouchDB true-up for patient #{patient_id}: #{e.class}: #{e.message}")
+  end
+
   def ensure_primary_identifier_persisted!(patient_id, patient_record)
     identifier = patient_record.with_indifferent_access[:ID].to_s.strip
     raise "Primary identifier missing for patient #{patient_id}" if identifier.blank?
@@ -408,6 +475,28 @@ class SavePatientRecordService
   rescue StandardError => e
     Rails.logger.error(
       "Failed to enqueue patient-record post-save side effects for patient #{patient_id}: #{e.class}: #{e.message}"
+    )
+  end
+
+  def should_top_up_dde_ids_after_save?(record)
+    record_value(record, :saveStatusPersonInformation).to_s == 'pending' &&
+      record_value(record, :ID).to_s.strip.present?
+  end
+
+  def enqueue_dde_id_top_up(patient_record, source_record)
+    location_id = record_value(source_record, :location_id).presence ||
+                  record_value(patient_record, :location_id).presence ||
+                  User.current&.location_id
+    identifier = record_value(patient_record, :ID).to_s.strip
+    return if location_id.blank? || identifier.blank?
+
+    job_id = Sync::DdeIdsSyncJob.perform_async(100, location_id.to_s)
+    Rails.logger.info(
+      "Queued DDE ID top-up job #{job_id} for location #{location_id} after saving patient record #{identifier}"
+    )
+  rescue StandardError => e
+    Rails.logger.warn(
+      "Failed to enqueue DDE ID top-up after saving patient record #{record_value(patient_record, :ID)}: #{e.class}: #{e.message}"
     )
   end
 
