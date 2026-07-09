@@ -40,6 +40,7 @@ module Sync
         "stage"             => stage.stage,
         "visit_number"      => stage.visit_number,
         "program_id"        => stage.program_id,
+        "referring_program_id" => stage.referring_program_id,
         "disposition_type"  => stage.disposition_type,
         "patient_care_area" => stage.patient_care_area,
         "department"        => stage.department,

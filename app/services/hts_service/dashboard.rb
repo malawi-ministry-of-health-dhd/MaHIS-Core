@@ -19,6 +19,9 @@ module HtsService
     ART_REFERRAL_FALLBACK_NAME = 'ART'
     REFER_TO_OTHER_HOSPITAL_CONCEPT_ID = 50_784
     HTS_TESTING_ENCOUNTER_NAMES = ['hiv testing', 'confirmatory hiv testing', 'testing'].freeze
+    # HIV outcomes recorded by the HIV Testing flow are stored as the full outcome
+    # label in value_text (not a bare "Positive"), so they must be matched explicitly.
+    CONCLUSIVE_HIV_OUTCOMES = ['Positive- Confirmed Professional Test'].freeze
 
     def self.daily_statistics(start_date, _end_date)
       art = Observation.joins('INNER JOIN concept_name ON concept_name.concept_id = obs.concept_id')
@@ -209,8 +212,9 @@ module HtsService
         10_051 => 'Positive'
       }
 
+      concept_clauses = concepts.map { |concept_id, value| "(concept_id = #{concept_id} AND value_text = '#{value}')" }
       scope = Observation
-              .where(concepts.map { |concept_id, value| "(concept_id = #{concept_id} AND value_text = '#{value}')" }.join(' OR '))
+              .where("#{concept_clauses.join(' OR ')} OR value_text IN (?)", CONCLUSIVE_HIV_OUTCOMES)
       scope = scope.where(location_id: location_id) if location_id
       scope.distinct.count(:person_id)
     end
