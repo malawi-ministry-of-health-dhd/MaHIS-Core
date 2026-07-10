@@ -14,7 +14,8 @@ module PatientRecordSearchFields
     { name: 'idx_location_full_name_search', fields: ['location_id_search', 'full_name_search'] },
     { name: 'idx_location_given_name_search', fields: ['location_id_search', 'given_name_search'] },
     { name: 'idx_location_family_name_search', fields: ['location_id_search', 'family_name_search'] },
-    { name: 'idx_has_pending_nlims_orders', fields: ['has_pending_nlims_orders'] }
+    { name: 'idx_has_pending_nlims_orders', fields: ['has_pending_nlims_orders'] },
+    { name: 'idx_location_pending_dispensation', fields: ['location_id_search', 'has_pending_dispensation'] }
     # NCD dashboard indexes now live on the dedicated ncd_patient_index database
     # (see NcdService::NcdPatientIndex), not on patients_records.
   ].freeze
@@ -72,6 +73,7 @@ module PatientRecordSearchFields
     record['full_name_with_middle_search'] = join_search_parts(given_search, middle_search, family_search)
     record['gender_search'] = normalize_text(gender)
     record['location_id_search'] = location_id.to_s.strip
+    record['has_pending_dispensation'] = pending_dispensation?(record)
     # NCD summary fields are no longer stamped onto patients_records documents.
     # They are projected into the dedicated ncd_patient_index database instead
     # (PatientRecordSearchFields.ncd_projection + NcdService::NcdPatientIndex).
@@ -120,6 +122,26 @@ module PatientRecordSearchFields
 
   def first_present(*values)
     values.find(&:present?)
+  end
+
+  def medication_orders(record)
+    medication_order = fetch_value(record, :MedicationOrder) || {}
+    Array(fetch_value(medication_order, :saved)) + Array(fetch_value(medication_order, :unsaved))
+  end
+
+  def pending_dispensation?(record)
+    medication_orders(record).any? { |order| pending_medication_order?(order) }
+  end
+
+  def pending_medication_order?(order)
+    return false if fetch_value(order, :voided).to_i == 1 || fetch_value(order, :status).to_s == 'voided'
+    return false if fetch_value(order, :dispensed) == true
+
+    dispensation = fetch_value(order, :dispensation)
+    return false if dispensation.present? && (!dispensation.respond_to?(:empty?) || !dispensation.empty?)
+
+    quantity = fetch_value(order, :quantity)
+    quantity.blank? || quantity.to_f <= 0
   end
 
   # Build a standalone NCD summary document for a patient record, suitable for
@@ -208,9 +230,7 @@ module PatientRecordSearchFields
   end
 
   def ncd_medication_orders(record)
-    medication_order = fetch_value(record, :MedicationOrder) || {}
-    orders = Array(fetch_value(medication_order, :saved)) + Array(fetch_value(medication_order, :unsaved))
-    orders.select do |order|
+    medication_orders(record).select do |order|
       program_id = fetch_value(order, :program_id)
       program_id.blank? || program_id.to_i == NCD_PROGRAM_ID
     end
