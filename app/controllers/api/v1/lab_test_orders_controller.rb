@@ -88,6 +88,15 @@ module Api
         render json: engine.orders_without_results(patient)
       end
 
+      # Facility-wide list of patients who have lab orders with no results yet.
+      # Mirrors drug_orders#awaiting_dispensation for the lab technician queue.
+      def patients_awaiting_results
+        filters = params.permit(:location_id, :page, :per_page, :page_size).to_h.symbolize_keys
+        filters[:location_id] = User.current&.location_id if filters[:location_id].blank?
+
+        render json: LabResultsQueueService.patients_awaiting_results(filters)
+      end
+
       def hts_referral_orders
         sql = <<-SQL
           SELECT orders.order_id,

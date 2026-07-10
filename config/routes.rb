@@ -369,6 +369,9 @@ Rails.application.routes.draw do
       get '/dde/patients/matches', to: 'dde#duplicates_match'
       post '/rollback/rollback_patient', to: 'rollback#rollback_patient'
       get '/dde/patients/sync_npids', to: 'dde#sync_npids'
+      # Program-agnostic lab technician queue (patients with lab orders lacking
+      # results). Top-level so it works without an active program in context.
+      get '/lab_tests/patients_awaiting_results', to: 'lab_test_orders#patients_awaiting_results'
       post '/lab/accession_numbers/top_up', to: 'lab_accession_numbers#top_up'
       post '/lab/accession_numbers/top_up_all', to: 'lab_accession_numbers#top_up_all'
       post '/lab/accession_numbers/reserve', to: 'lab_accession_numbers#reserve'
