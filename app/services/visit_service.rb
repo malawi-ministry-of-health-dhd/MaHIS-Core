@@ -124,14 +124,17 @@ class VisitService
       return
     end
 
-    existing_stage = Stage.where(
-      patient_id: visit.patient_id,
-      visit_id: visit.visit_id,
-      location_id: visit_params[:location_id] || (User.current&.location_id)
-    ).order(updated_at: :desc).first
-    if existing_stage.present?
-      StagesService.new.broadcast_stage_deletion(existing_stage)
-      existing_stage.destroy
+    # Closing a visit retires the queue stage(s) for that visit. A visit belongs
+    # to exactly one patient + program, so EVERY stage row on it must go — not
+    # just the one matching the caller's location. The previous location_id
+    # filter left stages created at another location (or closed with a nil
+    # location context, e.g. auto-abscond/offline sync) stuck at status = true on
+    # a closed visit. That broke the "one active stage per program" rule and made
+    # the OPD dashboard over-count the queue.
+    stages_service = StagesService.new
+    Stage.where(visit_id: visit.visit_id).order(updated_at: :desc).each do |stage|
+      stages_service.broadcast_stage_deletion(stage)
+      stage.destroy
     end
 
     closed_datetime = visit_params[:date_stopped] || Time.now

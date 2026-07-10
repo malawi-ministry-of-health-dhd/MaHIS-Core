@@ -328,7 +328,9 @@ Rails.application.routes.draw do
       get '/bp_drugs' => 'drugs#bp_drugs'
       get '/impow_drugs_and_references' => 'drugs#impow_drugs_and_references'
 
-      resources :drug_orders
+      resources :drug_orders do
+        get :awaiting_dispensation, on: :collection
+      end
       resources :orders do
         get '/radiology', to: 'orders#print_radiology_order', on: :collection
         post '/radiology', to: 'orders#radiology_order', on: :collection

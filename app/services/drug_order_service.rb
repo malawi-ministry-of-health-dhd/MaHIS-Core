@@ -30,6 +30,59 @@ module DrugOrderService
       query
     end
 
+    def patients_awaiting_dispensation(filters = {})
+      page = positive_integer(filters[:page], 1)
+      per_page = positive_integer(filters[:per_page] || filters[:page_size], 1000)
+      offset = (page - 1) * per_page
+      cutoff = filters[:date]&.to_date || Date.current
+      location_id = filters[:location_id].presence || User.current&.location_id
+
+      pending_patients_sql = pending_dispensation_patients_sql(cutoff, location_id)
+      count = ActiveRecord::Base.connection.select_value(
+        "SELECT COUNT(*) FROM (#{pending_patients_sql}) pending_patients"
+      ).to_i
+
+      rows = ActiveRecord::Base.connection.select_all(
+        sanitize_sql_array([
+          <<~SQL,
+            SELECT
+              pending.patient_id,
+              pending.encounter_datetime,
+              pending.location_id,
+              pending.program_ids,
+              pending.program_names,
+              pe.gender,
+              pn.given_name,
+              pn.family_name
+            FROM (#{pending_patients_sql}) pending
+            INNER JOIN patient p ON p.patient_id = pending.patient_id
+            INNER JOIN person pe ON pe.person_id = p.patient_id AND pe.voided = 0
+            LEFT JOIN person_name pn
+              ON pn.person_id = pe.person_id
+             AND pn.voided = 0
+             AND pn.person_name_id = (
+               SELECT pn2.person_name_id
+               FROM person_name pn2
+               WHERE pn2.person_id = pe.person_id
+                 AND pn2.voided = 0
+               ORDER BY pn2.date_created DESC, pn2.person_name_id DESC
+               LIMIT 1
+             )
+            ORDER BY pending.encounter_datetime DESC
+            LIMIT #{per_page}
+            OFFSET #{offset}
+          SQL
+        ])
+      )
+
+      {
+        count:,
+        page:,
+        per_page:,
+        results: rows.map { |row| format_pending_dispensation_patient(row) }
+      }
+    end
+
     def fetch_all_patient_drug_orders(patient_id)
       # Quote patient ID for SQL safety
       quoted_patient_id = ActiveRecord::Base.connection.quote(patient_id)
@@ -144,6 +197,78 @@ module DrugOrderService
     end
 
     private
+
+    def pending_dispensation_patients_sql(cutoff, location_id)
+      where_clauses = [
+        'o.voided = 0',
+        'e.voided = 0',
+        'o.start_date <= ?',
+        '(drdo.quantity IS NULL OR drdo.quantity <= 0)',
+        <<~SQL.squish
+          NOT EXISTS (
+            SELECT 1
+            FROM obs dispensation_obs
+            INNER JOIN concept_name cn
+              ON cn.concept_id = dispensation_obs.concept_id
+             AND cn.voided = 0
+            WHERE dispensation_obs.order_id = o.order_id
+              AND dispensation_obs.voided = 0
+              AND UPPER(cn.name) = ?
+              AND dispensation_obs.value_numeric IS NOT NULL
+          )
+        SQL
+      ]
+      binds = [TimeUtils.day_bounds(cutoff)[1], 'AMOUNT DISPENSED']
+
+      if location_id.present?
+        where_clauses << 'e.location_id = ?'
+        binds << location_id
+      end
+
+      sanitize_sql_array([
+        <<~SQL,
+          SELECT
+            o.patient_id,
+            MAX(o.start_date) AS encounter_datetime,
+            MAX(e.location_id) AS location_id,
+            GROUP_CONCAT(DISTINCT e.program_id ORDER BY e.program_id SEPARATOR ',') AS program_ids,
+            GROUP_CONCAT(DISTINCT prg.name ORDER BY prg.name SEPARATOR ', ') AS program_names
+          FROM drug_order drdo
+          INNER JOIN orders o ON o.order_id = drdo.order_id
+          INNER JOIN encounter e ON e.encounter_id = o.encounter_id
+          LEFT JOIN program prg ON prg.program_id = e.program_id
+          WHERE #{where_clauses.join(' AND ')}
+          GROUP BY o.patient_id
+        SQL
+        *binds
+      ])
+    end
+
+    def format_pending_dispensation_patient(row)
+      program_names = row['program_names'].to_s.split(', ').reject(&:blank?)
+
+      {
+        patient_id: row['patient_id'].to_s,
+        given_name: row['given_name'],
+        family_name: row['family_name'],
+        full_name: [row['given_name'], row['family_name']].compact.join(' ').strip,
+        gender: row['gender'],
+        encounter_datetime: row['encounter_datetime'],
+        location_id: row['location_id']&.to_s,
+        program_ids: row['program_ids'].to_s.split(',').reject(&:blank?).map(&:to_i),
+        program_names:,
+        source_label: program_names.presence&.join(', ') || 'Medication orders'
+      }
+    end
+
+    def positive_integer(value, fallback)
+      integer = value.to_i
+      integer.positive? ? integer : fallback
+    end
+
+    def sanitize_sql_array(values)
+      ActiveRecord::Base.send(:sanitize_sql_array, values)
+    end
 
     def parse_search_filters(filters)
       query_cond = []
