@@ -5,7 +5,7 @@ class StagesService
     patient_id = resolve_patient_id(stage_params)
     raise InvalidParameterError, 'Patient not found' if patient_id.blank?
 
-    active_visit = find_active_visit(patient_id)
+    active_visit = find_active_visit(patient_id, stage_params[:program_id])
     raise InvalidParameterError, "No active visit found for patient #{patient_id}" unless active_visit
 
     result = PatientRecordOperationGuard.run!(
@@ -48,6 +48,11 @@ class StagesService
     stage.visit_id = active_visit.visit_id
     stage.location_id = location_id
     stage.status = true
+    # Record the program the patient was sent from (e.g. OPD -> HTS) once, and
+    # keep it as the patient moves between stages of the destination program.
+    if stage_params[:referring_program_id].present? && stage.referring_program_id.blank?
+      stage.referring_program_id = stage_params[:referring_program_id]
+    end
     assign_arrival_time(stage, stage_params)
     assign_stage_metadata(stage, stage_params)
 
@@ -117,6 +122,7 @@ class StagesService
       visit_uuid: stage.visit&.uuid,
       arrival_time: stage.arrival_time,
       program_id: stage.program_id,
+      referring_program_id: stage.referring_program_id,
       latest_encounter_time: latest_encounter_time || latest_encounter&.encounter_datetime || stage.created_at,
       last_encounter_creator: encounter_creator_name(latest_encounter,patient),
       disposition_type: stage.disposition_type,
@@ -217,8 +223,15 @@ class StagesService
     patient&.person&.uuid || patient&.uuid
   end
 
-  def find_active_visit(patient_id)
-    Visit.find_by(patient_id: patient_id, date_stopped: nil)
+  def find_active_visit(patient_id, program_id = nil)
+    scope = Visit.where(patient_id: patient_id, date_stopped: nil)
+    # A stage belongs to a visit of the same program. Without this filter a
+    # stage requested for one program (e.g. OPD=14) silently attaches to an
+    # open visit of a different program (e.g. AETC=30), leaving the stage and
+    # its visit disagreeing on program. Legacy visits with a NULL program_id
+    # are still matched so they keep working.
+    scope = scope.where('program_id = ? OR program_id IS NULL', program_id) if program_id.present?
+    scope.first
   end
 
   def latest_visit_encounter(stage)

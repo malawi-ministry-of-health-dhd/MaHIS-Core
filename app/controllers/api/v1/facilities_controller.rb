@@ -3,6 +3,11 @@
 module Api
   module V1
     class FacilitiesController < ApplicationController
+      include CouchdbSync
+
+      FACILITIES_DB_NAME = 'facilities'
+      MAX_COUCHDB_UPDATE_ATTEMPTS = 3
+
       def index
         filters = params.permit(%i[district name location_id paginate page page_size])
         district, name, location_id = filters.values_at(:district, :name, :location_id)
@@ -38,6 +43,24 @@ module Api
             only: %i[location_attribute_id attribute_type_id value_reference]
           }
         }
+      end
+
+      def dde_activation
+        dde_activated = boolean_param(params[:dde_activated])
+        return render json: { errors: ['dde_activated must be true or false'] }, status: :bad_request if dde_activated.nil?
+
+        facility = facilities_scope.find_by(location_id: facility_location_id_param)
+        return render json: { errors: ['Facility not found'] }, status: :not_found unless facility
+
+        document = update_facility_dde_activation(facility, dde_activated)
+
+        render json: {
+          data: document,
+          dde_activated: document['dde_activated']
+        }
+      rescue RestClient::Exception, SocketError, Errno::ECONNREFUSED => e
+        Rails.logger.error("Failed to update facility DDE activation in CouchDB: #{e.class}: #{e.message}")
+        render json: { errors: ['Unable to update DDE activation in CouchDB'] }, status: :bad_gateway
       end
 
       def districts
@@ -78,6 +101,71 @@ module Api
       end
 
       private
+
+      def boolean_param(value)
+        return value if value == true || value == false
+
+        case value.to_s.strip.downcase
+        when 'true', '1', 'yes', 'y'
+          true
+        when 'false', '0', 'no', 'n'
+          false
+        end
+      end
+
+      def facility_location_id_param
+        params[:id].to_s.sub(/\Afacility_/, '')
+      end
+
+      def update_facility_dde_activation(facility, dde_activated)
+        ensure_db_exists(FACILITIES_DB_NAME)
+
+        attempts = 0
+        begin
+          attempts += 1
+          existing_document = fetch_facility_couchdb_document(facility)
+          document = build_facility_couchdb_document(facility, existing_document, dde_activated)
+          response = RestClient.put(
+            facility_couchdb_document_url(document['_id']),
+            document.to_json,
+            { content_type: :json, accept: :json }
+          )
+          document.merge('_rev' => JSON.parse(response.body)['rev'])
+        rescue RestClient::Conflict
+          raise if attempts >= MAX_COUCHDB_UPDATE_ATTEMPTS
+
+          retry
+        end
+      end
+
+      def fetch_facility_couchdb_document(facility)
+        response = RestClient.get(facility_couchdb_document_url(facility_document_id(facility)))
+        JSON.parse(response.body)
+      rescue RestClient::NotFound
+        {}
+      end
+
+      def build_facility_couchdb_document(facility, existing_document, dde_activated)
+        existing_document
+          .except('_conflicts')
+          .merge(
+            '_id' => facility_document_id(facility),
+            'location_id' => facility.location_id,
+            'name' => facility.name,
+            'district' => facility.city_village,
+            'latitude' => facility.latitude,
+            'longitude' => facility.longitude,
+            'dde_activated' => dde_activated
+          )
+      end
+
+      def facility_document_id(facility)
+        "facility_#{facility.location_id}"
+      end
+
+      def facility_couchdb_document_url(document_id)
+        couchdb_url(FACILITIES_DB_NAME, URI.encode_www_form_component(document_id.to_s))
+      end
 
       def facilities_scope
         Location.includes(:parent, :location_attributes)

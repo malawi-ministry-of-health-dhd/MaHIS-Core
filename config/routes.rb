@@ -234,6 +234,7 @@ Rails.application.routes.draw do
       resources :observations
 
       resources :patient_programs, only: %i[create index show destroy]
+      resources :regimen_names, only: %i[index]
 
       resources :programs do
         resources :program_workflows, path: :workflows
@@ -366,6 +367,9 @@ Rails.application.routes.draw do
       get '/dde/patients/matches', to: 'dde#duplicates_match'
       post '/rollback/rollback_patient', to: 'rollback#rollback_patient'
       get '/dde/patients/sync_npids', to: 'dde#sync_npids'
+      post '/lab/accession_numbers/top_up', to: 'lab_accession_numbers#top_up'
+      post '/lab/accession_numbers/top_up_all', to: 'lab_accession_numbers#top_up_all'
+      post '/lab/accession_numbers/reserve', to: 'lab_accession_numbers#reserve'
 
       get '/labels/location', to: 'locations#print_label'
       get '/location_attribute/:id', to: 'location_attribute#show'
@@ -578,6 +582,7 @@ Rails.application.routes.draw do
       resources :facilities do
         member do
           get 'nearby', to: 'facilities#nearby'
+          post 'dde_activation', to: 'facilities#dde_activation'
         end
 
         # Optional: Collection routes if you need them

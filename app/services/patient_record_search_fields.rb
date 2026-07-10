@@ -13,7 +13,8 @@ module PatientRecordSearchFields
     { name: 'idx_full_name_search', fields: ['full_name_search'] },
     { name: 'idx_location_full_name_search', fields: ['location_id_search', 'full_name_search'] },
     { name: 'idx_location_given_name_search', fields: ['location_id_search', 'given_name_search'] },
-    { name: 'idx_location_family_name_search', fields: ['location_id_search', 'family_name_search'] }
+    { name: 'idx_location_family_name_search', fields: ['location_id_search', 'family_name_search'] },
+    { name: 'idx_has_pending_nlims_orders', fields: ['has_pending_nlims_orders'] }
     # NCD dashboard indexes now live on the dedicated ncd_patient_index database
     # (see NcdService::NcdPatientIndex), not on patients_records.
   ].freeze

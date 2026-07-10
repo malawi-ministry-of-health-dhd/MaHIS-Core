@@ -14,11 +14,13 @@ module PatientRecordService
     end
 
     def save_lab_order(data_type, patient_id, record)
-      unsaved_data = record.dig(:labOrders, :unsaved)
+      lab_orders = operation_value_for(record, :labOrders) || {}
+      unsaved_data = operation_value_for(lab_orders, :unsaved)
       return ok unless unsaved_data&.any?
 
-      data_key         = data_type.to_s.underscore.to_sym
-      collected_errors = []
+      data_key            = data_type.to_s.underscore.to_sym
+      collected_errors    = []
+      hts_dashboard_dirty = false
 
       begin
         encounter_type = encounter_type_for!(data_key)
@@ -32,17 +34,31 @@ module PatientRecordService
               payload: order_params,
               target_type: 'LabOrder'
             ) do
+              order_params  = normalize_lab_order_params(order_params)
               encounter_id ||= create_encounter(patient_id, encounter_type.id, record)
               order_params  = order_params.merge(encounter_id: encounter_id)
+              accession_pool_service.validate_usable!(
+                accession_number: operation_value_for(order_params, :accession_number),
+                offline_id: operation_value_for(order_params, :offline_id),
+                location_id: operation_value_for(record, :location_id)
+              )
               order         = without_lab_patient_record_rebuild { Lab::OrdersService.order_test(order_params) }
-              tests         = order.fetch(:tests)
+              accession_pool_service.consume!(
+                accession_number: operation_value_for(order_params, :accession_number),
+                offline_id: operation_value_for(order_params, :offline_id),
+                patient_id: patient_id,
+                order_id: order.fetch(:order_id),
+                location_id: operation_value_for(record, :location_id)
+              )
+              tests         = Array.wrap(order.fetch(:tests)).compact
               first_test    = tests.first
-              raise "Lab order returned no tests for offline_id=#{order_params[:offline_id]}" if first_test.blank?
+              raise "Lab order returned no tests for offline_id=#{operation_value_for(order_params, :offline_id)}" if tests.blank?
 
-              if order_params[:offline_id].present?
-                result = save_lab_results(:labResults, patient_id, record, order_params[:offline_id], first_test[:id])
+              offline_id = operation_value_for(order_params, :offline_id)
+              if offline_id.present?
+                result = save_lab_results(:labResults, patient_id, record, offline_id, first_test[:id], tests)
                 collected_errors.concat(result.errors) if result.errors.any?
-                record[:labOrders][:results]&.reject! { |entry| entry[:offline_id] == order_params[:offline_id] }
+                operation_value_for(lab_orders, :results)&.reject! { |entry| operation_value_for(entry, :offline_id) == offline_id } if result.success?
               end
 
               person_making_request = ConceptName.find_by(name: "Person making request")&.concept_id
@@ -56,12 +72,14 @@ module PatientRecordService
                 obs_datetime:   record[:encounter_datetime],
                 location_id:    record[:location_id]
               })
-              create_observation(encounter_id, {
-                concept_id:   test_type,
-                value_coded:  first_test[:concept_id],
-                obs_datetime: record[:encounter_datetime],
-                location_id:  record[:location_id]
-              })
+              tests.each do |test|
+                create_observation(encounter_id, {
+                                     concept_id:   test_type,
+                                     value_coded:  operation_value_for(test, :concept_id),
+                                     obs_datetime: record[:encounter_datetime],
+                                     location_id:  record[:location_id]
+                                   })
+              end
               create_observation(encounter_id, {
                 concept_id:   reason_for_test,
                 value_coded:  order_params[:reason_for_test_id],
@@ -70,36 +88,90 @@ module PatientRecordService
               })
 
               if order_params[:referral] == "referral"
-                create_observation(encounter_id, {
-                  concept_id:   refer_to_htc,
-                  value_text:   first_test[:name],
-                  order_id:     order.fetch(:order_id),
-                  obs_datetime: record[:encounter_datetime],
-                  location_id:  record[:location_id]
-                })
+                tests.each do |test|
+                  create_observation(encounter_id, {
+                                       concept_id:   refer_to_htc,
+                                       value_text:   operation_value_for(test, :name),
+                                       order_id:     order.fetch(:order_id),
+                                       obs_datetime: record[:encounter_datetime],
+                                       location_id:  record[:location_id]
+                                     })
+                end
               end
 
               order
             end
 
-            next if result.skipped?
+            if result.skipped?
+              # A replayed order was not re-created here, so the captured list
+              # no longer represents everything saved; force the caller back
+              # onto the full labOrders rebuild.
+              @created_lab_orders_incomplete = true
+              next
+            end
+
+            hts_dashboard_dirty ||= hts_order_type?(operation_value_for(order_params, :order_type_id))
+            enqueue_lab_push_order(result.value.fetch(:order_id), operation_value_for(order_params, :offline_id))
+            capture_created_lab_order(result.value.fetch(:order_id))
           rescue StandardError => e
-            log_error("Failed to save lab order for order_params=#{order_params[:offline_id]}", e)
-            collected_errors << "Lab order #{order_params[:offline_id]}: #{e.message}"
+            log_error("Failed to save lab order for order_params=#{operation_value_for(order_params, :offline_id)}", e)
+            collected_errors << "Lab order #{operation_value_for(order_params, :offline_id)}: #{e.message}"
             # continues to next order
           end
         end
 
-        record[data_type][:unsaved] = []
+        assign_nested_operation_value(record, data_type, :unsaved, [])
+        # An HTS-typed lab order is HTS activity wherever it was raised (e.g.
+        # "Send to HTS" from an OPD consult files it under the OPD program), so
+        # refresh the HTS dashboard regardless of the record's program.
+        HtsDashboardChannel.broadcast_changed if hts_dashboard_dirty
         OperationResult.new(success: true, errors: collected_errors)
       rescue StandardError => e
         log_and_fail("Failed to save #{data_type} information", e)
       end
     end
 
+    def hts_order_type?(order_type_id)
+      return false if order_type_id.blank?
+
+      hts_order_type_ids.include?(order_type_id.to_i)
+    end
+
+    def hts_order_type_ids
+      @hts_order_type_ids ||=
+        OrderType.unscoped
+                 .where('LOWER(name) = ?', HtsService::Dashboard::HTS_ORDER_TYPE_NAME)
+                 .pluck(:order_type_id).presence || [HtsService::Dashboard::DEFAULT_HTS_ORDER_TYPE_ID]
+    end
+
     def create_observation(encounter_id, params)
       encounter = Encounter.unscoped.find(encounter_id)
       observation_service.create_observation(encounter, params)
+    end
+
+    # Serialized orders created during this save, used by
+    # SavePatientRecordService to merge into the response record instead of
+    # rebuilding the patient's entire lab order history. Returns [] when the
+    # capture is known to be incomplete so the caller falls back to a full
+    # rebuild.
+    def created_lab_orders
+      return [] if @created_lab_orders_incomplete
+
+      @created_lab_orders || []
+    end
+
+    def capture_created_lab_order(order_id)
+      order = Lab::LabOrder.prefetch_relationships.find_by(order_id: order_id)
+      raise "Lab order #{order_id} not found for response capture" unless order
+
+      # Re-serialize after inline results/observations were attached, and
+      # carry date_created to match what safe_get_lab_orders returns.
+      serialized = Lab::LabOrderSerializer.serialize_order(order)
+      serialized[:date_created] = order.date_created
+      (@created_lab_orders ||= []) << serialized
+    rescue StandardError => e
+      @created_lab_orders_incomplete = true
+      Rails.logger.warn("Failed to capture created lab order order_id=#{order_id}: #{e.class}: #{e.message}")
     end
 
     def enqueue_lab_push_order(order_id, offline_id = nil)
@@ -110,6 +182,9 @@ module PatientRecordService
       end
 
       Lab::PushOrderJob.perform_later(order_id)
+      Rails.logger.info("Enqueued Lab::PushOrderJob for order_id=#{order_id} offline_id=#{offline_id}")
+    rescue StandardError => e
+      Rails.logger.error("Failed to enqueue Lab::PushOrderJob for order_id=#{order_id} offline_id=#{offline_id}: #{e.message}")
     end
 
     def specimen_catalogue_name(order_id)
@@ -124,8 +199,21 @@ module PatientRecordService
       nil
     end
 
-    def save_lab_results(data_type, patient_id, record, offline_id = nil, test_obs_id = nil)
+    def accession_pool_service
+      @accession_pool_service ||= LabAccessionNumberPoolService.new
+    end
+
+    def normalize_lab_order_params(order_params)
+      params = normalize_lab_result_value(order_params).with_indifferent_access
+      tests = Array.wrap(operation_value_for(params, :tests)).compact
+      tests = [{ concept_id: operation_value_for(params, :concept_id), name: operation_value_for(params, :name) }] if tests.blank?
+      params[:tests] = tests.map { |test| normalize_lab_result_value(test).with_indifferent_access }
+      params
+    end
+
+    def save_lab_results(data_type, patient_id, record, offline_id = nil, test_obs_id = nil, order_tests = nil)
       lab_orders = operation_value_for(record, :labOrders) || {}
+      hydrate_lab_result_measures!(lab_orders)
 
       # Prune result entries that carry no measures. They represent nothing to
       # save (typically stale entries left in the record from an aborted/empty
@@ -155,7 +243,7 @@ module PatientRecordService
             payload: order_params,
             target_type: 'LabResult'
           ) do
-            effective_test_id = test_obs_id.presence || operation_value_for(order_params, :test_id)
+            effective_test_id = resolve_result_test_id(order_params, order_tests, test_obs_id)
 
             if effective_test_id.blank?
               collected_errors << "Skipped result offline_id=#{operation_value_for(order_params, :offline_id)}: test_id missing"
@@ -183,6 +271,55 @@ module PatientRecordService
       OperationResult.new(success: true, errors: collected_errors)
     rescue StandardError => e
       log_and_fail("Failed to save #{data_type} information", e)
+    end
+
+    # Offline results carry no per-test obs id. For a multi-test order every
+    # result would otherwise collapse onto the first test (test_obs_id). Match
+    # each result back to its test by concept when the client provided one,
+    # falling back to the first test (legacy behaviour) for single-test orders
+    # or older records that predate test_concept_id.
+    def resolve_result_test_id(order_params, order_tests, fallback_test_id)
+      concept_id = operation_value_for(order_params, :test_concept_id)
+
+      # In the inline path `order_tests` is the just-created order's tests. In the
+      # standalone path (a result whose order was saved in an earlier sync) it is
+      # nil, so recover the order's test observations from the result's offline_id
+      # — otherwise a result carrying only offline_id + test_concept_id (no test
+      # id, e.g. from the new-order flow) is skipped as "test_id missing".
+      effective_tests = order_tests.presence || tests_for_result_offline_id(order_params)
+
+      if concept_id.present? && effective_tests.present?
+        match = Array.wrap(effective_tests).find do |test|
+          operation_value_for(test, :concept_id).to_s == concept_id.to_s
+        end
+        matched_id = match && operation_value_for(match, :id)
+        return matched_id if matched_id.present?
+      end
+
+      fallback = fallback_test_id.presence || operation_value_for(order_params, :test_id)
+      return fallback if fallback.present?
+
+      # No concept match and no explicit id: safe only when the order has exactly
+      # one test, so there is no ambiguity about which test the result belongs to.
+      effective_tests.length == 1 ? operation_value_for(effective_tests.first, :id) : nil
+    end
+
+    # Test observations ({ concept_id:, id: }) of the already-saved order that
+    # consumed the result's offline_id, used to map an id-less result back to its
+    # test by concept. Returns [] when the order can't be resolved.
+    def tests_for_result_offline_id(order_params)
+      offline_id = operation_value_for(order_params, :offline_id)
+      return [] if offline_id.blank?
+
+      order_id = accession_pool_service.order_id_for_offline_id(offline_id)
+      return [] if order_id.blank?
+
+      test_type_concept_ids = ConceptName.where(name: 'Test type').pluck(:concept_id)
+      return [] if test_type_concept_ids.empty?
+
+      Observation.where(order_id: order_id, voided: 0, concept_id: test_type_concept_ids)
+                 .pluck(:value_coded, :obs_id)
+                 .map { |value_coded, obs_id| { 'concept_id' => value_coded, 'id' => obs_id } }
     end
 
     def void_lab_order(_patient_id, record)
@@ -240,6 +377,77 @@ module PatientRecordService
       Array.wrap(operation_value_for(result, :measures)).flatten(1).compact.empty?
     end
 
+    def hydrate_lab_result_measures!(lab_orders)
+      results_ref = operation_value_for(lab_orders, :results)
+      return unless results_ref.is_a?(Array)
+
+      results_ref.each do |result|
+        next unless result.respond_to?(:[]=)
+        next unless lab_result_measures_blank?(result)
+
+        measures = lab_result_measures_from_matching_test(lab_orders, result)
+        assign_operation_value(result, :measures, measures) if measures.present?
+      end
+    end
+
+    def lab_result_measures_from_matching_test(lab_orders, result)
+      test = find_lab_result_test(lab_orders, result)
+      Array.wrap(operation_value_for(test, :result)).flatten(1).compact
+    end
+
+    def find_lab_result_test(lab_orders, result)
+      result_test_id = operation_value_for(result, :test_id).presence
+      return find_lab_test_by_id(lab_orders, result_test_id) if result_test_id.present?
+
+      offline_id = operation_value_for(result, :offline_id).presence
+      return nil if offline_id.blank?
+
+      order = lab_orders_for_result(lab_orders).find { |candidate| operation_value_for(candidate, :offline_id).to_s == offline_id.to_s }
+      return nil unless order
+
+      tests = Array.wrap(operation_value_for(order, :tests)).compact
+      concept_id = operation_value_for(result, :test_concept_id).presence
+      if concept_id.present?
+        concept_match = tests.find { |test| operation_value_for(test, :concept_id).to_s == concept_id.to_s }
+        return concept_match if concept_match
+      end
+
+      tests_with_results = tests.select { |test| Array.wrap(operation_value_for(test, :result)).flatten(1).compact.any? }
+      tests_with_results.one? ? tests_with_results.first : nil
+    end
+
+    def find_lab_test_by_id(lab_orders, test_id)
+      lab_orders_for_result(lab_orders).each do |order|
+        Array.wrap(operation_value_for(order, :tests)).each do |test|
+          return test if operation_value_for(test, :id).to_s == test_id.to_s
+        end
+      end
+
+      nil
+    end
+
+    def lab_orders_for_result(lab_orders)
+      Array.wrap(operation_value_for(lab_orders, :saved)) + Array.wrap(operation_value_for(lab_orders, :unsaved))
+    end
+
+    def assign_operation_value(container, key, value)
+      return unless container.respond_to?(:[]=)
+
+      target_key = if container.respond_to?(:key?) && container.key?(key.to_s)
+                     key.to_s
+                   else
+                     key
+                   end
+      container[target_key] = value
+    end
+
+    def assign_nested_operation_value(container, parent_key, child_key, value)
+      parent = operation_value_for(container, parent_key)
+      return unless parent.respond_to?(:[]=)
+
+      assign_operation_value(parent, child_key, value)
+    end
+
     def lab_result_payload(order_params, encounter_id)
       params = normalize_lab_result_value(order_params)
       measures = Array.wrap(operation_value_for(params, :measures)).flatten(1).compact
@@ -267,6 +475,19 @@ module PatientRecordService
       else
         value
       end
+    end
+
+    def operation_value_for(container, key)
+      return nil if container.nil? || !container.respond_to?(:[])
+
+      if container.respond_to?(:key?)
+        return container[key] if container.key?(key)
+        return container[key.to_s] if container.key?(key.to_s)
+      end
+
+      container[key] || container[key.to_s]
+    rescue TypeError
+      nil
     end
   end
 end

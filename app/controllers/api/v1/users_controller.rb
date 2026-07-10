@@ -65,7 +65,7 @@ module Api
       end
 
       def update
-        update_params = params.permit :password, :given_name, :family_name, :must_append_roles, :location_id,
+        update_params = params.permit :password, :given_name, :family_name, :must_append_roles, :location_id, :phone,
                                       roles: [], programs: []
 
         # Force programs through since permit can silently drop integer arrays

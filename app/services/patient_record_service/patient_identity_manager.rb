@@ -4,6 +4,8 @@
 module PatientRecordService
   class PatientIdentityManager < BaseSaver
     NCD_PROGRAM_ID = 32
+    NCD_NUMBER_LOCK_NAME = 'mahis_ncd_number_allocation'
+    NCD_NUMBER_LOCK_TIMEOUT = 10
 
     def save_person_information(record)
       if record[:personInformation] && record[:saveStatusPersonInformation] == 'pending'
@@ -137,11 +139,17 @@ module PatientRecordService
       pending_ncd_id = ncd_id.to_s.strip.casecmp?('PENDING')
       return ok unless ncd_id == "-" || pending_ncd_id || needs_ncd_id || unsaved_ncd_id.present?
 
+      requested_ncd_identifier = pending_ncd_id || needs_ncd_id ? "" : unsaved_ncd_id.to_s.strip
+
       existing_ncd_identifiers = PatientIdentifier.where(patient_id: patient_id, identifier_type: 31)
                                                  .order(date_created: :desc)
                                                  .to_a
-      if existing_ncd_identifiers.present?
-        canonical_ncd_identifier = existing_ncd_identifiers.first
+      canonical_ncd_identifier = existing_ncd_identifiers.first
+
+      # Patient already has a number and no *different* one was requested: keep it
+      # and just void any per-patient duplicates (idempotent re-save).
+      if canonical_ncd_identifier &&
+         (requested_ncd_identifier.blank? || requested_ncd_identifier == canonical_ncd_identifier.identifier)
         existing_ncd_identifiers.drop(1).each do |duplicate_ncd_identifier|
           duplicate_ncd_identifier.void("Duplicate NCD number cleanup by #{User.current.username}")
         end
@@ -152,15 +160,11 @@ module PatientRecordService
         return changed_ok
       end
 
-      resolved_ncd_identifier = pending_ncd_id || needs_ncd_id ? "" : unsaved_ncd_id.to_s.strip
-      resolved_ncd_identifier = find_next_available_ncd_number(location_id) if resolved_ncd_identifier.blank?
+      # New assignment, or an explicit update to a different number. Either way go
+      # through the locked, uniqueness-checked allocator. PatientIdentifierService
+      # voids the patient's previous NCD identifier(s) when the value changes.
+      resolved_ncd_identifier = assign_ncd_number(patient_id, requested_ncd_identifier, location_id)
 
-      PatientIdentifierService.create(
-        patient_id:      patient_id,
-        identifier:      resolved_ncd_identifier,
-        identifier_type: 31,
-        location_id:     location_id
-      )
       record[:NcdID] = resolved_ncd_identifier
       record['NcdID'] = resolved_ncd_identifier
       record.delete(:needs_ncd_id)
@@ -173,27 +177,68 @@ module PatientRecordService
       log_and_fail("Failed to create NCD identifier", e)
     end
 
-    def find_next_available_ncd_number(location_id)
+    # Assign an NCD number to a patient under the allocation lock so two saves can
+    # never persist the same number. `requested` is the desired number (blank →
+    # auto-allocate); if it is already held by another patient (incl. voided) the
+    # next available number is used instead. Creating the identifier voids the
+    # patient's previous NCD number when the value changes (handles updates).
+    # Returns the assigned identifier string.
+    def assign_ncd_number(patient_id, requested, location_id)
+      with_ncd_number_lock do
+        candidate = requested.to_s.strip
+        candidate = find_next_available_ncd_number(location_id) if candidate.blank?
+
+        if ncd_number_taken_by_other?(candidate, patient_id)
+          Rails.logger.warn(
+            "[NCD] Requested NCD number #{candidate} already assigned; auto-assigning next available for patient #{patient_id}"
+          )
+          candidate = find_next_available_ncd_number(location_id)
+        end
+
+        PatientIdentifierService.create(
+          patient_id:      patient_id,
+          identifier:      candidate,
+          identifier_type: 31,
+          location_id:     location_id
+        )
+        candidate
+      end
+    end
+
+    # True when the NCD number is already assigned to a different patient.
+    # Uses `unscoped` so voided identifiers still count as taken — a voided NCD
+    # number must never be reused. Kept consistent with find_next_available_ncd_number.
+    def ncd_number_taken_by_other?(identifier, patient_id)
+      return false if identifier.blank?
+
+      PatientIdentifier.unscoped
+                       .where(identifier: identifier, identifier_type: 31)
+                       .where.not(patient_id: patient_id)
+                       .exists?
+    end
+
+    # Serialize NCD number allocation across concurrent saves (including parallel
+    # background jobs and web processes) using a MySQL server-wide named lock. The
+    # lock is held only for the check-and-insert critical section and always
+    # released. GET_LOCK returns 1 on success, 0 on timeout, NULL on error.
+    def with_ncd_number_lock
+      connection = ActiveRecord::Base.connection
+      lock_name  = connection.quote(NCD_NUMBER_LOCK_NAME)
+      acquired   = connection.select_value("SELECT GET_LOCK(#{lock_name}, #{NCD_NUMBER_LOCK_TIMEOUT})")
+      raise "Timed out acquiring NCD number allocation lock" unless acquired.to_i == 1
+
+      begin
+        yield
+      ensure
+        connection.select_value("SELECT RELEASE_LOCK(#{lock_name})")
+      end
+    end
+
+    def find_next_available_ncd_number(_location_id = nil)
       current_ncd_code = global_property("site_prefix")&.property_value
       raise 'Global property `site_prefix` not set' unless current_ncd_code
 
-      type                           = PatientIdentifierType.find_by_name('NCD Number')
-      raise 'Patient identifier type `NCD Number` not found' unless type
-
-      current_ncd_number_identifiers = PatientIdentifier.where(identifier_type: type.patient_identifier_type_id)
-
-      assigned_ncd_ids = current_ncd_number_identifiers&.filter_map do |identifier|
-        Regexp.last_match(1).to_i if identifier.identifier =~ /#{current_ncd_code}-NCD- *(\d+)/
-      end || []
-
-      if assigned_ncd_ids.empty?
-        next_available_number = 1
-      else
-        possible_number_range = global_property('ncd_number_range')&.property_value&.to_i || 100_000
-        next_available_number = (Array.new(possible_number_range) { |i| i + 1 } - assigned_ncd_ids.sort).first
-      end
-
-      "#{current_ncd_code}-NCD-#{next_available_number}"
+      "#{current_ncd_code}-NCD-#{PatientIdentifier.next_available_ncd_number(current_ncd_code)}"
     end
 
     def truthy?(value)

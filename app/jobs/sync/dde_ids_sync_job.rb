@@ -2,9 +2,11 @@
 module Sync
   class DdeIdsSyncJob < BaseSyncJob
     
-    TARGET_ID_COUNT = 50 # Always maintain exactly 50 unassigned IDs per facility
     FACILITIES_DB_NAME = 'facilities' # Name of the facilities database
-    CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
+    CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml'))) || {}
+    DEFAULT_TARGET_ID_COUNT = 200
+    configured_target_id_count = CONFIG['DDE_TARGET_ID_COUNT'].to_i
+    TARGET_ID_COUNT = configured_target_id_count.positive? ? configured_target_id_count : DEFAULT_TARGET_ID_COUNT
     DDE_LOCATION_ID = CONFIG['DDE_LOCATION_ID']
     
     # Sync DDE IDs to CouchDB for all DDE-activated facilities
@@ -13,11 +15,17 @@ module Sync
       program_id = 14 # OPD Program - adjust as needed
       normalized_batch_size = normalize_batch_size(batch_size)
       normalized_location_id = normalize_location_id(location_id)
-      
+
+      # Register a progress row up front so the sync dashboard always shows DDE,
+      # even when every facility is already at target and no IDs get appended
+      # (the per-facility append path is the only other place that registers).
+      SyncProgress.start(db_name, 0)
+
       begin
         dde_service = DdeService.new(program: Program.find(program_id))
       rescue ActiveRecord::RecordNotFound
         Sidekiq.logger.error "Program with ID #{program_id} not found. Cannot initialize DDE service."
+        SyncProgress.fail(db_name, "Program not found: #{program_id}")
         raise "Program not found: #{program_id}"
       end
       
@@ -33,6 +41,7 @@ module Sync
       if dde_facilities.empty?
         facility_filter = normalized_location_id.present? ? " for facility #{normalized_location_id}" : ''
         Sidekiq.logger.info "No DDE-activated facilities found#{facility_filter}. No sync needed."
+        SyncProgress.finish(db_name)
         return
       end
       
@@ -54,7 +63,8 @@ module Sync
         # Small delay between facilities to avoid overwhelming the DDE service
         sleep(1) if index < dde_facilities.length - 1
       end
-      
+
+      SyncProgress.finish(db_name)
       Sidekiq.logger.info "Completed DDE sync for all facilities at location #{DDE_LOCATION_ID}"
     end
     
