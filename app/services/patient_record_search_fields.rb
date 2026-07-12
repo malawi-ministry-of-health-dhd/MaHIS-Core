@@ -15,7 +15,10 @@ module PatientRecordSearchFields
     { name: 'idx_location_given_name_search', fields: ['location_id_search', 'given_name_search'] },
     { name: 'idx_location_family_name_search', fields: ['location_id_search', 'family_name_search'] },
     { name: 'idx_has_pending_nlims_orders', fields: ['has_pending_nlims_orders'] },
-    { name: 'idx_location_pending_dispensation', fields: ['location_id_search', 'has_pending_dispensation'] }
+    { name: 'idx_location_pending_dispensation', fields: ['location_id_search', 'has_pending_dispensation'] },
+    { name: 'idx_location_pending_lab_results', fields: ['location_id_search', 'has_pending_lab_results'] },
+    { name: 'idx_has_pending_lab_results', fields: ['has_pending_lab_results'] },
+    { name: 'idx_pending_lab_results_location', fields: ['pending_lab_results_location_id', 'has_pending_lab_results'] }
     # NCD dashboard indexes now live on the dedicated ncd_patient_index database
     # (see NcdService::NcdPatientIndex), not on patients_records.
   ].freeze
@@ -74,6 +77,8 @@ module PatientRecordSearchFields
     record['gender_search'] = normalize_text(gender)
     record['location_id_search'] = location_id.to_s.strip
     record['has_pending_dispensation'] = pending_dispensation?(record)
+    record['has_pending_lab_results'] = pending_lab_results?(record)
+    record['pending_lab_results_location_id'] = pending_lab_results_location_id(record)
     # NCD summary fields are no longer stamped onto patients_records documents.
     # They are projected into the dedicated ncd_patient_index database instead
     # (PatientRecordSearchFields.ncd_projection + NcdService::NcdPatientIndex).
@@ -142,6 +147,104 @@ module PatientRecordSearchFields
 
     quantity = fetch_value(order, :quantity)
     quantity.blank? || quantity.to_f <= 0
+  end
+
+  def lab_orders(record)
+    lab_order = fetch_value(record, :labOrders) || {}
+    Array(fetch_value(lab_order, :saved)) + Array(fetch_value(lab_order, :unsaved))
+  end
+
+  # Mirrors the frontend LabOrdersList "tests without results" rule: a patient
+  # is awaiting lab results when any lab order has a test with no result.
+  def pending_lab_results?(record)
+    pending_lab_orders(record).any?
+  end
+
+  def pending_lab_results_location_id(record)
+    pending_order = pending_lab_orders(record).max_by { |order| lab_order_timestamp(order) }
+    return '' unless pending_order
+
+    first_present(
+      lab_order_location_id(pending_order),
+      fetch_value(record, :location_id),
+      fetch_value(record, :deleted_location_id)
+    ).to_s.strip
+  end
+
+  def pending_lab_orders(record)
+    lab_orders(record).select { |order| pending_lab_order?(order) }
+  end
+
+  def pending_lab_order?(order)
+    return false if voided_lab_order?(order)
+
+    lab_order_tests(order).any? { |test| lab_test_without_result?(test, order) }
+  end
+
+  def lab_order_tests(order)
+    tests = fetch_value(order, :tests)
+    return tests if tests.is_a?(Array)
+
+    if tests.is_a?(String)
+      return tests.split(',').map { |name| { 'name' => name.strip } }.reject { |test| test['name'].blank? }
+    end
+
+    if tests.respond_to?(:each_pair)
+      return tests.map do |name, value|
+        value.respond_to?(:merge) ? value.merge('name' => name) : { 'name' => name }
+      end
+    end
+
+    first_present(fetch_value(order, :test_name), fetch_value(order, :test), fetch_value(order, :name)).present? ? [order] : []
+  end
+
+  def lab_test_without_result?(test, order = nil)
+    result = fetch_value(test, :result)
+    result = fetch_value(test, :results) if result.nil?
+    result = fetch_value(order, :result) if result.nil? && order
+    result = fetch_value(order, :results) if result.nil? && order
+    !result_has_value?(result)
+  end
+
+  def result_has_value?(result)
+    return false if result.nil?
+    return result.strip.present? if result.is_a?(String)
+    return !result.empty? if result.respond_to?(:empty?)
+
+    true
+  end
+
+  def voided_lab_order?(order)
+    fetch_value(order, :voided).to_i == 1 ||
+      fetch_value(order, :voided) == true ||
+      fetch_value(order, :status).to_s.casecmp('voided').zero? ||
+      fetch_value(order, :order_status).to_s.casecmp('voided').zero?
+  end
+
+  def lab_order_location_id(order)
+    encounter = fetch_hash(order, :encounter) || {}
+    first_present(
+      fetch_value(order, :location_id),
+      fetch_value(order, :locationId),
+      fetch_value(order, :encounter_location_id),
+      fetch_value(encounter, :location_id)
+    ).to_s.strip
+  end
+
+  def lab_order_timestamp(order)
+    value = first_present(
+      fetch_value(order, :order_date),
+      fetch_value(order, :start_date),
+      fetch_value(order, :date_created),
+      fetch_value(order, :encounter_date),
+      fetch_value(order, :date)
+    )
+    return Time.at(0) if value.blank?
+    return value.to_time if value.respond_to?(:to_time)
+
+    Time.zone.parse(value.to_s) || Time.at(0)
+  rescue StandardError
+    Time.at(0)
   end
 
   # Build a standalone NCD summary document for a patient record, suitable for
