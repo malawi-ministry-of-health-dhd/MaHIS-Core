@@ -41,9 +41,6 @@ module DrugOrderService
 
       pending_patients_sql = pending_dispensation_patients_sql(cutoff, location_id)
       pending_patient_rows_sql = pending_dispensation_patient_rows_sql(pending_patients_sql, search)
-      count = ActiveRecord::Base.connection.select_value(
-        "SELECT COUNT(*) FROM (#{pending_patient_rows_sql}) pending_patients"
-      ).to_i
 
       rows = ActiveRecord::Base.connection.select_all(
         <<~SQL
@@ -53,6 +50,19 @@ module DrugOrderService
           OFFSET #{offset}
         SQL
       )
+
+      # The awaiting-dispensation queue is small, so it almost always fits on a
+      # single page. In that case derive the total from the page we already have
+      # and skip the COUNT query, which would otherwise re-run the full (costly)
+      # pending-patients aggregation a second time.
+      count =
+        if page == 1 && rows.length < per_page
+          rows.length
+        else
+          ActiveRecord::Base.connection.select_value(
+            "SELECT COUNT(*) FROM (#{pending_patient_rows_sql}) pending_patients"
+          ).to_i
+        end
 
       {
         count:,
@@ -239,26 +249,40 @@ module DrugOrderService
       ]
     end
 
+    def dispensation_concept_ids
+      ConceptName.where(voided: 0)
+                 .where('UPPER(name) = ?', 'AMOUNT DISPENSED')
+                 .distinct
+                 .pluck(:concept_id)
+    end
+
     def pending_dispensation_patients_sql(cutoff, location_id)
       where_clauses = [
         'o.voided = 0',
         'e.voided = 0',
-        'o.start_date <= ?',
-        <<~SQL.squish
+        'o.start_date <= ?'
+      ]
+      binds = [TimeUtils.day_bounds(cutoff)[1]]
+
+      # An order is "dispensed" once it has a non-voided AMOUNT DISPENSED obs with
+      # a numeric value. Resolve the concept id(s) once so the per-order existence
+      # check is a direct, indexed obs lookup instead of joining to concept_name
+      # for every candidate order. When the concept is missing nothing counts as
+      # dispensed, matching the previous join's behaviour.
+      dispensed_concept_ids = dispensation_concept_ids
+      if dispensed_concept_ids.any?
+        where_clauses << <<~SQL.squish
           NOT EXISTS (
             SELECT 1
             FROM obs dispensation_obs
-            INNER JOIN concept_name cn
-              ON cn.concept_id = dispensation_obs.concept_id
-             AND cn.voided = 0
             WHERE dispensation_obs.order_id = o.order_id
               AND dispensation_obs.voided = 0
-              AND UPPER(cn.name) = ?
+              AND dispensation_obs.concept_id IN (?)
               AND dispensation_obs.value_numeric IS NOT NULL
           )
         SQL
-      ]
-      binds = [TimeUtils.day_bounds(cutoff)[1], 'AMOUNT DISPENSED']
+        binds << dispensed_concept_ids
+      end
 
       if location_id.present?
         where_clauses << 'e.location_id = ?'
