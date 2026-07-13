@@ -93,9 +93,9 @@ module Sync
         'description' => 'IMPOW Nutrition Program Drug Dosages (SFS, OTS, ITS)',
         'created_at' => Time.current.to_date.iso8601,
         'programs' => {
-          'SFS' => SFS_program_section,
+          'sfs' => SFS_program_section,
           'ots' => ots_program_section,
-          'ITS' => ITS_program_section
+          'its' => ITS_program_section
         },
         'views' => couchdb_views
       }
