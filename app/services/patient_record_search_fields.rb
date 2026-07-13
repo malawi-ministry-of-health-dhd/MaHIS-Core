@@ -16,6 +16,10 @@ module PatientRecordSearchFields
     { name: 'idx_location_family_name_search', fields: ['location_id_search', 'family_name_search'] },
     { name: 'idx_has_pending_nlims_orders', fields: ['has_pending_nlims_orders'] },
     { name: 'idx_location_pending_dispensation', fields: ['location_id_search', 'has_pending_dispensation'] },
+    { name: 'idx_pending_dispensation_full_name', fields: ['location_id_search', 'has_pending_dispensation', 'full_name_search'] },
+    { name: 'idx_pending_dispensation_full_name_middle', fields: ['location_id_search', 'has_pending_dispensation', 'full_name_with_middle_search'] },
+    { name: 'idx_pending_dispensation_given_name', fields: ['location_id_search', 'has_pending_dispensation', 'given_name_search'] },
+    { name: 'idx_pending_dispensation_family_name', fields: ['location_id_search', 'has_pending_dispensation', 'family_name_search'] },
     { name: 'idx_location_pending_lab_results', fields: ['location_id_search', 'has_pending_lab_results'] },
     { name: 'idx_has_pending_lab_results', fields: ['has_pending_lab_results'] },
     { name: 'idx_pending_lab_results_location', fields: ['pending_lab_results_location_id', 'has_pending_lab_results'] }
@@ -145,8 +149,7 @@ module PatientRecordSearchFields
     dispensation = fetch_value(order, :dispensation)
     return false if dispensation.present? && (!dispensation.respond_to?(:empty?) || !dispensation.empty?)
 
-    quantity = fetch_value(order, :quantity)
-    quantity.blank? || quantity.to_f <= 0
+    true
   end
 
   def lab_orders(record)
