@@ -13,6 +13,13 @@ module Api
         render json: paginate(drug_orders.includes(%i[order], drug: [:barcodes]))
       end
 
+      def awaiting_dispensation
+        filters = params.permit(:date, :location_id, :page, :per_page, :page_size, :search).to_h.symbolize_keys
+        filters[:location_id] = User.current&.location_id if filters[:location_id].blank?
+
+        render json: DrugOrderService.patients_awaiting_dispensation(filters)
+      end
+
       # POST /drug_orders
       #
       # Create drug orders in bulk

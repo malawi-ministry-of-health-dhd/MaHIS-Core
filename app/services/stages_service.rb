@@ -146,6 +146,17 @@ class StagesService
     broadcast_stage_update('stage_deleted', stage_data)
   end
 
+  # Key the CouchDB stage doc by identifier + program so a patient can hold one
+  # stage per program simultaneously (e.g. an open OPD stage AND an HTS stage
+  # after "Send to HTS"). Keying by identifier alone let each program's write
+  # clobber the other, dropping a stage from offline devices. Shared by the
+  # stages controller and VisitService so every stage write uses one scheme.
+  def couchdb_doc_id(data)
+    identifier = data[:identifier] || data[:patient_id]
+    program_id = data[:program_id]
+    program_id.present? ? "#{identifier}_#{program_id}" : identifier.to_s
+  end
+
   private
 
   def skipped_stage_payload(receipt, stage_params)
