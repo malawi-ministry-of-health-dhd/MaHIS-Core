@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 class ObservationService
+  OBS_COMMENTS_MAX_LENGTH = 255
+
   attr_accessor :records
 
   def initialize
@@ -38,6 +40,7 @@ class ObservationService
       obs_parameters[:encounter_id] = encounter.id
       obs_parameters[:location_id] = obs_parameters[:location_id] || User.current.location_id
       obs_parameters = obs_parameters.except("concept_name")
+      normalize_obs_comments!(obs_parameters)
       observation = Observation.create!(obs_parameters)
       validate_observation(observation)
       records << observation
@@ -71,5 +74,12 @@ class ObservationService
     error = InvalidParameterError.new('Could not create/update observation')
     error.model_errors = observation.errors
     raise error
+  end
+
+  def normalize_obs_comments!(obs_parameters)
+    comments = obs_parameters[:comments]
+    return if comments.blank?
+
+    obs_parameters[:comments] = comments.to_s.squish.truncate(OBS_COMMENTS_MAX_LENGTH, omission: '...')
   end
 end
