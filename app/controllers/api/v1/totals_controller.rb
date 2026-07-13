@@ -18,9 +18,7 @@ module Api
                                                                     :group).distinct.count('concept_name.concept_id'),
           total_specimens: Lab::ConceptsService.specimen_types.unscope(:select,
                                                                        :group).distinct.count('concept_name.concept_id'),
-          total_diagnosis: DiagnosisService.new.find_diagnosis({
-                                                                 id: ConceptName.find_by(name: 'Qech outpatient diagnosis list')&.concept_id, name: nil, count: true
-                                                               }),
+          total_diagnosis: diagnosis_count,
           total_facilities: Facility.all.count,
         }
       end
@@ -32,6 +30,13 @@ module Api
           .select('concept_name.concept_id')
           .group('concept_name.concept_id')
           .length
+      end
+
+      def diagnosis_count
+        concept_set_id = ConceptName.find_by(name: 'ICD-10 Volume 3 Diagnosis', voided: 0)&.concept_id
+        return 0 unless concept_set_id
+
+        ConceptSet.where(concept_set: concept_set_id).distinct.count(:concept_id)
       end
     end
   end

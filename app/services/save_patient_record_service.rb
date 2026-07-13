@@ -62,6 +62,11 @@ class SavePatientRecordService
     if couchdb_configured?
       patient_record["_id"] = patient_record["ID"]
       sync_to_couchdb(patient_record, "patients_records", "#{patient_record["ID"]}")
+      # Refresh the NCD read model synchronously so the live (REST) save path
+      # reflects NCD number assignment/updates immediately. The CouchDB changes
+      # listener only maintains this index for listener-processed docs, so a
+      # patient just given a number would otherwise linger in "Pending NCD".
+      refresh_ncd_patient_index(patient_record)
     end
     enqueue_dde_id_top_up(patient_record, record) if should_top_up_dde_ids && couchdb_configured?
 
@@ -69,6 +74,17 @@ class SavePatientRecordService
   end
 
   private
+
+  # Best-effort synchronous update of the ncd_patient_index projection for the
+  # saved record. Mirrors CouchdbChangesListener#maintain_ncd_patient_index for
+  # the REST path. Non-NCD records yield no projection and are skipped.
+  def refresh_ncd_patient_index(patient_record)
+    return unless NcdService::NcdPatientIndex.configured?
+
+    NcdService::NcdPatientIndex.upsert_records([patient_record])
+  rescue StandardError => e
+    Rails.logger.error("[NCD] Failed to refresh NCD patient index for #{patient_record['ID']}: #{e.message}")
+  end
 
   def extract_required_fields(record)
     RequiredFields.new(
