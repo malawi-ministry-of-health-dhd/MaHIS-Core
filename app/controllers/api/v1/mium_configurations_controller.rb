@@ -41,12 +41,18 @@ module Api
         login_payload = JSON.parse(login_response.body)
         unless login_payload['access_token'].present?
           error = login_payload['error'].presence || 'MIUM login did not return an access token'
-          return render json: { errors: [error] }, status: :unauthorized
+          # Bad_gateway (not unauthorized): this is a failure of OUR upstream MIUM
+          # service credentials, not the MaHIS user's session. The MaHIS client
+          # treats any 401 as its own session expiry and clears the stored EMR
+          # apiKey, which would log the user out mid-login.
+          return render json: { errors: [error] }, status: :bad_gateway
         end
 
         render json: login_payload, status: :ok
       rescue RestClient::Unauthorized
-        render json: { errors: ['MIUM service credentials are invalid'] }, status: :unauthorized
+        # See note above: surface bad MIUM service credentials as a gateway error,
+        # never 401, so the MaHIS client does not clear the EMR session.
+        render json: { errors: ['MIUM service credentials are invalid'] }, status: :bad_gateway
       rescue RestClient::ExceptionWithResponse => e
         render json: { errors: ["MIUM login failed: #{e.response&.code || e.class}"] },
                status: :bad_gateway
