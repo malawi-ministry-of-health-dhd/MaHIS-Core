@@ -5,9 +5,9 @@
 # ============================================================
 # Syncs all IMPOW (Integrated Management and Prevention of Oedema and Wasting)
 # program drugs to CouchDB, including:
-#   - SFP (Supplementary Feeding Services): RUSF, CSB+, CSB++
+#   - SFS (Supplementary Feeding Services): RUSF, CSB+, CSB++
 #   - OTS (Outpatient Therapeutic Services): RUTF, Amoxicillin, Albendazole, Mebendazole, Vitamin A, Measles-Rubella
-#   - NRU (Inpatient Therapeutic Service): F-75, F-100, RUTF
+#   - ITS (Inpatient Therapeutic Service): F-75, F-100, RUTF
 #
 # Creates both individual drug documents and a comprehensive reference document
 # with dosage protocols for all programs.
@@ -32,7 +32,7 @@ module Sync
     private
 
     def sync_impow_drugs(batch_size)
-      # Sync SFP drugs
+      # Sync SFS drugs
       sync_records_to_couchdb(Drug, DB_NAME, batch_size) do |model_class|
         model_class.find_all_by_concept_set('Supplementary Feeding Services')
       end
@@ -42,7 +42,7 @@ module Sync
         model_class.find_all_by_concept_set('Outpatient Therapeutic Services')
       end
 
-      # Sync NRU drugs
+      # Sync ITS drugs
       sync_records_to_couchdb(Drug, DB_NAME, batch_size) do |model_class|
         model_class.find_all_by_concept_set('Inpatient Therapeutic Service')
       end
@@ -90,36 +90,36 @@ module Sync
         '_id' => REFERENCE_DOC_ID,
         'type' => 'impow_drug_reference',
         'version' => '1.0.0',
-        'description' => 'IMPOW Nutrition Program Drug Dosages (SFP, OTS, NRU)',
+        'description' => 'IMPOW Nutrition Program Drug Dosages (SFS, OTS, ITS)',
         'created_at' => Time.current.to_date.iso8601,
         'programs' => {
-          'sfp' => sfp_program_section,
+          'SFS' => SFS_program_section,
           'ots' => ots_program_section,
-          'nru' => nru_program_section
+          'ITS' => ITS_program_section
         },
         'views' => couchdb_views
       }
     end
 
-    # ---- SFP (Supplementary Feeding Services) --------------------------
+    # ---- SFS (Supplementary Feeding Services) --------------------------
 
-    def sfp_program_section
+    def SFS_program_section
       concept_set = ConceptName.find_by(name: 'Supplementary Feeding Services')
 
       {
         'program_name' => 'Supplementary Feeding Services',
-        'program_code' => 'SFP',
+        'program_code' => 'SFS',
         'concept_set_id' => concept_set&.concept_id,
         'description' => 'Supplementary Feeding Program for moderate acute malnutrition',
         'drugs' => {
-          'rusf' => rusf_sfp_section,
+          'rusf' => rusf_SFS_section,
           'csb_plus' => csb_plus_section,
           'csb_plus_plus' => csb_plus_plus_section
         }
       }
     end
 
-    def rusf_sfp_section
+    def rusf_SFS_section
       build_simple_section('Ready-to-Use Supplementary Food (RUSF)', 'Supplementary Feeding Services')
     end
 
@@ -432,20 +432,20 @@ module Sync
       drugs.empty? ? [] : drugs
     end
 
-    # ---- NRU (Inpatient Therapeutic Service) ---------------------------
+    # ---- ITS (Inpatient Therapeutic Service) ---------------------------
 
-    def nru_program_section
+    def ITS_program_section
       concept_set = ConceptName.find_by(name: 'Inpatient Therapeutic Service')
 
       {
         'program_name' => 'Inpatient Therapeutic Service',
-        'program_code' => 'NRU',
+        'program_code' => 'ITS',
         'concept_set_id' => concept_set&.concept_id,
         'description' => 'Inpatient treatment for severe acute malnutrition with medical complications',
         'drugs' => {
           'f75' => f75_section,
           'f100' => f100_section,
-          'rutf_nru' => rutf_nru_section,
+          'rutf_ITS' => rutf_ITS_section,
           'malaria_drugs' => malaria_drugs_section,
           'vitamin_a' => vitamin_a_section,
           'deworming' => deworming_section,
@@ -486,11 +486,11 @@ module Sync
       )
     end
 
-    def rutf_nru_section
+    def rutf_ITS_section
       build_simple_section(
         'Ready-to-Use Therapeutic Food (RUTF)',
         'Inpatient Therapeutic Service',
-        { 'description' => 'Used during rehabilitation phase in NRU' }
+        { 'description' => 'Used during rehabilitation phase in ITS' }
       )
     end
 
@@ -590,7 +590,7 @@ module Sync
               'map' => 'function(doc) { if (doc.type === "impow_drug_reference" && doc.programs && doc.programs.ots && doc.programs.ots.drugs && doc.programs.ots.drugs.vitamin_a) { doc.programs.ots.drugs.vitamin_a.age_bands.forEach(function(b) { emit([b.min_age_months, b.max_age_months], { dose_iu: b.dose_iu, dose_description: b.dose_description }); }); } }'
             },
             'drugs_by_program' => {
-              'description' => 'Emits all drugs grouped by program (SFP, OTS, NRU)',
+              'description' => 'Emits all drugs grouped by program (SFS, OTS, ITS)',
               'map' => 'function(doc) { if (doc.type === "impow_drug_reference" && doc.programs) { for (var program in doc.programs) { emit(program, { program_name: doc.programs[program].program_name, drug_count: Object.keys(doc.programs[program].drugs || {}).length }); } } }'
             }
           }
