@@ -24,9 +24,6 @@ class LabResultsQueueService
       location_id = filters[:location_id].presence || User.current&.location_id
 
       pending_sql = pending_lab_results_patients_sql(location_id)
-      count = ActiveRecord::Base.connection.select_value(
-        "SELECT COUNT(*) FROM (#{pending_sql}) pending_lab_patients"
-      ).to_i
 
       rows = ActiveRecord::Base.connection.select_all(
         sanitize_sql_array([
@@ -61,6 +58,19 @@ class LabResultsQueueService
         ])
       )
 
+      # The awaiting-results queue is small, so it almost always fits on a single
+      # page. In that case derive the total from the page we already have and skip
+      # the COUNT query, which would otherwise re-run the full (costly) pending
+      # aggregation a second time.
+      count =
+        if page == 1 && rows.length < per_page
+          rows.length
+        else
+          ActiveRecord::Base.connection.select_value(
+            "SELECT COUNT(*) FROM (#{pending_sql}) pending_lab_patients"
+          ).to_i
+        end
+
       {
         count:,
         page:,
@@ -72,24 +82,38 @@ class LabResultsQueueService
     private
 
     def pending_lab_results_patients_sql(location_id)
+      # Resolve the lab order-type and result-concept id(s) once so the main scan
+      # can filter orders directly by order_type_id (indexed) and the per-order
+      # existence check is a direct, indexed obs lookup — instead of joining to
+      # order_type and concept_name for every candidate order.
+      order_type_ids = lab_order_type_ids
+      result_concept_ids = lab_result_concept_ids
+
+      # No configured lab order types means nothing can be a lab order.
+      return 'SELECT NULL AS patient_id WHERE 1 = 0' if order_type_ids.empty?
+
       where_clauses = [
         'lo.voided = 0',
         'e.voided = 0',
-        'ot.name IN (?)',
-        <<~SQL.squish
+        'lo.order_type_id IN (?)'
+      ]
+      binds = [order_type_ids]
+
+      # A lab order has results once it has a non-voided "Lab test result" obs.
+      # When the concept is missing nothing counts as resulted, matching the
+      # previous join's behaviour.
+      if result_concept_ids.any?
+        where_clauses << <<~SQL.squish
           NOT EXISTS (
             SELECT 1
             FROM obs result_obs
-            INNER JOIN concept_name cn
-              ON cn.concept_id = result_obs.concept_id
-             AND cn.voided = 0
             WHERE result_obs.order_id = lo.order_id
               AND result_obs.voided = 0
-              AND cn.name = ?
+              AND result_obs.concept_id IN (?)
           )
         SQL
-      ]
-      binds = [LAB_ORDER_TYPE_NAMES, LAB_RESULT_CONCEPT_NAME]
+        binds << result_concept_ids
+      end
 
       if location_id.present?
         where_clauses << 'e.location_id = ?'
@@ -105,7 +129,6 @@ class LabResultsQueueService
             GROUP_CONCAT(DISTINCT e.program_id ORDER BY e.program_id SEPARATOR ',') AS program_ids,
             GROUP_CONCAT(DISTINCT prg.name ORDER BY prg.name SEPARATOR ', ') AS program_names
           FROM orders lo
-          INNER JOIN order_type ot ON ot.order_type_id = lo.order_type_id
           INNER JOIN encounter e ON e.encounter_id = lo.encounter_id
           LEFT JOIN program prg ON prg.program_id = e.program_id
           WHERE #{where_clauses.join(' AND ')}
@@ -113,6 +136,14 @@ class LabResultsQueueService
         SQL
         *binds
       ])
+    end
+
+    def lab_order_type_ids
+      OrderType.where(name: LAB_ORDER_TYPE_NAMES).distinct.pluck(:order_type_id)
+    end
+
+    def lab_result_concept_ids
+      ConceptName.where(voided: 0, name: LAB_RESULT_CONCEPT_NAME).distinct.pluck(:concept_id)
     end
 
     def format_row(row)
