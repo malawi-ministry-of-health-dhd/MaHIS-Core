@@ -23,7 +23,7 @@ class Location < RetirableRecord
   def as_json(options = {})
       # Define the default inclusion for parent and district method
       default_includes = { parent: {} }
-      default_methods = %i[district]
+      default_methods = %i[district department_id]
       
       # Start with the standard serialization
       attributes_data = super(options.merge(
@@ -71,6 +71,31 @@ class Location < RetirableRecord
 
   def district
     city_village
+  end
+
+  DEPARTMENT_ATTRIBUTE_TYPE_NAME = 'Department'
+
+  # Id of the "Department" location attribute type (seeded once, id is stable).
+  # Memoized per-process; re-queries while absent so it self-heals after seeding.
+  def self.department_attribute_type_id
+    @department_attribute_type_id ||= LocationAttributeType
+                                      .where(name: DEPARTMENT_ATTRIBUTE_TYPE_NAME)
+                                      .pick(:location_attribute_type_id)
+  end
+
+  # The global department a ward belongs to (value is the department's
+  # location_id). Resolved only when location_attributes are already eager
+  # loaded, so serializing locations elsewhere never triggers an N+1.
+  def department_id
+    return nil unless association(:location_attributes).loaded?
+
+    type_id = self.class.department_attribute_type_id
+    return nil unless type_id
+
+    department_attribute = location_attributes.find do |attribute|
+      attribute.attribute_type_id == type_id && [nil, false, 0].include?(attribute.voided)
+    end
+    department_attribute&.value_reference
   end
 
   def site_id
