@@ -124,7 +124,7 @@ class LabResultsQueueService
         <<~SQL,
           SELECT
             lo.patient_id,
-            MAX(lo.start_date) AS encounter_datetime,
+            MAX(e.encounter_datetime) AS encounter_datetime,
             MAX(e.location_id) AS location_id,
             GROUP_CONCAT(DISTINCT e.program_id ORDER BY e.program_id SEPARATOR ',') AS program_ids,
             GROUP_CONCAT(DISTINCT prg.name ORDER BY prg.name SEPARATOR ', ') AS program_names
