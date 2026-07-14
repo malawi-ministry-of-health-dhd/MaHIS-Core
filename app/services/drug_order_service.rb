@@ -11,6 +11,12 @@ module DrugOrderService
 
   DATETIME_FIELDS = %i[start_date auto_expire_date discontinued_date].freeze
 
+  # The "awaiting dispensation" queue only looks this many days back (inclusive of
+  # the requested date). Prescriptions older than the window are treated as stale
+  # and dropped from the queue. This bounds the scan so the queue loads fast
+  # instead of scanning every undispensed order ever recorded at the location.
+  DISPENSATION_QUEUE_WINDOW_DAYS = 7
+
   class << self
     def find(filters)
       date = filters.delete(:date)&.to_date
@@ -257,12 +263,16 @@ module DrugOrderService
     end
 
     def pending_dispensation_patients_sql(cutoff, location_id)
+      window_start = TimeUtils.day_bounds(cutoff - (DISPENSATION_QUEUE_WINDOW_DAYS - 1).days)[0]
+      window_end = TimeUtils.day_bounds(cutoff)[1]
+
       where_clauses = [
         'o.voided = 0',
         'e.voided = 0',
+        'o.start_date >= ?',
         'o.start_date <= ?'
       ]
-      binds = [TimeUtils.day_bounds(cutoff)[1]]
+      binds = [window_start, window_end]
 
       # An order is "dispensed" once it has a non-voided AMOUNT DISPENSED obs with
       # a numeric value. Resolve the concept id(s) once so the per-order existence
