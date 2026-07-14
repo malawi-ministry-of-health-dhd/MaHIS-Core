@@ -15,7 +15,7 @@ module PatientRecordService
       unsaved = record.dig(:voidedDrugOders, :unsaved)
       return ok unless unsaved&.any?
 
-      dispensation_service = DispensationService.new
+      dispensation_service = DispensationService
       collected_errors = []
 
       unsaved.each do |entry|
