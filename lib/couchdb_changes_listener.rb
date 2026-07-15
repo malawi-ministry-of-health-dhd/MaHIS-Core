@@ -478,7 +478,7 @@ class CouchdbChangesListener
     mark_processing_failure(doc, e, source_rev: doc&.dig('_rev'))
   end
 
-  def process_document(doc)
+  def process_document(doc, reprocess_stale: true)
     return unless doc
     
     doc_id = doc['_id']
@@ -509,7 +509,14 @@ class CouchdbChangesListener
         raise "Patient record processing did not return a payload: #{processed_data.inspect}"
       end
       
-      unless update_couchdb_with_retry(doc_id, processed_data, source_rev: doc['_rev'])
+      update_result = update_couchdb_with_retry(doc_id, processed_data, source_rev: doc['_rev'])
+
+      if update_result == :stale && db_name == 'patients_records'
+        recover_stale_patient_record_update(doc_id, processed_data, reprocess_stale: reprocess_stale)
+        return true
+      end
+
+      unless update_result == true
         raise "Failed to mark CouchDB document #{doc_id} as processed"
       end
       
@@ -522,6 +529,53 @@ class CouchdbChangesListener
   def listener_location_for(doc)
     location_id = doc["location_id"].presence || doc[:location_id].presence
     Location.unscoped.find_by(location_id: location_id) || Location.current_health_center
+  end
+
+  def recover_stale_patient_record_update(doc_id, processed_data, reprocess_stale:)
+    current_doc = fetch_current_document(doc_id)
+
+    if reprocess_stale && unprocessed_listener_document?(current_doc)
+      Rails.logger.warn(
+        "[CouchDB Listener] Reprocessing latest revision for #{doc_id} in #{db_name} " \
+        "after stale update"
+      )
+      process_document(current_doc, reprocess_stale: false)
+    elsif current_doc&.dig("processed_by_listener") != true
+      raise "Failed to mark CouchDB document #{doc_id} as processed"
+    end
+
+    true_up_patient_lab_orders_after_stale_update(doc_id, processed_data, current_doc)
+  end
+
+  def true_up_patient_lab_orders_after_stale_update(doc_id, processed_data, current_doc)
+    patient_id = processed_data["patientID"] || processed_data[:patientID] ||
+                 processed_data["patient_id"] || processed_data[:patient_id] ||
+                 current_doc&.dig("patientID") || current_doc&.dig("patient_id")
+    return true if patient_id.blank?
+
+    lab_orders_data = BuildPatientRecordService.build_lab_orders_data(patient_id).as_json
+    document_id = (processed_data["ID"] || processed_data[:ID] || current_doc&.dig("ID") || doc_id).to_s
+
+    unless update_couchdb_patient_lab_orders_only(document_id, lab_orders_data)
+      raise "Failed to true-up labOrders for patient CouchDB document #{document_id}"
+    end
+  end
+
+  def update_couchdb_patient_lab_orders_only(document_id, lab_orders_data, attempt = 1)
+    current_doc = fetch_current_document(document_id)
+    return false unless current_doc
+
+    current_doc["labOrders"] = lab_orders_data
+    update_couchdb_document_direct(document_id, current_doc)
+  rescue RestClient::Conflict, RestClient::PreconditionFailed
+    raise if attempt >= config[:max_retry_attempts]
+
+    Rails.logger.warn(
+      "[CouchDB Listener] Conflict trueing up labOrders for #{document_id}; " \
+      "retrying attempt #{attempt + 1}/#{config[:max_retry_attempts]}"
+    )
+    sleep(0.5 * (2 ** (attempt - 1)))
+    update_couchdb_patient_lab_orders_only(document_id, lab_orders_data, attempt + 1)
   end
 
   def update_couchdb_with_retry(doc_id, processed_data, attempt = 1, source_rev: nil)
@@ -542,7 +596,7 @@ class CouchdbChangesListener
 
       if source_rev.present? && current_doc["_rev"] != source_rev
         Rails.logger.warn("[CouchDB Listener] Document #{doc_id} in #{db_name} changed while processing; skipping stale listener update")
-        return false
+        return :stale
       end
       
       updated_doc = current_doc.dup
