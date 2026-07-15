@@ -16,6 +16,16 @@ module DrugOrderService
   # and dropped from the queue. This bounds the scan so the queue loads fast
   # instead of scanning every undispensed order ever recorded at the location.
   DISPENSATION_QUEUE_WINDOW_DAYS = 7
+  FREQUENCY_DAILY_DOSES = {
+    'OD' => 1,
+    'BD' => 2,
+    'TDS' => 3,
+    'QID' => 4,
+    'QDS' => 4,
+    'NOCTE' => 1,
+    'STAT' => 1,
+    'WEEKLY' => 1
+  }.freeze
 
   class << self
     def find(filters)
@@ -44,6 +54,8 @@ module DrugOrderService
       location_id = filters[:location_id].presence || User.current&.location_id
       search = filters[:search].to_s.strip
       search = '' if search.match?(/\A(undefined|null)\z/i)
+
+      repair_missing_drug_order_rows(cutoff:, location_id:)
 
       pending_patients_sql = pending_dispensation_patients_sql(cutoff, location_id)
       pending_patient_rows_sql = pending_dispensation_patient_rows_sql(pending_patients_sql, search)
@@ -79,9 +91,20 @@ module DrugOrderService
     end
 
     def fetch_all_patient_drug_orders(patient_id)
+      repair_missing_drug_order_rows(patient_id:)
+
       # Quote patient ID for SQL safety
       quoted_patient_id = ActiveRecord::Base.connection.quote(patient_id)
-    
+
+      # An order is dispensed once it has a non-voided AMOUNT DISPENSED obs with
+      # a positive numeric value - the same rule the online awaiting-dispensation queue uses
+      # (see pending_dispensation_patients_sql). Stamping the flag here lets the
+      # offline record know a synced order was already dispensed online, so the
+      # offline has_pending_dispensation flag matches the online queue. When the
+      # concept is missing nothing counts as dispensed, matching the online query.
+      dispensed_concept_ids = dispensation_concept_ids
+      dispensed_ids_sql = dispensed_concept_ids.any? ? dispensed_concept_ids.join(',') : 'NULL'
+
       # Query to fetch all drug orders for the patient
       medication = ActiveRecord::Base.connection.select_all <<-SQL
         SELECT
@@ -99,7 +122,15 @@ module DrugOrderService
           t.dose AS dose,
           t.units AS units,
           t.equivalent_daily_dose AS equivalent_daily_dose,
-          e.program_id AS program_id
+          e.program_id AS program_id,
+          EXISTS (
+            SELECT 1
+            FROM obs dispensation_obs
+            WHERE dispensation_obs.order_id = o.order_id
+              AND dispensation_obs.voided = 0
+              AND dispensation_obs.concept_id IN (#{dispensed_ids_sql})
+              AND dispensation_obs.value_numeric > 0
+          ) AS dispensed
         FROM orders o
         INNER JOIN drug_order t ON o.order_id = t.order_id
         INNER JOIN drug d ON d.drug_id = t.drug_inventory_id
@@ -108,7 +139,7 @@ module DrugOrderService
           AND o.patient_id = #{quoted_patient_id}
         ORDER BY e.program_id ASC, e.encounter_datetime DESC;
       SQL
-    
+
       # Transform the result into an array of drug orders with all fields
       medication.map do |m|
         {
@@ -126,7 +157,8 @@ module DrugOrderService
           dose: m['dose'],
           units: m['units'],
           equivalent_daily_dose: m['equivalent_daily_dose'],
-          program_id: m['program_id']
+          program_id: m['program_id'],
+          dispensed: m['dispensed'].to_i == 1
         }
       end
     rescue StandardError => e
@@ -193,7 +225,118 @@ module DrugOrderService
       end
     end
 
+    def repair_missing_drug_order_rows(patient_id: nil, cutoff: nil, location_id: nil)
+      repaired = 0
+
+      orphan_drug_orders_scope(patient_id:, cutoff:, location_id:).find_each do |order|
+        next if DrugOrder.exists?(order_id: order.order_id)
+
+        drug = matching_drug_for_order(order)
+        next unless drug
+
+        DrugOrder.create!(drug_order_attributes_for(order, drug))
+        repaired += 1
+      rescue ActiveRecord::RecordNotUnique
+        next
+      end
+
+      repaired
+    end
+
     private
+
+    def orphan_drug_orders_scope(patient_id:, cutoff:, location_id:)
+      scope = Order
+        .joins(:encounter)
+        .joins('LEFT JOIN drug_order missing_drug_order ON missing_drug_order.order_id = orders.order_id')
+        .where('orders.voided = 0')
+        .where('encounter.voided = 0')
+        .where('missing_drug_order.order_id IS NULL')
+        .where(
+          'EXISTS (
+            SELECT 1
+            FROM drug orphan_drug
+            WHERE orphan_drug.concept_id = orders.concept_id
+              AND orphan_drug.retired = 0
+          )'
+        )
+
+      scope = scope.where('orders.patient_id = ?', patient_id) if patient_id.present?
+      scope = scope.where('encounter.location_id = ?', location_id) if location_id.present?
+
+      if cutoff.present?
+        window_start = TimeUtils.day_bounds(cutoff - (DISPENSATION_QUEUE_WINDOW_DAYS - 1).days)[0]
+        window_end = TimeUtils.day_bounds(cutoff)[1]
+        scope = scope.where(
+          '((orders.start_date >= ? AND orders.start_date <= ?)
+            OR (orders.start_date IS NULL AND encounter.encounter_datetime >= ? AND encounter.encounter_datetime <= ?))',
+          window_start,
+          window_end,
+          window_start,
+          window_end
+        )
+      end
+
+      scope
+    end
+
+    def matching_drug_for_order(order)
+      drugs = Drug.where(concept_id: order.concept_id).order(:drug_id).to_a
+      return if drugs.empty?
+
+      instruction_drug_name = order.instructions.to_s.split(':', 2).first
+      normalized_instruction_name = normalize_drug_name(instruction_drug_name)
+      drugs.find { |drug| normalize_drug_name(drug.name) == normalized_instruction_name } || drugs.first
+    end
+
+    def normalize_drug_name(name)
+      name.to_s.downcase.gsub(/\s+/, ' ').strip
+    end
+
+    def drug_order_attributes_for(order, drug)
+      parsed_instructions = parse_drug_order_instructions(order.instructions)
+
+      {
+        order_id: order.order_id,
+        drug_inventory_id: drug.drug_id,
+        dose: parsed_instructions[:dose],
+        frequency: parsed_instructions[:frequency],
+        prn: 0,
+        units: parsed_instructions[:units].presence || drug.units,
+        equivalent_daily_dose: parsed_instructions[:equivalent_daily_dose] || 1,
+        quantity: dispensed_quantity_for_order(order.order_id)
+      }
+    end
+
+    def parse_drug_order_instructions(instructions)
+      body = instructions.to_s.split(':', 2).last.to_s
+      match = body.match(
+        /\A\s*(?<dose>\d+(?:\.\d+)?)\s*(?<units>.*?)\s+(?<frequency>OD|BD|TDS|QID|QDS|NOCTE|STAT|WEEKLY)\b/i
+      )
+      return {} unless match
+
+      dose = match[:dose].to_f
+      frequency = match[:frequency].upcase
+      multiplier = FREQUENCY_DAILY_DOSES[frequency]
+
+      {
+        dose:,
+        units: match[:units].to_s.strip.presence,
+        frequency:,
+        equivalent_daily_dose: multiplier ? dose * multiplier : nil
+      }
+    end
+
+    def dispensed_quantity_for_order(order_id)
+      concept_ids = dispensation_concept_ids
+      return 0 if concept_ids.empty?
+
+      Observation
+        .where(order_id:, voided: 0, concept_id: concept_ids)
+        .where('value_numeric > 0')
+        .sum(:value_numeric)
+        .to_i
+    end
 
     def pending_dispensation_patient_rows_sql(pending_patients_sql, search)
       search_clause, search_binds = pending_dispensation_patient_search_clause(search)
@@ -265,20 +408,19 @@ module DrugOrderService
     def pending_dispensation_patients_sql(cutoff, location_id)
       window_start = TimeUtils.day_bounds(cutoff - (DISPENSATION_QUEUE_WINDOW_DAYS - 1).days)[0]
       window_end = TimeUtils.day_bounds(cutoff)[1]
+      queue_datetime = 'COALESCE(o.start_date, e.encounter_datetime)'
 
       where_clauses = [
         'o.voided = 0',
         'e.voided = 0',
-        'o.start_date >= ?',
-        'o.start_date <= ?'
+        'COALESCE(drdo.quantity, 0) <= 0',
+        '((o.start_date >= ? AND o.start_date <= ?) OR (o.start_date IS NULL AND e.encounter_datetime >= ? AND e.encounter_datetime <= ?))'
       ]
-      binds = [window_start, window_end]
+      binds = [window_start, window_end, window_start, window_end]
 
-      # An order is "dispensed" once it has a non-voided AMOUNT DISPENSED obs with
-      # a numeric value. Resolve the concept id(s) once so the per-order existence
-      # check is a direct, indexed obs lookup instead of joining to concept_name
-      # for every candidate order. When the concept is missing nothing counts as
-      # dispensed, matching the previous join's behaviour.
+      # An order is dispensed once it has a non-voided AMOUNT DISPENSED obs with
+      # a positive numeric value. Zero-quantity observations can exist for failed
+      # or out-of-stock attempts and should leave the order in the queue.
       dispensed_concept_ids = dispensation_concept_ids
       if dispensed_concept_ids.any?
         where_clauses << <<~SQL.squish
@@ -288,7 +430,7 @@ module DrugOrderService
             WHERE dispensation_obs.order_id = o.order_id
               AND dispensation_obs.voided = 0
               AND dispensation_obs.concept_id IN (?)
-              AND dispensation_obs.value_numeric IS NOT NULL
+              AND dispensation_obs.value_numeric > 0
           )
         SQL
         binds << dispensed_concept_ids
@@ -303,7 +445,7 @@ module DrugOrderService
         <<~SQL,
           SELECT
             o.patient_id,
-            MAX(o.start_date) AS encounter_datetime,
+            MAX(#{queue_datetime}) AS encounter_datetime,
             MAX(e.location_id) AS location_id,
             GROUP_CONCAT(DISTINCT e.program_id ORDER BY e.program_id SEPARATOR ',') AS program_ids,
             GROUP_CONCAT(DISTINCT prg.name ORDER BY prg.name SEPARATOR ', ') AS program_names

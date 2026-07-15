@@ -30,8 +30,12 @@ module PatientRecordService
               payload: void_obj,
               target_type: 'DrugOrder'
             ) do
-              drug_order = DrugOrder.find(drug_order_id)
+              drug_order = DrugOrder.includes(:order).find(drug_order_id)
+              reason = void_obj[:reason].presence || 'Voided from patient record'
+
               dispensation_service.void_dispensations(drug_order)
+              drug_order.order&.void(reason)
+
               { target_type: 'DrugOrder', target_id: drug_order_id }
             end
 

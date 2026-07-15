@@ -16,6 +16,10 @@ class LabResultsQueueService
   ].freeze
   LAB_RESULT_CONCEPT_NAME = Lab::Metadata::TEST_RESULT_CONCEPT_NAME
 
+  # Only surface patients whose pending lab orders are from the last week; older
+  # unresulted orders are handled elsewhere and would otherwise bloat the queue.
+  PENDING_WINDOW_DAYS = 7
+
   class << self
     def patients_awaiting_results(filters = {})
       page = positive_integer(filters[:page], 1)
@@ -98,6 +102,10 @@ class LabResultsQueueService
         'lo.order_type_id IN (?)'
       ]
       binds = [order_type_ids]
+
+      # Restrict to orders placed within the pending window (last 7 days).
+      where_clauses << 'e.encounter_datetime >= ?'
+      binds << PENDING_WINDOW_DAYS.days.ago
 
       # A lab order has results once it has a non-voided "Lab test result" obs.
       # When the concept is missing nothing counts as resulted, matching the
