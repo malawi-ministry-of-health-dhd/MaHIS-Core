@@ -26,40 +26,19 @@ class LabResultsQueueService
       per_page = positive_integer(filters[:per_page] || filters[:page_size], 1000)
       offset = (page - 1) * per_page
       location_id = filters[:location_id].presence || User.current&.location_id
+      search = filters[:search].to_s.strip
+      search = '' if search.match?(/\A(undefined|null)\z/i)
 
       pending_sql = pending_lab_results_patients_sql(location_id)
+      rows_sql = pending_lab_results_patient_rows_sql(pending_sql, search)
 
       rows = ActiveRecord::Base.connection.select_all(
-        sanitize_sql_array([
-          <<~SQL
-            SELECT
-              pending.patient_id,
-              pending.encounter_datetime,
-              pending.location_id,
-              pending.program_ids,
-              pending.program_names,
-              pe.gender,
-              pn.given_name,
-              pn.family_name
-            FROM (#{pending_sql}) pending
-            INNER JOIN patient p ON p.patient_id = pending.patient_id
-            INNER JOIN person pe ON pe.person_id = p.patient_id AND pe.voided = 0
-            LEFT JOIN person_name pn
-              ON pn.person_id = pe.person_id
-             AND pn.voided = 0
-             AND pn.person_name_id = (
-               SELECT pn2.person_name_id
-               FROM person_name pn2
-               WHERE pn2.person_id = pe.person_id
-                 AND pn2.voided = 0
-               ORDER BY pn2.date_created DESC, pn2.person_name_id DESC
-               LIMIT 1
-             )
-            ORDER BY pending.encounter_datetime DESC
-            LIMIT #{per_page}
-            OFFSET #{offset}
-          SQL
-        ])
+        <<~SQL
+          #{rows_sql}
+          ORDER BY encounter_datetime DESC
+          LIMIT #{per_page}
+          OFFSET #{offset}
+        SQL
       )
 
       # The awaiting-results queue is small, so it almost always fits on a single
@@ -71,7 +50,7 @@ class LabResultsQueueService
           rows.length
         else
           ActiveRecord::Base.connection.select_value(
-            "SELECT COUNT(*) FROM (#{pending_sql}) pending_lab_patients"
+            "SELECT COUNT(*) FROM (#{rows_sql}) pending_lab_patients"
           ).to_i
         end
 
@@ -84,6 +63,66 @@ class LabResultsQueueService
     end
 
     private
+
+    def pending_lab_results_patient_rows_sql(pending_sql, search)
+      search_clause, search_binds = pending_lab_results_patient_search_clause(search)
+
+      sanitize_sql_array([
+        <<~SQL,
+          SELECT
+            pending.patient_id,
+            pending.encounter_datetime,
+            pending.location_id,
+            pending.program_ids,
+            pending.program_names,
+            pe.gender,
+            pn.given_name,
+            pn.family_name
+          FROM (#{pending_sql}) pending
+          INNER JOIN patient p ON p.patient_id = pending.patient_id
+          INNER JOIN person pe ON pe.person_id = p.patient_id AND pe.voided = 0
+          LEFT JOIN person_name pn
+            ON pn.person_id = pe.person_id
+           AND pn.voided = 0
+           AND pn.person_name_id = (
+             SELECT pn2.person_name_id
+             FROM person_name pn2
+             WHERE pn2.person_id = pe.person_id
+               AND pn2.voided = 0
+             ORDER BY pn2.date_created DESC, pn2.person_name_id DESC
+             LIMIT 1
+           )
+          WHERE 1 = 1
+            #{search_clause}
+        SQL
+        *search_binds
+      ])
+    end
+
+    def pending_lab_results_patient_search_clause(search)
+      return ['', []] if search.blank?
+
+      escaped_search = ActiveRecord::Base.sanitize_sql_like(search.downcase)
+      name_like = "%#{escaped_search}%"
+      identifier_like = "%#{ActiveRecord::Base.sanitize_sql_like(search)}%"
+
+      [
+        <<~SQL.squish,
+          AND (
+            LOWER(CONCAT(COALESCE(pn.given_name, ''), ' ', COALESCE(pn.family_name, ''))) LIKE ?
+            OR CAST(pending.patient_id AS CHAR) LIKE ?
+            OR EXISTS (
+              SELECT 1
+              FROM patient_identifier pi
+              WHERE pi.patient_id = pending.patient_id
+                AND pi.voided = 0
+                AND LOWER(pi.identifier) LIKE ?
+            )
+          )
+        SQL
+        [name_like, identifier_like, identifier_like.downcase]
+      ]
+    end
 
     def pending_lab_results_patients_sql(location_id)
       # Resolve the lab order-type and result-concept id(s) once so the main scan
