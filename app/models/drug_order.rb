@@ -42,6 +42,8 @@ class DrugOrder < ApplicationRecord
   # Calculates the duration which the current drugs may last
   # given the equivalent daily dose
   def quantity_duration
+    return 0 if equivalent_daily_dose.nil? || equivalent_daily_dose.zero?
+
     duration = quantity / equivalent_daily_dose
     duration *= 7 if weekly_dose?
 

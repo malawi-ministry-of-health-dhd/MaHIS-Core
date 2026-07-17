@@ -62,7 +62,7 @@ class LabAccessionNumberPoolService
     date = Date.current
     reserved_at = Time.current.iso8601
 
-    next_accession_numbers(date, facility_prefix, count).map do |accession_number|
+    documents = next_accession_numbers(date, facility_prefix, count).map do |accession_number|
       {
         '_id' => accession_number,
         'type' => DOC_TYPE,
@@ -76,6 +76,17 @@ class LabAccessionNumberPoolService
         'reservation_source' => 'api'
       }
     end
+
+    # Persist the reservation to the server's CouchDB so the accession
+    # lifecycle is tracked server-side. Without this the server never learns a
+    # number was reserved (the device's local reserved/used state is pull-only
+    # and never pushed back), so validate_usable! and consume! cannot see the
+    # reservation when the lab order later syncs up. Doc _id is the unique
+    # accession number, so re-issued numbers surface as conflicts rather than
+    # duplicates. No-ops when CouchDB is not configured.
+    append_documents(documents)
+
+    documents
   end
 
   def validate_usable!(accession_number:, offline_id:, location_id:)
@@ -91,9 +102,17 @@ class LabAccessionNumberPoolService
     end
 
     status = doc['status'].to_s
-    if status == 'available'
-      raise AccessionPoolError, "Accession number #{accession_number} has not been reserved by a device"
-    end
+    # The server has no reliable record of which numbers a device reserved:
+    # reserve_for_device returns reserved docs in the API response but never
+    # writes them to the server's CouchDB, and the device's local
+    # reserved/used state is never pushed back (the lab_accession_numbers DB
+    # replicates server -> device only). So a legitimately-used number can
+    # still read 'available' on the server (e.g. it came from the top-up pool,
+    # or the counter was reset by a reseed). Allow 'available' through rather
+    # than rejecting the order: consume! (called immediately after the order is
+    # created) stamps used_by_offline_id, and the 'consumed' branch below
+    # rejects any number already consumed by a *different* offline order, so
+    # cross-device collisions are still caught where a server doc exists.
 
     if status == 'consumed'
       return true if offline_id.present? && doc['used_by_offline_id'].to_s == offline_id.to_s
