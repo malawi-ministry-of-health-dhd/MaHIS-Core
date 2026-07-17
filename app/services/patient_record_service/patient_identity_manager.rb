@@ -8,44 +8,57 @@ module PatientRecordService
     NCD_NUMBER_LOCK_TIMEOUT = 10
 
     def save_person_information(record)
-      if record[:personInformation] && record[:saveStatusPersonInformation] == 'pending'
-        incoming_identifier = extract_incoming_identifier(record)
-        location_id         = extract_location_id(record)
-        patient             = find_patient_by_identifier(incoming_identifier)
-
-        if patient.blank?
-          person  = create_person(record[:personInformation])
-          patient = create_patient(person.person_id, record)
-        end
-
-        patient_id = patient.patient_id
-        identifier = ensure_primary_identifier(patient, incoming_identifier, location_id)
-        other_person_information = record[:otherPersonInformation] || record['otherPersonInformation'] || {}
-
-        created_ids = create_ids(other_person_information, patient_id, location_id)
-        mark_ichis_enrolled_in_care(record) if created_ids[:ichis_id_saved]
-
-        # MAHIS -> iCHIS identifier sync is handled asynchronously after save.
-
-        create_encounter(patient_id, 5, record)
-
-        record[:ID]                          = identifier
-        record[:patientID]                   = patient_id
-        record[:saveStatusPersonInformation] = 'complete'
-
-        return { patient_id: patient_id, id: identifier }
-      end
+      return register_patient!(record) if record[:personInformation] && record[:saveStatusPersonInformation] == 'pending'
 
       existing_patient_id = record[:patientID]
-      return { patient_id: existing_patient_id, id: record[:ID] } if existing_patient_id.blank?
+      patient = Patient.unscoped.find_by(patient_id: existing_patient_id) if existing_patient_id.present?
 
-      patient = Patient.unscoped.find_by(patient_id: existing_patient_id)
+      # No patient row backs this record yet. If it still carries person
+      # information, it was never committed as 'pending' (e.g. a dependent
+      # captured mid-registration) yet already syncs clinical data such as
+      # orders and dispensation. Register it now so that data attaches to a real
+      # patient instead of a phantom patient_id that later dereferences to nil.
+      return register_patient!(record) if patient.blank? && record[:personInformation].present?
+
+      return { patient_id: existing_patient_id, id: record[:ID] } if existing_patient_id.blank?
       return { patient_id: existing_patient_id, id: record[:ID] } if patient.blank?
 
       healed_identifier = ensure_primary_identifier(patient, extract_incoming_identifier(record), extract_location_id(record))
       record[:ID] = healed_identifier if healed_identifier.present?
 
       { patient_id: existing_patient_id, id: healed_identifier }
+    end
+
+    # Creates (or finds) the Person + Patient for a record and finalises its
+    # registration: primary identifier, secondary ids, and the registration
+    # encounter. Used both for records the client marked 'pending' and for
+    # records that reached sync carrying clinical data but no backing patient.
+    def register_patient!(record)
+      incoming_identifier = extract_incoming_identifier(record)
+      location_id         = extract_location_id(record)
+      patient             = find_patient_by_identifier(incoming_identifier)
+
+      if patient.blank?
+        person  = create_person(record[:personInformation])
+        patient = create_patient(person.person_id, record)
+      end
+
+      patient_id = patient.patient_id
+      identifier = ensure_primary_identifier(patient, incoming_identifier, location_id)
+      other_person_information = record[:otherPersonInformation] || record['otherPersonInformation'] || {}
+
+      created_ids = create_ids(other_person_information, patient_id, location_id)
+      mark_ichis_enrolled_in_care(record) if created_ids[:ichis_id_saved]
+
+      # MAHIS -> iCHIS identifier sync is handled asynchronously after save.
+
+      create_encounter(patient_id, 5, record)
+
+      record[:ID]                          = identifier
+      record[:patientID]                   = patient_id
+      record[:saveStatusPersonInformation] = 'complete'
+
+      { patient_id: patient_id, id: identifier }
     end
 
     def create_person(person_info)

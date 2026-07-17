@@ -81,8 +81,11 @@ module PatientRecordSearchFields
     record['gender_search'] = normalize_text(gender)
     record['location_id_search'] = location_id.to_s.strip
     record['has_pending_dispensation'] = pending_dispensation?(record)
+    record['pending_dispensation_location_id'] = pending_dispensation_location_id(record)
+    record['pending_dispensation_last_order_date'] = pending_dispensation_last_order_date(record)
     record['has_pending_lab_results'] = pending_lab_results?(record)
     record['pending_lab_results_location_id'] = pending_lab_results_location_id(record)
+    record['pending_lab_results_last_order_date'] = pending_lab_results_last_order_date(record)
     # NCD summary fields are no longer stamped onto patients_records documents.
     # They are projected into the dedicated ncd_patient_index database instead
     # (PatientRecordSearchFields.ncd_projection + NcdService::NcdPatientIndex).
@@ -152,6 +155,77 @@ module PatientRecordSearchFields
     true
   end
 
+  def pending_medication_orders(record)
+    medication_orders(record).select { |order| pending_medication_order?(order) }
+  end
+
+  # Mirrors the frontend pendingDispensationLocationId: a patient awaiting
+  # dispensation belongs to the location where their most recent pending
+  # medication order was placed, falling back to the record's own location.
+  def pending_dispensation_location_id(record)
+    pending_order = pending_medication_orders(record).max_by { |order| medication_order_timestamp(order) }
+    return '' unless pending_order
+
+    first_present(
+      medication_order_location_id(pending_order),
+      fetch_value(record, :location_id),
+      fetch_value(record, :deleted_location_id)
+    ).to_s.strip
+  end
+
+  # Most recent pending medication order date (YYYY-MM-DD). Lets the offline
+  # awaiting-dispensation query apply the same rolling window as the online
+  # queue. Mirrors the frontend pendingDispensationLastOrderDate (no sentinel).
+  def pending_dispensation_last_order_date(record)
+    dates = pending_medication_orders(record).map { |order| medication_order_start_date(order) }.reject(&:blank?)
+    return '' if dates.empty?
+
+    dates.max
+  end
+
+  def medication_order_location_id(order)
+    nested = fetch_hash(order, :order) || {}
+    encounter = fetch_hash(order, :encounter) || {}
+    location = fetch_hash(order, :location) || {}
+    first_present(
+      fetch_value(order, :location_id),
+      fetch_value(order, :locationId),
+      fetch_value(order, :encounter_location_id),
+      fetch_value(encounter, :location_id),
+      fetch_value(encounter, :locationId),
+      fetch_value(nested, :location_id),
+      fetch_value(nested, :locationId),
+      fetch_value(location, :location_id)
+    ).to_s.strip
+  end
+
+  def medication_order_start_date(order)
+    nested = fetch_hash(order, :order) || {}
+    value = first_present(
+      fetch_value(order, :start_date),
+      fetch_value(nested, :start_date),
+      fetch_value(order, :encounter_date),
+      fetch_value(order, :date_created)
+    )
+    value.to_s[0, 10]
+  end
+
+  def medication_order_timestamp(order)
+    nested = fetch_hash(order, :order) || {}
+    value = first_present(
+      fetch_value(order, :start_date),
+      fetch_value(nested, :start_date),
+      fetch_value(order, :encounter_date),
+      fetch_value(order, :date_created)
+    )
+    return Time.at(0) if value.blank?
+    return value.to_time if value.respond_to?(:to_time)
+
+    Time.zone.parse(value.to_s) || Time.at(0)
+  rescue StandardError
+    Time.at(0)
+  end
+
   def lab_orders(record)
     lab_order = fetch_value(record, :labOrders) || {}
     Array(fetch_value(lab_order, :saved)) + Array(fetch_value(lab_order, :unsaved))
@@ -172,6 +246,32 @@ module PatientRecordSearchFields
       fetch_value(record, :location_id),
       fetch_value(record, :deleted_location_id)
     ).to_s.strip
+  end
+
+  # Most recent pending lab order date (YYYY-MM-DD). Lets the offline
+  # awaiting-lab-results query apply the same rolling window as the online
+  # queue. Mirrors the frontend pendingLabResultsLastOrderDate: when the record
+  # is pending but carries no usable order date we stamp a far-future sentinel
+  # so genuinely pending work is never silently hidden by the window filter.
+  def pending_lab_results_last_order_date(record)
+    orders = pending_lab_orders(record)
+    return '' if orders.empty?
+
+    dates = orders.map { |order| lab_order_start_date(order) }.reject(&:blank?)
+    return '9999-12-31' if dates.empty?
+
+    dates.max
+  end
+
+  def lab_order_start_date(order)
+    value = first_present(
+      fetch_value(order, :order_date),
+      fetch_value(order, :start_date),
+      fetch_value(order, :date_created),
+      fetch_value(order, :encounter_date),
+      fetch_value(order, :date)
+    )
+    value.to_s[0, 10]
   end
 
   def pending_lab_orders(record)
