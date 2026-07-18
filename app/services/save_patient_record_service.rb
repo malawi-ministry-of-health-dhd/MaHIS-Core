@@ -509,6 +509,12 @@ class SavePatientRecordService
     identifier = record_value(patient_record, :ID).to_s.strip
     return if location_id.blank? || identifier.blank?
 
+    DdeIdPoolService.new.consume!(
+      npid: identifier,
+      location_id: location_id,
+      patient_id: record_value(patient_record, :patientID)
+    )
+
     job_id = Sync::DdeIdsSyncJob.perform_async(100, location_id.to_s)
     Rails.logger.info(
       "Queued DDE ID top-up job #{job_id} for location #{location_id} after saving patient record #{identifier}"
