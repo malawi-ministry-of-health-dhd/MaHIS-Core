@@ -61,6 +61,14 @@ class SavePatientRecordService
 
     if couchdb_configured?
       patient_record["_id"] = patient_record["ID"]
+      # This REST call has already written the record to SQL, so the CouchDB
+      # changes listener would only re-run the identical processing on the doc it
+      # writes here. Stamp it processed so the listener skips it — one fewer writer
+      # per online save, which narrows the window for an offline edit to conflict.
+      # Only when fully synced; partial failures stay unstamped so the listener
+      # still reprocesses/retries them as before. (On the listener's own path this
+      # sync_to_couchdb is a no-op via skip_couchdb_sync, so this only affects REST.)
+      mark_online_record_listener_processed!(patient_record) if overall_sync_status == 'synced'
       sync_to_couchdb(patient_record, "patients_records", "#{patient_record["ID"]}")
       # Refresh the NCD read model synchronously so the live (REST) save path
       # reflects NCD number assignment/updates immediately. The CouchDB changes
@@ -84,6 +92,17 @@ class SavePatientRecordService
     NcdService::NcdPatientIndex.upsert_records([patient_record])
   rescue StandardError => e
     Rails.logger.error("[NCD] Failed to refresh NCD patient index for #{patient_record['ID']}: #{e.message}")
+  end
+
+  # Mark an online (REST) patient record as already listener-processed so the
+  # CouchDB changes listener skips it. Uses the same fields the listener stamps
+  # (see CouchdbChangesListener#update_couchdb_with_retry). An offline edit later
+  # resets processed_by_listener to false on the client, so future edits are still
+  # picked up.
+  def mark_online_record_listener_processed!(patient_record)
+    patient_record["processed_by_listener"] = true
+    patient_record["listener_processed_at"] = Time.current.iso8601
+    patient_record["processed_by_db"] = "patients_records"
   end
 
   def extract_required_fields(record)

@@ -42,6 +42,12 @@ referral_status_retry_job:
     - 720
   description: "Retries MAHIS -> iCHIS referral status updates for recent referrals"
 
+resolve_patient_record_conflicts_job:
+  cron: "*/15 * * * *" # every 15 minutes
+  class: "ResolvePatientRecordConflictsJob"
+  queue: default
+  description: "Safety-net sweep that merge-resolves accumulated CouchDB patients_records conflicts"
+
 # notifiable_disease_job:
 #   cron: "* * * * *"  # Every minute
 #   class: "ScriptRunner"

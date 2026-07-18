@@ -20,7 +20,12 @@ class CouchdbChangesListener
     # per change (live feed + backfill) instead of processing inline. Preferred on
     # TiDB, where concurrency beats single-threaded latency. Default false keeps the
     # existing inline behaviour, so this is an opt-in, drop-in change.
-    fan_out: false
+    fan_out: false,
+    # When true (default) the listener collapses any replication conflicts on a
+    # patient record right after it is processed, via PatientRecordConflictResolver
+    # (merge-aware — never drops clinical data). Set false to disable inline
+    # resolution and rely solely on the periodic sweep, without a code change.
+    resolve_conflicts: true
   }.freeze
 
   # db_name => [processor service class name, method]. Single source of truth used
@@ -565,6 +570,11 @@ class CouchdbChangesListener
     current_doc = fetch_current_document(document_id)
     return false unless current_doc
 
+    # After a stale-update reprocess the doc already carries current labOrders, so
+    # this true-up is usually redundant. Skip the write when unchanged: a no-op PUT
+    # only advances the revision and can collide with a replicating client.
+    return true if current_doc["labOrders"] == lab_orders_data
+
     current_doc["labOrders"] = lab_orders_data
     update_couchdb_document_direct(document_id, current_doc)
   rescue RestClient::Conflict, RestClient::PreconditionFailed
@@ -630,7 +640,10 @@ class CouchdbChangesListener
           update_couchdb_document_direct(doc_id, updated_doc)
         end
 
-      maintain_ncd_patient_index(updated_doc) if result && db_name == 'patients_records'
+      if result && db_name == 'patients_records'
+        maintain_ncd_patient_index(updated_doc)
+        resolve_patient_record_conflicts(canonical_id.presence || doc_id)
+      end
       result
 
     rescue RestClient::Conflict, RestClient::PreconditionFailed => e
@@ -660,6 +673,20 @@ class CouchdbChangesListener
     NcdService::NcdPatientIndex.upsert_records([patient_doc])
   rescue StandardError => e
     Rails.logger.error("[CouchDB Listener] Failed to update NCD patient index for #{patient_doc&.dig('_id')}: #{e.message}")
+  end
+
+  # Collapse any replication conflicts on a patient record as soon as we finish
+  # processing it, so conflicts don't linger until the periodic sweep or a client
+  # opens the sync-badge UI. Merge-aware (never drops clinical data) and
+  # best-effort — a resolution hiccup must never break the listener's main flow.
+  def resolve_patient_record_conflicts(doc_id)
+    return unless db_name == 'patients_records'
+    return unless config[:resolve_conflicts]
+    return if doc_id.blank?
+
+    PatientRecordConflictResolver.new(dry_run: false, logger: Rails.logger).resolve(doc_id)
+  rescue StandardError => e
+    Rails.logger.error("[CouchDB Listener] Conflict resolution failed for #{doc_id} in #{db_name}: #{e.message}")
   end
 
   def mark_processing_failure(doc, error, source_rev: nil)
