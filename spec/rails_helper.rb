@@ -57,6 +57,7 @@ RSpec.configure do |config|
     'hts_dashboard_channel_spec.rb',
     'stage_spec.rb',
     'visit_service_spec.rb',
+    'patient_record_operation_guard_spec.rb',
     'couchdb_changes_listener_spec.rb',
     'void_drug_orders_spec.rb'
   ].freeze
