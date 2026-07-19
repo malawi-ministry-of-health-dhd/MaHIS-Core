@@ -64,12 +64,16 @@ module Sync
       # 'patients_records' is tracked from CouchDB's actual doc count by
       # EnsurePatientIndexesJob (not per-batch increments), so a re-sync of
       # already-present patients can't push the count past the real total.
+      bulk_errors = []
       if patient_records.any?
-        bulk_sync_patients_to_couchdb(patient_records)
+        bulk_result = bulk_sync_patients_to_couchdb(patient_records)
+        bulk_errors = bulk_result[:errors]
 
         duration = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_time
         records_per_sec = duration.positive? ? (patient_records.count / duration).round(2) : patient_records.count
-        Sidekiq.logger.info("Successfully synced #{patient_records.count} patient records in #{duration.round(2)}s (#{records_per_sec} patients/sec)")
+        if bulk_errors.empty?
+          Sidekiq.logger.info("Successfully synced #{patient_records.count} patient records in #{duration.round(2)}s (#{records_per_sec} patients/sec)")
+        end
       end
       
       if failed_ids.any?
@@ -77,6 +81,14 @@ module Sync
       end
 
       log_skip_reasons(missing_patient_ids, missing_primary_identifier_ids, missing_document_id_ids)
+
+      return if failed_ids.empty? && bulk_errors.empty?
+
+      # Do not let Sidekiq consider a partially written batch successful. Raising
+      # preserves the job for retries/dead-set inspection instead of silently
+      # losing a migrated patient document.
+      raise "Patient CouchDB bulk sync incomplete: failed_patients=#{failed_ids.size}, " \
+            "couchdb_errors=#{bulk_errors.size}"
     end
     
     private
@@ -120,6 +132,8 @@ module Sync
           Sidekiq.logger.error("  #{error}")
         end
       end
+
+      bulk_result
     end
     
     def prepare_document(patient_record)
