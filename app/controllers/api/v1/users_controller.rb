@@ -380,7 +380,9 @@ module Api
         current_rank = superuser_rank(User.current)
         target_rank = superuser_rank(target_user)
 
-        current_rank == SUPERUSER_ROLE_RANK['global superuser'] || target_rank.zero? || current_rank > target_rank
+        # Equal rank is allowed so a superuser can manage their own account (and same-rank
+        # peers), matching the frontend rule. A strict `>` here wrongly blocks self-edits.
+        current_rank == SUPERUSER_ROLE_RANK['global superuser'] || target_rank.zero? || current_rank >= target_rank
       end
 
       def superuser_rank(user)
