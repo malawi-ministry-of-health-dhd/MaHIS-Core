@@ -34,6 +34,23 @@ RSpec.describe DrugOrderService do
     end
   end
 
+  describe :fetch_all_patient_drug_orders do
+    it 'includes the saved order instructions in the built drug order object' do
+      instructions = 'HCTZ 25mg | AM:2 | N:1 | PM:1 | Dur:2 | Qty:8'
+      connection = ActiveRecord::Base.connection
+
+      allow(service).to receive(:repair_missing_drug_order_rows)
+      allow(service).to receive(:dispensation_concept_ids).and_return([])
+      allow(connection).to receive(:quote).with(123).and_return('123')
+      expect(connection).to receive(:select_all) do |sql|
+        expect(sql).to include('o.instructions AS instructions')
+        [{ 'order_id' => 456, 'instructions' => instructions, 'dispensed' => 0 }]
+      end
+
+      expect(service.fetch_all_patient_drug_orders(123).first).to include(instructions:)
+    end
+  end
+
   describe :patients_awaiting_dispensation do
     let(:location_id) { Location.current&.location_id || 700 }
     let(:drug) { Drug.first || create(:drug, name: 'Queue spec drug', form: create(:concept)) }
