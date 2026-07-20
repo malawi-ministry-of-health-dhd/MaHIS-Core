@@ -25,6 +25,8 @@ module MahisUserImport
     end
 
     def login!(username:, password:)
+      @username = username
+      @password = password
       response = post('/api/v1/auth/login', { username: username, password: password }, authenticate: false)
       @token = response.dig('authorization', 'token')
       @current_user_payload = response.dig('authorization', 'user')
@@ -172,8 +174,11 @@ module MahisUserImport
       request['Accept'] = 'application/json'
       request['Authorization'] = @token if authenticate && @token.present?
 
-      response = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == 'https') do |http|
-        http.request(request)
+      response = perform_request(request, uri)
+      if authenticate && response.is_a?(Net::HTTPUnauthorized) && can_reauthenticate?
+        reauthenticate!
+        request['Authorization'] = @token
+        response = perform_request(request, uri)
       end
 
       parsed = parse_response(response)
@@ -183,6 +188,26 @@ module MahisUserImport
         "Target MaHIS API #{request.method} #{uri.path} failed with HTTP #{response.code}: #{api_error_message(parsed)}",
         status: response.code.to_i
       )
+    end
+
+    def perform_request(request, uri)
+      Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == 'https') do |http|
+        http.request(request)
+      end
+    end
+
+    def can_reauthenticate?
+      @username.present? && @password.present?
+    end
+
+    def reauthenticate!
+      response = post('/api/v1/auth/login', { username: @username, password: @password }, authenticate: false)
+      @token = response.dig('authorization', 'token')
+      @current_user_payload = response.dig('authorization', 'user')
+
+      unless @token.present? && @current_user_payload.present?
+        raise ApiError, 'Target MaHIS re-login did not return an authorization token.'
+      end
     end
 
     def parse_response(response)
