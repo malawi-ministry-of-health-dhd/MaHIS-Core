@@ -17,6 +17,18 @@ module Api
         )
       end
 
+      # GET /api/v1/diagnosis/common — recent common diagnoses for the site,
+      # used to populate the OPD "Common diagnoses" quick-pick.
+      def common
+        filters = params.permit(:limit, :since, :location_id)
+
+        render json: service.recent_common_diagnoses(
+          limit: filters[:limit] || 15,
+          since: filters[:since],
+          location_id: filters[:location_id]
+        )
+      end
+
       private
 
       def service

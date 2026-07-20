@@ -3,6 +3,13 @@
 class DiagnosisService
   DEFAULT_CONCEPT_SET_NAME = 'ICD-10 Volume 3 Diagnosis'
 
+  # The OPD workflow records the primary diagnosis as a "Main Diagnosis" (157897)
+  # observation, value_coded = the ICD-10 concept, on a "Diagnosis" (38) encounter.
+  MAIN_DIAGNOSIS_CONCEPT_ID = 157_897
+  DIAGNOSIS_ENCOUNTER_TYPE_ID = 38
+  DEFAULT_RECENCY_DAYS = 90
+  MAX_COMMON_DIAGNOSES = 50
+
   def find_diagnosis(query, concept_set_id: nil, concept_set_name: nil)
     if concept_set_id.present? || concept_set_name.present?
       concept_set_id = resolve_concept_set_id(concept_set_id, concept_set_name)
@@ -14,7 +21,58 @@ class DiagnosisService
     find_icd11_diagnosis(query)
   end
 
+  # Recent, most-frequently recorded OPD diagnoses for a site, used to populate the
+  # "Common diagnoses" quick-pick. Counts Main Diagnosis observations within a recency
+  # window, scoped to the given (or current user's) location, ordered by frequency then
+  # recency. Returns [{ concept_id:, name:, count:, last_seen: }] capped at `limit`.
+  def recent_common_diagnoses(limit: 15, since: nil, location_id: nil)
+    limit = limit.to_i
+    limit = 15 if limit <= 0
+    limit = MAX_COMMON_DIAGNOSES if limit > MAX_COMMON_DIAGNOSES
+
+    since_date = (since.present? ? since.to_date : Date.today - DEFAULT_RECENCY_DAYS)
+                 .strftime('%Y-%m-%d 00:00:00')
+    loc = location_id.presence || User.current&.location_id
+
+    scope = Observation
+            .where(concept_id: MAIN_DIAGNOSIS_CONCEPT_ID, voided: 0)
+            .where.not(value_coded: nil)
+            .joins('INNER JOIN encounter e ON e.encounter_id = obs.encounter_id AND e.voided = 0')
+            .where('e.encounter_type = ?', DIAGNOSIS_ENCOUNTER_TYPE_ID)
+            .where('obs.obs_datetime >= ?', since_date)
+    scope = scope.where('e.location_id = ?', loc) if loc.present?
+
+    rows = scope
+           .group('obs.value_coded')
+           .order(Arel.sql('COUNT(*) DESC, MAX(obs.obs_datetime) DESC'))
+           .limit(limit)
+           .pluck(Arel.sql('obs.value_coded'), Arel.sql('COUNT(*)'), Arel.sql('MAX(obs.obs_datetime)'))
+
+    names = diagnosis_names(rows.map(&:first))
+
+    rows.map do |value_coded, freq, last_seen|
+      { concept_id: value_coded, name: names[value_coded], count: freq.to_i, last_seen: last_seen }
+    end
+  end
+
   private
+
+  # Resolve concept names, preferring the locale-preferred name and falling back to any
+  # non-voided name so a diagnosis is never left without a label.
+  def diagnosis_names(concept_ids)
+    return {} if concept_ids.blank?
+
+    names = ConceptName.where(concept_id: concept_ids, voided: 0, locale_preferred: 1)
+                       .pluck(:concept_id, :name).to_h
+    missing = concept_ids - names.keys
+    if missing.any?
+      ConceptName.where(concept_id: missing, voided: 0)
+                 .pluck(:concept_id, :name)
+                 .each { |cid, nm| names[cid] ||= nm }
+    end
+    names
+  end
+
 
   def resolve_concept_set_id(concept_set_id, concept_set_name)
     return Concept.find_by_name(concept_set_name)&.concept_id if concept_set_name.present?
