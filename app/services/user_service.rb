@@ -404,7 +404,10 @@ def self.new_arch_authenticate(user, password)
 end
 
   def self.check_user(username)
-    User.exists?(username:)
+    # Usernames are global login keys, so check across ALL facilities (unscoped) and
+    # case-insensitively — otherwise a name taken at another facility, or differing only
+    # in case (e.g. "test" vs "Test"), would wrongly appear available.
+    User.unscoped.where('LOWER(username) = ?', username.to_s.downcase).exists?
   end
 
   def self.user_roles(user)

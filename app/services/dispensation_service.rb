@@ -99,8 +99,8 @@ module DispensationService
           dispensation
         end
 
-        user_specified_drug_run_out_date = drug_order.order.discontinued_date
-        drug_order.order.update!(auto_expire_date: user_specified_drug_run_out_date) if user_specified_drug_run_out_date
+        user_specified_drug_run_out_date = drug_order.order&.discontinued_date
+        drug_order.order&.update!(auto_expire_date: user_specified_drug_run_out_date) if user_specified_drug_run_out_date
         drug_order.quantity = 0
         drug_order.save!
 

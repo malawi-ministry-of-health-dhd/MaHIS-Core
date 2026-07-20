@@ -1,6 +1,7 @@
 # app/jobs/sync/diagnosis_sync_job.rb
 module Sync
   class DiagnosisSyncJob < BaseSyncJob
+    DIAGNOSIS_CONCEPT_SET_NAME = 'ICD-10 Volume 3 Diagnosis'
 
     def perform(batch_size = 1000)
       sync_custom_query_to_couchdb(
@@ -16,7 +17,7 @@ module Sync
 
     private
 
-    # Diagnoses use a deterministic "diagnosis_<concept_id>_<code>" id, so the
+    # Diagnoses use a deterministic "diagnosis_<concept_id>" id, so the
     # fast prefix-based count is accurate (the shared type-based count requires a
     # 'type' field these docs don't have, and reads every doc one-by-one).
     def check_and_clean_couchdb_if_needed_for_custom(count_query, db_name, data_type_name)
@@ -38,7 +39,7 @@ module Sync
     end
 
     # Override to bypass find_in_batches (concept_name has no primary key).
-    # Uses keyset pagination on (concept_id, code) instead of OFFSET — on TiDB,
+    # Uses keyset pagination on concept_id instead of OFFSET — on TiDB,
     # OFFSET is a distributed skip whose cost grows with the page number, which is
     # what made the diagnoses sync crawl on its final pages.
     def sync_custom_bulk(query, db_name, batch_size, total_count, data_type_name)
@@ -47,10 +48,9 @@ module Sync
       processed = 0
       errors = []
       last_concept_id = nil
-      last_code = nil
 
       loop do
-        batch = diagnoses_keyset_page(query, last_concept_id, last_code, batch_size)
+        batch = diagnoses_keyset_page(query, last_concept_id, batch_size)
         break if batch.empty?
 
         begin
@@ -80,7 +80,6 @@ module Sync
 
         last = batch.last
         last_concept_id = last.concept_id
-        last_code = last.code
         sleep(0.05)
       end
 
@@ -89,69 +88,51 @@ module Sync
       handle_sync_completion(processed, errors, total_count, data_type_name, progress_key: db_name)
     end
 
-    # One keyset page ordered by (concept_id, code). The document grain is
-    # (concept_id, code) (id = "diagnosis_<concept_id>_<code>"), so this composite
-    # cursor visits every distinct document; rows that share a (concept_id, code)
-    # collapse to the same CouchDB doc, so skipping a boundary duplicate is safe.
-    def diagnoses_keyset_page(query, last_concept_id, last_code, limit)
-      scope = query.reorder(Arel.sql('concept_id ASC, code ASC'))
+    def diagnoses_keyset_page(query, last_concept_id, limit)
+      scope = query.reorder(Arel.sql('concept_name.concept_id ASC'))
 
       if last_concept_id
-        scope = scope.where(
-          '(concept_name.concept_id > :cid) OR (concept_name.concept_id = :cid AND concept_map.concept_code > :code)',
-          cid: last_concept_id, code: last_code
-        )
+        scope = scope.where('concept_name.concept_id > ?', last_concept_id)
       end
 
       scope.limit(limit).to_a
     end
 
     def get_diagnoses_query
+      concept_set_id = diagnosis_concept_set_id!
+
       ConceptName
-        .joins(concept_maps: :concept_source)
-        .where(
-          concept_source: { name: 'ICD-11' },
-          locale_preferred: 1,
-          voided: 0
-        )
+        .joins('INNER JOIN concept_set s ON s.concept_id = concept_name.concept_id')
+        .where('s.concept_set = ?', concept_set_id)
+        .where(locale_preferred: 1, voided: 0)
         .select(
           'concept_name.concept_id',
-          'concept_name.name AS name',
-          'concept_source.name AS code_system',
-          'concept_map.concept_code AS code'
+          'concept_name.name AS name'
         )
         .distinct
         .order('concept_name.concept_id')
     end
 
-    # Count must match the document grain: one doc per (concept_id, code), since
-    # the document id is "diagnosis_<concept_id>_<code>". Counting distinct
-    # concept_id alone undercounts and causes a permanent resync loop.
     def get_diagnoses_count_query
-      ConceptName.unscoped.from(
-        ConceptName
-          .joins(concept_maps: :concept_source)
-          .where(
-            concept_source: { name: 'ICD-11' },
-            locale_preferred: 1,
-            voided: 0
-          )
-          .select('concept_name.concept_id, concept_map.concept_code AS code')
-          .distinct,
-        :concept_name
-      )
+      ConceptName.unscoped.from(get_diagnoses_query.except(:order), :concept_name)
     end
 
     def prepare_document(diagnosis)
       {
         "concept_id"  => diagnosis.concept_id,
-        "name"        => diagnosis.name,
-        "code"        => diagnosis.code,
+        "name"        => diagnosis.name
       }
     end
 
     def generate_document_id(diagnosis)
-      "diagnosis_#{diagnosis.concept_id}_#{diagnosis.code}"
+      "diagnosis_#{diagnosis.concept_id}"
+    end
+
+    def diagnosis_concept_set_id!
+      concept_id = ConceptName.where(name: DIAGNOSIS_CONCEPT_SET_NAME, voided: 0).pick(:concept_id)
+      return concept_id if concept_id.present?
+
+      raise "Missing concept set '#{DIAGNOSIS_CONCEPT_SET_NAME}'. Run `rails icd10_volume3:import_diagnoses` first."
     end
   end
 end

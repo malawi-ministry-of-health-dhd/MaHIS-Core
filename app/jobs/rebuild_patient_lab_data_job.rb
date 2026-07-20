@@ -68,6 +68,16 @@ class RebuildPatientLabDataJob < ApplicationJob
 
     begin
       document = JSON.parse(RestClient.get(doc_url).body)
+
+      # Most saves don't change historical lab orders, so the rebuilt list usually
+      # equals what's already in CouchDB. Skip the write when unchanged: a no-op
+      # PUT still advances the doc revision and can collide with a replicating
+      # client, needlessly widening the conflict window.
+      if document['labOrders'] == lab_orders_data
+        Rails.logger.debug("RebuildPatientLabDataJob: labOrders for #{document_id} unchanged; skipping CouchDB write")
+        return
+      end
+
       document['labOrders'] = lab_orders_data
 
       RestClient.put(

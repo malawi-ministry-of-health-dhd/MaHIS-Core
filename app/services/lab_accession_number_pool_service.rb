@@ -58,24 +58,16 @@ class LabAccessionNumberPoolService
     raise AccessionPoolError, 'device_id is required' if device_id.blank?
 
     ensure_location_eligible!(location_id)
-    facility_prefix = facility_prefix_for!(location_id)
-    date = Date.current
     reserved_at = Time.current.iso8601
 
-    next_accession_numbers(date, facility_prefix, count).map do |accession_number|
-      {
-        '_id' => accession_number,
-        'type' => DOC_TYPE,
-        'accession_number' => accession_number,
-        'facility_prefix' => facility_prefix,
-        'location_id' => location_id.to_s,
-        'date' => date.iso8601,
-        'status' => 'reserved',
-        'assigned_to_device_id' => device_id,
-        'assigned_at' => reserved_at,
-        'reservation_source' => 'api'
-      }
-    end
+    # Reserve existing central-pool documents instead of generating a separate
+    # device-only sequence. Updating the existing _rev makes the claim atomic:
+    # if two devices select the same number, only one PUT succeeds and the other
+    # continues with another available document.
+    ensure_pool_for_location(location_id: location_id, target_count: [configured_target_count, count].max)
+    documents = claim_available_documents(location_id, device_id, count, reserved_at)
+
+    documents
   end
 
   def validate_usable!(accession_number:, offline_id:, location_id:)
@@ -91,9 +83,10 @@ class LabAccessionNumberPoolService
     end
 
     status = doc['status'].to_s
-    if status == 'available'
-      raise AccessionPoolError, "Accession number #{accession_number} has not been reserved by a device"
-    end
+    # Clients released before central reservation support may still return an
+    # accession whose server document says "available". Keep accepting those
+    # legacy offline orders during rollout; consume! immediately records the
+    # offline order, while the consumed branch below prevents later reuse.
 
     if status == 'consumed'
       return true if offline_id.present? && doc['used_by_offline_id'].to_s == offline_id.to_s
@@ -125,12 +118,15 @@ class LabAccessionNumberPoolService
       location_id: location_id
     )
 
+    consumed_at = Time.current.iso8601
     update_document(doc.merge(
+      'assigned' => true,
       'status' => 'consumed',
       'used_by_offline_id' => offline_id,
       'patient_id' => patient_id,
       'order_id' => order_id,
-      'consumed_at' => Time.current.iso8601
+      'used_at' => consumed_at,
+      'consumed_at' => consumed_at
     ))
     top_up_after_consume(location_id)
     true
@@ -254,6 +250,7 @@ class LabAccessionNumberPoolService
         'facility_prefix' => facility_prefix,
         'location_id' => location_id.to_s,
         'date' => date.iso8601,
+        'assigned' => false,
         'status' => 'available',
         'generated_at' => generated_at
       }
@@ -264,6 +261,58 @@ class LabAccessionNumberPoolService
     ensure_pool_for_location(location_id: location_id, target_count: configured_target_count)
   rescue StandardError => e
     log(:warn, "Could not top up lab accession numbers after consuming one for location #{location_id}: #{e.message}")
+  end
+
+  def claim_available_documents(location_id, device_id, count, reserved_at)
+    claimed = []
+    attempts = 0
+
+    while claimed.length < count && attempts < 5
+      attempts += 1
+      candidates = available_documents(location_id, count - claimed.length)
+      break if candidates.empty?
+
+      candidates.each do |document|
+        claimed_document = claim_available_document(document, device_id, reserved_at)
+        claimed << claimed_document if claimed_document
+        break if claimed.length >= count
+      end
+    end
+
+    claimed
+  end
+
+  def available_documents(location_id, limit)
+    response = RestClient.post(
+      couchdb_url(DB_NAME, '_find'),
+      {
+        selector: {
+          type: DOC_TYPE,
+          location_id: location_id.to_s,
+          status: 'available'
+        },
+        limit: [limit * 2, 10].max
+      }.to_json,
+      { content_type: :json, accept: :json }
+    )
+
+    JSON.parse(response.body).fetch('docs', []).sort_by { |document| document['_id'].to_s }
+  end
+
+  def claim_available_document(document, device_id, reserved_at)
+    claimed = document.merge(
+      'assigned' => false,
+      'status' => 'reserved',
+      'assigned_to_device_id' => device_id,
+      'assigned_at' => reserved_at,
+      'reservation_source' => 'api'
+    )
+
+    response = update_document(claimed)
+    claimed['_rev'] = JSON.parse(response.body)['rev']
+    claimed
+  rescue RestClient::Conflict, RestClient::PreconditionFailed
+    nil
   end
 
   def configured_target_count

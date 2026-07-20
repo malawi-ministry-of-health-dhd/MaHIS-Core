@@ -41,7 +41,14 @@ module Api
       end
 
       def close
-        render json: VisitService.new.close_visit(visit_params)
+        data = VisitService.new.close_visit(visit_params)
+        # Mirror the closure into CouchDB using the SAME _id as create
+        # (generate_document_id) so the closed state OVERWRITES the open doc
+        # instead of leaving a stale open duplicate. A lingering open copy made
+        # offline devices treat a closed visit as active and over-count its
+        # stage on the OPD dashboard.
+        create_couchdb_visit(data) if data.present?
+        render json: data
       end
 
       def generate_visit_number

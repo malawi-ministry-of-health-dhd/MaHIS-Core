@@ -258,12 +258,21 @@ class PatientService
   end
 
   def find_program_drug_orders_awaiting_dispensation(patient, date, program_id: nil)
+    DrugOrderService.repair_missing_drug_order_rows(
+      patient_id: patient.patient_id,
+      cutoff: date,
+      location_id: User.current&.location_id
+    )
+
     query = DrugOrder
       .joins(order: :encounter)
       .select('drug_order.*, encounter.program_id')
       .where(
-        'orders.start_date <= ? AND orders.patient_id = ? 
-         AND drug_order.quantity IS NOT NULL',
+        '((orders.start_date IS NOT NULL AND orders.start_date <= ?)
+          OR (orders.start_date IS NULL AND encounter.encounter_datetime <= ?))
+         AND orders.patient_id = ?
+         AND COALESCE(drug_order.quantity, 0) <= 0',
+        TimeUtils.day_bounds(date)[1],
         TimeUtils.day_bounds(date)[1],
         patient.patient_id
       )
@@ -274,7 +283,7 @@ class PatientService
           JOIN concept_name ON concept_name.concept_id = obs.concept_id
           WHERE obs.order_id = orders.order_id
           AND concept_name.name = ? 
-          AND obs.value_numeric IS NOT NULL
+          AND obs.value_numeric > 0
         )',
         'AMOUNT DISPENSED'
       )

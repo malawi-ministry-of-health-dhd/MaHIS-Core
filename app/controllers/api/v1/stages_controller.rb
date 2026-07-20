@@ -28,21 +28,21 @@ module Api
 
       def create
         data = stages_service.create_stage(stage_params)
-        sync_to_couchdb(data, 'stages', data[:identifier] || data[:patient_id].to_s)
+        sync_to_couchdb(data, 'stages', stages_service.couchdb_doc_id(data))
         broadcast_hts_dashboard_changed
         render json: data, status: :created
       end
 
       def update
         data = stages_service.update_stage(params[:id], stage_params)
-        sync_to_couchdb(data, 'stages', data[:identifier] || data[:patient_id].to_s)
+        sync_to_couchdb(data, 'stages', stages_service.couchdb_doc_id(data))
         broadcast_hts_dashboard_changed
         render json: data, status: :ok
       end
 
       def update_by_visit
         data = stages_service.update_stage_by_visit(params[:visit_id], stage_params)
-        sync_to_couchdb(data, 'stages', data[:identifier] || data[:patient_id].to_s)
+        sync_to_couchdb(data, 'stages', stages_service.couchdb_doc_id(data))
         broadcast_hts_dashboard_changed
         render json: data, status: :ok
       end

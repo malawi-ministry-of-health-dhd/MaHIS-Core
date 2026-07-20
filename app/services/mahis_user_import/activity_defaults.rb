@@ -15,7 +15,6 @@ module MahisUserImport
       'Waiting for Vitals',
       'Waiting for Consultation',
       'Waiting for Laboratory',
-      'Waiting for Dispensation',
       'Waiting for Short Stay',
       'Appointments Today',
       'Total Patients Today'
@@ -47,13 +46,13 @@ module MahisUserImport
       'opdprogram' => {
         'clinician' => {
           opd_activities: OPD_FORM_ACTIVITIES,
-          opd_waiting_list: OPD_WAITING_LISTS - ['Waiting for Laboratory', 'Waiting for Dispensation']
+          opd_waiting_list: OPD_WAITING_LISTS - ['Waiting for Laboratory']
         },
         'nurse' => {
           opd_waiting_list: ['Total Patients Today', 'Waiting for Vitals', 'Waiting for Short Stay']
         },
         'pharmacist' => {
-          opd_waiting_list: ['Total Patients Today', 'Waiting for Dispensation', 'Waiting for Short Stay']
+          opd_waiting_list: ['Total Patients Today', 'Waiting for Short Stay']
         },
         'lab' => {
           opd_activities: ['Investigations'],

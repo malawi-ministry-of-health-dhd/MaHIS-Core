@@ -28,15 +28,26 @@ module Sync
       RECENT_SYNC_LOOKBACK.ago.iso8601
     end
 
-    def perform(location_id = nil, since_date = nil, batch_size = 50)
+    def perform(location_id = nil, since_date = nil, batch_size = 50, force_full = false)
       if location_id.present?
         Rails.logger.info("Starting batch patient sync for location #{location_id}")
       else
         Rails.logger.info("Starting batch patient sync for ALL locations")
       end
 
-      since_date = default_since_date(location_id) if since_date.blank?
-      parsed_since_date = parse_since_date(since_date)
+      force_full = force_full_sync?(force_full)
+      if force_full
+        # A migration can add historical clinical data for patients whose CouchDB
+        # documents already exist. Count/presence reconciliation cannot detect
+        # those stale documents, and the normal date watermark may exclude the
+        # imported encounters. Bypass the watermark and rebuild every patient.
+        Rails.logger.info('Forced full patient sync requested; bypassing the incremental encounter watermark')
+        location_id = nil
+        parsed_since_date = nil
+      else
+        since_date = default_since_date(location_id) if since_date.blank?
+        parsed_since_date = parse_since_date(since_date)
+      end
       normalized_batch_size = normalize_batch_size(batch_size)
 
       # Reconciliation (re-enqueue missing patients) only runs for the full /
@@ -69,6 +80,10 @@ module Sync
     end
 
     private
+
+    def force_full_sync?(value)
+      ActiveModel::Type::Boolean.new.cast(value)
+    end
 
     # Seed the patient progress row from ground truth: total = all patients,
     # done = how many are already in CouchDB. EnsurePatientIndexesJob keeps `done`
@@ -217,3 +232,4 @@ end
 # Sync::BatchPatientSyncJob.perform_async(nil, '2000-01-01')      # With date filter
 # Sync::BatchPatientSyncJob.perform_async(nil, nil, 25)           # Smaller batches (25 patients)
 # Sync::BatchPatientSyncJob.perform_async(nil, nil, 100)          # Larger batches (100 patients)
+# Sync::BatchPatientSyncJob.perform_async(nil, nil, 50, true)     # Force rebuild of every patient

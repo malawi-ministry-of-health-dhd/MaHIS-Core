@@ -10,7 +10,9 @@
 # what makes saving/listing lab orders slow down as history grows.
 #
 # Three targeted fixes, all behavior-preserving:
-# 1. serialize_order consumes the preloaded associations when present.
+# 1. serialize_order consumes the preloaded associations when present, but
+#    falls through to the gem's own lookup when a preloaded association is
+#    empty (so an empty :tests preload can never be persisted as `tests: []`).
 # 2. concept_name (TEST CATALOGUE NAME attribute + concept name lookups) is
 #    memoized per find_orders call via a thread-local cache.
 # 3. latest_order_status/latest_test_status load the status trail association
@@ -18,7 +20,16 @@
 module LabOrderSerializerPreloadedAssociations
   def serialize_order(order, tests: nil, requesting_clinician: nil, reason_for_test: nil, target_lab: nil, comment_to_fulfiller: nil)
     unless [1, true].include?(order.voided)
-      tests ||= preloaded_association(order, :tests)&.sort_by { |test| [test.date_created || Time.at(0), test.obs_id || 0] }
+      # Only trust the preloaded :tests when it actually has rows. An empty
+      # preloaded association (`[]`) is truthy, so assigning it here would
+      # satisfy the gem's `tests ||= order_tests(order)` fallback and suppress
+      # it — persisting `tests: []` into the patient record even when an
+      # order-linked "Test type" observation exists. `.presence` turns `[]`
+      # into nil so serialization falls through to the canonical `.unscoped`
+      # re-query by order_id. (has_one associations below don't need this:
+      # they return nil when absent, which is already falsy.)
+      tests ||= preloaded_association(order, :tests).presence
+                                                     &.sort_by { |test| [test.date_created || Time.at(0), test.obs_id || 0] }
     end
     requesting_clinician ||= preloaded_association(order, :requesting_clinician)
     reason_for_test ||= preloaded_association(order, :reason_for_test)
