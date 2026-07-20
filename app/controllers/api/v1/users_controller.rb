@@ -365,7 +365,7 @@ module Api
       end
 
       def sensitive_update_fields(update_params)
-        %i[password roles programs location_id].select { |key| update_params.key?(key) }
+        %i[password roles programs location_id given_name family_name].select { |key| update_params.key?(key) }
       end
 
       def validate_sensitive_user_update(target_user, fields)
