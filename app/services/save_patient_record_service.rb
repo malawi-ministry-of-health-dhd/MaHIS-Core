@@ -59,8 +59,14 @@ class SavePatientRecordService
     enqueue_post_save_side_effects(patient_id, record, operation_results)
 
     if couchdb_configured?
-      patient_record["_id"] = patient_record["ID"]
-      sync_to_couchdb(patient_record, "patients_records", "#{patient_record["ID"]}")
+      begin
+        patient_record["_id"] = patient_record["ID"]
+        sync_to_couchdb(patient_record, "patients_records", "#{patient_record["ID"]}")
+      rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH => e
+        Rails.logger.warn("CouchDB connection refused during patient record sync for #{patient_record["ID"]}: #{e.message}")
+      rescue StandardError => e
+        Rails.logger.error("CouchDB sync failed for patient #{patient_record["ID"]}: #{e.class}: #{e.message}")
+      end
     end
     enqueue_dde_id_top_up(patient_record, record) if should_top_up_dde_ids && couchdb_configured?
 

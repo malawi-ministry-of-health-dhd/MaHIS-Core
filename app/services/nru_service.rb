@@ -1,5 +1,6 @@
 class NruService
-  NRU_OUTCOME_ENCOUNTER_TYPE = 93  
+  NRU_OUTCOME_ENCOUNTER_TYPE = 93   # DISCHARGE_DIAGNOSIS — where Outcome obs are saved
+  NRU_ANTHROPOMETRY_ENCOUNTER_TYPE = 6  # VITALS — where "Days in NRU" (LOS) obs are saved
   NRU_MANAGEMENT_ENCOUNTER_TYPE = 22
 
   def initialize(program_id:)
@@ -31,7 +32,8 @@ class NruService
         defaulted:        { count: monthly['Early Departed'].to_i,   pct: pct(monthly['Early Departed'],   total_disc) },
         non_cured:        { count: monthly['Non-cured'].to_i,        pct: pct(monthly['Non-cured'],        total_disc) },
         died:             { count: monthly['Died'].to_i,             pct: pct(monthly['Died'],             total_disc) },
-        medical_transfer: { count: monthly['Medical Transfer'].to_i, pct: pct(monthly['Medical Transfer'], total_disc) }
+        medical_transfer: { count: (monthly['Medical Transfer'].to_i + monthly['Transferred'].to_i),
+                            pct:   pct(monthly['Medical Transfer'].to_i + monthly['Transferred'].to_i, total_disc) }
       }
     }
   end
@@ -86,7 +88,7 @@ class NruService
     avg = Observation
             .joins("INNER JOIN encounter e ON e.encounter_id = obs.encounter_id AND e.voided = 0")
             .where("obs.concept_id = ? AND obs.voided = 0 AND e.encounter_type = ? AND e.program_id = ?",
-                   los_concept_id, NRU_OUTCOME_ENCOUNTER_TYPE, @program_id)
+                   los_concept_id, NRU_ANTHROPOMETRY_ENCOUNTER_TYPE, @program_id)
             .where("DATE(obs.obs_datetime) BETWEEN ? AND ?", start_date, end_date)
             .average(:value_numeric)
     avg ? avg.round : 0
