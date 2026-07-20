@@ -14,6 +14,14 @@ class User < RetirableRecord
     { person: [:names, { person_attributes: :type }] }
   ].freeze
   SUPERUSER_ROLE_NAMES = ['Superuser', 'Global Superuser', 'District Superuser', 'Facility Superuser'].freeze
+  # Canonical superuser hierarchy. Higher number = more authority. This is the single
+  # source of truth shared by the controllers that gate sensitive user/role actions.
+  SUPERUSER_ROLE_RANK = {
+    'facility superuser' => 1,
+    'district superuser' => 2,
+    'superuser' => 3,
+    'global superuser' => 4
+  }.freeze
 
   audited except: %i[date_changed authentication_token token_expiry_time]
 
@@ -126,6 +134,15 @@ class User < RetirableRecord
     return (role_names & SUPERUSER_ROLE_NAMES).any? if role_names
 
     user_roles.exists?(role: SUPERUSER_ROLE_NAMES)
+  end
+
+  # Highest superuser rank held by this user (0 for a non-superuser). Uses SUPERUSER_ROLE_RANK.
+  def superuser_rank
+    role_names = loaded_role_names || roles.map(&:role)
+    role_names.reduce(0) do |highest_rank, role_name|
+      rank = SUPERUSER_ROLE_RANK[role_name.to_s.strip.downcase] || 0
+      [highest_rank, rank].max
+    end
   end
 
   def name
