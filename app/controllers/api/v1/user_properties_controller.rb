@@ -69,13 +69,6 @@ module Api
 
       private
 
-      SUPERUSER_ROLE_RANK = {
-        'facility superuser' => 1,
-        'district superuser' => 2,
-        'superuser' => 3,
-        'global superuser' => 4
-      }.freeze
-
       def validate_cross_user_property_update(provider)
         return true if provider.to_i == User.current.user_id.to_i
 
@@ -106,19 +99,12 @@ module Api
       end
 
       def can_manage_sensitive_user?(target_user)
-        current_rank = superuser_rank(User.current)
-        target_rank = superuser_rank(target_user)
+        current_rank = User.current&.superuser_rank || 0
+        target_rank = target_user&.superuser_rank || 0
 
-        current_rank == SUPERUSER_ROLE_RANK['global superuser'] || target_rank.zero? || current_rank > target_rank
-      end
-
-      def superuser_rank(user)
-        return 0 unless user
-
-        user.roles.map(&:role).reduce(0) do |highest_rank, role_name|
-          rank = SUPERUSER_ROLE_RANK[role_name.to_s.strip.downcase] || 0
-          [highest_rank, rank].max
-        end
+        # Equal rank is allowed so this matches the users_controller sensitive-update rule
+        # (a superuser can manage same-rank peers). Self edits are already short-circuited above.
+        current_rank == User::SUPERUSER_ROLE_RANK['global superuser'] || target_rank.zero? || current_rank >= target_rank
       end
     end
   end

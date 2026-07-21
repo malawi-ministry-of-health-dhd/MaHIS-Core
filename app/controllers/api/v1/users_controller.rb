@@ -247,7 +247,12 @@ module Api
       end
 
       def destroy
-        if User.find(params[:id]).void('No reason provided')
+        # `user` (find_user) scopes the target to the caller's managed locations, and the
+        # rank check prevents voiding a user who outranks the caller.
+        target_user = user
+        return unless validate_sensitive_user_update(target_user, %i[status])
+
+        if target_user.void('No reason provided')
           render status: :no_content
         else
           render json: { errors: ['Failed to void user'] }, status: :internal_server_error
@@ -331,29 +336,26 @@ module Api
         true
       end
 
-      PROTECTED_ROLES = %w[Superuser Global\ Superuser District\ Superuser Facility\ Superuser].freeze
       # Only a Global Superuser may grant these roles
       GLOBAL_ONLY_ROLES = ['Global Superuser', 'District Superuser'].freeze
-      SUPERUSER_ROLE_RANK = {
-        'facility superuser' => 1,
-        'district superuser' => 2,
-        'superuser' => 3,
-        'global superuser' => 4
-      }.freeze
 
       def validate_role_permissions(roles)
         return true if roles.blank?
+        return true if User.current.global_superuser?
+
+        current_rank = User.current.superuser_rank
 
         roles.each do |role|
-          next unless PROTECTED_ROLES.any? { |pr| pr.casecmp(role.to_s).zero? }
+          role_rank = User::SUPERUSER_ROLE_RANK[role.to_s.strip.downcase]
+          next if role_rank.nil? # ordinary (non-superuser) role — anyone may assign it
 
-          # Global Superusers may assign any protected role
-          next if User.current.global_superuser?
+          # Global Superuser / District Superuser may only ever be granted by a Global Superuser.
+          forbidden = GLOBAL_ONLY_ROLES.any? { |gr| gr.casecmp(role.to_s).zero? }
+          # Any other superuser role may only be granted by someone of equal or higher rank,
+          # so a user can never grant a role that outranks their own.
+          forbidden ||= current_rank < role_rank
 
-          # Plain Superusers may assign any protected role except Global Superuser
-          if User.current.is_superuser?
-            next unless GLOBAL_ONLY_ROLES.any? { |gr| gr.casecmp(role.to_s).zero? }
-          end
+          next unless forbidden
 
           render json: { errors: ["You are not authorised to assign the '#{role}' role"] }, status: :forbidden
           return false
@@ -363,7 +365,7 @@ module Api
       end
 
       def sensitive_update_fields(update_params)
-        %i[password roles programs location_id].select { |key| update_params.key?(key) }
+        %i[password roles programs location_id given_name family_name].select { |key| update_params.key?(key) }
       end
 
       def validate_sensitive_user_update(target_user, fields)
@@ -377,21 +379,12 @@ module Api
       end
 
       def can_manage_sensitive_user?(target_user)
-        current_rank = superuser_rank(User.current)
-        target_rank = superuser_rank(target_user)
+        current_rank = User.current&.superuser_rank || 0
+        target_rank = target_user&.superuser_rank || 0
 
         # Equal rank is allowed so a superuser can manage their own account (and same-rank
         # peers), matching the frontend rule. A strict `>` here wrongly blocks self-edits.
-        current_rank == SUPERUSER_ROLE_RANK['global superuser'] || target_rank.zero? || current_rank >= target_rank
-      end
-
-      def superuser_rank(user)
-        return 0 unless user
-
-        user.roles.map(&:role).reduce(0) do |highest_rank, role_name|
-          rank = SUPERUSER_ROLE_RANK[role_name.to_s.strip.downcase] || 0
-          [highest_rank, rank].max
-        end
+        current_rank == User::SUPERUSER_ROLE_RANK['global superuser'] || target_rank.zero? || current_rank >= target_rank
       end
 
       def validate_username(username)

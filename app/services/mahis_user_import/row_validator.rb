@@ -190,14 +190,18 @@ module MahisUserImport
     def validate_admin_role_permissions(attributes)
       current_user = @current_user
       return if current_user.blank?
+      return if current_user.global_superuser?
+
+      current_rank = current_user.superuser_rank
 
       attributes[:role_names].each do |role_name|
         next unless protected_role?(role_name)
-        next if current_user.global_superuser?
 
-        if current_user.is_superuser?
-          next unless GLOBAL_ONLY_ROLES.any? { |role| role.casecmp(role_name).zero? }
-        end
+        # Global Superuser / District Superuser may only ever be granted by a Global Superuser,
+        # and no admin may grant a superuser role that outranks their own.
+        forbidden = GLOBAL_ONLY_ROLES.any? { |role| role.casecmp(role_name).zero? }
+        forbidden ||= current_rank < (User::SUPERUSER_ROLE_RANK[role_name.to_s.strip.downcase] || 0)
+        next unless forbidden
 
         add_error("configured admin is not authorised to assign the '#{role_name}' role")
       end

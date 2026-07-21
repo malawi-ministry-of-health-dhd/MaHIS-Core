@@ -352,7 +352,11 @@ Rails.application.routes.draw do
 
       resource :session_stats, path: 'stats/session'
 
-      resources :diagnosis
+      resources :diagnosis do
+        collection do
+          get :common
+        end
+      end
 
       # Workflow engine
       get '/workflows/:program_id/:patient_id' => 'workflows#next_encounter'
