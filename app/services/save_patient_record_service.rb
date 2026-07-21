@@ -63,7 +63,7 @@ class SavePatientRecordService
         patient_record["_id"] = patient_record["ID"]
         sync_to_couchdb(patient_record, "patients_records", "#{patient_record["ID"]}")
       rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH => e
-        Rails.logger.warn("CouchDB connection refused during patient record sync for #{patient_record["ID"]}: #{e.message}")
+        Rails.logger.warn("CouchDB connection error during patient record sync for #{patient_record["ID"]}: #{e.class}: #{e.message}")
       rescue StandardError => e
         Rails.logger.error("CouchDB sync failed for patient #{patient_record["ID"]}: #{e.class}: #{e.message}")
       end
