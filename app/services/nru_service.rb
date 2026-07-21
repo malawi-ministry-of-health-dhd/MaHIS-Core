@@ -72,11 +72,19 @@ class NruService
     outcome_concept_id = ConceptName.where(name: 'Outcome', voided: 0).pick(:concept_id)
     return {} unless outcome_concept_id
 
-    Observation
+    # Subquery: for each patient get the obs_id of their LATEST outcome in the date range.
+    # This ensures a patient counted only once even if multiple outcome records exist.
+    latest_per_patient = Observation
       .joins("INNER JOIN encounter e ON e.encounter_id = obs.encounter_id AND e.voided = 0")
       .where("obs.concept_id = ? AND obs.voided = 0 AND e.encounter_type = ? AND e.program_id = ?",
              outcome_concept_id, NRU_OUTCOME_ENCOUNTER_TYPE, @program_id)
       .where("DATE(obs.obs_datetime) BETWEEN ? AND ?", start_date, end_date)
+      .select("MAX(obs.obs_id) AS max_obs_id")
+      .group("obs.person_id")
+
+    Observation
+      .joins("INNER JOIN (#{latest_per_patient.to_sql}) latest ON latest.max_obs_id = obs.obs_id")
+      .where(voided: 0)
       .group(:value_text)
       .count
   end
