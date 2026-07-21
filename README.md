@@ -227,6 +227,24 @@ The script will:
 3. **Process tables** - Migrate data in parallel with optimized batch sizes
 4. **Show progress** - Display real-time migration statistics
 
+After a successful migration, the migrator automatically enqueues CouchDB rebuilds
+only for patients belonging to the source database being migrated. It waits until
+all migration groups and post-processing finish before enqueueing, so patient
+documents include the migrated encounters, observations, orders, and program data.
+
+The targeted rebuild requires Redis and a Sidekiq worker processing the
+`batch_sync` and `patient_sync` queues. Monitor Sidekiq logs while the queued
+patient batches drain.
+
+To skip automatic enqueueing for an operational reason, run the migration with
+`SKIP_COUCHDB_SYNC=true`.
+
+The full rebuild remains available as a recovery command:
+
+```bash
+rails sync:patients_full
+```
+
 #### Test Mode
 
 To test the migration with a limited dataset (10 records per table):

@@ -3,6 +3,9 @@
 module Api
   module V1
     class RolesController < ApplicationController
+      before_action :authorize_role_management,
+                    only: %i[create update destroy add_privilege remove_privilege]
+
       def index
         roles_query = Role.includes(:privileges, :role_privileges, :user_roles)
 
@@ -90,6 +93,13 @@ module Api
         permitted_params << :location_id if Role.location_scoped?
 
         params.permit(permitted_params)
+      end
+
+      def authorize_role_management
+        return true if User.current&.is_superuser?
+
+        render json: { errors: ['Only a Superuser can manage roles'] }, status: :forbidden
+        false
       end
 
       def authorize_superuser_sync

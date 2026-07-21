@@ -25,6 +25,7 @@ class PatientRecordOperationGuard
   ].freeze
   PROCESSING_WAIT_TIMEOUT = 15.seconds
   PROCESSING_WAIT_INTERVAL = 0.25.seconds
+  TARGET_ID_LIMIT = 191
 
   class << self
     def run!(patient_id:, operation_type:, operation_id: nil, payload: nil, target_type: nil)
@@ -94,7 +95,7 @@ class PatientRecordOperationGuard
 
       if existing_receipt.processing?
         existing_receipt = wait_for_processing_receipt(existing_receipt)
-        return [existing_receipt, false] if existing_receipt.completed? || existing_receipt.processing?
+        return [existing_receipt, false] if existing_receipt.completed?
       end
 
       PatientRecordOperationReceipt.transaction do
@@ -110,7 +111,7 @@ class PatientRecordOperationGuard
           )
         end
 
-        should_process = !(receipt.completed? || receipt.processing?)
+        should_process = !receipt.completed? && (!receipt.processing? || stale_processing_receipt?(receipt, now))
 
         if should_process
           receipt.update!(
@@ -177,7 +178,7 @@ class PatientRecordOperationGuard
       end
 
       if value.is_a?(Array)
-        target_ids = value.filter_map { |item| target_reference(item, default_target_type).last }.join(',')
+        target_ids = compact_target_ids(value.filter_map { |item| target_reference(item, default_target_type).last })
         return [default_target_type, target_ids.presence]
       end
 
@@ -189,7 +190,25 @@ class PatientRecordOperationGuard
                   value[:encounter_id] || value['encounter_id'] || value[:visit_id] || value['visit_id'] ||
                   value[:patient_program_id] || value['patient_program_id']
 
-      [target_type, target_id]
+      [target_type, safe_target_id(target_id)]
+    end
+
+    def compact_target_ids(target_ids)
+      ids = target_ids.map(&:to_s).reject(&:blank?)
+      joined = ids.join(',')
+      return joined if joined.length <= TARGET_ID_LIMIT
+
+      "count:#{ids.length};first:#{ids.first};last:#{ids.last};sha256:#{Digest::SHA256.hexdigest(joined)}".first(TARGET_ID_LIMIT)
+    end
+
+    def safe_target_id(target_id)
+      return nil if target_id.blank?
+
+      target_id.to_s.first(TARGET_ID_LIMIT)
+    end
+
+    def stale_processing_receipt?(receipt, now = Time.current)
+      receipt.started_at.blank? || receipt.started_at < now - PROCESSING_WAIT_TIMEOUT
     end
 
     def normalize_operation_id(value)

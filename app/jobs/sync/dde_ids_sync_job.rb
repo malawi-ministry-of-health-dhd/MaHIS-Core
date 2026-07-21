@@ -320,13 +320,14 @@ module Sync
         response = RestClient.get(view_url)
         result = JSON.parse(response.body)
         
-        # Count unassigned IDs for this facility and location
-        # Note: location_id might not exist in older documents, so we check both conditions
-        # Compare as strings because prepare_document stores location_id via .to_s
+        # Count only documents that are still genuinely available. Patient
+        # creation marks the central document assigned=true/status=used, so the
+        # following top-up replaces it for subsequent local pull replication.
         unassigned_count = result['rows'].count do |row|
           doc = row['doc']
           doc['dde_location_id'].to_s == DDE_LOCATION_ID.to_s &&
-          (doc['status'].nil? || doc['status'].empty? || doc['status'] != 'used') &&
+          doc['assigned'] != true &&
+          !%w[reserved used consumed].include?(doc['status'].to_s) &&
           (doc['location_id'].to_s == location_id.to_s || doc['location_id'].nil?)
         end
         
@@ -354,6 +355,7 @@ module Sync
         "npid" => actual_npid,
         "assigned" => npid_data.fetch('assigned', false),
         "allocated" => npid_data.fetch('allocated', true),
+        "status" => npid_data.fetch('assigned', false) ? 'reserved' : 'available',
         "original_dde_data" => npid_data['dde_id'], # Store original DDE data if available
         "synced_at" => Time.current.iso8601
       }

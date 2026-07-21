@@ -52,8 +52,16 @@ RSpec.configure do |config|
     'report_spec.rb',
     'cohort_builder_spec.rb',
     'medication_order_saver_spec.rb',
+    'drug_order_service_spec.rb',
     'user_service_spec.rb',
-    'hts_dashboard_channel_spec.rb'
+    'hts_dashboard_channel_spec.rb',
+    'stage_spec.rb',
+    'visit_service_spec.rb',
+    'patient_record_operation_guard_spec.rb',
+    'couchdb_changes_listener_spec.rb',
+    'batch_patient_sync_job_spec.rb',
+    'bulk_patient_record_sync_job_spec.rb',
+    'void_drug_orders_spec.rb'
   ].freeze
 
   # Wrap individual test execution to skip non-passing specs

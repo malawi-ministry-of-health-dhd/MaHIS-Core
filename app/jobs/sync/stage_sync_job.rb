@@ -40,6 +40,7 @@ module Sync
         "stage"             => stage.stage,
         "visit_number"      => stage.visit_number,
         "program_id"        => stage.program_id,
+        "referring_program_id" => stage.referring_program_id,
         "disposition_type"  => stage.disposition_type,
         "patient_care_area" => stage.patient_care_area,
         "department"        => stage.department,
@@ -59,7 +60,11 @@ module Sync
                                 &.find { |pi| pi.identifier_type == 3 }
                                 &.identifier
 
-      "stage_#{type3_identifier || 'unknown'}_#{stage.arrival_time&.iso8601}"
+      # Match the live-sync scheme (identifier + program) so the batch job and the
+      # controller write to the SAME doc per (patient, program) instead of two
+      # competing keys. This lets a patient hold one stage per program at once
+      # (e.g. an open OPD stage AND an HTS stage after "Send to HTS").
+      "#{type3_identifier || 'unknown'}_#{stage.program_id}"
     end
   end
 end

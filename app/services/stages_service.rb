@@ -48,6 +48,11 @@ class StagesService
     stage.visit_id = active_visit.visit_id
     stage.location_id = location_id
     stage.status = true
+    # Record the program the patient was sent from (e.g. OPD -> HTS) once, and
+    # keep it as the patient moves between stages of the destination program.
+    if stage_params[:referring_program_id].present? && stage.referring_program_id.blank?
+      stage.referring_program_id = stage_params[:referring_program_id]
+    end
     assign_arrival_time(stage, stage_params)
     assign_stage_metadata(stage, stage_params)
 
@@ -117,6 +122,7 @@ class StagesService
       visit_uuid: stage.visit&.uuid,
       arrival_time: stage.arrival_time,
       program_id: stage.program_id,
+      referring_program_id: stage.referring_program_id,
       latest_encounter_time: latest_encounter_time || latest_encounter&.encounter_datetime || stage.created_at,
       last_encounter_creator: encounter_creator_name(latest_encounter,patient),
       disposition_type: stage.disposition_type,
@@ -138,6 +144,17 @@ class StagesService
     stage_data = serialize(stage)
     stage_data[:status] = false
     broadcast_stage_update('stage_deleted', stage_data)
+  end
+
+  # Key the CouchDB stage doc by identifier + program so a patient can hold one
+  # stage per program simultaneously (e.g. an open OPD stage AND an HTS stage
+  # after "Send to HTS"). Keying by identifier alone let each program's write
+  # clobber the other, dropping a stage from offline devices. Shared by the
+  # stages controller and VisitService so every stage write uses one scheme.
+  def couchdb_doc_id(data)
+    identifier = data[:identifier] || data[:patient_id]
+    program_id = data[:program_id]
+    program_id.present? ? "#{identifier}_#{program_id}" : identifier.to_s
   end
 
   private
