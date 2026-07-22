@@ -20,7 +20,12 @@ class CouchdbChangesListener
     # per change (live feed + backfill) instead of processing inline. Preferred on
     # TiDB, where concurrency beats single-threaded latency. Default false keeps the
     # existing inline behaviour, so this is an opt-in, drop-in change.
-    fan_out: false
+    fan_out: false,
+    # When true (default) the listener collapses any replication conflicts on a
+    # patient record right after it is processed, via PatientRecordConflictResolver
+    # (merge-aware — never drops clinical data). Set false to disable inline
+    # resolution and rely solely on the periodic sweep, without a code change.
+    resolve_conflicts: true
   }.freeze
 
   # db_name => [processor service class name, method]. Single source of truth used
@@ -478,7 +483,7 @@ class CouchdbChangesListener
     mark_processing_failure(doc, e, source_rev: doc&.dig('_rev'))
   end
 
-  def process_document(doc)
+  def process_document(doc, reprocess_stale: true)
     return unless doc
     
     doc_id = doc['_id']
@@ -509,7 +514,14 @@ class CouchdbChangesListener
         raise "Patient record processing did not return a payload: #{processed_data.inspect}"
       end
       
-      unless update_couchdb_with_retry(doc_id, processed_data, source_rev: doc['_rev'])
+      update_result = update_couchdb_with_retry(doc_id, processed_data, source_rev: doc['_rev'])
+
+      if update_result == :stale && db_name == 'patients_records'
+        recover_stale_patient_record_update(doc_id, processed_data, reprocess_stale: reprocess_stale)
+        return true
+      end
+
+      unless update_result == true
         raise "Failed to mark CouchDB document #{doc_id} as processed"
       end
       
@@ -522,6 +534,58 @@ class CouchdbChangesListener
   def listener_location_for(doc)
     location_id = doc["location_id"].presence || doc[:location_id].presence
     Location.unscoped.find_by(location_id: location_id) || Location.current_health_center
+  end
+
+  def recover_stale_patient_record_update(doc_id, processed_data, reprocess_stale:)
+    current_doc = fetch_current_document(doc_id)
+
+    if reprocess_stale && unprocessed_listener_document?(current_doc)
+      Rails.logger.warn(
+        "[CouchDB Listener] Reprocessing latest revision for #{doc_id} in #{db_name} " \
+        "after stale update"
+      )
+      process_document(current_doc, reprocess_stale: false)
+    elsif current_doc&.dig("processed_by_listener") != true
+      raise "Failed to mark CouchDB document #{doc_id} as processed"
+    end
+
+    true_up_patient_lab_orders_after_stale_update(doc_id, processed_data, current_doc)
+  end
+
+  def true_up_patient_lab_orders_after_stale_update(doc_id, processed_data, current_doc)
+    patient_id = processed_data["patientID"] || processed_data[:patientID] ||
+                 processed_data["patient_id"] || processed_data[:patient_id] ||
+                 current_doc&.dig("patientID") || current_doc&.dig("patient_id")
+    return true if patient_id.blank?
+
+    lab_orders_data = BuildPatientRecordService.build_lab_orders_data(patient_id).as_json
+    document_id = (processed_data["ID"] || processed_data[:ID] || current_doc&.dig("ID") || doc_id).to_s
+
+    unless update_couchdb_patient_lab_orders_only(document_id, lab_orders_data)
+      raise "Failed to true-up labOrders for patient CouchDB document #{document_id}"
+    end
+  end
+
+  def update_couchdb_patient_lab_orders_only(document_id, lab_orders_data, attempt = 1)
+    current_doc = fetch_current_document(document_id)
+    return false unless current_doc
+
+    # After a stale-update reprocess the doc already carries current labOrders, so
+    # this true-up is usually redundant. Skip the write when unchanged: a no-op PUT
+    # only advances the revision and can collide with a replicating client.
+    return true if current_doc["labOrders"] == lab_orders_data
+
+    current_doc["labOrders"] = lab_orders_data
+    update_couchdb_document_direct(document_id, current_doc)
+  rescue RestClient::Conflict, RestClient::PreconditionFailed
+    raise if attempt >= config[:max_retry_attempts]
+
+    Rails.logger.warn(
+      "[CouchDB Listener] Conflict trueing up labOrders for #{document_id}; " \
+      "retrying attempt #{attempt + 1}/#{config[:max_retry_attempts]}"
+    )
+    sleep(0.5 * (2 ** (attempt - 1)))
+    update_couchdb_patient_lab_orders_only(document_id, lab_orders_data, attempt + 1)
   end
 
   def update_couchdb_with_retry(doc_id, processed_data, attempt = 1, source_rev: nil)
@@ -542,7 +606,7 @@ class CouchdbChangesListener
 
       if source_rev.present? && current_doc["_rev"] != source_rev
         Rails.logger.warn("[CouchDB Listener] Document #{doc_id} in #{db_name} changed while processing; skipping stale listener update")
-        return false
+        return :stale
       end
       
       updated_doc = current_doc.dup
@@ -576,7 +640,10 @@ class CouchdbChangesListener
           update_couchdb_document_direct(doc_id, updated_doc)
         end
 
-      maintain_ncd_patient_index(updated_doc) if result && db_name == 'patients_records'
+      if result && db_name == 'patients_records'
+        maintain_ncd_patient_index(updated_doc)
+        resolve_patient_record_conflicts(canonical_id.presence || doc_id)
+      end
       result
 
     rescue RestClient::Conflict, RestClient::PreconditionFailed => e
@@ -606,6 +673,20 @@ class CouchdbChangesListener
     NcdService::NcdPatientIndex.upsert_records([patient_doc])
   rescue StandardError => e
     Rails.logger.error("[CouchDB Listener] Failed to update NCD patient index for #{patient_doc&.dig('_id')}: #{e.message}")
+  end
+
+  # Collapse any replication conflicts on a patient record as soon as we finish
+  # processing it, so conflicts don't linger until the periodic sweep or a client
+  # opens the sync-badge UI. Merge-aware (never drops clinical data) and
+  # best-effort — a resolution hiccup must never break the listener's main flow.
+  def resolve_patient_record_conflicts(doc_id)
+    return unless db_name == 'patients_records'
+    return unless config[:resolve_conflicts]
+    return if doc_id.blank?
+
+    PatientRecordConflictResolver.new(dry_run: false, logger: Rails.logger).resolve(doc_id)
+  rescue StandardError => e
+    Rails.logger.error("[CouchDB Listener] Conflict resolution failed for #{doc_id} in #{db_name}: #{e.message}")
   end
 
   def mark_processing_failure(doc, error, source_rev: nil)

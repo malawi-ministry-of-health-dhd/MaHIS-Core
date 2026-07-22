@@ -13,6 +13,12 @@ Rails.application.routes.draw do
   mount ActionCable.server => '/api/v1/cable'
   mount Sidekiq::Web => '/sidekiq'
 
+  # WHO ICD-11 Embedded Coding Tool proxy -> ICD-API container. Under /api/v1 so it is
+  # reachable through the nginx "/api" rule like every other backend call. Unauthenticated;
+  # serves only public ICD-11 reference data (see Icd11ProxyController). Declared before the
+  # api namespace so it wins over any generic api/v1 route.
+  match '/api/v1/icd/*icd_path', to: 'icd11_proxy#forward', via: %i[get post], format: false
+
   namespace :api do
     namespace :v1 do
       # Helper for creating dynamic redirect urls with redirect blocks
@@ -346,7 +352,11 @@ Rails.application.routes.draw do
 
       resource :session_stats, path: 'stats/session'
 
-      resources :diagnosis
+      resources :diagnosis do
+        collection do
+          get :common
+        end
+      end
 
       # Workflow engine
       get '/workflows/:program_id/:patient_id' => 'workflows#next_encounter'

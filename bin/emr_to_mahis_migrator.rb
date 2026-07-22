@@ -2337,6 +2337,77 @@ def update_group_obs_ids(source_db, _foreign_keys = {})
   puts "✓ obs_group_id update complete (#{updated} records now have obs_group_id set)"
 end
 
+# This runs only after every migration group and post-processing step has finished,
+# so a worker always builds the complete migrated patient document.
+def enqueue_migrated_patient_couchdb_sync
+  if ENV['TEST_MODE'] == 'true'
+    puts "\nℹ Skipping CouchDB patient sync in TEST_MODE."
+    return
+  end
+
+  if ENV['SKIP_COUCHDB_SYNC'] == 'true'
+    puts "\nℹ Skipping CouchDB patient sync because SKIP_COUCHDB_SYNC=true."
+    return
+  end
+
+  unless CouchdbPatientService.couchdb_configured?
+    puts "\n⚠ CouchDB is not configured; migrated patient sync was not enqueued."
+    puts '  After configuring CouchDB, run: rails sync:patients_full'
+    return
+  end
+
+  unless ActiveRecord::Base.connection.data_source_exists?('mig_person_id_map')
+    puts "\n⚠ mig_person_id_map is unavailable; migrated patient sync was not enqueued."
+    puts '  Run: rails sync:patients_full'
+    return
+  end
+
+  batch_size = Sync::BatchPatientSyncJob::DEFAULT_BATCH_SIZE
+  push_size = Sync::BatchPatientSyncJob::SIDEKIQ_BULK_PUSH_SIZE
+  last_patient_id = -1
+  selected_patients = 0
+  queued_jobs = 0
+  bulk_args = []
+
+  loop do
+    patient_ids = Patient.unscoped
+                         .joins('INNER JOIN mig_person_id_map migration_people ON ' \
+                                'migration_people.target_id = patient.patient_id')
+                         .where(patient: { voided: 0 })
+                         .where('patient.patient_id > ?', last_patient_id)
+                         .distinct
+                         .order('patient.patient_id ASC')
+                         .limit(2_000)
+                         .pluck(:patient_id)
+    break if patient_ids.empty?
+
+    last_patient_id = patient_ids.last
+    patient_ids.each_slice(batch_size) do |ids|
+      bulk_args << [ids, { 'location_id' => SITE_ID }]
+      selected_patients += ids.size
+
+      next unless bulk_args.size >= push_size
+
+      result = Sync::BulkPatientRecordSyncJob.perform_bulk(bulk_args)
+      queued_jobs += result.is_a?(Array) ? result.size : bulk_args.size
+      bulk_args = []
+    end
+  end
+
+  if bulk_args.any?
+    result = Sync::BulkPatientRecordSyncJob.perform_bulk(bulk_args)
+    queued_jobs += result.is_a?(Array) ? result.size : bulk_args.size
+  end
+
+  Sync::EnsurePatientIndexesJob.perform_async('reconcile' => false) if selected_patients.positive?
+
+  puts "\n✓ Enqueued #{queued_jobs} CouchDB bulk job(s) for #{selected_patients} migrated patient(s)."
+  puts '  Only patients mapped from this migration source will be rebuilt.'
+rescue StandardError => e
+  puts "\n⚠ Migration succeeded, but migrated patient sync enqueueing failed: #{e.class}: #{e.message}"
+  puts '  Start Redis/Sidekiq and run: rails sync:patients_full'
+end
+
 # Main Execution
 prepare_centralized_db
 ensure_migration_indexes(source_db)
@@ -2841,6 +2912,13 @@ if __FILE__ == $0
   # migrated with older migrator versions (which created duplicate drug rows) are
   # cleaned up automatically. Safe to run repeatedly — no-op when no duplicates exist.
   consolidate_duplicate_drugs
+
+  if overall_success
+    enqueue_migrated_patient_couchdb_sync
+  else
+    puts "\n⚠ CouchDB patient sync was not enqueued because one or more migration groups failed."
+    puts '  Resolve the failures before syncing patient documents.'
+  end
 
   # Final cleanup: Clear all active connections
   puts "\n✓ Migration complete! Cleaning up connections..."

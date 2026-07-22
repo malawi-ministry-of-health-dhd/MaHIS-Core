@@ -169,11 +169,22 @@ module Api
 
       def create
         # Require and permit parameters
-        params.require(:parent_id)
         params.require(:tag)
         params.require(:name)
         location_params = params.permit(:name, :description, :address1, :address2, :district,
-                                        :parent_id, :tag, :city_village, :county_district)
+                                        :parent_id, :tag, :city_village, :county_district, :department_id)
+
+        is_department = location_params[:tag].to_s.strip.casecmp('Department').zero?
+        is_ward = location_params[:tag].to_s.strip.casecmp('Ward').zero?
+
+        # Departments are global (site-agnostic): only a global superuser may
+        # add them, and they carry no facility parent.
+        if is_department && !User.current&.global_superuser?
+          return render json: { error: 'Only a global superuser can add departments' }, status: :forbidden
+        end
+
+        # Every other location type (ward, section, ...) still hangs off a parent.
+        params.require(:parent_id) unless is_department
 
         # Build location attributes
         location_attrs = {
@@ -187,11 +198,13 @@ module Api
           date_created: Time.now
         }
 
-        # Add parent location
-        parent_location = Location.find_by(location_id: location_params[:parent_id])
-        return render json: { error: 'Parent location not found' }, status: :bad_request unless parent_location
+        # Add parent location (global departments have none).
+        unless is_department
+          parent_location = Location.find_by(location_id: location_params[:parent_id])
+          return render json: { error: 'Parent location not found' }, status: :bad_request unless parent_location
 
-        location_attrs[:parent_location] = parent_location.location_id
+          location_attrs[:parent_location] = parent_location.location_id
+        end
 
         location = Location.create(location_attrs)
 
@@ -206,6 +219,10 @@ module Api
             location_id: location.location_id,
             location_tag_id: tag.location_tag_id
           )
+
+          # A ward belongs to a facility (its parent) and is classified by a
+          # global department, stored as a location attribute.
+          assign_ward_department(location, location_params[:department_id]) if is_ward
 
           # Reload to include associations
           location.reload
@@ -250,6 +267,39 @@ module Api
       end
 
       private
+
+      # Persist which global department a ward belongs to as a location
+      # attribute (value_reference = department location_id). No-op only when no
+      # department was supplied; the attribute type is created on demand so this
+      # does not depend on a separate seed run.
+      def assign_ward_department(location, department_id)
+        return if department_id.blank?
+
+        attribute_type = find_or_create_department_attribute_type
+        return unless attribute_type
+
+        LocationAttribute.create(
+          location_id: location.location_id,
+          attribute_type_id: attribute_type.location_attribute_type_id,
+          value_reference: department_id.to_s,
+          uuid: SecureRandom.uuid,
+          creator: User.current&.user_id,
+          date_created: Time.now,
+          voided: false
+        )
+      end
+
+      def find_or_create_department_attribute_type
+        LocationAttributeType.find_or_create_by(name: Location::DEPARTMENT_ATTRIBUTE_TYPE_NAME) do |attribute_type|
+          attribute_type.min_occurs = 0
+          attribute_type.max_occurs = 1
+          attribute_type.datatype = 'org.openmrs.customdatatype.datatype.FreeTextDatatype'
+          attribute_type.description = 'Global department a ward belongs to (value is the department location_id)'
+          attribute_type.creator = User.current&.user_id
+          attribute_type.date_created = Time.now
+          attribute_type.retired = false
+        end
+      end
 
       def find_or_create_location_tag(tag_param)
         # Try to find by ID first if it's numeric

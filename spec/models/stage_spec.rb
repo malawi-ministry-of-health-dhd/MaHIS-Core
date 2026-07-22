@@ -11,4 +11,13 @@ RSpec.describe Stage, type: :model do
     expect(described_class::VALID_STAGES).to include('HTS')
     expect(stage.errors[:stage]).to be_empty
   end
+
+  it 'allows the AETC test results queue stage' do
+    stage = described_class.new(stage: 'TEST_RESULTS')
+
+    stage.validate
+
+    expect(described_class::VALID_STAGES).to include('TEST_RESULTS')
+    expect(stage.errors[:stage]).to be_empty
+  end
 end

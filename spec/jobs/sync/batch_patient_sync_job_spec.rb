@@ -31,4 +31,38 @@ RSpec.describe Sync::BatchPatientSyncJob, type: :job do
       expect(parsed).to be > 2.days.ago
     end
   end
+
+  describe '#perform' do
+    subject(:job) { described_class.new }
+
+    before do
+      allow(job).to receive(:initialize_patient_progress)
+      allow(Sync::EnsurePatientIndexesJob).to receive(:perform_async)
+    end
+
+    it 'bypasses the incremental watermark and scans every patient when force_full is true' do
+      expect(job).not_to receive(:default_since_date)
+      expect(job).to receive(:sync_patients_in_bulk)
+        .with(nil, nil, described_class::DEFAULT_BATCH_SIZE)
+        .and_return([0, 0])
+
+      job.perform(nil, nil, described_class::DEFAULT_BATCH_SIZE, true)
+
+      expect(Sync::EnsurePatientIndexesJob).to have_received(:perform_async)
+        .with('reconcile' => true)
+    end
+
+    it 'retains the incremental watermark behavior by default' do
+      watermark = '2026-01-01T00:00:00Z'
+      parsed_watermark = Time.zone.parse(watermark)
+
+      expect(job).to receive(:default_since_date).with(nil).and_return(watermark)
+      expect(job).to receive(:sync_patients_in_bulk)
+        .with(nil, parsed_watermark, described_class::DEFAULT_BATCH_SIZE)
+        .and_return([0, 0])
+
+      job.perform
+    end
+
+  end
 end
