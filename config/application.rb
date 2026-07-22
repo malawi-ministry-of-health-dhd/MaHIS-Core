@@ -27,6 +27,7 @@ module BHTEmrApi
     config.autoload_paths << Rails.root.join('app/channels')
     config.eager_load_paths << Rails.root.join('app/channels')
     config.active_record.yaml_column_permitted_classes = [Date, Time]
+    config.active_record.schema_format = :sql
     # Settings in config/environments/* take precedence over those specified here.
     # Application configuration can go into files in config/initializers
     # -- all .rb files in that directory are automatically loaded after loading

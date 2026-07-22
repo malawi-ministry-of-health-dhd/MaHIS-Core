@@ -1,7 +1,8 @@
 # frozen_string_literal: true
 
 class PushDdeFootprintsJob < ApplicationJob
-  def perform(program_id:, patient_id:, date:, creator_id:)
+  def perform(program_id:, patient_id:, location_id:, date:, creator_id:)
+    login(creator_id, location_id)
     patient = Patient.find(patient_id)
     dde_service(program_id).create_patient_footprint(patient, date&.to_date, creator_id)
   end
