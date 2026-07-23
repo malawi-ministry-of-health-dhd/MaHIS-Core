@@ -56,7 +56,7 @@ module BuildPatientRecordService
       observations = Observation.unscoped
         .where(encounter_id: encounter_ids)
         .where(voided: [false, 0])
-        .select(:obs_id, :obs_group_id, :encounter_id, :concept_id, :obs_datetime, :value_coded, :value_text, :value_numeric, :value_datetime)
+        .select(:obs_id, :obs_group_id, :encounter_id, :concept_id, :obs_datetime, :value_coded, :value_text, :value_numeric, :value_datetime, :comments)
         .to_a
 
       observations_by_encounter = Hash.new { |hash, key| hash[key] = [] }
@@ -130,6 +130,7 @@ module BuildPatientRecordService
           value_text: observation.value_text || '',
           value_numeric: observation.value_numeric,
           value_datetime: observation.value_datetime,
+          comments: observation.comments,
           provider_id: encounter.provider_id,
           provider_name: provider_names_by_id[encounter.provider_id] || '',
           location_id: encounter.location_id,

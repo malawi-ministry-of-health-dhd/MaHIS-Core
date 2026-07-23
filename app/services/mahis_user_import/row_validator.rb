@@ -3,6 +3,7 @@
 module MahisUserImport
   class RowValidator
     DEFAULT_PASSWORD = 'Change@2026'
+    DEFAULT_PHONE_DIAL_CODE = '265'
     LIST_SEPARATOR = /[,;|\/\r\n]+/
     NAME_FORMAT = /\A\s*[A-Za-z]+([\s'-][A-Za-z]+)*\s*\z/
     PROTECTED_ROLES = ['Superuser', 'Global Superuser', 'District Superuser', 'Facility Superuser'].freeze
@@ -34,6 +35,7 @@ module MahisUserImport
       attributes = extract_attributes
       validate_required_attributes(attributes)
       validate_names(attributes)
+      validate_phone(attributes[:phone])
       validate_username(attributes[:username])
       validate_password(attributes[:password])
       resolve_references(attributes)
@@ -57,7 +59,7 @@ module MahisUserImport
         family_name: family_name,
         username: UsernameGenerator.generate(username_source),
         gender: normalize_gender(value(:gender)),
-        phone: value(:phone_number),
+        phone: normalize_phone(value(:phone_number)),
         role_inputs: parse_list(value(:role)),
         program_inputs: parse_list(value(:program)),
         district_input: value(:district),
@@ -153,6 +155,15 @@ module MahisUserImport
       add_error('password must not contain spaces') if password.match?(/\s/)
     end
 
+    def validate_phone(phone)
+      return if phone.blank?
+
+      local_number = phone.to_s.split('-', 2).last.to_s.gsub(/\D/, '')
+      return if [9, 10].include?(local_number.length)
+
+      add_error('phone_number must be 9 or 10 digits after the country code')
+    end
+
     def validate_facility_district(attributes)
       facility = attributes[:facility]
       district = attributes[:district]
@@ -179,14 +190,18 @@ module MahisUserImport
     def validate_admin_role_permissions(attributes)
       current_user = @current_user
       return if current_user.blank?
+      return if current_user.global_superuser?
+
+      current_rank = current_user.superuser_rank
 
       attributes[:role_names].each do |role_name|
         next unless protected_role?(role_name)
-        next if current_user.global_superuser?
 
-        if current_user.is_superuser?
-          next unless GLOBAL_ONLY_ROLES.any? { |role| role.casecmp(role_name).zero? }
-        end
+        # Global Superuser / District Superuser may only ever be granted by a Global Superuser,
+        # and no admin may grant a superuser role that outranks their own.
+        forbidden = GLOBAL_ONLY_ROLES.any? { |role| role.casecmp(role_name).zero? }
+        forbidden ||= current_rank < (User::SUPERUSER_ROLE_RANK[role_name.to_s.strip.downcase] || 0)
+        next unless forbidden
 
         add_error("configured admin is not authorised to assign the '#{role_name}' role")
       end
@@ -313,6 +328,20 @@ module MahisUserImport
       else
         gender.to_s.strip.presence
       end
+    end
+
+    def normalize_phone(phone)
+      digits = phone.to_s.gsub(/\D/, '')
+      return nil if digits.blank?
+
+      if digits.start_with?(DEFAULT_PHONE_DIAL_CODE) && digits.length > 10
+        digits = digits[DEFAULT_PHONE_DIAL_CODE.length..]
+      end
+
+      local_number = digits.sub(/\A0+/, '')
+      return nil if local_number.blank?
+
+      "+#{DEFAULT_PHONE_DIAL_CODE}-#{local_number}"
     end
 
     def normalize_waiting_list_access(value)

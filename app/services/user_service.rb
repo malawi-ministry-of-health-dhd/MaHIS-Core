@@ -7,7 +7,14 @@ require 'digest'
 require_relative 'person_service'
 
 module UserService
-  AUTHENTICATION_TOKEN_VALIDITY_PERIOD = 168.hours
+  # 30 days. Kept in sync with the client's offline-login window
+  # (MAHIS/src/services/offline_login_store.ts MAX_OFFLINE_AGE_MS): a device may
+  # sign in offline for up to 30 days after the last online login, so the token
+  # cached in that offline session must stay valid for the same period —
+  # otherwise endpoints that opportunistically hit the online API when a
+  # connection returns would 401 mid-window. Both are measured from the same
+  # login event, so they expire together.
+  AUTHENTICATION_TOKEN_VALIDITY_PERIOD = 720.hours
   LOGGER = Logger.new $stdout
   HSA_ROLES = ["HSA", "Health Surveillance"]
 
@@ -404,7 +411,10 @@ def self.new_arch_authenticate(user, password)
 end
 
   def self.check_user(username)
-    User.exists?(username:)
+    # Usernames are global login keys, so check across ALL facilities (unscoped) and
+    # case-insensitively — otherwise a name taken at another facility, or differing only
+    # in case (e.g. "test" vs "Test"), would wrongly appear available.
+    User.unscoped.where('LOWER(username) = ?', username.to_s.downcase).exists?
   end
 
   def self.user_roles(user)

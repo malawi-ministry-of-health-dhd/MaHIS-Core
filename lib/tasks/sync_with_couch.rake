@@ -104,6 +104,18 @@ namespace :sync do
     end
   end
 
+  desc 'Force a complete rebuild of every MySQL patient document in CouchDB'
+  task patients_full: :environment do
+    unless CouchdbPatientService.couchdb_configured?
+      puts '❌ CouchDB is not configured; forced patient sync was not enqueued.'
+      next
+    end
+
+    Sync::BatchPatientSyncJob.perform_async(nil, nil, Sync::BatchPatientSyncJob::DEFAULT_BATCH_SIZE, true)
+    puts '✅ Enqueued forced full patient sync (all MySQL patients will be rebuilt in CouchDB).'
+    puts 'Run `rails sync:progress` to watch progress.'
+  end
+
   desc 'Diagnose why a CouchDB sync is not progressing (Sidekiq, queues, CouchDB, locks)'
   task doctor: :environment do
     require 'sidekiq/api'
