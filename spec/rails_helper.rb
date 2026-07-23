@@ -106,24 +106,27 @@ end
 
 # Required by Auditable model concern...
 # Set sensible defaults for tests — bootstrap seed data bypassing FK/validations
-ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS=0')
-unless Person.find_by(person_id: 1)
-  Person.new(person_id: 1, gender: 'M', birthdate: Date.parse('1980-01-01'),
-             birthdate_estimated: 0, creator: 1, date_created: Time.now,
-             uuid: SecureRandom.uuid).save!(validate: false)
-end
-unless Location.find_by(location_id: 700)
-  Location.new(location_id: 700, name: 'Test Location', creator: 1,
-               date_created: Time.now, retired: 0,
+begin
+  ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS=0')
+  unless Person.find_by(person_id: 1)
+    Person.new(person_id: 1, gender: 'M', birthdate: Date.parse('1980-01-01'),
+               birthdate_estimated: 0, creator: 1, date_created: Time.now,
                uuid: SecureRandom.uuid).save!(validate: false)
+  end
+  unless Location.find_by(location_id: 700)
+    Location.new(location_id: 700, name: 'Test Location', creator: 1,
+                 date_created: Time.now, retired: 0,
+                 uuid: SecureRandom.uuid).save!(validate: false)
+  end
+  unless User.find_by(user_id: 1)
+    User.new(user_id: 1, username: 'admin', password: SecureRandom.hex(16),
+             salt: SecureRandom.hex(16), person_id: 1, location_id: 700,
+             creator: 1, date_created: Time.now, retired: 0,
+             uuid: SecureRandom.uuid, system_id: 'admin').save!(validate: false)
+  end
+ensure
+  ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS=1')
 end
-unless User.find_by(user_id: 1)
-  User.new(user_id: 1, username: 'admin', password: SecureRandom.hex(16),
-           salt: SecureRandom.hex(16), person_id: 1, location_id: 700,
-           creator: 1, date_created: Time.now, retired: 0,
-           uuid: SecureRandom.uuid, system_id: 'admin').save!(validate: false)
-end
-ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS=1')
 
 # Helper method to get a default provider person for tests
 def default_provider
