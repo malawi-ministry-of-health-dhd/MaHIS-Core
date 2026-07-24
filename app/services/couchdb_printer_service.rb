@@ -4,8 +4,11 @@ require 'yaml'
 require Rails.root.join('lib', 'couchdb_url').to_s
 
 class CouchdbPrinterService
-  CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
-  COUCHDB_URL = CONFIG['COUCHDB_URL']
+  CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')), aliases: true)
+  # Prefer the environment-scoped value: config/initializers/load_application_yml.rb
+  # promotes keys from application.yml[Rails.env] (e.g. the `production:` block) into ENV,
+  # so a per-environment COUCHDB_URL lands in ENV. Fall back to the top-level key for local dev.
+  COUCHDB_URL = ENV['COUCHDB_URL'].presence || CONFIG['COUCHDB_URL']
   PRINTERS_DB = 'printer_configurations'
 
   class << self
