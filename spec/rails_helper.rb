@@ -103,9 +103,13 @@ RSpec.configure do |config|
 
   # Ensure User.current is set before each test (prepend ensures it runs before let! blocks)
   config.prepend_before(:each) do
-    # User with ID 1 should exist from seeds
-    User.current = User.find_by(user_id: 1) || User.first
-    Location.current = Location.find_by(location_id: 700) || Location.first
+    # User is location-scoped, so the current actor and facility must agree.
+    # Resolve the bootstrap actor without the scope, then select its facility.
+    test_user = User.unscoped.find_by(user_id: 1) || User.unscoped.first
+    Location.current = Location.unscoped.find_by(location_id: test_user&.location_id) ||
+                       Location.unscoped.find_by(location_id: 700) ||
+                       Location.unscoped.first
+    User.current = test_user
   end
 end
 
@@ -144,5 +148,8 @@ def default_provider
 end
 
 # Set current location and user for tests
-Location.current = Location.find_by(location_id: 700) || Location.first
-User.current = User.find_by(user_id: 1) || User.first
+default_test_user = User.unscoped.find_by(user_id: 1) || User.unscoped.first
+Location.current = Location.unscoped.find_by(location_id: default_test_user&.location_id) ||
+                   Location.unscoped.find_by(location_id: 700) ||
+                   Location.unscoped.first
+User.current = default_test_user
