@@ -138,10 +138,38 @@ The import reads every worksheet in the workbook. Each worksheet must have the s
 
 # sync all records with couchDB
 
-- rails sync:all # enqueue everything + live dashboard
+- rails sync:all # enqueue reference data and only missing patient documents + live dashboard
+- rails "sync:all[rebuild_patients]" # rebuild every eligible patient document
 - rails sync:progress # watch an already-running sync from another terminal
 - WATCH=0 rails sync:all # enqueue only, no dashboard
 - rails sync:doctor # check for common issues
+
+By default, `rails sync:all` checks the type-3 patient identifiers against
+CouchDB and enqueues only documents that are missing. It does not rebuild or
+rewrite patient documents that already exist. Patients without a nonblank,
+non-voided type-3 identifier are excluded because that identifier is used as the
+CouchDB document ID. When a patient has multiple valid type-3 identifiers, the
+newest one is the canonical document ID; older identifiers do not create extra
+documents. Patient progress is measured against distinct canonical document
+IDs, not every identifier row or every row in the MySQL patient table.
+
+Use the explicit `rebuild_patients` argument only when existing CouchDB patient
+documents must be regenerated, such as after importing historical clinical data:
+
+```bash
+rails "sync:all[rebuild_patients]"
+```
+
+This full mode rebuilds every eligible patient's complete record and can take
+substantially longer than the default missing-only sync.
+
+Patient bulk requests are split at 5 MB so one large record cannot prevent the
+other documents in its batch from syncing. A source patient with more than
+50,000 observations or 20,000 orders is treated as a permanent failure for that
+run because it cannot produce a practical single offline document. The
+dashboard ends with an explicit failed patient count for these records instead
+of retrying them indefinitely. Clean the duplicated/abnormal MySQL clinical
+rows, then run `rails sync:all` again to retry them.
 
 # Run only one sync job
 

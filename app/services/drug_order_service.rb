@@ -90,8 +90,8 @@ module DrugOrderService
       }
     end
 
-    def fetch_all_patient_drug_orders(patient_id)
-      repair_missing_drug_order_rows(patient_id:)
+    def fetch_all_patient_drug_orders(patient_id, repair_missing: true)
+      repair_missing_drug_order_rows(patient_id:) if repair_missing
 
       # Quote patient ID for SQL safety
       quoted_patient_id = ActiveRecord::Base.connection.quote(patient_id)
@@ -401,10 +401,10 @@ module DrugOrderService
     end
 
     def dispensation_concept_ids
-      ConceptName.where(voided: 0)
-                 .where('UPPER(name) = ?', 'AMOUNT DISPENSED')
-                 .distinct
-                 .pluck(:concept_id)
+      @dispensation_concept_ids ||= ConceptName
+                                    .where(voided: 0, name: 'Amount dispensed')
+                                    .distinct
+                                    .pluck(:concept_id)
     end
 
     def pending_dispensation_patients_sql(cutoff, location_id)

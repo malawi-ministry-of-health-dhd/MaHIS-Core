@@ -19,6 +19,8 @@ require 'action_cable/engine'
 # you've limited to :test, :development, or :production.
 Bundler.require(*Rails.groups)
 
+require_relative '../lib/middleware/inflate_request_body'
+
 module BHTEmrApi
   class Application < Rails::Application
     # Initialize configuration defaults for originally generated Rails version.
@@ -63,6 +65,10 @@ module BHTEmrApi
 
     # This also configures session_options for use below
     config.session_store :cookie_store, key: '_interslice_session'
+
+    # Inflate gzip-compressed request bodies (e.g. POST /save_patient_record)
+    # before Rails parses params. Runs at the front of the stack.
+    config.middleware.insert_before 0, InflateRequestBody
 
     # Required for all session management (regardless of session_store)
     config.middleware.use ActionDispatch::Cookies

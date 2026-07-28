@@ -2,6 +2,9 @@
 module Sync
   class BulkPatientRecordSyncJob < BaseSyncJob
     sidekiq_options queue: :patient_sync, retry: 3
+
+    MAX_SOURCE_OBSERVATIONS = 50_000
+    MAX_SOURCE_ORDERS = 20_000
     
     # Sync multiple patient records in one job using CouchDB bulk operations
     def perform(patient_ids, options = {})
@@ -9,6 +12,13 @@ module Sync
 
       start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       patient_ids = patient_ids.uniq
+      oversized_source_patients = oversized_source_patients(patient_ids)
+      oversized_source_patients.each do |patient_id, reason|
+        PatientSyncReconciler.record_permanent_failure(patient_id, reason)
+        Sidekiq.logger.error("Skipped permanently unsyncable patient #{patient_id}: #{reason}")
+      end
+      patient_ids -= oversized_source_patients.keys
+      return if patient_ids.empty?
 
       patient_records = []
       failed_ids = []
@@ -17,10 +27,11 @@ module Sync
       missing_document_id_ids = []
 
       existing_patient_ids = Patient.where(patient_id: patient_ids).pluck(:patient_id).to_h { |id| [id, true] }
-      identifier_rows = PatientIdentifier.where(patient_id: patient_ids).pluck(:patient_id, :identifier_type, :identifier)
+      identifier_rows = PatientIdentifier.where(patient_id: patient_ids).pluck(:patient_id, :identifier_type, :identifier, :voided)
       patient_ids_with_primary_identifier = {}
-      identifier_rows.each do |pid, identifier_type, identifier|
+      identifier_rows.each do |pid, identifier_type, identifier, voided|
         next unless identifier_type == 3
+        next unless voided.to_i.zero?
         next if identifier.blank?
 
         patient_ids_with_primary_identifier[pid] = true
@@ -36,7 +47,6 @@ module Sync
 
           unless patient_ids_with_primary_identifier[patient_id]
             missing_primary_identifier_ids << patient_id
-            failed_ids << patient_id
             next
           end
           
@@ -84,14 +94,34 @@ module Sync
 
       return if failed_ids.empty? && bulk_errors.empty?
 
-      # Do not let Sidekiq consider a partially written batch successful. Raising
-      # preserves the job for retries/dead-set inspection instead of silently
-      # losing a migrated patient document.
+      # Patients without the required primary identifier are intentionally
+      # skipped: the current CouchDB ID scheme cannot represent them, so retrying
+      # the batch can never make them sync. Other failures remain retryable.
       raise "Patient CouchDB bulk sync incomplete: failed_patients=#{failed_ids.size}, " \
             "couchdb_errors=#{bulk_errors.size}"
     end
     
     private
+
+    def oversized_source_patients(patient_ids)
+      observation_counts = Observation.unscoped
+                                      .where(person_id: patient_ids)
+                                      .group(:person_id)
+                                      .having('COUNT(*) > ?', MAX_SOURCE_OBSERVATIONS)
+                                      .count
+      order_counts = Order.unscoped
+                          .where(patient_id: patient_ids)
+                          .group(:patient_id)
+                          .having('COUNT(*) > ?', MAX_SOURCE_ORDERS)
+                          .count
+
+      (observation_counts.keys | order_counts.keys).to_h do |patient_id|
+        reason = "source record exceeds offline-document safety limits " \
+                 "(observations=#{observation_counts[patient_id].to_i}, " \
+                 "orders=#{order_counts[patient_id].to_i})"
+        [patient_id.to_i, reason]
+      end
+    end
 
     def log_skip_reasons(missing_patient_ids, missing_primary_identifier_ids, missing_document_id_ids)
       if missing_patient_ids.any?

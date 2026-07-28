@@ -40,7 +40,9 @@ module BuildPatientRecordService
         )
       end
 
-      matching.max_by { |row| row.date_created || Time.at(0) }.identifier.to_s
+      matching.max_by do |row|
+        [row.date_created || Time.at(0), row.patient_identifier_id.to_i]
+      end.identifier.to_s
     rescue StandardError => e
       Rails.logger.error("Error getting patient identifier for type #{identifier_type_id}: #{e.message}")
       ''

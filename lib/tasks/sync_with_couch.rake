@@ -1,6 +1,19 @@
 namespace :sync do
-  desc "Run all sync jobs in parallel"
-  task all: :environment do
+  desc "Run all sync jobs in parallel; use rails 'sync:all[rebuild_patients]' to rebuild every patient document"
+  task :all, [:rebuild_patients] => :environment do |_task, args|
+    patient_mode = (args[:rebuild_patients].presence || ENV['REBUILD_PATIENTS']).to_s.downcase
+    rebuild_values = %w[1 true yes rebuild rebuild_patients full]
+    missing_only_values = ['', '0', 'false', 'no', 'missing', 'missing_only']
+
+    unless rebuild_values.include?(patient_mode) || missing_only_values.include?(patient_mode)
+      puts "❌ Unknown patient sync mode '#{patient_mode}'."
+      puts "   Default missing-only: rails sync:all"
+      puts "   Full patient rebuild: rails 'sync:all[rebuild_patients]'"
+      next
+    end
+
+    rebuild_patients = rebuild_values.include?(patient_mode)
+
     # Fail fast if CouchDB is unreachable, otherwise the index check below (and
     # every sync job) hangs on RestClient's ~60s-per-request connect with no
     # useful message. A short pre-flight turns a freeze into a clear error.
@@ -25,9 +38,13 @@ namespace :sync do
       puts '⚠️  Could not verify every CouchDB reference-data index. Check Rails logs for details.'
     end
     puts 'Patient record indexes will be verified after patient sync drains.'
+    if rebuild_patients
+      puts 'Patient mode: FULL REBUILD — every eligible patient document will be rebuilt.'
+    else
+      puts 'Patient mode: MISSING ONLY — existing patient documents will not be rebuilt.'
+    end
 
     jobs = [
-      Sync::BatchPatientSyncJob,
       Sync::FacilitySyncJob,
       Sync::SpecimenSyncJob,
       Sync::VisitSyncJob,
@@ -65,9 +82,20 @@ namespace :sync do
 
     # Fresh run: clear any stale progress so the bars start from zero.
     SyncProgress.reset_all!
+    PatientSyncReconciler.clear_run_failures!
 
+    if rebuild_patients
+      Sync::BatchPatientSyncJob.perform_async(
+        nil,
+        nil,
+        Sync::BatchPatientSyncJob::DEFAULT_BATCH_SIZE,
+        true
+      )
+    else
+      Sync::BatchPatientSyncJob.perform_async
+    end
     jobs.each(&:perform_async)
-    puts "✅ Enqueued #{jobs.size} sync jobs in parallel."
+    puts "✅ Enqueued #{jobs.size + 1} sync jobs in parallel."
 
     # WATCH=0 (or NO_WATCH=1) just enqueues without the live dashboard.
     if ENV['WATCH'] == '0' || ENV['NO_WATCH'] == '1'
@@ -104,7 +132,7 @@ namespace :sync do
     end
   end
 
-  desc 'Force a complete rebuild of every MySQL patient document in CouchDB'
+  desc 'Force a complete rebuild of every eligible MySQL patient document in CouchDB'
   task patients_full: :environment do
     unless CouchdbPatientService.couchdb_configured?
       puts '❌ CouchDB is not configured; forced patient sync was not enqueued.'
@@ -112,7 +140,7 @@ namespace :sync do
     end
 
     Sync::BatchPatientSyncJob.perform_async(nil, nil, Sync::BatchPatientSyncJob::DEFAULT_BATCH_SIZE, true)
-    puts '✅ Enqueued forced full patient sync (all MySQL patients will be rebuilt in CouchDB).'
+    puts '✅ Enqueued forced full patient sync (all eligible MySQL patients will be rebuilt in CouchDB).'
     puts 'Run `rails sync:progress` to watch progress.'
   end
 
@@ -256,7 +284,8 @@ end
 
 
 # sync all records with couchDB
-# rails sync:all
+# rails sync:all                         # only missing patient documents
+# rails 'sync:all[rebuild_patients]'     # rebuild every eligible patient document
 
 # Run only one job (e.g. StageSyncJob)
 # rails "sync:run[StageSyncJob]"

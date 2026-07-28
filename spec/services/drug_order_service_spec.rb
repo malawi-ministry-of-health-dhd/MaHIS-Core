@@ -49,6 +49,34 @@ RSpec.describe DrugOrderService do
 
       expect(service.fetch_all_patient_drug_orders(123).first).to include(instructions:)
     end
+
+    it 'does not repair MySQL rows when repair_missing is false' do
+      connection = ActiveRecord::Base.connection
+
+      expect(service).not_to receive(:repair_missing_drug_order_rows)
+      allow(service).to receive(:dispensation_concept_ids).and_return([])
+      allow(connection).to receive(:quote).with(123).and_return('123')
+      allow(connection).to receive(:select_all).and_return([])
+
+      expect(service.fetch_all_patient_drug_orders(123, repair_missing: false)).to eq([])
+    end
+  end
+
+  describe :dispensation_concept_ids do
+    it 'uses the indexed name lookup and caches the result' do
+      relation = instance_double(ActiveRecord::Relation)
+      distinct_relation = instance_double(ActiveRecord::Relation)
+      service.instance_variable_set(:@dispensation_concept_ids, nil)
+
+      expect(ConceptName).to receive(:where)
+        .once
+        .with(voided: 0, name: 'Amount dispensed')
+        .and_return(relation)
+      expect(relation).to receive(:distinct).once.and_return(distinct_relation)
+      expect(distinct_relation).to receive(:pluck).once.with(:concept_id).and_return([51_678])
+
+      2.times { expect(service.send(:dispensation_concept_ids)).to eq([51_678]) }
+    end
   end
 
   describe :patients_awaiting_dispensation do

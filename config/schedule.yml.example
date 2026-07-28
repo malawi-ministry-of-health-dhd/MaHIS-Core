@@ -13,8 +13,8 @@ mnh_stats_changed_refresh:
     - 5000   # batch_size
     - ~      # location_id (nil = dispatch/fan-out)
     - ~      # program_key (nil = all MNH programs)
-    - true   # changed_only: only facilities active in the last 48h
-  description: "Nightly changed-only MNH stats refresh (fans out one job per active facility)"
+    - true   # retained for compatibility; dispatch is limited to DDE-activated facilities
+  description: "Nightly MNH stats refresh (fans out one job per DDE-activated facility)"
 
 mnh_stats_full_refresh:
   cron: "30 3 * * 0"

@@ -9,6 +9,8 @@ module Sync
     # Configuration - can be overridden in subclasses
     BULK_SYNC_ENABLED = true
     DEFAULT_BULK_BATCH_SIZE = 5000
+    DEFAULT_MAX_BULK_REQUEST_BYTES = 5 * 1024 * 1024
+    DEFAULT_MAX_DOCUMENT_BYTES = 7 * 1024 * 1024
     
     # Abstract method - must be implemented by subclasses
     def perform(batch_size = DEFAULT_BULK_BATCH_SIZE)
@@ -439,6 +441,28 @@ module Sync
     # success plus formatted error strings and the list of ids that conflicted
     # (so the caller can fetch their revs and retry just those).
     def post_bulk_docs(documents, bulk_url)
+      payload_bytes = estimated_bulk_payload_bytes(documents)
+
+      if documents.length > 1 && payload_bytes > max_bulk_request_bytes
+        Sidekiq.logger.warn(
+          "Splitting CouchDB bulk request containing #{documents.length} documents " \
+          "(#{payload_bytes} bytes exceeds #{max_bulk_request_bytes})"
+        )
+        return post_bulk_docs_in_parts(documents, bulk_url)
+      end
+
+      if documents.one? && payload_bytes > max_document_bytes
+        document = documents.first
+        return {
+          success: false,
+          errors: [
+            "Doc #{document['_id']}: document_too_large - serialized payload is " \
+            "#{payload_bytes} bytes (safe limit #{max_document_bytes})"
+          ],
+          conflicts: []
+        }
+      end
+
       retries = 0
       begin
         response = RestClient.post(
@@ -458,9 +482,49 @@ module Sync
           sleep(0.1 * retries)
           retry
         else
-          { success: false, errors: ["Bulk sync failed: #{e.message}"], conflicts: [] }
+          if documents.length > 1
+            Sidekiq.logger.warn(
+              "Splitting failed CouchDB bulk request containing #{documents.length} documents: #{e.message}"
+            )
+            post_bulk_docs_in_parts(documents, bulk_url)
+          else
+            response_detail = e.respond_to?(:response) ? e.response&.body.to_s : ''
+            detail = response_detail.present? ? "#{e.message}: #{response_detail}" : e.message
+            { success: false, errors: ["Doc #{documents.first['_id']}: bulk_sync_failed - #{detail}"], conflicts: [] }
+          end
         end
       end
+    end
+
+    def post_bulk_docs_in_parts(documents, bulk_url)
+      midpoint = documents.length / 2
+      left = post_bulk_docs(documents.first(midpoint), bulk_url)
+      right = post_bulk_docs(documents.drop(midpoint), bulk_url)
+
+      {
+        success: left[:success] && right[:success],
+        errors: left[:errors] + right[:errors],
+        conflicts: left[:conflicts] + right[:conflicts]
+      }
+    end
+
+    def estimated_bulk_payload_bytes(documents)
+      # JSON wrapper plus a comma between each serialized document. Computing
+      # individual sizes avoids first allocating one enormous request string.
+      12 + documents.sum { |document| document.to_json.bytesize + 1 }
+    end
+
+    def max_bulk_request_bytes
+      configured_positive_bytes('COUCHDB_BULK_MAX_BYTES', DEFAULT_MAX_BULK_REQUEST_BYTES)
+    end
+
+    def max_document_bytes
+      configured_positive_bytes('COUCHDB_MAX_DOCUMENT_BYTES', DEFAULT_MAX_DOCUMENT_BYTES)
+    end
+
+    def configured_positive_bytes(key, fallback)
+      value = ENV.fetch(key, fallback).to_i
+      value.positive? ? value : fallback
     end
 
     def normalize_search_documents(documents, db_name)
