@@ -75,6 +75,7 @@ module BuildPatientRecordService
         nationalID: patient_identifier_from_map(identifiers_by_type, 28, patient.patient_id),
         NcdID: patient_identifier_from_map(identifiers_by_type, 31, patient.patient_id),
         ichisID: patient_identifier_from_map(identifiers_by_type, 10, patient.patient_id),
+        arvNumber: patient_identifier_from_map(identifiers_by_type, 4, patient.patient_id),
         TEI: extract_tei(patient, identifiers_by_type),
         program_id: '',
         provider_id: '',
