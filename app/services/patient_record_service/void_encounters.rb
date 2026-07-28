@@ -3,6 +3,11 @@
 
 module PatientRecordService
   class VoidEncounters < BaseSaver
+    # Client-side operation type used when an unsaved observation encounter is
+    # pushed for creation. The receipt it leaves behind is how we map a client
+    # operation_id back to the Encounter the listener created for it.
+    OBSERVATION_ENCOUNTER_OPERATION_TYPE = 'observation_encounter.create'
+
     def void_encounters(record)
       data = record.dig(:void_encounters)
       return ok unless data.is_a?(Array) && data.any?
@@ -10,11 +15,24 @@ module PatientRecordService
       collected_errors = []
 
       data.each do |void_request|
-        encounter_id = void_request[:id]
-        reason       = void_request[:reason]
+        reason = void_request[:reason]
 
-        unless encounter_id.present? && reason.present?
-          collected_errors << "Missing encounter_id or reason for request=#{void_request.inspect}"
+        unless reason.present?
+          collected_errors << "Missing reason for request=#{void_request.inspect}"
+          next
+        end
+
+        encounter_id = void_request[:id].presence || resolve_encounter_id_from_receipt(void_request)
+        # Write the resolved id back so the record rebuild downstream refreshes
+        # this encounter's type (it reads void_encounters[].id).
+        void_request[:id] = encounter_id if encounter_id.present?
+
+        # An unsaved encounter that never reached MySQL has no receipt to resolve.
+        # The client already dropped it from the record, so there is nothing to void.
+        next if encounter_id.blank? && void_request[:encounter_operation_id].present?
+
+        unless encounter_id.present?
+          collected_errors << "Missing encounter_id or encounter_operation_id for request=#{void_request.inspect}"
           next
         end
 
@@ -44,6 +62,26 @@ module PatientRecordService
     end
 
     private
+
+    # An encounter voided while still in the "unsaved" state carries no
+    # encounter_id, only the operation_id the client stamped on the observation
+    # group. If the listener already turned that group into an Encounter, the
+    # operation receipt holds the resulting encounter_id.
+    def resolve_encounter_id_from_receipt(void_request)
+      operation_id = void_request[:encounter_operation_id]
+      return nil if operation_id.blank?
+
+      scope = PatientRecordOperationReceipt.where(
+        operation_type: OBSERVATION_ENCOUNTER_OPERATION_TYPE,
+        operation_id: operation_id,
+        status: 'completed',
+        target_type: 'Encounter'
+      )
+      patient_id = void_request[:patient_id]
+      scope = scope.where(patient_id: patient_id) if patient_id.present?
+
+      scope.order(completed_at: :desc).first&.target_id.presence
+    end
 
     def encounter_service
       @encounter_service ||= EncounterService.new

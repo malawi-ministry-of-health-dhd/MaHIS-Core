@@ -257,12 +257,14 @@ class PatientService
     ).order('orders.start_date DESC')
   end
 
-  def find_program_drug_orders_awaiting_dispensation(patient, date, program_id: nil)
-    DrugOrderService.repair_missing_drug_order_rows(
-      patient_id: patient.patient_id,
-      cutoff: date,
-      location_id: User.current&.location_id
-    )
+  def find_program_drug_orders_awaiting_dispensation(patient, date, program_id: nil, repair_missing: true)
+    if repair_missing
+      DrugOrderService.repair_missing_drug_order_rows(
+        patient_id: patient.patient_id,
+        cutoff: date,
+        location_id: User.current&.location_id
+      )
+    end
 
     query = DrugOrder
       .joins(order: :encounter)

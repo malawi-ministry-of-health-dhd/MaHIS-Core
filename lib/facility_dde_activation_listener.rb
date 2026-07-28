@@ -131,6 +131,8 @@ class FacilityDdeActivationListener
     return unless doc
     return if doc['_id'].to_s.start_with?('_design/')
 
+    Rails.cache.delete(Sync::MnhStatsSyncJob::FACILITIES_CACHE_KEY)
+
     unless dde_activated?(doc)
       Rails.logger.debug("[Facility DDE Listener] Ignoring non-activated facility #{doc['_id']}")
       return
