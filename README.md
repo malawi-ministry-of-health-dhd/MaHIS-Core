@@ -138,10 +138,105 @@ The import reads every worksheet in the workbook. Each worksheet must have the s
 
 # sync all records with couchDB
 
-- rails sync:all # enqueue everything + live dashboard
+- rails sync:all # enqueue reference data and only missing patient documents + live dashboard
+- rails "sync:all[rebuild_patients]" # rebuild every eligible patient document
 - rails sync:progress # watch an already-running sync from another terminal
 - WATCH=0 rails sync:all # enqueue only, no dashboard
 - rails sync:doctor # check for common issues
+
+By default, `rails sync:all` checks the type-3 patient identifiers against
+CouchDB and enqueues only documents that are missing. It does not rebuild or
+rewrite patient documents that already exist. Patients without a nonblank,
+non-voided type-3 identifier are excluded because that identifier is used as the
+CouchDB document ID. When a patient has multiple valid type-3 identifiers, the
+newest one is the canonical document ID; older identifiers do not create extra
+documents. Patient progress is measured against distinct canonical document
+IDs, not every identifier row or every row in the MySQL patient table.
+
+Use the explicit `rebuild_patients` argument only when existing CouchDB patient
+documents must be regenerated, such as after importing historical clinical data:
+
+```bash
+rails "sync:all[rebuild_patients]"
+```
+
+This full mode rebuilds every eligible patient's complete record and can take
+substantially longer than the default missing-only sync.
+
+Patient bulk requests are split at 5 MiB so one large record cannot prevent the
+other documents in its batch from syncing. Single patient documents are not
+rejected by application-level observation, order, or serialized-size limits.
+CouchDB, a reverse proxy, or available server memory may still impose practical
+limits on unusually large documents.
+
+The read-only threshold report lists patients above the former safeguards:
+
+```bash
+# Complete report. This serializes every eligible patient document and may take
+# a long time on a large database.
+rails patient_sync:threshold_report
+
+# Check selected patients only.
+PATIENT_IDS=149537,1577 rails patient_sync:threshold_report
+
+# Faster: check counts and serialize only patients already above a count limit.
+DOCUMENT_SCAN=candidates rails patient_sync:threshold_report
+
+# Counts only; do not build patient documents.
+DOCUMENT_SCAN=none rails patient_sync:threshold_report
+```
+
+The default CSV is `tmp/patient_sync_threshold_report.csv`. Set `OUTPUT` to
+choose another path. The count columns include voided rows so they match the
+historical checks exactly. Document build failures are written to a neighboring
+`*_errors.csv` file and should be reviewed because their size could not be
+determined.
+
+### Parallel duplicate clinical-data cleanup
+
+The duplicate cleanup runs synchronously unless `ASYNC=1` is supplied. Parallel
+mode enqueues one patient per Sidekiq job on the dedicated
+`clinical_data_cleanup` queue. Start a worker for that queue with:
+
+```bash
+bundle exec sidekiq -C config/sidekiq_clinical_data_cleanup.yml
+```
+
+The dedicated worker defaults to three concurrent patient cleanups. Adjust it
+carefully when the database has sufficient capacity:
+
+```bash
+CLINICAL_DATA_CLEANUP_CONCURRENCY=4 \
+  bundle exec sidekiq -C config/sidekiq_clinical_data_cleanup.yml
+```
+
+After reviewing the synchronous dry run, enqueue the confirmed cleanup:
+
+```bash
+PATIENT_IDS=149550,149564,149583 \
+MODE=replay \
+APPLY=1 \
+CONFIRM=VOID_DUPLICATES \
+VOIDED_BY=1 \
+ASYNC=1 \
+bin/rails clinical_data:deduplicate
+```
+
+Every job handles one patient transaction and enqueues the cleaned patient
+document for rebuilding. It does not create filesystem backups. Duplicate rows
+remain in MySQL with `voided`, `voided_by`, `date_voided`, and `void_reason`
+audit fields. Rerunning an already completed patient is safe: only active
+duplicate rows are selected, so applied rows are not voided again.
+
+Before processing a large list, apply the cleanup performance indexes:
+
+```bash
+bin/rails db:migrate
+```
+
+The write phase loads duplicate-to-keeper IDs into connection-local temporary
+tables and uses joined updates, avoiding hundreds of repeated `CASE` updates
+over the same patient's rows.
 
 # Run only one sync job
 

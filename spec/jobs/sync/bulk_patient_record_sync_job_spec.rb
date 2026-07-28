@@ -7,7 +7,7 @@ RSpec.describe Sync::BulkPatientRecordSyncJob, type: :job do
 
   before do
     patient_scope = instance_double(ActiveRecord::Relation, pluck: [123])
-    identifier_scope = instance_double(ActiveRecord::Relation, pluck: [[123, 3, 'NPID-123']])
+    identifier_scope = instance_double(ActiveRecord::Relation, pluck: [[123, 3, 'NPID-123', 0]])
 
     allow(Patient).to receive(:where).with(patient_id: [123]).and_return(patient_scope)
     allow(PatientIdentifier).to receive(:where).with(patient_id: [123]).and_return(identifier_scope)
@@ -35,5 +35,22 @@ RSpec.describe Sync::BulkPatientRecordSyncJob, type: :job do
 
     expect { job.perform([123]) }
       .to raise_error(/failed_patients=1/)
+  end
+
+  it 'skips a patient without a primary identifier without retrying the batch' do
+    identifier_scope = instance_double(ActiveRecord::Relation, pluck: [])
+    allow(PatientIdentifier).to receive(:where).with(patient_id: [123]).and_return(identifier_scope)
+    expect(BuildPatientRecordService).not_to receive(:build_patient_record)
+    expect(job).not_to receive(:bulk_sync_patients_to_couchdb)
+
+    expect { job.perform([123]) }.not_to raise_error
+  end
+
+  it 'does not reject a patient based on observation or order counts' do
+    allow(job).to receive(:bulk_sync_patients_to_couchdb).and_return(success: true, errors: [])
+    expect(Observation).not_to receive(:unscoped)
+    expect(Order).not_to receive(:unscoped)
+
+    expect { job.perform([123]) }.not_to raise_error
   end
 end

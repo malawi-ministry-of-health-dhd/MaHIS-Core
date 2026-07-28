@@ -17,10 +17,11 @@ module Sync
       missing_document_id_ids = []
 
       existing_patient_ids = Patient.where(patient_id: patient_ids).pluck(:patient_id).to_h { |id| [id, true] }
-      identifier_rows = PatientIdentifier.where(patient_id: patient_ids).pluck(:patient_id, :identifier_type, :identifier)
+      identifier_rows = PatientIdentifier.where(patient_id: patient_ids).pluck(:patient_id, :identifier_type, :identifier, :voided)
       patient_ids_with_primary_identifier = {}
-      identifier_rows.each do |pid, identifier_type, identifier|
+      identifier_rows.each do |pid, identifier_type, identifier, voided|
         next unless identifier_type == 3
+        next unless voided.to_i.zero?
         next if identifier.blank?
 
         patient_ids_with_primary_identifier[pid] = true
@@ -36,7 +37,6 @@ module Sync
 
           unless patient_ids_with_primary_identifier[patient_id]
             missing_primary_identifier_ids << patient_id
-            failed_ids << patient_id
             next
           end
           
@@ -84,9 +84,9 @@ module Sync
 
       return if failed_ids.empty? && bulk_errors.empty?
 
-      # Do not let Sidekiq consider a partially written batch successful. Raising
-      # preserves the job for retries/dead-set inspection instead of silently
-      # losing a migrated patient document.
+      # Patients without the required primary identifier are intentionally
+      # skipped: the current CouchDB ID scheme cannot represent them, so retrying
+      # the batch can never make them sync. Other failures remain retryable.
       raise "Patient CouchDB bulk sync incomplete: failed_patients=#{failed_ids.size}, " \
             "couchdb_errors=#{bulk_errors.size}"
     end
