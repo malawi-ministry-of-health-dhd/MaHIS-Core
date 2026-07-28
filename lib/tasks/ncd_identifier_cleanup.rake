@@ -2,12 +2,15 @@
 
 require 'fileutils'
 require 'json'
+require 'securerandom'
 require 'set'
 
 # Usage:
 #   bin/rails ncd_identifiers:fix                         # preview
 #   bin/rails ncd_identifiers:fix_all_abnormal
 #   DRY_RUN=false SYNC_COUCHDB=true bin/rails ncd_identifiers:fix
+#   PATIENT_IDENTIFIER_IDS=112922,112934 bin/rails ncd_identifiers:fix_selected
+#   PROGRAM_LOCATION_ID=568 SITE_PREFIX=KDH bin/rails ncd_identifiers:fix_facility_program
 #
 # The narrower normalize_spaces and apply_undefined_prefixes tasks are
 # preview-only. All writes go through the locked, collision-safe full cleanup.
@@ -20,6 +23,8 @@ class NcdIdentifierCleanupTask
   DEFAULT_MAPPING_PATH = Rails.root.join('db', 'ncd_facility_prefix_mapping.json')
   DEFAULT_DETAILS_PATH = Rails.root.join('tmp', 'ncd_undefined_facility_details.json')
   DEFAULT_REVIEW_PATH = Rails.root.join('tmp', 'ncd_abnormal_identifier_review.json')
+  DEFAULT_FACILITY_REVIEW_PATH = Rails.root.join('tmp', 'ncd_facility_identifier_review.json')
+  DEFAULT_SELECTED_REVIEW_PATH = Rails.root.join('tmp', 'ncd_selected_identifier_review.json')
   DEFAULT_MAX_NEXT_NUMBER_SOURCE = 100_000
   NCD_NUMBER_LOCK_NAME = 'mahis_ncd_number_allocation'
   NCD_NUMBER_LOCK_TIMEOUT = 30
@@ -210,10 +215,224 @@ class NcdIdentifierCleanupTask
     changes
   end
 
+  def fix_facility_program_identifiers(program_location_id:, site_prefix:, fallback_creator_id: 1)
+    validate_target_database!
+    location_id = program_location_id.to_i
+    prefix = site_prefix.to_s.strip.upcase
+    creator_id = fallback_creator_id.to_i
+    raise ArgumentError, 'PROGRAM_LOCATION_ID must be a positive integer' unless location_id.positive?
+    raise ArgumentError, 'SITE_PREFIX must contain letters only' unless prefix.match?(/\A[A-Z]+\z/)
+    raise ArgumentError, 'CREATOR_ID must be a positive integer' unless creator_id.positive?
+
+    plan = if @dry_run
+             build_facility_cleanup_plan(location_id, prefix, creator_id)
+           else
+             with_ncd_number_lock do
+               locked_plan = build_facility_cleanup_plan(location_id, prefix, creator_id)
+               apply_changes(locked_plan[:changes])
+               locked_plan
+             end
+           end
+
+    changes = plan[:changes]
+    unresolved = plan[:unresolved]
+    warnings = plan[:warnings]
+    write_review(
+      changes,
+      unresolved,
+      warnings,
+      mode: 'facility_program',
+      program_location_id: location_id,
+      required_site_prefix: prefix,
+      enrolled_patient_count: plan[:enrolled_patient_count]
+    )
+
+    puts "\n--- Facility NCD identifier cleanup ---"
+    puts "Program location: #{location_id}"
+    puts "Required prefix: #{prefix}"
+    puts "Enrolled patients: #{plan[:enrolled_patient_count]}"
+    puts "Changes ready: #{changes.length}"
+    puts "Still needs review: #{unresolved.length}"
+    puts "Review JSON: #{@review_path}"
+    print_sample_changes(changes.map { |change| change.merge(id: change[:patient_identifier_id] || "new/#{change[:patient_id]}") })
+    print_unresolved_sample(unresolved)
+
+    unless @dry_run
+      puts "Applied #{changes.length} facility NCD identifier changes."
+      enqueue_couchdb_sync(changes) if @sync_couchdb && changes.any?
+    end
+
+    changes
+  end
+
+  def fix_selected_identifiers(patient_identifier_ids:)
+    validate_target_database!
+    selected_ids = Array(patient_identifier_ids).map(&:to_i).select(&:positive?).uniq
+    raise ArgumentError, 'PATIENT_IDENTIFIER_IDS must contain at least one positive ID' if selected_ids.empty?
+
+    plan_builder = lambda do
+      selected_rows = all_identifier_rows.select do |row|
+        selected_ids.include?(row['patient_identifier_id'].to_i)
+      end
+      found_ids = selected_rows.map { |row| row['patient_identifier_id'].to_i }
+      missing_ids = selected_ids - found_ids
+      unless missing_ids.empty?
+        raise "Active NCD identifier rows not found for IDs: #{missing_ids.join(', ')}"
+      end
+
+      build_cleanup_plan(rows: selected_rows)
+    end
+
+    plan = if @dry_run
+             plan_builder.call
+           else
+             with_ncd_number_lock do
+               locked_plan = plan_builder.call
+               apply_changes(locked_plan[:changes])
+               locked_plan
+             end
+           end
+
+    changes = plan[:changes]
+    unresolved = plan[:unresolved]
+    warnings = plan[:warnings]
+    write_review(
+      changes,
+      unresolved,
+      warnings,
+      mode: 'selected_identifiers',
+      requested_patient_identifier_ids: selected_ids
+    )
+
+    puts "\n--- Selected NCD identifier cleanup ---"
+    puts "Requested identifiers: #{selected_ids.length}"
+    puts "Changes ready: #{changes.length}"
+    puts "Still needs review: #{unresolved.length}"
+    puts "Review JSON: #{@review_path}"
+    print_sample_changes(changes.map { |change| change.merge(id: change[:patient_identifier_id]) })
+    print_unresolved_sample(unresolved)
+
+    unless @dry_run
+      puts "Updated #{changes.length} selected NCD identifiers."
+      enqueue_couchdb_sync(changes) if @sync_couchdb && changes.any?
+    end
+
+    changes
+  end
+
   private
 
-  def build_cleanup_plan
-    rows = all_identifier_rows
+  def build_facility_cleanup_plan(location_id, prefix, fallback_creator_id)
+    rows = facility_program_rows(location_id)
+    reservation_rows = all_identifier_reservation_rows
+    reserved_identifiers = reservation_rows.each_with_object(Hash.new { |hash, key| hash[key] = [] }) do |row, result|
+      result[identifier_collision_key(row['identifier'])] << row.dup
+    end
+    used_number_groups = build_used_number_groups(reservation_rows)
+    # Protect every recoverable facility suffix before allocating replacements.
+    # Without this pre-reservation, an early collision could consume a number
+    # that a later patient could otherwise keep while only changing the prefix.
+    rows.each do |row|
+      number = facility_identifier_number(row['identifier'])
+      next if number.blank?
+
+      numeric_number = number.to_i
+      next unless numeric_number.between?(1, @max_next_number_source)
+
+      used_number_groups[prefix] << numeric_number
+    end
+
+    changes = []
+    unresolved = []
+    rows.each do |row|
+      if row['active_ncd_count'].to_i > 1
+        unresolved << unresolved_payload(
+          row,
+          reason: 'same patient has multiple active NCD identifier rows',
+          suggestion: 'review and void redundant patient_identifier rows before assigning the facility prefix'
+        ).merge(row_review_payload(row))
+        next
+      end
+
+      old_identifier = row['identifier'].to_s.strip
+      number = facility_identifier_number(old_identifier)
+      proposed_identifier, category = if row['patient_identifier_id'].blank?
+                                        [
+                                          next_available_identifier(prefix, reserved_identifiers, used_number_groups, row),
+                                          'missing_identifier_next_number'
+                                        ]
+                                      elsif number.present?
+                                        ["#{prefix}-NCD-#{number}", facility_change_category(old_identifier, prefix)]
+                                      else
+                                        [
+                                          next_available_identifier(prefix, reserved_identifiers, used_number_groups, row),
+                                          'invalid_identifier_next_number'
+                                        ]
+                                      end
+
+      if proposed_identifier.blank?
+        unresolved << unresolved_payload(row, reason: 'NCD number range exhausted').merge(row_review_payload(row))
+        next
+      end
+
+      conflicts = conflicting_reservations(row, proposed_identifier, reserved_identifiers)
+      if conflicts.any?
+        if same_patient_active_conflict?(row, conflicts)
+          unresolved << unresolved_payload(
+            row,
+            reason: 'same patient has duplicate active NCD identifier rows',
+            suggestion: 'review and void the redundant patient_identifier row'
+          ).merge(row_review_payload(row))
+          next
+        end
+
+        if @collision_mode == 'review'
+          unresolved << unresolved_payload(
+            row,
+            reason: 'target facility NCD identifier is already reserved',
+            suggestion: next_available_identifier(prefix, reserved_identifiers, used_number_groups, row)
+          ).merge(row_review_payload(row))
+          next
+        end
+
+        collision_target = proposed_identifier
+        proposed_identifier = next_available_identifier(prefix, reserved_identifiers, used_number_groups, row)
+        if proposed_identifier.blank?
+          unresolved << unresolved_payload(row, reason: 'NCD number range exhausted').merge(row_review_payload(row))
+          next
+        end
+        category = "#{category}_collision_next_number"
+      end
+
+      next if row['patient_identifier_id'].present? && proposed_identifier == old_identifier
+
+      change = change_payload(row, proposed_identifier, category).merge(
+        action: row['patient_identifier_id'].present? ? 'update' : 'insert',
+        patient_id: row['patient_id'].to_i,
+        patient_identifier_id: row['patient_identifier_id']&.to_i,
+        identifier_location_id: location_id,
+        creator: positive_integer(row['program_creator']) || fallback_creator_id
+      )
+      if conflicts.any?
+        change[:collision_original_identifier] = collision_target
+        change[:collision_reservations] = collision_review_payload(conflicts)
+      end
+
+      reserve_change!(row, proposed_identifier, reserved_identifiers)
+      track_used_number(proposed_identifier, row, used_number_groups)
+      changes << change
+    end
+
+    {
+      changes: changes,
+      unresolved: unresolved,
+      warnings: [],
+      enrolled_patient_count: rows.length
+    }
+  end
+
+  def build_cleanup_plan(rows: nil)
+    rows ||= all_identifier_rows
     reservation_rows = all_identifier_reservation_rows
     mapping = load_json_hash(@mapping_path)
     prefix_by_facility_name = mapping.each_with_object({}) do |(facility_name, value), result|
@@ -337,8 +556,8 @@ class NcdIdentifierCleanupTask
     { changes: changes, unresolved: unresolved, warnings: warnings }
   end
 
-  def write_review(changes, unresolved, warnings)
-    write_json(@review_path, {
+  def write_review(changes, unresolved, warnings, context = {})
+    payload = {
       database: @database_name,
       identifier_type: @identifier_type,
       dry_run: @dry_run,
@@ -353,7 +572,8 @@ class NcdIdentifierCleanupTask
       changes: changes,
       unresolved: unresolved,
       warnings: warnings
-    })
+    }.merge(context)
+    write_json(@review_path, payload)
   end
 
   def apply_changes(changes)
@@ -361,6 +581,11 @@ class NcdIdentifierCleanupTask
 
     connection.transaction do
       changes.each do |change|
+        if change[:action] == 'insert'
+          apply_insert_change(change)
+          next
+        end
+
         affected = update_sanitized(
           <<~SQL.squish,
             UPDATE #{table('patient_identifier')}
@@ -380,6 +605,56 @@ class NcdIdentifierCleanupTask
         raise "NCD identifier #{change[:patient_identifier_id]} changed after the cleanup plan was built"
       end
     end
+  end
+
+  def apply_insert_change(change)
+    affected = update_sanitized(
+      <<~SQL.squish,
+        INSERT INTO #{table('patient_identifier')}
+          (patient_id, identifier, identifier_type, location_id, preferred, creator, date_created, uuid, voided)
+        SELECT ?, ?, ?, ?, 1, ?, ?, ?, 0
+        WHERE EXISTS (
+          SELECT 1
+          FROM #{table('patient_program')} pp
+          INNER JOIN #{table('program')} pr ON pr.program_id = pp.program_id
+          WHERE pp.patient_id = ?
+            AND pp.location_id = ?
+            AND pp.voided = 0
+            AND LOWER(pr.name) = 'ncd program'
+        )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM #{table('patient_identifier')} existing_patient_ncd
+            WHERE existing_patient_ncd.patient_id = ?
+              AND existing_patient_ncd.identifier_type = ?
+              AND existing_patient_ncd.voided = 0
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM #{table('patient_identifier')} reserved_ncd
+            WHERE reserved_ncd.identifier_type = ?
+              AND reserved_ncd.identifier = ?
+              AND reserved_ncd.patient_id <> ?
+          )
+      SQL
+      change[:patient_id],
+      change[:new_identifier],
+      @identifier_type,
+      change[:identifier_location_id],
+      change[:creator],
+      Time.current,
+      SecureRandom.uuid,
+      change[:patient_id],
+      change[:identifier_location_id],
+      change[:patient_id],
+      @identifier_type,
+      @identifier_type,
+      change[:new_identifier],
+      change[:patient_id]
+    )
+    return if affected == 1
+
+    raise "Patient #{change[:patient_id]} changed after the facility cleanup plan was built"
   end
 
   def connection
@@ -404,6 +679,61 @@ class NcdIdentifierCleanupTask
       WHERE pi.identifier_type = #{@identifier_type}
         AND pi.voided = 0
       ORDER BY pi.patient_identifier_id
+    SQL
+  end
+
+  def facility_program_rows(location_id)
+    connection.select_all(<<~SQL).to_a
+      WITH facility_patients AS (
+        SELECT
+          pp.patient_id,
+          MAX(pp.creator) AS program_creator
+        FROM #{table('patient_program')} pp
+        INNER JOIN #{table('program')} pr ON pr.program_id = pp.program_id
+        INNER JOIN #{table('patient')} p
+          ON p.patient_id = pp.patient_id
+         AND p.voided = 0
+        INNER JOIN #{table('person')} pe
+          ON pe.person_id = pp.patient_id
+         AND pe.voided = 0
+        WHERE pp.location_id = #{location_id}
+          AND pp.voided = 0
+          AND LOWER(pr.name) = 'ncd program'
+        GROUP BY pp.patient_id
+      )
+      SELECT
+        fp.patient_id,
+        fp.program_creator,
+        pi.patient_identifier_id,
+        pi.identifier,
+        pi.location_id AS identifier_location_id,
+        pi.date_created,
+        COALESCE(pi.creator, fp.program_creator) AS creator,
+        #{location_id} AS user_location_id,
+        CONCAT('Program location ', #{location_id}) AS facility_name,
+        NULL AS matched_facility_code,
+        (
+          SELECT COUNT(*)
+          FROM #{table('patient_identifier')} active_ncd
+          WHERE active_ncd.patient_id = fp.patient_id
+            AND active_ncd.identifier_type = #{@identifier_type}
+            AND active_ncd.voided = 0
+        ) AS active_ncd_count
+      FROM facility_patients fp
+      LEFT JOIN #{table('patient_identifier')} pi
+        ON pi.patient_identifier_id = (
+          SELECT latest_ncd.patient_identifier_id
+          FROM #{table('patient_identifier')} latest_ncd
+          WHERE latest_ncd.patient_id = fp.patient_id
+            AND latest_ncd.identifier_type = #{@identifier_type}
+            AND latest_ncd.voided = 0
+          ORDER BY
+            latest_ncd.preferred DESC,
+            latest_ncd.date_created DESC,
+            latest_ncd.patient_identifier_id DESC
+          LIMIT 1
+        )
+      ORDER BY fp.patient_id
     SQL
   end
 
@@ -579,6 +909,23 @@ class NcdIdentifierCleanupTask
     identifier.to_s.strip.gsub(/[[:space:]]*-[[:space:]]*NCD[[:space:]]*-[[:space:]]*/i, '-NCD-')
   end
 
+  def facility_identifier_number(identifier)
+    normalized = normalize_ncd_identifier(identifier)
+    match = normalized.match(/\A(?:[A-Za-z]+-NCD-|-?NCD-)(\d+)\z/i)
+    return match[1] if match
+
+    normalized.match(/\A(\d+)\z/)&.[](1)
+  end
+
+  def facility_change_category(identifier, required_prefix)
+    normalized = normalize_ncd_identifier(identifier)
+    current_prefix = normalized.match(/\A([A-Za-z]+)-NCD-\d+\z/i)&.[](1)&.upcase
+    return 'facility_prefix' if current_prefix.present? && current_prefix != required_prefix
+    return 'facility_format' if current_prefix == required_prefix
+
+    'facility_missing_prefix'
+  end
+
   def ncd_number_from_identifier(identifier, allow_embedded_prefix: false)
     normalized = normalize_ncd_identifier(identifier)
     return normalized.match(/\Aundefined-NCD-(\d+)\z/i)&.[](1) unless allow_embedded_prefix
@@ -614,6 +961,8 @@ class NcdIdentifierCleanupTask
       return mapped_prefix_change(row, Regexp.last_match(2), prefix_by_facility_name, category: 'numeric_prefix')
     when /\A(\d+)\z/
       return mapped_prefix_change(row, Regexp.last_match(1), prefix_by_facility_name, category: 'number_only')
+    when /\A-?NCD-(\d+)\z/i
+      return mapped_prefix_change(row, Regexp.last_match(1), prefix_by_facility_name, category: 'missing_prefix')
     when /\A([A-Za-z]+)-NCD-.+\z/i
       prefix = Regexp.last_match(1).upcase
       return unresolved_payload(row, reason: 'missing facility prefix mapping') if %w[UNDEFINED NULL].include?(prefix)
@@ -685,7 +1034,9 @@ class NcdIdentifierCleanupTask
 
   def conflicting_reservations(row, identifier, reserved_identifiers)
     reserved_identifiers.fetch(identifier_collision_key(identifier), []).reject do |reservation|
-      same_row = reservation['patient_identifier_id'].to_i == row['patient_identifier_id'].to_i
+      row_identifier_id = row['patient_identifier_id'].to_i
+      same_row = row_identifier_id.positive? &&
+                 reservation['patient_identifier_id'].to_i == row_identifier_id
       same_patient_history = reservation['voided'].to_i != 0 &&
                              reservation['patient_id'].to_i == row['patient_id'].to_i
       same_row || same_patient_history
@@ -718,7 +1069,8 @@ class NcdIdentifierCleanupTask
   def reserve_change!(row, new_identifier, reserved_identifiers)
     old_key = identifier_collision_key(row['identifier'])
     reserved_identifiers[old_key].reject! do |reservation|
-      reservation['patient_identifier_id'].to_i == row['patient_identifier_id'].to_i
+      row_identifier_id = row['patient_identifier_id'].to_i
+      row_identifier_id.positive? && reservation['patient_identifier_id'].to_i == row_identifier_id
     end
     reserved_identifiers[identifier_collision_key(new_identifier)] << row.merge(
       'identifier' => new_identifier,
@@ -756,7 +1108,7 @@ class NcdIdentifierCleanupTask
 
   def row_review_payload(row)
     {
-      patient_identifier_id: row['patient_identifier_id'].to_i,
+      patient_identifier_id: positive_integer(row['patient_identifier_id']),
       patient_id: row['patient_id']&.to_i,
       creator: row['creator'],
       identifier_location_id: row['identifier_location_id'],
@@ -919,6 +1271,11 @@ class NcdIdentifierCleanupTask
   def blank?(value)
     value.nil? || value.to_s.strip.empty?
   end
+
+  def positive_integer(value)
+    integer = value.to_i
+    integer.positive? ? integer : nil
+  end
 end
 
 namespace :ncd_identifiers do
@@ -937,7 +1294,7 @@ namespace :ncd_identifiers do
     ).run
   end
 
-  desc 'Preview or fix every non-standard NCD identifier format'
+  desc 'Preview or fix malformed and duplicate NCD identifiers'
   task fix_all_abnormal: :environment do
     NcdIdentifierCleanupTask.new(
       database_name: ENV.fetch('DB_NAME', NcdIdentifierCleanupTask::DEFAULT_DATABASE),
@@ -950,6 +1307,41 @@ namespace :ncd_identifiers do
       max_next_number_source: ENV.fetch('MAX_NEXT_NUMBER_SOURCE', NcdIdentifierCleanupTask::DEFAULT_MAX_NEXT_NUMBER_SOURCE),
       sync_couchdb: ENV.fetch('SYNC_COUCHDB', 'false') == 'true'
     ).fix_all_abnormal_identifiers
+  end
+
+  desc 'Preview or fix NCD identifiers for one NCD Program location (defaults: Karonga 568 / KDH)'
+  task fix_facility_program: :environment do
+    NcdIdentifierCleanupTask.new(
+      database_name: ENV.fetch('DB_NAME', NcdIdentifierCleanupTask::DEFAULT_DATABASE),
+      identifier_type: ENV.fetch('IDENTIFIER_TYPE', NcdIdentifierCleanupTask::DEFAULT_IDENTIFIER_TYPE),
+      mapping_path: ENV.fetch('MAPPING_PATH', NcdIdentifierCleanupTask::DEFAULT_MAPPING_PATH),
+      details_path: ENV.fetch('DETAILS_PATH', NcdIdentifierCleanupTask::DEFAULT_DETAILS_PATH),
+      review_path: ENV.fetch('REVIEW_PATH', NcdIdentifierCleanupTask::DEFAULT_FACILITY_REVIEW_PATH),
+      dry_run: ENV.fetch('DRY_RUN', 'true') != 'false',
+      collision_mode: ENV.fetch('COLLISION_MODE', 'review'),
+      max_next_number_source: ENV.fetch('MAX_NEXT_NUMBER_SOURCE', NcdIdentifierCleanupTask::DEFAULT_MAX_NEXT_NUMBER_SOURCE),
+      sync_couchdb: ENV.fetch('SYNC_COUCHDB', 'false') == 'true'
+    ).fix_facility_program_identifiers(
+      program_location_id: ENV.fetch('PROGRAM_LOCATION_ID', 568),
+      site_prefix: ENV.fetch('SITE_PREFIX', 'KDH'),
+      fallback_creator_id: ENV.fetch('CREATOR_ID', 1)
+    )
+  end
+
+  desc 'Preview or fix only the active NCD identifier rows listed in PATIENT_IDENTIFIER_IDS'
+  task fix_selected: :environment do
+    selected_ids = ENV.fetch('PATIENT_IDENTIFIER_IDS').split(/[,\s]+/)
+    NcdIdentifierCleanupTask.new(
+      database_name: ENV.fetch('DB_NAME', NcdIdentifierCleanupTask::DEFAULT_DATABASE),
+      identifier_type: ENV.fetch('IDENTIFIER_TYPE', NcdIdentifierCleanupTask::DEFAULT_IDENTIFIER_TYPE),
+      mapping_path: ENV.fetch('MAPPING_PATH', NcdIdentifierCleanupTask::DEFAULT_MAPPING_PATH),
+      details_path: ENV.fetch('DETAILS_PATH', NcdIdentifierCleanupTask::DEFAULT_DETAILS_PATH),
+      review_path: ENV.fetch('REVIEW_PATH', NcdIdentifierCleanupTask::DEFAULT_SELECTED_REVIEW_PATH),
+      dry_run: ENV.fetch('DRY_RUN', 'true') != 'false',
+      collision_mode: ENV.fetch('COLLISION_MODE', 'review'),
+      max_next_number_source: ENV.fetch('MAX_NEXT_NUMBER_SOURCE', NcdIdentifierCleanupTask::DEFAULT_MAX_NEXT_NUMBER_SOURCE),
+      sync_couchdb: ENV.fetch('SYNC_COUCHDB', 'false') == 'true'
+    ).fix_selected_identifiers(patient_identifier_ids: selected_ids)
   end
 
   desc 'Preview identifiers with spaces (writes must use ncd_identifiers:fix)'

@@ -6,13 +6,16 @@ RSpec.describe HardDeleteUnsyncablePatientsTask do
   describe 'candidate scope' do
     subject(:task) { described_class.new({}) }
 
-    it 'requires no valid type-3 identifier and no program row' do
+    it 'includes unsyncable unenrolled patients or patients named test' do
       sql = task.send(:candidate_scope).to_sql
 
       expect(sql).to include('`patient`.`voided` = 0')
       expect(sql).to include('cleanup_identifier.identifier_type = 3')
       expect(sql).to include('cleanup_identifier.voided = 0')
       expect(sql).to include('cleanup_program.patient_id = patient.patient_id')
+      expect(sql).to include('cleanup_name.person_id = patient.patient_id')
+      expect(sql).to include("LOWER(TRIM(cleanup_name.given_name)) = 'test'")
+      expect(sql).to include("LOWER(TRIM(cleanup_name.family_name)) = 'test'")
     end
   end
 
@@ -65,6 +68,7 @@ RSpec.describe HardDeleteUnsyncablePatientsTask do
       allow(task).to receive(:delete_join)
       allow(task).to receive(:delete_merge_audits)
       allow(task).to receive(:delete_nonstandard_patient_references)
+      allow(task).to receive(:delete_patient_program_children)
 
       expect(task).to receive(:prepare_related_ids).with(connection).ordered
       expect(task).to receive(:delete_nontransactional_patient_references)

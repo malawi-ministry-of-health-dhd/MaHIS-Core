@@ -49,6 +49,28 @@ RSpec.describe NcdIdentifierCleanupTask do
     task.send(:build_cleanup_plan)
   end
 
+  def facility_row(id:, patient_id:, identifier:, active_ncd_count: nil)
+    {
+      'patient_identifier_id' => id,
+      'patient_id' => patient_id,
+      'identifier' => identifier,
+      'identifier_location_id' => id ? 568 : nil,
+      'date_created' => id ? Time.zone.parse('2024-01-01') : nil,
+      'creator' => id ? 2 : nil,
+      'program_creator' => 2,
+      'user_location_id' => 568,
+      'facility_name' => 'Program location 568',
+      'matched_facility_code' => nil,
+      'active_ncd_count' => active_ncd_count.nil? ? (id ? 1 : 0) : active_ncd_count
+    }
+  end
+
+  def facility_cleanup_plan(task, rows:, reservations:)
+    allow(task).to receive(:facility_program_rows).with(568).and_return(rows)
+    allow(task).to receive(:all_identifier_reservation_rows).and_return(reservations)
+    task.send(:build_facility_cleanup_plan, 568, 'KDH', 1)
+  end
+
   it 'reserves voided NCD numbers when repairing an active identifier' do
     task = build_task
     active = active_row(id: 2, patient_id: 20, identifier: 'ABC - NCD - 1')
@@ -265,5 +287,92 @@ RSpec.describe NcdIdentifierCleanupTask do
 
     expect { task.send(:apply_changes, [change]) }
       .to raise_error(RuntimeError, /changed after the cleanup plan was built/)
+  end
+
+  it 'changes another Karonga prefix to KDH while preserving an available number' do
+    task = build_task
+    active = facility_row(id: 10, patient_id: 20, identifier: 'KA-NCD-614')
+
+    plan = facility_cleanup_plan(
+      task,
+      rows: [active],
+      reservations: [reservation(active)]
+    )
+
+    expect(plan[:changes]).to contain_exactly(
+      hash_including(
+        action: 'update',
+        patient_identifier_id: 10,
+        patient_id: 20,
+        old_identifier: 'KA-NCD-614',
+        new_identifier: 'KDH-NCD-614',
+        category: 'facility_prefix'
+      )
+    )
+  end
+
+  it 'allocates the next unused KDH number when the desired KDH number is reserved' do
+    task = build_task
+    active = facility_row(id: 10, patient_id: 20, identifier: 'KA-NCD-614')
+    existing = active_row(id: 11, patient_id: 30, identifier: 'KDH-NCD-614')
+
+    plan = facility_cleanup_plan(
+      task,
+      rows: [active],
+      reservations: [reservation(active), reservation(existing)]
+    )
+
+    expect(plan[:changes]).to contain_exactly(
+      hash_including(
+        action: 'update',
+        new_identifier: 'KDH-NCD-1',
+        category: 'facility_prefix_collision_next_number',
+        collision_original_identifier: 'KDH-NCD-614'
+      )
+    )
+  end
+
+  it 'plans an insert with the next unused KDH number for an enrolled patient without one' do
+    task = build_task
+    missing = facility_row(id: nil, patient_id: 20, identifier: nil)
+    existing = active_row(id: 11, patient_id: 30, identifier: 'KDH-NCD-1')
+
+    plan = facility_cleanup_plan(
+      task,
+      rows: [missing],
+      reservations: [reservation(existing)]
+    )
+
+    expect(plan[:changes]).to contain_exactly(
+      hash_including(
+        action: 'insert',
+        patient_identifier_id: nil,
+        patient_id: 20,
+        new_identifier: 'KDH-NCD-2',
+        identifier_location_id: 568,
+        creator: 2,
+        category: 'missing_identifier_next_number'
+      )
+    )
+  end
+
+  it 'uses a guarded insert for a missing facility NCD identifier' do
+    task = build_task
+    change = {
+      action: 'insert',
+      patient_id: 20,
+      new_identifier: 'KDH-NCD-2',
+      identifier_location_id: 568,
+      creator: 2
+    }
+
+    expect(task).to receive(:update_sanitized) do |sql, *binds|
+      expect(sql).to include('INSERT INTO', 'patient_program', 'NOT EXISTS')
+      expect(binds[0, 5]).to eq([20, 'KDH-NCD-2', 31, 568, 2])
+      expect(binds).to include(20, 568, 31, 'KDH-NCD-2')
+      1
+    end
+
+    expect { task.send(:apply_insert_change, change) }.not_to raise_error
   end
 end

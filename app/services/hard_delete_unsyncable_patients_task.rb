@@ -27,6 +27,17 @@ class HardDeleteUnsyncablePatientsTask
 
   MISSING_TYPE3_SQL = VoidUnsyncablePatientsTask::MISSING_TYPE3_SQL
   NO_PROGRAM_SQL = VoidUnsyncablePatientsTask::NO_PROGRAM_SQL
+  TEST_NAME_SQL = <<~SQL.squish.freeze
+    EXISTS (
+      SELECT 1 FROM person_name cleanup_name
+      WHERE cleanup_name.person_id = patient.patient_id
+        AND cleanup_name.voided = 0
+        AND (
+          LOWER(TRIM(cleanup_name.given_name)) = 'test'
+          OR LOWER(TRIM(cleanup_name.family_name)) = 'test'
+        )
+    )
+  SQL
 
   CLINICAL_DATA_SQL = <<~SQL.squish.freeze
     EXISTS (
@@ -96,13 +107,16 @@ class HardDeleteUnsyncablePatientsTask
   def candidate_scope
     Patient.unscoped
            .where(voided: 0)
-           .where(MISSING_TYPE3_SQL)
-           .where(NO_PROGRAM_SQL)
+           .where(
+             "(#{MISSING_TYPE3_SQL} AND #{NO_PROGRAM_SQL}) OR #{TEST_NAME_SQL}"
+           )
   end
 
   def print_report(candidate_count, clinical_count, shared_person_count)
     puts "\n===== HARD DELETE Unsyncable Patient Records ====="
-    puts 'Criteria: active patient, no valid type-3 identifier, no patient_program row'
+    puts 'Criteria: active patient matching either:'
+    puts '  - no valid type-3 identifier and no patient_program row'
+    puts '  - active given name or family name equals "test"'
     puts "Complete patient records selected: #{candidate_count}"
     puts "Selected patients with clinical data: #{clinical_count}"
     puts "Shared staff/provider person identities retained: #{shared_person_count}"
@@ -233,6 +247,7 @@ class HardDeleteUnsyncablePatientsTask
 
       delete_merge_audits(connection)
       delete_nonstandard_patient_references(connection)
+      delete_patient_program_children(connection)
       delete_tables_with_column(
         connection,
         'patient_id',
@@ -444,6 +459,21 @@ class HardDeleteUnsyncablePatientsTask
       INNER JOIN #{batch} matched_patient
         ON matched_patient.id = target.primary_id
         OR matched_patient.id = target.secondary_id
+    SQL
+  end
+
+  def delete_patient_program_children(connection)
+    return unless base_table_exists?(connection, 'patient_state') &&
+                  base_table_exists?(connection, 'patient_program')
+
+    batch = quoted(connection, TEMP_BATCH)
+    connection.execute(<<~SQL.squish)
+      DELETE state
+      FROM patient_state state
+      INNER JOIN patient_program program
+        ON program.patient_program_id = state.patient_program_id
+      INNER JOIN #{batch} target_patient
+        ON target_patient.id = program.patient_id
     SQL
   end
 
