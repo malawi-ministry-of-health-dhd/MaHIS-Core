@@ -236,7 +236,11 @@ module BuildPatientRecordService
 
     def build_dispensations_data(patient)
       {
-        saved: patient_service.find_program_drug_orders_awaiting_dispensation(patient, Date.today).as_json,
+        saved: patient_service.find_program_drug_orders_awaiting_dispensation(
+          patient,
+          Date.today,
+          repair_missing: false
+        ).as_json,
         unsaved: []
       }
     end

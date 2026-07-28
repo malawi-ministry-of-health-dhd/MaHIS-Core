@@ -8,12 +8,6 @@ module Sync
     PATIENT_FETCH_MULTIPLIER = 20
     SIDEKIQ_BULK_PUSH_SIZE = 200
 
-    # When CouchDB holds fewer than this fraction of the MySQL patient count, a
-    # default sync runs a FULL sweep instead of an incremental one, so a prior
-    # partial run gets backfilled by the parallel fan-out (the reconciliation
-    # pass also catches stragglers, but a full sweep parallelises the bulk work).
-    FULL_SYNC_COMPLETENESS_THRESHOLD = 0.9
-
     # Rolling window used by the live, per-encounter sync triggered from the
     # controller. Wide enough to re-sync recently-active patients at the location
     # while keeping each enqueued job's encounter scan bounded.
@@ -36,11 +30,17 @@ module Sync
       end
 
       force_full = force_full_sync?(force_full)
+      if missing_only_sync?(location_id, since_date, force_full)
+        sync_missing_patient_documents
+        return
+      end
+
       if force_full
         # A migration can add historical clinical data for patients whose CouchDB
         # documents already exist. Count/presence reconciliation cannot detect
         # those stale documents, and the normal date watermark may exclude the
-        # imported encounters. Bypass the watermark and rebuild every patient.
+        # imported encounters. Bypass the watermark and rebuild every eligible
+        # patient (patients without a usable document ID remain excluded).
         Rails.logger.info('Forced full patient sync requested; bypassing the incremental encounter watermark')
         location_id = nil
         parsed_since_date = nil
@@ -81,16 +81,34 @@ module Sync
 
     private
 
+    def missing_only_sync?(location_id, since_date, force_full)
+      !force_full && location_id.blank? && since_date.blank?
+    end
+
+    # The default all-location run is presence-based: ask CouchDB which primary
+    # identifiers are absent and enqueue only those patients. Existing documents
+    # are rebuilt only when the caller explicitly requests a forced full sync.
+    def sync_missing_patient_documents
+      Rails.logger.info('Starting missing-only patient sync; existing CouchDB patient documents will not be rebuilt')
+      initialize_patient_progress
+
+      result = PatientSyncReconciler.reconcile!(logger: Sidekiq.logger)
+      if result.errored
+        raise 'Missing-only patient reconciliation failed; retrying'
+      end
+
+      Rails.logger.info("Missing-only patient sync enqueued #{result.missing_reenqueued} patient(s)")
+      EnsurePatientIndexesJob.perform_async('reconcile' => true)
+    end
+
     def force_full_sync?(value)
       ActiveModel::Type::Boolean.new.cast(value)
     end
 
-    # Seed the patient progress row from ground truth: total = all patients,
-    # done = how many are already in CouchDB. EnsurePatientIndexesJob keeps `done`
-    # current from CouchDB as the fan-out drains, so the row never reads as the
-    # per-run delta (e.g. "1/1") when most patients are already synced.
+    # Seed progress from the achievable CouchDB total: distinct canonical
+    # nonblank, non-voided type-3 identifiers (one per non-voided patient).
     def initialize_patient_progress
-      total = Patient.count
+      total = PatientSyncReconciler.distinct_primary_identifier_count
       synced = CouchdbPatientService.patient_record_count.to_i
       SyncProgress.start('patients_records', total)
       SyncProgress.set('patients_records', [synced, total].min) if total.positive?
@@ -114,32 +132,14 @@ module Sync
       nil
     end
 
-    def default_since_date(location_id)
-      return CouchdbPatientService.get_latest_encounter_date_changed if location_id.present?
-
-      mysql_count = Patient.count
-      couchdb_count = CouchdbPatientService.patient_record_count
-
-      if couchdb_count.nil?
-        Rails.logger.warn('Could not compare MySQL and CouchDB patient counts; falling back to incremental patient sync')
-        return CouchdbPatientService.get_latest_encounter_date_changed
-      end
-
-      # CouchDB is materially behind (e.g. a previous run died part-way): a `nil`
-      # since_date forces the full patient-table sweep so the whole backlog is
-      # re-enqueued in parallel instead of relying on incremental encounter dates,
-      # which would skip patients whose encounters have not changed.
-      if couchdb_count < (mysql_count * FULL_SYNC_COMPLETENESS_THRESHOLD)
-        Rails.logger.warn("CouchDB holds #{couchdb_count}/#{mysql_count} patient records " \
-                          "(< #{(FULL_SYNC_COMPLETENESS_THRESHOLD * 100).to_i}%); forcing a full patient sync to backfill")
-        return nil
-      end
-
+    def default_since_date(_location_id)
       CouchdbPatientService.get_latest_encounter_date_changed
     end
 
     def patient_sync_scope(location_id, parsed_since_date)
-      scope = Encounter.unscoped.where.not(patient_id: nil)
+      scope = Encounter.unscoped
+                       .where.not(patient_id: nil)
+                       .where(patient_id: PatientSyncReconciler.eligible_patient_ids)
 
       # encounter.location_id is a string in this schema
       scope = scope.where(location_id: location_id.to_s) if location_id.present?
@@ -210,7 +210,8 @@ module Sync
     end
 
     def next_patient_batch(last_patient_id, patient_fetch_size)
-      Patient.where('patient.patient_id > ?', last_patient_id)
+      Patient.where(patient_id: PatientSyncReconciler.eligible_patient_ids)
+             .where('patient.patient_id > ?', last_patient_id)
              .reorder(nil)
              .order(patient_id: :asc)
              .limit(patient_fetch_size)
@@ -227,7 +228,7 @@ module Sync
 end
 
 # Usage examples:
-# Sync::BatchPatientSyncJob.perform_async                          # All locations, 50 patients per batch
+# Sync::BatchPatientSyncJob.perform_async                          # Enqueue only missing patient documents
 # Sync::BatchPatientSyncJob.perform_async(700)                     # Specific location
 # Sync::BatchPatientSyncJob.perform_async(nil, '2000-01-01')      # With date filter
 # Sync::BatchPatientSyncJob.perform_async(nil, nil, 25)           # Smaller batches (25 patients)

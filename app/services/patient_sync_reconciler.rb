@@ -34,12 +34,61 @@ class PatientSyncReconciler
 
   Result = Struct.new(
     :total_patients, :eligible, :distinct_ids, :collisions, :no_identifier,
-    :couch_count, :present, :missing_reenqueued, :errored,
+    :couch_count, :present, :missing, :missing_reenqueued, :errored,
     keyword_init: true
   )
 
-  def self.reconcile!(logger: Rails.logger, db_name: DEFAULT_DB_NAME)
-    new(logger: logger, db_name: db_name).reconcile!
+  def self.reconcile!(logger: Rails.logger, db_name: DEFAULT_DB_NAME, enqueue_missing: true)
+    new(logger: logger, db_name: db_name).reconcile!(enqueue_missing: enqueue_missing)
+  end
+
+  # Eligibility scope shared by the bulk producer and reconciliation pass. A
+  # patient can only produce a CouchDB document when a non-voided, nonblank
+  # type-3 identifier supplies the document ID.
+  def self.eligible_identifier_scope
+    PatientIdentifier
+      .where(identifier_type: PRIMARY_IDENTIFIER_TYPE, voided: 0)
+      .where.not(identifier: [nil, ''])
+      .joins('INNER JOIN patient ON patient.patient_id = patient_identifier.patient_id AND patient.voided = 0')
+  end
+
+  # BuildPatientRecordService chooses one document ID per patient: the newest
+  # non-voided type-3 identifier. Mirror that rule in SQL so progress and
+  # reconciliation do not treat a patient's older identifiers as additional
+  # documents that can never be created. patient_identifier_id breaks
+  # date_created ties deterministically and is mirrored by
+  # PatientIdentifierService.
+  def self.canonical_identifier_scope
+    eligible_identifier_scope.where(<<~SQL.squish)
+      NOT EXISTS (
+        SELECT 1
+        FROM patient_identifier newer
+        WHERE newer.patient_id = patient_identifier.patient_id
+          AND newer.identifier_type = #{PRIMARY_IDENTIFIER_TYPE}
+          AND newer.voided = 0
+          AND newer.identifier IS NOT NULL
+          AND newer.identifier <> ''
+          AND (
+            COALESCE(newer.date_created, '1970-01-01 00:00:00') >
+              COALESCE(patient_identifier.date_created, '1970-01-01 00:00:00')
+            OR (
+              COALESCE(newer.date_created, '1970-01-01 00:00:00') =
+                COALESCE(patient_identifier.date_created, '1970-01-01 00:00:00')
+              AND newer.patient_identifier_id > patient_identifier.patient_identifier_id
+            )
+          )
+      )
+    SQL
+  end
+
+  def self.eligible_patient_ids
+    canonical_identifier_scope.select('patient_identifier.patient_id')
+  end
+
+  # Duplicate canonical identifiers across patients map to the same CouchDB
+  # `_id`, so their distinct count is the maximum achievable document count.
+  def self.distinct_primary_identifier_count
+    canonical_identifier_scope.distinct.count('patient_identifier.identifier')
   end
 
   def initialize(logger: Rails.logger, db_name: DEFAULT_DB_NAME)
@@ -47,33 +96,43 @@ class PatientSyncReconciler
     @db_name = db_name
   end
 
-  def reconcile!
+  def reconcile!(enqueue_missing: true)
     unless CouchdbPatientService.couchdb_configured?
       @logger.warn('PatientSyncReconciler: CouchDB not configured; skipping reconciliation')
-      return Result.new(missing_reenqueued: 0, errored: false)
+      return Result.new(missing: 0, missing_reenqueued: 0, errored: false)
     end
 
     report = build_report
     log_report(report)
 
-    missing = reenqueue_missing
-    report.missing_reenqueued = missing
-    @logger.info("PatientSyncReconciler: re-enqueued #{missing} missing patient(s) this pass")
+    missing, present, reenqueued = reenqueue_missing(enqueue: enqueue_missing)
+    report.present = present
+    report.missing = missing
+    report.missing_reenqueued = enqueue_missing ? reenqueued : 0
+
+    SyncProgress.ensure(@db_name, report.distinct_ids)
+    SyncProgress.set(@db_name, present)
+
+    if enqueue_missing
+      @logger.info("PatientSyncReconciler: re-enqueued #{reenqueued} of #{missing} missing patient(s) this pass")
+    else
+      @logger.info("PatientSyncReconciler: final audit found #{missing} missing patient document(s)")
+    end
     report
   rescue RestClient::Exception, SocketError, Errno::ECONNREFUSED => e
     @logger.warn("PatientSyncReconciler: CouchDB error during reconciliation: #{e.class}: #{e.message}")
-    Result.new(missing_reenqueued: 0, errored: true)
+    Result.new(missing: 0, missing_reenqueued: 0, errored: true)
   rescue StandardError => e
     @logger.error("PatientSyncReconciler: unexpected error: #{e.class}: #{e.message}")
-    Result.new(missing_reenqueued: 0, errored: true)
+    Result.new(missing: 0, missing_reenqueued: 0, errored: true)
   end
 
   private
 
   def build_report
     total_patients = Patient.count
-    eligible = eligible_identifier_scope.distinct.count('patient_identifier.patient_id')
-    distinct_ids = eligible_identifier_scope.distinct.count('patient_identifier.identifier')
+    eligible = canonical_identifier_scope.count
+    distinct_ids = canonical_identifier_scope.distinct.count('patient_identifier.identifier')
     couch_count = CouchdbPatientService.patient_record_count(@db_name)
 
     Result.new(
@@ -84,6 +143,7 @@ class PatientSyncReconciler
       no_identifier: total_patients - eligible,
       couch_count: couch_count,
       present: 0,
+      missing: 0,
       missing_reenqueued: 0,
       errored: false
     )
@@ -111,17 +171,20 @@ class PatientSyncReconciler
     end
   end
 
-  # Re-enqueue every eligible patient whose CouchDB document is missing. Keyset
-  # over patient_identifier_id so every identifier row is visited exactly once
-  # (a patient may legitimately have more than one non-voided primary identifier).
-  def reenqueue_missing
+  # Re-enqueue every eligible patient whose canonical CouchDB document is
+  # missing. Keyset over patient_identifier_id so every canonical identifier row
+  # is visited exactly once.
+  def reenqueue_missing(enqueue: true)
     last_row_id = 0
     missing_total = 0
+    reenqueued_total = 0
+    present_total = 0
     bulk_args = []
     pending = []
+    seen_identifiers = Set.new
 
     loop do
-      rows = eligible_identifier_scope
+      rows = canonical_identifier_scope
              .where('patient_identifier.patient_identifier_id > ?', last_row_id)
              .order('patient_identifier.patient_identifier_id')
              .limit(SCAN_BATCH)
@@ -129,30 +192,37 @@ class PatientSyncReconciler
       break if rows.empty?
 
       last_row_id = rows.last.first
+      rows = rows.reject do |row|
+        already_seen = seen_identifiers.include?(row[2])
+        seen_identifiers << row[2]
+        already_seen
+      end
 
       present = couch_present_ids(rows.map { |row| row[2] }.uniq)
+      present_total += present.size
       missing_patient_ids = rows.reject { |row| present.include?(row[2]) }
                                 .map { |row| row[1] }
                                 .uniq
 
       missing_patient_ids.each do |patient_id|
+        missing_total += 1
         pending << patient_id
         next if pending.size < ENQUEUE_SLICE
 
         bulk_args << [pending, { 'location_id' => nil }]
-        missing_total += pending.size
+        reenqueued_total += pending.size
         pending = []
-        flush(bulk_args) if bulk_args.size >= PUSH_BULK_SIZE
+        flush(bulk_args) if enqueue && bulk_args.size >= PUSH_BULK_SIZE
       end
     end
 
     if pending.any?
       bulk_args << [pending, { 'location_id' => nil }]
-      missing_total += pending.size
+      reenqueued_total += pending.size
     end
-    flush(bulk_args) if bulk_args.any?
+    flush(bulk_args) if enqueue && bulk_args.any?
 
-    missing_total
+    [missing_total, present_total, reenqueued_total]
   end
 
   def flush(bulk_args)
@@ -185,9 +255,10 @@ class PatientSyncReconciler
   # (Patient's default scope) — without it a voided patient that still has a live
   # identifier would be re-enqueued every round and never reach a clean pass.
   def eligible_identifier_scope
-    PatientIdentifier
-      .where(identifier_type: PRIMARY_IDENTIFIER_TYPE, voided: 0)
-      .where.not(identifier: [nil, ''])
-      .joins('INNER JOIN patient ON patient.patient_id = patient_identifier.patient_id AND patient.voided = 0')
+    self.class.eligible_identifier_scope
+  end
+
+  def canonical_identifier_scope
+    self.class.canonical_identifier_scope
   end
 end

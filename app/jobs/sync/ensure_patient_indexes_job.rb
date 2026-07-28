@@ -44,7 +44,11 @@ module Sync
 
       forced = attempt >= MAX_ATTEMPTS
 
-      if reconcile && !forced && reconcile_rounds < MAX_RECONCILE_ROUNDS
+      if reconcile && !forced
+        if reconcile_rounds >= MAX_RECONCILE_ROUNDS
+          return final_reconciliation_audit
+        end
+
         return if run_reconciliation(reconcile_rounds)
       elsif reconcile && forced
         Sidekiq.logger.warn("EnsurePatientIndexesJob: drain wait hit the #{MAX_ATTEMPTS}-poll cap; building indexes without a final clean reconciliation pass")
@@ -67,7 +71,7 @@ module Sync
         return true
       end
 
-      if result.missing_reenqueued.positive?
+      if result.missing.to_i.positive?
         Sidekiq.logger.info("EnsurePatientIndexesJob: reconcile round #{reconcile_rounds + 1} re-enqueued #{result.missing_reenqueued} missing patient(s); waiting for the queue to drain again")
         reschedule(true, 0, 0, reconcile_rounds + 1)
         return true
@@ -75,6 +79,29 @@ module Sync
 
       Sidekiq.logger.info("EnsurePatientIndexesJob: reconcile round #{reconcile_rounds + 1} found no missing patients; finalizing")
       false
+    end
+
+    def final_reconciliation_audit
+      result = PatientSyncReconciler.reconcile!(
+        logger: Sidekiq.logger,
+        enqueue_missing: false
+      )
+
+      if result.errored
+        SyncProgress.fail('patients_records', 'final reconciliation audit could not reach CouchDB')
+        Sidekiq.logger.error('EnsurePatientIndexesJob: final reconciliation audit failed')
+        return
+      end
+
+      if result.missing.to_i.positive?
+        build_patient_indexes(mark_complete: false)
+        message = "#{result.missing} canonical patient document(s) remain missing after #{MAX_RECONCILE_ROUNDS} reconciliation rounds"
+        SyncProgress.fail('patients_records', message)
+        Sidekiq.logger.error("EnsurePatientIndexesJob: #{message}")
+        return
+      end
+
+      build_patient_indexes
     end
 
     def reschedule(reconcile, attempt, consecutive_idle, reconcile_rounds)
@@ -124,25 +151,23 @@ module Sync
     end
 
     # Update the patient progress row from CouchDB's actual doc count (ground
-    # truth) so the dashboard shows synced/total for the whole population, not a
-    # per-run delta. Total is re-asserted in case only an incremental run ran.
+    # truth) against the achievable total of distinct canonical primary
+    # identifiers, not against every MySQL patient or every identifier row.
     def refresh_patient_progress
-      total = Patient.count
-      synced = CouchdbPatientService.patient_record_count.to_i
+      total = PatientSyncReconciler.distinct_primary_identifier_count
       SyncProgress.ensure('patients_records', total)
-      SyncProgress.set('patients_records', [synced, total].min) if total.positive?
     rescue StandardError => e
       Sidekiq.logger.warn("EnsurePatientIndexesJob: could not refresh patient progress: #{e.class}: #{e.message}")
     end
 
-    def build_patient_indexes
+    def build_patient_indexes(mark_complete: true)
       unless couchdb_configured?
         Sidekiq.logger.warn('EnsurePatientIndexesJob: CouchDB not configured, skipping index build')
         return
       end
 
       CouchdbIndexMaintenance.ensure_patient_records!(logger: Sidekiq.logger)
-      SyncProgress.finish('patients_records')
+      SyncProgress.finish('patients_records') if mark_complete
       Sidekiq.logger.info('EnsurePatientIndexesJob: patient search indexes verified after bulk sync completion')
     end
   end
