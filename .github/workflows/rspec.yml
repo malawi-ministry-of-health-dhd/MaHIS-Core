@@ -48,10 +48,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libmysqlclient-dev
 
-      - name: Set up Ruby
+      - name: Prepare CI dependency lock
+        run: cp Gemfile.ci.lock Gemfile.lock
+
+      - name: Set up Ruby and install gems
         uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
         with:
+          bundler: 2.6.8
+          # This runs bundle install and caches the installed gems.
           bundler-cache: true
+
+      - name: Verify CI dependency lock
+        run: git diff --no-index --exit-code Gemfile.ci.lock Gemfile.lock
 
       - name: Set up config files
         run: |
