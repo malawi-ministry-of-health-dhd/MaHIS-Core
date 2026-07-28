@@ -70,6 +70,12 @@ module BHTEmrApi
     # before Rails parses params. Runs at the front of the stack.
     config.middleware.insert_before 0, InflateRequestBody
 
+    # Gzip responses (e.g. the full record returned by get/save_patient_record)
+    # when the client sends Accept-Encoding: gzip. The browser decompresses
+    # transparently, so no frontend change is needed. Done in-app because we
+    # do not control the nginx `gzip on` directive.
+    config.middleware.use Rack::Deflater
+
     # Required for all session management (regardless of session_store)
     config.middleware.use ActionDispatch::Cookies
 
