@@ -10,7 +10,6 @@ module Sync
     BULK_SYNC_ENABLED = true
     DEFAULT_BULK_BATCH_SIZE = 5000
     DEFAULT_MAX_BULK_REQUEST_BYTES = 5 * 1024 * 1024
-    DEFAULT_MAX_DOCUMENT_BYTES = 7 * 1024 * 1024
     
     # Abstract method - must be implemented by subclasses
     def perform(batch_size = DEFAULT_BULK_BATCH_SIZE)
@@ -451,18 +450,6 @@ module Sync
         return post_bulk_docs_in_parts(documents, bulk_url)
       end
 
-      if documents.one? && payload_bytes > max_document_bytes
-        document = documents.first
-        return {
-          success: false,
-          errors: [
-            "Doc #{document['_id']}: document_too_large - serialized payload is " \
-            "#{payload_bytes} bytes (safe limit #{max_document_bytes})"
-          ],
-          conflicts: []
-        }
-      end
-
       retries = 0
       begin
         response = RestClient.post(
@@ -516,10 +503,6 @@ module Sync
 
     def max_bulk_request_bytes
       configured_positive_bytes('COUCHDB_BULK_MAX_BYTES', DEFAULT_MAX_BULK_REQUEST_BYTES)
-    end
-
-    def max_document_bytes
-      configured_positive_bytes('COUCHDB_MAX_DOCUMENT_BYTES', DEFAULT_MAX_DOCUMENT_BYTES)
     end
 
     def configured_positive_bytes(key, fallback)

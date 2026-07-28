@@ -26,8 +26,6 @@ require 'set'
 class PatientSyncReconciler
   PRIMARY_IDENTIFIER_TYPE = 3
   DEFAULT_DB_NAME = 'patients_records'
-  PERMANENT_FAILURES_KEY = 'sync:patients:permanent_failures'
-  FAILURE_TTL_SECONDS = 24 * 60 * 60
 
   SCAN_BATCH = 2_000        # identifier rows pulled from MySQL per page
   COUCH_KEYS_BATCH = 1_000  # ids per CouchDB _all_docs presence check
@@ -36,8 +34,7 @@ class PatientSyncReconciler
 
   Result = Struct.new(
     :total_patients, :eligible, :distinct_ids, :collisions, :no_identifier,
-    :couch_count, :present, :missing, :missing_reenqueued,
-    :permanent_failures, :errored,
+    :couch_count, :present, :missing, :missing_reenqueued, :errored,
     keyword_init: true
   )
 
@@ -94,27 +91,6 @@ class PatientSyncReconciler
     canonical_identifier_scope.distinct.count('patient_identifier.identifier')
   end
 
-  def self.record_permanent_failure(patient_id, reason)
-    Sidekiq.redis do |redis|
-      redis.hset(PERMANENT_FAILURES_KEY, patient_id.to_i.to_s, reason.to_s)
-      redis.expire(PERMANENT_FAILURES_KEY, FAILURE_TTL_SECONDS)
-    end
-  rescue StandardError => e
-    Rails.logger.warn("Could not record permanent patient sync failure #{patient_id}: #{e.message}")
-  end
-
-  def self.permanent_failures
-    Sidekiq.redis { |redis| redis.hgetall(PERMANENT_FAILURES_KEY) }
-  rescue StandardError
-    {}
-  end
-
-  def self.clear_run_failures!
-    Sidekiq.redis { |redis| redis.del(PERMANENT_FAILURES_KEY) }
-  rescue StandardError => e
-    Rails.logger.warn("Could not clear permanent patient sync failures: #{e.message}")
-  end
-
   def initialize(logger: Rails.logger, db_name: DEFAULT_DB_NAME)
     @logger = logger
     @db_name = db_name
@@ -123,17 +99,16 @@ class PatientSyncReconciler
   def reconcile!(enqueue_missing: true)
     unless CouchdbPatientService.couchdb_configured?
       @logger.warn('PatientSyncReconciler: CouchDB not configured; skipping reconciliation')
-      return Result.new(missing: 0, missing_reenqueued: 0, permanent_failures: 0, errored: false)
+      return Result.new(missing: 0, missing_reenqueued: 0, errored: false)
     end
 
     report = build_report
     log_report(report)
 
-    missing, present, reenqueued, permanent_failures = reenqueue_missing(enqueue: enqueue_missing)
+    missing, present, reenqueued = reenqueue_missing(enqueue: enqueue_missing)
     report.present = present
     report.missing = missing
     report.missing_reenqueued = enqueue_missing ? reenqueued : 0
-    report.permanent_failures = permanent_failures
 
     SyncProgress.ensure(@db_name, report.distinct_ids)
     SyncProgress.set(@db_name, present)
@@ -146,10 +121,10 @@ class PatientSyncReconciler
     report
   rescue RestClient::Exception, SocketError, Errno::ECONNREFUSED => e
     @logger.warn("PatientSyncReconciler: CouchDB error during reconciliation: #{e.class}: #{e.message}")
-    Result.new(missing: 0, missing_reenqueued: 0, permanent_failures: 0, errored: true)
+    Result.new(missing: 0, missing_reenqueued: 0, errored: true)
   rescue StandardError => e
     @logger.error("PatientSyncReconciler: unexpected error: #{e.class}: #{e.message}")
-    Result.new(missing: 0, missing_reenqueued: 0, permanent_failures: 0, errored: true)
+    Result.new(missing: 0, missing_reenqueued: 0, errored: true)
   end
 
   private
@@ -170,7 +145,6 @@ class PatientSyncReconciler
       present: 0,
       missing: 0,
       missing_reenqueued: 0,
-      permanent_failures: 0,
       errored: false
     )
   end
@@ -205,11 +179,9 @@ class PatientSyncReconciler
     missing_total = 0
     reenqueued_total = 0
     present_total = 0
-    permanent_total = 0
     bulk_args = []
     pending = []
     seen_identifiers = Set.new
-    permanent_failure_ids = self.class.permanent_failures.keys.map(&:to_i).to_set
 
     loop do
       rows = canonical_identifier_scope
@@ -234,11 +206,6 @@ class PatientSyncReconciler
 
       missing_patient_ids.each do |patient_id|
         missing_total += 1
-        if permanent_failure_ids.include?(patient_id)
-          permanent_total += 1
-          next
-        end
-
         pending << patient_id
         next if pending.size < ENQUEUE_SLICE
 
@@ -255,7 +222,7 @@ class PatientSyncReconciler
     end
     flush(bulk_args) if enqueue && bulk_args.any?
 
-    [missing_total, present_total, reenqueued_total, permanent_total]
+    [missing_total, present_total, reenqueued_total]
   end
 
   def flush(bulk_args)

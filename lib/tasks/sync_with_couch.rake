@@ -82,7 +82,6 @@ namespace :sync do
 
     # Fresh run: clear any stale progress so the bars start from zero.
     SyncProgress.reset_all!
-    PatientSyncReconciler.clear_run_failures!
 
     if rebuild_patients
       Sync::BatchPatientSyncJob.perform_async(

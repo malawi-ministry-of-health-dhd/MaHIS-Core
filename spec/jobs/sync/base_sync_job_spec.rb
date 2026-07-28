@@ -10,7 +10,6 @@ RSpec.describe Sync::BaseSyncJob, type: :job do
 
     before do
       allow(job).to receive(:max_bulk_request_bytes).and_return(100)
-      allow(job).to receive(:max_document_bytes).and_return(80)
     end
 
     it 'splits a request that is too large while preserving successful results' do
@@ -29,15 +28,18 @@ RSpec.describe Sync::BaseSyncJob, type: :job do
       expect(RestClient).to have_received(:post).twice
     end
 
-    it 'does not send a single oversized document to CouchDB' do
+    it 'sends a single document even when it exceeds the bulk request threshold' do
       document = { '_id' => 'huge', 'data' => 'x' * 100 }
-      allow(RestClient).to receive(:post)
+      response = instance_double(
+        RestClient::Response,
+        body: [{ id: 'huge', ok: true }].to_json
+      )
+      allow(RestClient).to receive(:post).and_return(response)
 
       result = job.send(:post_bulk_docs, [document], bulk_url)
 
-      expect(result[:success]).to be(false)
-      expect(result[:errors].first).to include('Doc huge: document_too_large')
-      expect(RestClient).not_to have_received(:post)
+      expect(result).to eq(success: true, errors: [], conflicts: [])
+      expect(RestClient).to have_received(:post).once
     end
   end
 end

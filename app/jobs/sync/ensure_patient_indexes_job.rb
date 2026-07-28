@@ -72,14 +72,6 @@ module Sync
       end
 
       if result.missing.to_i.positive?
-        if result.missing_reenqueued.to_i.zero? && result.permanent_failures.to_i.positive?
-          build_patient_indexes(mark_complete: false)
-          message = "#{result.permanent_failures} patient document(s) exceed offline-document safety limits"
-          SyncProgress.fail('patients_records', message)
-          Sidekiq.logger.error("EnsurePatientIndexesJob: #{message}; source data cleanup is required")
-          return true
-        end
-
         Sidekiq.logger.info("EnsurePatientIndexesJob: reconcile round #{reconcile_rounds + 1} re-enqueued #{result.missing_reenqueued} missing patient(s); waiting for the queue to drain again")
         reschedule(true, 0, 0, reconcile_rounds + 1)
         return true

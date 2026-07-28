@@ -2,9 +2,6 @@
 module Sync
   class BulkPatientRecordSyncJob < BaseSyncJob
     sidekiq_options queue: :patient_sync, retry: 3
-
-    MAX_SOURCE_OBSERVATIONS = 50_000
-    MAX_SOURCE_ORDERS = 20_000
     
     # Sync multiple patient records in one job using CouchDB bulk operations
     def perform(patient_ids, options = {})
@@ -12,13 +9,6 @@ module Sync
 
       start_time = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       patient_ids = patient_ids.uniq
-      oversized_source_patients = oversized_source_patients(patient_ids)
-      oversized_source_patients.each do |patient_id, reason|
-        PatientSyncReconciler.record_permanent_failure(patient_id, reason)
-        Sidekiq.logger.error("Skipped permanently unsyncable patient #{patient_id}: #{reason}")
-      end
-      patient_ids -= oversized_source_patients.keys
-      return if patient_ids.empty?
 
       patient_records = []
       failed_ids = []
@@ -102,26 +92,6 @@ module Sync
     end
     
     private
-
-    def oversized_source_patients(patient_ids)
-      observation_counts = Observation.unscoped
-                                      .where(person_id: patient_ids)
-                                      .group(:person_id)
-                                      .having('COUNT(*) > ?', MAX_SOURCE_OBSERVATIONS)
-                                      .count
-      order_counts = Order.unscoped
-                          .where(patient_id: patient_ids)
-                          .group(:patient_id)
-                          .having('COUNT(*) > ?', MAX_SOURCE_ORDERS)
-                          .count
-
-      (observation_counts.keys | order_counts.keys).to_h do |patient_id|
-        reason = "source record exceeds offline-document safety limits " \
-                 "(observations=#{observation_counts[patient_id].to_i}, " \
-                 "orders=#{order_counts[patient_id].to_i})"
-        [patient_id.to_i, reason]
-      end
-    end
 
     def log_skip_reasons(missing_patient_ids, missing_primary_identifier_ids, missing_document_id_ids)
       if missing_patient_ids.any?

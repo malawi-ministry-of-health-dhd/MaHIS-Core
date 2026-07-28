@@ -6,7 +6,6 @@ RSpec.describe Sync::BulkPatientRecordSyncJob, type: :job do
   subject(:job) { described_class.new }
 
   before do
-    allow(job).to receive(:oversized_source_patients).and_return({})
     patient_scope = instance_double(ActiveRecord::Relation, pluck: [123])
     identifier_scope = instance_double(ActiveRecord::Relation, pluck: [[123, 3, 'NPID-123', 0]])
 
@@ -47,13 +46,11 @@ RSpec.describe Sync::BulkPatientRecordSyncJob, type: :job do
     expect { job.perform([123]) }.not_to raise_error
   end
 
-  it 'records a permanently unsyncable source record without building or retrying it' do
-    reason = 'source record exceeds offline-document safety limits'
-    allow(job).to receive(:oversized_source_patients).with([123]).and_return(123 => reason)
-    allow(PatientSyncReconciler).to receive(:record_permanent_failure)
-    expect(BuildPatientRecordService).not_to receive(:build_patient_record)
+  it 'does not reject a patient based on observation or order counts' do
+    allow(job).to receive(:bulk_sync_patients_to_couchdb).and_return(success: true, errors: [])
+    expect(Observation).not_to receive(:unscoped)
+    expect(Order).not_to receive(:unscoped)
 
     expect { job.perform([123]) }.not_to raise_error
-    expect(PatientSyncReconciler).to have_received(:record_permanent_failure).with(123, reason)
   end
 end
