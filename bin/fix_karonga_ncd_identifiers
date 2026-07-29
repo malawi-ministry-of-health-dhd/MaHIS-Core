@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SELECTED_IDENTIFIER_IDS="112922,112934,112939,112947,112948,112954,114003"
+APPLY=false
+SYNC_COUCHDB=auto
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  bin/fix_karonga_ncd_identifiers [options]
+
+By default this is a dry run. It creates two review files without changing
+patient identifiers:
+  tmp/ncd_khombedza_selected_review.json
+  tmp/ncd_karonga_facility_review.json
+
+Options:
+  --apply             Apply the reviewed changes. CouchDB sync is enabled.
+  --sync-couchdb      Queue CouchDB refreshes (normally implied by --apply).
+  --no-sync-couchdb   Do not queue CouchDB refreshes after applying.
+  -h, --help          Show this help.
+
+Optional environment overrides:
+  DB_NAME                 Database schema (default from the rake task: NDC_mahis)
+  IDENTIFIER_TYPE         NCD identifier type (default: 31)
+  CREATOR_ID              Fallback creator for new identifiers (default: 1)
+  MAX_NEXT_NUMBER_SOURCE  Highest allocatable NCD number (default: 100000)
+
+Examples:
+  bin/fix_karonga_ncd_identifiers
+  bin/fix_karonga_ncd_identifiers --apply
+  bin/fix_karonga_ncd_identifiers --apply --no-sync-couchdb
+USAGE
+}
+
+while (($# > 0)); do
+  case "$1" in
+    --apply)
+      APPLY=true
+      ;;
+    --sync-couchdb)
+      SYNC_COUCHDB=true
+      ;;
+    --no-sync-couchdb)
+      SYNC_COUCHDB=false
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+if [[ "$APPLY" == true ]]; then
+  DRY_RUN=false
+  [[ "$SYNC_COUCHDB" == auto ]] && SYNC_COUCHDB=true
+  echo "Applying NCD identifier cleanup."
+else
+  DRY_RUN=true
+  [[ "$SYNC_COUCHDB" == auto ]] && SYNC_COUCHDB=false
+  echo "Previewing NCD identifier cleanup. No patient identifiers will be changed."
+fi
+
+mkdir -p "$ROOT_DIR/tmp"
+
+(
+  cd "$ROOT_DIR"
+
+  echo
+  echo "1/2 Khombedza: fixing the seven selected identifiers with prefix KHD"
+  env \
+    PATIENT_IDENTIFIER_IDS="$SELECTED_IDENTIFIER_IDS" \
+    DRY_RUN="$DRY_RUN" \
+    COLLISION_MODE=next \
+    SYNC_COUCHDB="$SYNC_COUCHDB" \
+    REVIEW_PATH="$ROOT_DIR/tmp/ncd_khombedza_selected_review.json" \
+    bin/rails ncd_identifiers:fix_selected
+
+  echo
+  echo "2/2 Karonga: enforcing KDH for NCD Program location 568 and assigning missing numbers"
+  env \
+    PROGRAM_LOCATION_ID=568 \
+    SITE_PREFIX=KDH \
+    DRY_RUN="$DRY_RUN" \
+    COLLISION_MODE=next \
+    SYNC_COUCHDB="$SYNC_COUCHDB" \
+    REVIEW_PATH="$ROOT_DIR/tmp/ncd_karonga_facility_review.json" \
+    bin/rails ncd_identifiers:fix_facility_program
+)
+
+echo
+if [[ "$APPLY" == true ]]; then
+  echo "Cleanup finished. Review the JSON files in $ROOT_DIR/tmp."
+  if [[ "$SYNC_COUCHDB" == true ]]; then
+    echo "CouchDB refresh jobs were queued for changed patients."
+  fi
+else
+  echo "Preview finished. Review the JSON files in $ROOT_DIR/tmp, then rerun with --apply."
+fi
