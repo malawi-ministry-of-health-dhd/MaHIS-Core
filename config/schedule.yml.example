@@ -28,6 +28,12 @@ flag_potential_duplicates:
   queue: "default"
   description: "Flags potential duplicates at midnight"
 
+couchdb_nightly_compaction:
+  cron: "0 2 * * * Africa/Blantyre"
+  class: "CouchdbNightlyCompactionJob"
+  queue: "default"
+  description: "Sequentially compacts fragmented CouchDB databases and indexes outside clinical hours"
+
 dde_ids_sync_job:
   cron: "*/15 * * * *" # every 15 minutes
   class: "Sync::DdeIdsSyncJob"

@@ -21,8 +21,10 @@ module Api
       end
 
       def generate_document_id(visit)
-        # Create composite _id from identifier and start_date
-        identifier = visit[:identifier] || 'unknown'
+        # Create composite _id from identifier and start_date. Patients without a
+        # National ID have a blank identifier, so fall back to patient_id to keep
+        # their visit docs from all colliding on "unknown_<date>".
+        identifier = visit[:identifier].presence || visit['patient_id'] || 'unknown'
         start_date = visit['date_started'] ? visit['date_started'].to_time.strftime('%Y-%m-%dT%H:%M:%S') : 'no-date'
         "#{identifier}_#{start_date}"
       end
