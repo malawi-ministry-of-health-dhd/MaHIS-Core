@@ -407,6 +407,12 @@ module DrugOrderService
                                     .pluck(:concept_id)
     end
 
+    # HIV/ART drug orders are dispensed through the ART clinic workflow, not the
+    # general pharmacist queue, so the queue excludes orders on this program.
+    def hiv_program_id
+      @hiv_program_id ||= Program.find_by_name('HIV PROGRAM')&.program_id
+    end
+
     def pending_dispensation_patients_sql(cutoff, location_id)
       window_start = TimeUtils.day_bounds(cutoff - (DISPENSATION_QUEUE_WINDOW_DAYS - 1).days)[0]
       window_end = TimeUtils.day_bounds(cutoff)[1]
@@ -441,6 +447,14 @@ module DrugOrderService
       if location_id.present?
         where_clauses << 'e.location_id = ?'
         binds << location_id
+      end
+
+      # Drop HIV/ART orders from the cross-program queue. Because membership here
+      # is per-encounter, a patient on ART who also has a non-HIV order still
+      # shows (for the non-HIV order); a patient with only HIV orders disappears.
+      if (hiv_id = hiv_program_id)
+        where_clauses << '(e.program_id IS NULL OR e.program_id <> ?)'
+        binds << hiv_id
       end
 
       sanitize_sql_array([
