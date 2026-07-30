@@ -55,6 +55,40 @@ RSpec.describe VisitService do
     expect(opd_visit.reload.date_stopped).to be_nil
   end
 
+  it "uses the authenticated user's location when creating a visit" do
+    stale_patient_location_id = @location_id.to_i + 1
+
+    data = described_class.new.create_visit(
+      patient_id: @patient.patient_id,
+      identifier: @identifier,
+      visit_type_id: visit_type.visit_type_id,
+      date_started: Time.current,
+      provider_id: @user_id,
+      program_id: OPD_PROGRAM_ID,
+      location_id: stale_patient_location_id
+    )
+
+    expect(Visit.find(data['visit_id']).location_id).to eq(@location_id)
+    expect(data[:location_id]).to eq(@location_id.to_s)
+  end
+
+  it "uses the authenticated user's location when creating a stage" do
+    visit = create_open_visit(OPD_PROGRAM_ID)
+    stale_patient_location_id = @location_id.to_i + 1
+
+    data = StagesService.new.create_stage(
+      patient_id: @patient.patient_id,
+      identifier: @identifier,
+      stage: 'VITALS',
+      program_id: OPD_PROGRAM_ID,
+      location_id: stale_patient_location_id
+    )
+
+    expect(Stage.find(data[:id]).location_id).to eq(@location_id)
+    expect(data[:location_id]).to eq(@location_id.to_s)
+    expect(data[:visit_id]).to eq(visit.visit_id)
+  end
+
   private
 
   def create_patient_with_identifier

@@ -18,6 +18,10 @@ class CouchdbIndexMaintenance
     reference_data_ok && patient_records_ok
   end
 
+  def self.prune_patient_records!(logger: Rails.logger)
+    new(logger:).prune_patient_records!
+  end
+
   def initialize(logger: Rails.logger)
     @logger = logger
   end
@@ -39,6 +43,32 @@ class CouchdbIndexMaintenance
     db_name = PatientRecordSearchFields::PATIENT_RECORD_DB
     ensure_database(db_name) &&
       PatientRecordSearchFields.ensure_couchdb_indexes!(couchdb_url(db_name), logger: @logger, force: true)
+  end
+
+  # Deliberately NOT wired into the sync path — deleting design docs is an
+  # explicit maintenance action, not something a bulk sync batch should do.
+  #
+  # Ensures the current (grouped) indexes exist and are verified BEFORE deleting
+  # the design docs they replace. Pruning first would leave patients_records with
+  # no usable index for the duration of the rebuild, turning every patient search
+  # into a full scan. If the ensure step cannot confirm every index, nothing is
+  # deleted and this returns false.
+  def prune_patient_records!
+    return false unless couchdb_configured?
+
+    unless ensure_patient_records!
+      @logger&.warn('CouchDB patient search: skipping prune — current indexes could not be verified')
+      return false
+    end
+
+    db_name = PatientRecordSearchFields::PATIENT_RECORD_DB
+    CouchdbIndexEnsurer.prune!(
+      couchdb_url(db_name),
+      PatientRecordSearchFields::RETIRED_COUCHDB_INDEXES,
+      logger: @logger,
+      label: 'CouchDB patient search'
+    )
+    true
   end
 
   private

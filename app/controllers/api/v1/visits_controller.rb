@@ -30,8 +30,13 @@ module Api
       end
 
       def index
-        patient_id = params[:patient_id]
-        patient_id = find_patient_id_by_identifier(params[:identifier]) if params[:identifier].present?
+        patient_id = resolve_index_patient_id
+
+        # A caller that scoped the request to one patient must never receive every
+        # patient's visits. An unresolvable patient key — e.g. the blank identifier
+        # sent for a patient with no National ID — used to leave the scope
+        # unfiltered, so the response was every visit for the program.
+        return render json: [], status: :ok if patient_scoped_request? && patient_id.blank?
 
         visits = base_visits_scope
         visits = visits.where(patient_id: patient_id) if patient_id.present?
@@ -132,6 +137,21 @@ module Api
 
         start_time, end_time = TimeUtils.day_bounds(date_stopped)
         visits.where(date_stopped: start_time..end_time)
+      end
+
+      # Scoped to one patient whenever the caller sent either patient key at all,
+      # even blank. Listing endpoints (e.g. today's visits) send neither.
+      def patient_scoped_request?
+        params.key?(:patient_id) || params.key?(:identifier)
+      end
+
+      def resolve_index_patient_id
+        if params[:identifier].present?
+          resolved = find_patient_id_by_identifier(params[:identifier])
+          return resolved if resolved.present?
+        end
+
+        params[:patient_id].presence
       end
 
       def find_patient_id_by_identifier(identifier)
