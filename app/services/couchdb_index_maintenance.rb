@@ -62,9 +62,21 @@ class CouchdbIndexMaintenance
     end
 
     db_name = PatientRecordSearchFields::PATIENT_RECORD_DB
+    db_url = couchdb_url(db_name)
+
+    # Whole design docs from the pre-consolidation layout...
     CouchdbIndexEnsurer.prune!(
-      couchdb_url(db_name),
+      db_url,
       PatientRecordSearchFields::RETIRED_COUCHDB_INDEXES,
+      logger: @logger,
+      label: 'CouchDB patient search'
+    )
+    # ...then individual indexes left inside the groups we own, e.g. the old
+    # idx_patient_identifier now superseded by the client-named idx_ID within the
+    # same design doc. Runs after ensure!, so the replacement already exists.
+    CouchdbIndexEnsurer.prune_unknown_indexes!(
+      db_url,
+      PatientRecordSearchFields::COUCHDB_INDEXES,
       logger: @logger,
       label: 'CouchDB patient search'
     )

@@ -16,39 +16,55 @@ module PatientRecordSearchFields
   DDOC_IDENTIFIERS = 'idx_patient_identifiers'
   DDOC_NAME_SEARCH = 'idx_patient_name'
   DDOC_QUEUES = 'idx_patient_queues'
+  DDOC_LOCATION = 'idx_patient_location'
 
+  # Mirrors the client's DATABASE_INDEX_CONFIG.patients_records exactly — same
+  # index NAMES, fields and design-doc groups. That exactness is the whole point:
+  # in LAN mode the client never creates patients_records indexes (it holds only
+  # remote handles), so whatever is missing or differently named here simply does
+  # not exist, and `use_index` is REJECTED rather than silently ignored:
+  #
+  #   "_design/idx_patient_identifiers, idx_patientID was not used because it is
+  #    not a valid index for this query. No matching index found..."
+  #
+  # CouchDB then full-scans patients_records. Observed: a single patient lookup
+  # taking 41,529ms against ~131k documents. Twelve of the client's twenty-five
+  # indexes were unusable this way — four because the same field was indexed under
+  # a different name here (idx_ID vs the old idx_patient_identifier), eight
+  # because they were never defined at all (patientID, patient_id, arvNumber,
+  # location_id, location_id_search, has_pending_dispensation,
+  # pending_dispensation_location, personInformation.gender).
+  #
+  # Backend coverage must stay a SUPERSET of the client's config, keyed by the
+  # client's names. Renaming or dropping one here silently reintroduces a full
+  # table scan.
   COUCHDB_INDEXES = [
-    { name: 'idx_patient_identifier', ddoc: DDOC_IDENTIFIERS, fields: ['ID'] },
-    { name: 'idx_ncd_id', ddoc: DDOC_IDENTIFIERS, fields: ['NcdID'] },
-    { name: 'idx_national_id', ddoc: DDOC_IDENTIFIERS, fields: ['nationalID'] },
-    { name: 'idx_ichis_id', ddoc: DDOC_IDENTIFIERS, fields: ['ichisID'] },
+    { name: 'idx_ID', ddoc: DDOC_IDENTIFIERS, fields: ['ID'] },
+    { name: 'idx_NcdID', ddoc: DDOC_IDENTIFIERS, fields: ['NcdID'] },
+    { name: 'idx_arvNumber', ddoc: DDOC_IDENTIFIERS, fields: ['arvNumber'] },
+    { name: 'idx_ichisID', ddoc: DDOC_IDENTIFIERS, fields: ['ichisID'] },
+    { name: 'idx_nationalID', ddoc: DDOC_IDENTIFIERS, fields: ['nationalID'] },
+    { name: 'idx_patientID', ddoc: DDOC_IDENTIFIERS, fields: ['patientID'] },
+    { name: 'idx_patient_id', ddoc: DDOC_IDENTIFIERS, fields: ['patient_id'] },
     { name: 'idx_full_name_search', ddoc: DDOC_NAME_SEARCH, fields: ['full_name_search'] },
     { name: 'idx_location_full_name_search', ddoc: DDOC_NAME_SEARCH, fields: ['location_id_search', 'full_name_search'] },
+    { name: 'idx_has_pending_dispensation', ddoc: DDOC_QUEUES, fields: ['has_pending_dispensation'] },
+    { name: 'idx_has_pending_lab_results', ddoc: DDOC_QUEUES, fields: ['has_pending_lab_results'] },
     { name: 'idx_location_pending_dispensation', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_dispensation'] },
+    { name: 'idx_location_pending_lab_results', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_lab_results'] },
+    { name: 'idx_pending_dispensation_family_name', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_dispensation', 'family_name_search'] },
     { name: 'idx_pending_dispensation_full_name', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_dispensation', 'full_name_search'] },
     { name: 'idx_pending_dispensation_full_name_middle', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_dispensation', 'full_name_with_middle_search'] },
     { name: 'idx_pending_dispensation_given_name', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_dispensation', 'given_name_search'] },
-    { name: 'idx_pending_dispensation_family_name', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_dispensation', 'family_name_search'] },
-    { name: 'idx_location_pending_lab_results', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_lab_results'] },
-    # Name-search indexes for the awaiting-lab-results queue, mirroring the
-    # dispensation set above and matching the client's definitions of the same
-    # names. Without these the queue name search falls back to the two-field
-    # idx_location_pending_lab_results and post-filters the whole queue, which
-    # degrades with queue size (measured: 19ms/156ms/440ms for a 50/500/3000
-    # patient queue, versus 3ms/6ms/10ms with these indexes).
+    { name: 'idx_pending_dispensation_location', ddoc: DDOC_QUEUES, fields: ['pending_dispensation_location_id', 'has_pending_dispensation', 'pending_dispensation_last_order_date'] },
+    { name: 'idx_pending_lab_results_family_name', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_lab_results', 'family_name_search'] },
     { name: 'idx_pending_lab_results_full_name', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_lab_results', 'full_name_search'] },
     { name: 'idx_pending_lab_results_full_name_middle', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_lab_results', 'full_name_with_middle_search'] },
     { name: 'idx_pending_lab_results_given_name', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_lab_results', 'given_name_search'] },
-    { name: 'idx_pending_lab_results_family_name', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_lab_results', 'family_name_search'] },
-    { name: 'idx_has_pending_lab_results', ddoc: DDOC_QUEUES, fields: ['has_pending_lab_results'] },
-    # Third field added to match the client's definition of the same index name
-    # (MAHIS DATABASE_INDEX_CONFIG.patients_records). A [a,b,c] index also serves
-    # the [a,b] prefix query, so this is a superset, and re-POSTing an existing
-    # name with new fields replaces the index in place.
-    { name: 'idx_pending_lab_results_location', ddoc: DDOC_QUEUES,
-      fields: ['pending_lab_results_location_id', 'has_pending_lab_results', 'pending_lab_results_last_order_date'] }
-    # NCD dashboard indexes now live on the dedicated ncd_patient_index database
-    # (see NcdService::NcdPatientIndex), not on patients_records.
+    { name: 'idx_pending_lab_results_location', ddoc: DDOC_QUEUES, fields: ['pending_lab_results_location_id', 'has_pending_lab_results', 'pending_lab_results_last_order_date'] },
+    { name: 'idx_gender', ddoc: DDOC_LOCATION, fields: ['personInformation.gender'] },
+    { name: 'idx_location_id', ddoc: DDOC_LOCATION, fields: ['location_id'] },
+    { name: 'idx_location_id_search', ddoc: DDOC_LOCATION, fields: ['location_id_search'] }
   ].freeze
 
   # DESIGN DOCS (not index names) we no longer want on patients_records. Every one

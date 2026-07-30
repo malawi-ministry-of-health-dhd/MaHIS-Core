@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require 'erb'
+require 'set'
+
 module CouchdbIndexEnsurer
   module_function
 
@@ -53,6 +56,45 @@ module CouchdbIndexEnsurer
     end
 
     logger&.info("#{label}: pruned #{pruned} retired index design doc(s)") if pruned.positive?
+    pruned
+  end
+
+  # Delete individual indexes that we own but no longer want, leaving the rest of
+  # their design doc intact. Needed because renaming an index inside a shared
+  # design doc only ADDS the new name — the old one keeps being maintained on
+  # every write, and a duplicate view on the same fields is pure cost.
+  #
+  # Scoped strictly to the design docs named in `definitions`: an index in any
+  # other design doc belongs to someone else and is never touched.
+  def prune_unknown_indexes!(db_url, definitions, logger: Rails.logger, label: 'CouchDB')
+    return 0 if db_url.blank? || definitions.blank?
+
+    managed_ddocs = definitions.map { |definition| design_doc_for(definition) }.uniq
+    wanted = definitions.map { |definition| [design_doc_for(definition), definition[:name].to_s] }.to_set
+
+    stale = fetch_indexes(db_url, logger:, label:).select do |index|
+      next false unless index['type'].to_s == 'json'
+
+      ddoc = normalize_ddoc(index['ddoc'])
+      managed_ddocs.include?(ddoc) && !wanted.include?([ddoc, index['name'].to_s])
+    end
+
+    pruned = 0
+    stale.each do |index|
+      ddoc = normalize_ddoc(index['ddoc'])
+      name = index['name'].to_s
+      begin
+        RestClient.delete("#{db_url}/_index/#{ERB::Util.url_encode(ddoc)}/json/#{ERB::Util.url_encode(name)}")
+        logger&.info("#{label}: deleted stale index #{name} from _design/#{ddoc}")
+        pruned += 1
+      rescue RestClient::NotFound
+        next
+      rescue StandardError => e
+        logger&.warn("#{label}: could not delete stale index #{name} from _design/#{ddoc}: #{e.class}: #{e.message}")
+      end
+    end
+
+    logger&.info("#{label}: pruned #{pruned} stale index(es) from managed design docs") if pruned.positive?
     pruned
   end
 
