@@ -19,7 +19,7 @@ require 'action_cable/engine'
 # you've limited to :test, :development, or :production.
 Bundler.require(*Rails.groups)
 
-require_relative '../lib/middleware/inflate_request_body'
+require_relative '../lib/inflate_request_body'
 
 module BHTEmrApi
   class Application < Rails::Application
