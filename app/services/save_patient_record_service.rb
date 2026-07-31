@@ -60,21 +60,14 @@ class SavePatientRecordService
     enqueue_post_save_side_effects(patient_id, record, operation_results)
 
     if couchdb_configured?
-      patient_record["_id"] = patient_record["ID"]
-      # This REST call has already written the record to SQL, so the CouchDB
-      # changes listener would only re-run the identical processing on the doc it
-      # writes here. Stamp it processed so the listener skips it — one fewer writer
-      # per online save, which narrows the window for an offline edit to conflict.
-      # Only when fully synced; partial failures stay unstamped so the listener
-      # still reprocesses/retries them as before. (On the listener's own path this
-      # sync_to_couchdb is a no-op via skip_couchdb_sync, so this only affects REST.)
-      mark_online_record_listener_processed!(patient_record) if overall_sync_status == 'synced'
-      sync_to_couchdb(patient_record, "patients_records", "#{patient_record["ID"]}")
-      # Refresh the NCD read model synchronously so the live (REST) save path
-      # reflects NCD number assignment/updates immediately. The CouchDB changes
-      # listener only maintains this index for listener-processed docs, so a
-      # patient just given a number would otherwise linger in "Pending NCD".
-      refresh_ncd_patient_index(patient_record)
+      begin
+        patient_record["_id"] = patient_record["ID"]
+        sync_to_couchdb(patient_record, "patients_records", "#{patient_record["ID"]}")
+      rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH => e
+        Rails.logger.warn("CouchDB connection error during patient record sync for #{patient_record["ID"]}: #{e.class}: #{e.message}")
+      rescue StandardError => e
+        Rails.logger.error("CouchDB sync failed for patient #{patient_record["ID"]}: #{e.class}: #{e.message}")
+      end
     end
     enqueue_dde_id_top_up(patient_record, record) if should_top_up_dde_ids && couchdb_configured?
 
