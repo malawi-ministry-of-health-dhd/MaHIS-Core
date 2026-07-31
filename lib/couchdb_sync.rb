@@ -91,4 +91,29 @@ module CouchdbSync
       retry
     end
   end
+
+  # Fetch a single document by id. Returns the parsed Hash (including _rev/_id)
+  # or nil when the document or CouchDB itself is absent. Transient connection
+  # resets are retried like the write path.
+  def fetch_couchdb_doc(db_name, doc_id)
+    return nil unless couchdb_configured?
+    return nil if doc_id.to_s.empty?
+
+    encoded_doc_id = URI.encode_www_form_component(doc_id.to_s)
+    doc_url = couchdb_url(db_name, encoded_doc_id)
+
+    attempt = 1
+    begin
+      JSON.parse(RestClient.get(doc_url).body)
+    rescue RestClient::NotFound
+      nil
+    rescue *TRANSIENT_CONNECTION_ERRORS => e
+      raise if attempt >= MAX_RETRY_ATTEMPTS
+
+      Rails.logger.warn("CouchDB fetch_couchdb_doc(#{db_name}/#{doc_id}) attempt #{attempt} failed: #{e.class}: #{e.message}")
+      attempt += 1
+      sleep(0.1 * attempt)
+      retry
+    end
+  end
 end
