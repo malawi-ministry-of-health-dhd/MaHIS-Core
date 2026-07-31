@@ -100,7 +100,12 @@ module ReferenceDataSearchFields
       { name: 'idx_identifier_date_stopped', fields: ['identifier', 'date_stopped'] },
       { name: 'idx_program_identifier_date_stopped', fields: ['program_id', 'identifier', 'date_stopped'] },
       { name: 'idx_location_program_date_started', fields: ['location_id', 'program_id', 'date_started'] },
-      { name: 'idx_date_started', fields: ['date_started'] }
+      { name: 'idx_date_started', fields: ['date_started'] },
+      { name: 'idx_date_stopped', fields: ['date_stopped'] },
+      { name: 'idx_visit_id', fields: ['visit_id'] }
+    ],
+    'stages' => [
+      { name: 'idx_location_id', fields: ['location_id'] }
     ],
     'dde' => [
       { name: 'idx_type', fields: ['type'] },
@@ -161,7 +166,7 @@ module ReferenceDataSearchFields
   # Gated on having index definitions, NOT on supported_database?. Those are two
   # different things: supported_database? means "this database has text fields we
   # normalise", while index creation only needs index definitions. Several
-  # databases (visits, dde, lab_accession_numbers, regimens, mnh_stats,
+  # databases (visits, stages, dde, lab_accession_numbers, regimens, mnh_stats,
   # custom_regimen_ingredients) need indexes but no text normalisation, and the
   # old gate silently skipped them — which is why the client had to create their
   # indexes itself, from every device, against the shared CouchDB.
