@@ -6,7 +6,6 @@
 
 # Ignore bundler config.
 /.bundle
-
 Gemfile.lock
 
 # Ignore the default SQLite database.
@@ -39,8 +38,6 @@ config/*.yml
 *.pid.lock
 *.pid
 db/schema.rb
-
-.ruby-version
 
 *.DS_Store
 

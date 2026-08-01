@@ -5,7 +5,7 @@ require 'rails_helper'
 describe ArtService::Reports::CohortBuilder do
   # Set User.current and Location.current before any tests or let blocks
   before(:all) do
-    User.current = User.first
+    User.current = User.unscoped.first
     Location.current = Location.first
     @default_provider = Person.first
   end
@@ -18,7 +18,7 @@ describe ArtService::Reports::CohortBuilder do
 
   before(:each) do
     # Ensure User.current remains set
-    User.current ||= User.first
+    User.current ||= User.unscoped.first
     Location.current ||= Location.first
   end
 
@@ -41,12 +41,12 @@ describe ArtService::Reports::CohortBuilder do
 
   before(:each) do
     # Clean database records from previous tests
-    PatientState.delete_all
-    PatientProgram.delete_all
-    Observation.delete_all
-    DrugOrder.delete_all
-    Order.delete_all
-    Encounter.delete_all
+    PatientState.unscoped.delete_all
+    PatientProgram.unscoped.delete_all
+    Observation.unscoped.delete_all
+    DrugOrder.unscoped.delete_all
+    Order.unscoped.delete_all
+    Encounter.unscoped.delete_all
 
     # Clean ALL temp tables that might exist from previous runs
     temp_tables = %w[
@@ -68,7 +68,8 @@ describe ArtService::Reports::CohortBuilder do
     ]
 
     temp_tables.each do |table|
-      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{table}")
+      location_table = "#{table}_loc_#{Location.current&.location_id || 'default'}"
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{location_table}")
     end
   end
 
@@ -148,8 +149,8 @@ describe ArtService::Reports::CohortBuilder do
           start_date: start_date + 5.days,
           auto_expire_date: start_date + 35.days,
           encounter: registration_encounter,
-          provider: User.first,
-          orderer: User.first.user_id
+          provider: User.current,
+          orderer: User.current.user_id
         )
 
         DrugOrder.create!(
@@ -251,8 +252,8 @@ describe ArtService::Reports::CohortBuilder do
           start_date: start_date + 10.days,
           auto_expire_date: start_date + 40.days,
           encounter: registration_encounter,
-          provider: User.first,
-          orderer: User.first.user_id
+          provider: User.current,
+          orderer: User.current.user_id
         )
 
         DrugOrder.create!(
@@ -333,8 +334,8 @@ describe ArtService::Reports::CohortBuilder do
           start_date: start_date + 3.days,
           auto_expire_date: start_date + 33.days,
           encounter: registration_encounter,
-          provider: User.first,
-          orderer: User.first.user_id
+          provider: User.current,
+          orderer: User.current.user_id
         )
 
         DrugOrder.create!(
@@ -409,8 +410,8 @@ describe ArtService::Reports::CohortBuilder do
           start_date: start_date + 7.days,
           auto_expire_date: start_date + 37.days,
           encounter: registration_encounter,
-          provider: User.first,
-          orderer: User.first.user_id
+          provider: User.current,
+          orderer: User.current.user_id
         )
 
         DrugOrder.create!(
@@ -488,8 +489,8 @@ describe ArtService::Reports::CohortBuilder do
             start_date: start_date + (index + 1).days,
             auto_expire_date: start_date + (index + 31).days,
             encounter: encounter,
-            provider: User.first,
-            orderer: User.first.user_id
+            provider: User.current,
+            orderer: User.current.user_id
           )
 
           DrugOrder.create!(
@@ -574,8 +575,8 @@ describe ArtService::Reports::CohortBuilder do
             start_date: start_date - 100.days,
             auto_expire_date: end_date + 10.days, # Extend into reporting period so patient is active
             encounter: registration_encounter,
-            provider: User.first,
-            orderer: User.first.user_id
+            provider: User.current,
+            orderer: User.current.user_id
           )
 
           order
@@ -601,8 +602,8 @@ describe ArtService::Reports::CohortBuilder do
             start_date: start_date - 50.days,
             auto_expire_date: start_date - 20.days,
             encounter: dispensing_encounter,
-            provider: User.first,
-            orderer: User.first.user_id
+            provider: User.current,
+            orderer: User.current.user_id
           )
 
           DrugOrder.create!(
@@ -667,19 +668,17 @@ describe ArtService::Reports::CohortBuilder do
     it 'creates temp_earliest_start_date table' do
       cohort_builder.build(cohort_struct, start_date, end_date, nil)
 
-      result = ActiveRecord::Base.connection.execute(
-        "SHOW TABLES LIKE 'temp_earliest_start_date'"
-      )
-      expect(result.count).to eq(1)
+      expect(
+        ActiveRecord::Base.connection.table_exists?(cohort_builder.temp_earliest_start_date)
+      ).to be(true)
     end
 
     it 'creates temp_patient_outcomes table' do
       cohort_builder.build(cohort_struct, start_date, end_date, nil)
 
-      result = ActiveRecord::Base.connection.execute(
-        "SHOW TABLES LIKE 'temp_patient_outcomes'"
-      )
-      expect(result.count).to eq(1)
+      expect(
+        ActiveRecord::Base.connection.table_exists?(cohort_builder.temp_patient_outcomes)
+      ).to be(true)
     end
   end
 
@@ -724,8 +723,8 @@ describe ArtService::Reports::CohortBuilder do
         start_date: start_date - 200.days,
         auto_expire_date: end_date + 10.days, # Extend into reporting period
         encounter: encounter,
-        provider: User.first,
-        orderer: User.first.user_id
+        provider: User.current,
+        orderer: User.current.user_id
       )
 
       DrugOrder.create!(
@@ -756,8 +755,8 @@ describe ArtService::Reports::CohortBuilder do
         start_date: start_date + 3.days,
         auto_expire_date: end_date + 10.days,
         encounter: enc,
-        provider: User.first,
-        orderer: User.first.user_id
+        provider: User.current,
+        orderer: User.current.user_id
       )
 
       DrugOrder.create!(
@@ -810,8 +809,8 @@ describe ArtService::Reports::CohortBuilder do
         start_date: start_date + 5.days,
         auto_expire_date: start_date + 35.days,
         encounter: encounter,
-        provider: User.first,
-        orderer: User.first.user_id
+        provider: User.current,
+        orderer: User.current.user_id
       )
 
       DrugOrder.create!(
@@ -894,8 +893,8 @@ describe ArtService::Reports::CohortBuilder do
           start_date: start_date + 5.days,
           auto_expire_date: start_date + 35.days,
           encounter: registration_encounter,
-          provider: User.first,
-          orderer: User.first.user_id
+          provider: User.current,
+          orderer: User.current.user_id
         )
 
         DrugOrder.create!(
@@ -950,8 +949,8 @@ describe ArtService::Reports::CohortBuilder do
           start_date: start_date + 5.days,
           auto_expire_date: start_date + 35.days,
           encounter: registration_encounter,
-          provider: User.first,
-          orderer: User.first.user_id
+          provider: User.current,
+          orderer: User.current.user_id
         )
 
         DrugOrder.create!(
