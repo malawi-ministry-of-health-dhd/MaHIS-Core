@@ -811,7 +811,7 @@ end
 
 # Check if a table should be filtered for HIV program only
 def hiv_filter_required?(table_name)
-  %w[patient_program patient_identifier encounter patient_state orders obs drug_order
+  %w[patient_program encounter patient_state orders obs drug_order
      pharmacy_obs].include?(table_name.to_s)
 end
 
@@ -1292,6 +1292,46 @@ end
 # Override with BATCH_SIZE env var, e.g. BATCH_SIZE=100000.
 DEFAULT_BATCH_SIZE = (ENV['BATCH_SIZE'] || 100_000).to_i
 
+# Global properties migrated from the source EMR (in addition to legacy site_prefix).
+# Clinic-days configuration is migrated in full via the LIKE patterns below, which cover
+# the legacy facility-wide keys and every program-namespaced variant
+# (e.g. week_days_properties_program_32, holiday_date_program_14).
+MIGRATABLE_GLOBAL_PROPERTIES = %w[
+  site_prefix
+  clinic.days
+  peads.clinic.days
+  clinic.holidays
+  clinic.appointment.limit
+  impow.clinic.appointment.limit
+  activate.htn.enhancement
+  htn.screening.age.threshold
+  htn.systolic.threshold
+  htn.diastolic.threshold
+  activate.cervical.cancer.screening
+  cervical.cancer.screening.age.bounds
+  ask_pills_remaining_at_home
+  use.filing.number
+  filing.number.limit
+  filing.number.prefix
+].freeze
+
+# Prefixes for clinic-days keys whose program-namespaced variants must all be migrated.
+MIGRATABLE_GLOBAL_PROPERTY_PREFIXES = %w[
+  week_days_properties
+  maximum_number_Of_c_for_each_day
+  holiday_date
+].freeze
+
+# Build the SQL WHERE clause selecting the global properties to migrate from the source.
+def migratable_global_property_where
+  in_list = MIGRATABLE_GLOBAL_PROPERTIES.map { |p| "'#{p}'" }.join(', ')
+  clauses = ["property IN (#{in_list})"]
+  MIGRATABLE_GLOBAL_PROPERTY_PREFIXES.each do |prefix|
+    clauses << "property LIKE '#{prefix}%'"
+  end
+  clauses.join(' OR ')
+end
+
 # Process in Batches with Dynamic Threads and Percentage Tracking
 def process_in_batches(source_db, table_name, batch_size = nil, target_model = nil)
   # Convert table_name to string
@@ -1405,7 +1445,7 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
                     where_clause = hiv_filter
                     query_with_columns("#{source_db}.#{table_name_str}", where_clause, test_limit, nil, target_model)
                   elsif %w[global_property user_role user_property].include?(table_name_str)
-                    where_clause = table_name_str == 'global_property' ? "property = 'site_prefix'" : nil
+                    where_clause = table_name_str == 'global_property' ? migratable_global_property_where : nil
                     query_with_columns("#{source_db}.#{table_name_str}", where_clause, nil, nil, target_model)
                   else
                     full_table_name = "#{source_db}.#{table_name_str}"
@@ -1549,7 +1589,11 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
                     when 'DrugOrder'
                       target_model.unscoped.where(order_id: record_keys).pluck(:order_id).to_set
                     when 'GlobalProperty'
-                      target_model.unscoped.where(property: record_keys).pluck(:property).to_set
+                      # Scope dedup to the current site so a property already present for
+                      # another location does not block this site's own copy (dest is UNIQUE
+                      # on (property, location_id); location_id is force-set to SITE_ID below).
+                      target_model.unscoped.where(property: record_keys, location_id: SITE_ID.to_s)
+                                  .pluck(:property).to_set
                     when 'LimsAcknowledgementStatus'
                       target_model.unscoped.where(order_id: record_keys).pluck(:order_id).to_set
                     when 'UserRole'
