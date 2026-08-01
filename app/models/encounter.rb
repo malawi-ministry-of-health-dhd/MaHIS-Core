@@ -97,6 +97,7 @@ class Encounter < VoidableRecord
 
     PushDdeFootprintsJob.perform_later(patient_id:,
                                        program_id:,
+                                       location_id:,
                                        date: encounter_datetime.strftime('%Y-%m-%d'),
                                        creator_id: creator)
   end

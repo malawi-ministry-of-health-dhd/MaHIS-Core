@@ -16,7 +16,8 @@ class PatientService
       if use_dde_service?
         begin
           assign_patient_dde_npid(patient, program, npid)
-        rescue StandardError
+        rescue StandardError => e
+          Rails.logger.error "Failed to create patient ##{patient.patient_id} in DDE, falling back to local NPID: #{e.message}\n#{e.backtrace.first(5).join("\n")}"
           create_local_npid(patient, malawi_national_id, npid: npid, location_id: location_id)
         end
       else
@@ -727,7 +728,7 @@ class PatientService
   end
 
   def use_dde_service?
-    global_property('dde_enabled', DDE_LOCATION_ID).property_value&.strip == 'true'
+    DdeService.dde_enabled?
   rescue StandardError
     false
   end
