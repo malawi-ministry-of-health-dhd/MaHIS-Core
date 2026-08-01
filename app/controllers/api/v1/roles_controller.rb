@@ -7,7 +7,7 @@ module Api
                     only: %i[create update destroy add_privilege remove_privilege]
 
       def index
-        roles_query = Role.includes(:privileges, :role_privileges, :user_roles)
+        roles_query = Role.includes(:privileges)
 
         if Role.location_scoped?
           roles_query = roles_query.where(location_id: params[:location_id])
@@ -15,12 +15,12 @@ module Api
         end
 
         roles = params[:paginate] == 'true' ? paginate(roles_query) : roles_query.order(:role)
-        render json: roles.as_json(include: { privileges: {}, role_privileges: {}, user_roles: {} })
+        render json: serialize_roles(roles)
       end
 
       def show
-        role = Role.includes(:privileges, :role_privileges, :user_roles).find(params[:id])
-        render json: role.as_json(include: { privileges: {}, role_privileges: {}, user_roles: {} })
+        role = Role.includes(:privileges).find(params[:id])
+        render json: serialize_roles([role]).first
       end
 
       def create
@@ -87,6 +87,26 @@ module Api
       end
 
       private
+
+      # Roles used to inline their whole user_roles/role_privileges rows — one entry per user
+      # per role, each carrying a duplicate copy of the role itself (~540KB of the 634KB
+      # payload). Clients only ever read the user tally, so send that instead. role_privileges
+      # is dropped outright: `privileges` already carries the same set.
+      def serialize_roles(roles)
+        roles = roles.to_a
+        # Arel.sql on the grouping column: UserRole's `role` column is shadowed by
+        # `belongs_to :role`, so a plain group(:role).count hands back Role objects as keys
+        # (one lookup each) instead of the role names we need to index by.
+        user_counts = UserRole.where(role: roles.map(&:role))
+                              .group(:role)
+                              .pluck(Arel.sql('user_role.role'), Arel.sql('COUNT(*)'))
+                              .to_h
+
+        roles.map do |role|
+          role.as_json(include: { privileges: {} })
+              .merge('users_count' => user_counts[role.role] || 0)
+        end
+      end
 
       def role_params
         permitted_params = %i[role description uuid]

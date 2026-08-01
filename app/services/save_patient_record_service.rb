@@ -54,8 +54,10 @@ class SavePatientRecordService
       raise
     end
 
+    history_base = resolve_history_base(patient_id, record)
     patient_record = build_and_save_patient_record(patient_id, record, operation_results, overall_sync_status,
-                                                   created_lab_orders: managers[:lab_data_manager].created_lab_orders)
+                                                   created_lab_orders: managers[:lab_data_manager].created_lab_orders,
+                                                   couch_base: history_base)
     ensure_primary_identifier_persisted!(patient_id, patient_record)
     enqueue_post_save_side_effects(patient_id, record, operation_results)
 
@@ -228,7 +230,8 @@ class SavePatientRecordService
     }
   end
 
-  def build_and_save_patient_record(patient_id, patient_data, operation_results, overall_sync_status, created_lab_orders: [])
+  def build_and_save_patient_record(patient_id, patient_data, operation_results, overall_sync_status, created_lab_orders: [], couch_base: nil)
+    restore_trimmed_history!(patient_data, couch_base)
     patient          = BuildPatientRecordService.find_patient(patient_id)
     person           = patient&.person
     latest_encounter = BuildPatientRecordService.find_latest_encounter(patient_id)
@@ -341,6 +344,198 @@ class SavePatientRecordService
     clear_processed_pending_fields!(patient_data)
     PatientRecordSearchFields.normalize!(patient_data)
     patient_data.as_json
+  end
+
+  # The authoritative full record used to re-attach the read-only history the
+  # lean online payload omits. Prefers the current CouchDB doc (a single fast
+  # fetch); falls back to a MySQL rebuild only when the doc is absent (e.g. a
+  # brand-new patient, where the rebuild is cheap). Returns nil on the
+  # listener/offline ingest path (skip_couchdb_sync? — the record already
+  # carries the full doc) or when CouchDB is not configured, in which case
+  # restore_trimmed_history! is a no-op and the client payload is used as-is.
+  def resolve_history_base(patient_id, record)
+    return nil unless couchdb_configured? && !skip_couchdb_sync?
+
+    doc_id = record_value(record, :ID).to_s
+    base   = doc_id.present? ? fetch_couchdb_doc('patients_records', doc_id) : nil
+    base ||= (patient_id ? BuildPatientRecordService.build_patient_record(patient_id) : nil)
+    base
+  rescue StandardError => e
+    Rails.logger.warn("[SavePatientRecord] could not resolve history base for #{record_value(record, :ID)}: #{e.class}: #{e.message}")
+    nil
+  end
+
+  # Re-attach read-only history the online client stripped from its payload, so
+  # the saved CouchDB doc and the response still carry the full record while the
+  # request stays small. No-op when no base is supplied (listener/offline ingest
+  # already carries the full doc) or when the client already sent the section
+  # (full/legacy payloads). Sections the client did send — this visit's writes —
+  # are left untouched, and the existing per-operation rebuild logic still
+  # refreshes changed sections from MySQL over the top.
+  def restore_trimmed_history!(patient_data, couch_base)
+    return patient_data if couch_base.blank?
+
+    restore_observation_history!(patient_data, couch_base)
+    restore_lab_order_history!(patient_data, couch_base)
+    restore_medication_order_history!(patient_data, couch_base)
+    restore_active_programs_history!(patient_data, couch_base)
+    restore_guardian_history!(patient_data, couch_base)
+    restore_vaccine_obs_history!(patient_data, couch_base)
+
+    # Whole read-only sections the client may omit and the backend does not
+    # unconditionally rebuild: art_summary (never), visits (only conditionally),
+    # personInformation (only on edit). Restore from the base when the client
+    # omitted them. Preserve empty values ([]/{}) too, so a section the base
+    # defined never comes back absent. (patient_identifiers is always rebuilt
+    # below, so it needs no restore.)
+    %i[art_summary visits personInformation].each do |key|
+      next if record_value(patient_data, key).present?
+
+      base_value = record_value(couch_base, key)
+      patient_data[key] = base_value unless base_value.nil?
+    end
+
+    patient_data
+  end
+
+  # Merge the base's observation encounters (keyed by encounter_type) underneath
+  # the client's. The client's encounters win on a type collision, and
+  # rebuild_all_observations later refreshes the changed types from MySQL, so no
+  # history is lost — untouched historical encounter types simply carry through.
+  def restore_observation_history!(patient_data, couch_base)
+    base_obs = Array(record_value(couch_base, :observations))
+    return if base_obs.empty?
+
+    merged_by_type = {}
+    base_obs.each do |group|
+      type = record_value(group, :encounter_type)
+      merged_by_type[type] = group if type.present?
+    end
+
+    typeless_client_groups = []
+    Array(record_value(patient_data, :observations)).each do |group|
+      type = record_value(group, :encounter_type)
+      if type.present?
+        merged_by_type[type] = group
+      else
+        typeless_client_groups << group
+      end
+    end
+
+    patient_data[:observations] = merged_by_type.values + typeless_client_groups
+  end
+
+  # Restore labOrders.saved (historical orders) from the base when the client
+  # omitted it. Lab writes (unsaved/results/voided) the client did send still
+  # trigger the full labOrders rebuild from MySQL in build_and_save_patient_record.
+  def restore_lab_order_history!(patient_data, couch_base)
+    base_lab = record_value(couch_base, :labOrders)
+    return if base_lab.blank?
+
+    client_lab = record_value(patient_data, :labOrders)
+    if client_lab.blank?
+      patient_data[:labOrders] = base_lab
+      return
+    end
+
+    return if record_value(client_lab, :saved).present?
+
+    base_saved = record_value(base_lab, :saved)
+    # Restore even an empty [] so labOrders.saved never comes back absent
+    # (the frontend maps over it).
+    assign_subkey(client_lab, :saved, base_saved) unless base_saved.nil?
+  end
+
+  # Restore MedicationOrder.saved (order history) from the base, keeping any
+  # saved order the client sent that carries a dispensation (dispensations_pending?
+  # / save_dispensation_data read saved[].dispensation). Client entries win on an
+  # order_id collision. When a medication/dispensation/void op runs, build_and_save
+  # rebuilds MedicationOrder fully from MySQL over this, so it is only load-bearing
+  # for the no-med-activity carry-through case.
+  def restore_medication_order_history!(patient_data, couch_base)
+    base_med   = record_value(couch_base, :MedicationOrder)
+    base_saved = Array(record_value(base_med, :saved))
+    return if base_saved.empty?
+
+    client_med = record_value(patient_data, :MedicationOrder)
+    if client_med.blank?
+      patient_data[:MedicationOrder] = base_med
+      return
+    end
+
+    client_saved = Array(record_value(client_med, :saved))
+    client_ids   = client_saved.map { |order| record_value(order, :order_id) }.compact
+    merged_saved = base_saved.reject { |order| client_ids.include?(record_value(order, :order_id)) } + client_saved
+
+    assign_subkey(client_med, :saved, merged_saved)
+  end
+
+  # Restore saved-program history from the base. The client sends only new
+  # enrollments (status "unsaved"); union the base's programs underneath, keyed
+  # by patient_program_id so nothing duplicates. When enrollment changes,
+  # build_and_save refetches activePrograms fully from MySQL over this.
+  def restore_active_programs_history!(patient_data, couch_base)
+    base_programs = Array(record_value(couch_base, :activePrograms))
+    return if base_programs.empty?
+
+    client_programs = Array(record_value(patient_data, :activePrograms))
+    client_ids      = client_programs.map { |program| record_value(program, :patient_program_id) }.compact
+    merged = base_programs.reject { |program| client_ids.include?(record_value(program, :patient_program_id)) } + client_programs
+
+    patient_data[:activePrograms] = merged
+  end
+
+  # Restore guardianInformation.saved (guardian history) from the base when the
+  # client omitted it. manage_guardian only reads .unsaved, which the client
+  # still sends; a guardian op still rebuilds the section fully from MySQL.
+  def restore_guardian_history!(patient_data, couch_base)
+    base_guardian = record_value(couch_base, :guardianInformation)
+    return if base_guardian.blank?
+
+    client_guardian = record_value(patient_data, :guardianInformation)
+    if client_guardian.blank?
+      patient_data[:guardianInformation] = base_guardian
+      return
+    end
+
+    return if record_value(client_guardian, :saved).present?
+
+    base_saved = record_value(base_guardian, :saved)
+    assign_subkey(client_guardian, :saved, base_saved) unless base_saved.nil?
+  end
+
+  # Restore vaccineAdministration.obs (vaccine obs history) from the base when
+  # the client omitted it. The client keeps obs whenever there is a vaccine
+  # write (save_vaccines reads it), so this only fills the no-vaccine-write case.
+  def restore_vaccine_obs_history!(patient_data, couch_base)
+    base_vaccine = record_value(couch_base, :vaccineAdministration)
+    return if base_vaccine.blank?
+
+    client_vaccine = record_value(patient_data, :vaccineAdministration)
+    if client_vaccine.blank?
+      patient_data[:vaccineAdministration] = base_vaccine
+      return
+    end
+
+    return if record_value(client_vaccine, :obs).present?
+
+    base_obs = record_value(base_vaccine, :obs)
+    assign_subkey(client_vaccine, :obs, base_obs) unless base_obs.nil?
+  end
+
+  # Set a sub-key on a hash that may use either symbol or string keys, matching
+  # whichever form the container already uses (JSON-sourced hashes use strings).
+  def assign_subkey(container, key, value)
+    return unless container.respond_to?(:[]=)
+
+    keys       = container.respond_to?(:keys) ? container.keys : []
+    has_symbol = keys.any? { |k| k.is_a?(Symbol) }
+    has_string = keys.any? { |k| k.is_a?(String) }
+    # Default to a string key (JSON/CouchDB convention) unless the container is
+    # clearly symbol-keyed; only match symbol when there are symbol keys and no
+    # string keys. (ActionController::Parameters is indifferent either way.)
+    use_string = has_string || !has_symbol
+    container[use_string ? key.to_s : key] = value
   end
 
   def get_encounter_id(encounter_type)

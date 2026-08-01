@@ -67,7 +67,9 @@ class VisitService
     
     # Optional fields
     visit.date_stopped = visit_params[:date_stopped] if visit_params[:date_stopped].present?
-    visit.location_id = visit_params[:location_id] if visit_params[:location_id].present?
+    # Keep visits at the authenticated user's assigned facility. Patient
+    # records and stale clients can submit the registration facility instead.
+    visit.location_id = User.current&.location_id || visit_params[:location_id]
     visit.program_id = visit_params[:program_id] if visit_params[:program_id].present?
     visit.indication_concept_id = visit_params[:indication_concept_id] if visit_params[:indication_concept_id].present?
 
@@ -76,7 +78,7 @@ class VisitService
       visit_data[:full_name] = Patient.find_by(patient_id: patient_id).try(:name)
       visit_data[:identifier] = identifier if identifier.present?
       visit_data[:program_id] = visit_params[:program_id]
-      visit_data[:location_id] = visit_params[:location_id].to_s
+      visit_data[:location_id] = visit.location_id.to_s
 
       if stage_params.present?
         stages_service = StagesService.new
@@ -93,7 +95,7 @@ class VisitService
       create_encounter(patient_id, id.encounter_type_id,
         {
           program_id: visit_params[:program_id],
-          location_id: visit_params[:location_id],
+          location_id: visit.location_id,
           encounter_datetime: visit_params[:date_started],
           provider_id: visit_params[:provider_id]
         })

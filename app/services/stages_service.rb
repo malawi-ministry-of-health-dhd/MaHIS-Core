@@ -24,7 +24,10 @@ class StagesService
 
   def create_or_update_stage(patient_id, active_visit, stage_params)
 
-    location_id = stage_params[:location_id] || User.current.location_id
+    # The authenticated user's assigned facility is authoritative for queue
+    # placement. Patient records can carry the facility where they were
+    # registered, and older clients may submit that stale location_id.
+    location_id = User.current&.location_id || stage_params[:location_id]
     stage_name = normalize_stage(stage_params[:stage])
 
     # Keep one stage record per active visit and update it as patient moves.

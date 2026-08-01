@@ -187,6 +187,8 @@ class FacilityDdeActivationListener
     else
       Rails.logger.info("[Facility DDE Listener] DDE IDs sync already queued/running for activated facility #{facility_label}")
     end
+
+    enqueue_lab_accession_numbers_sync(facility_label.to_s)
   end
 
   def enqueue_all_dde_ids_sync
@@ -197,6 +199,21 @@ class FacilityDdeActivationListener
     else
       Rails.logger.info('[Facility DDE Listener] DDE IDs sync already queued/running for all activated facilities')
     end
+
+    enqueue_lab_accession_numbers_sync(nil)
+  end
+
+  # DDE activation is also the gate for the lab accession number pool
+  # (LabAccessionNumberPoolService refuses non-activated locations), so the same
+  # trigger primes both pools.
+  def enqueue_lab_accession_numbers_sync(location_id)
+    facility_label = location_id.presence || 'all activated facilities'
+    Rails.logger.info("[Facility DDE Listener] Enqueueing Sync::LabAccessionNumberSyncJob on #{Sync::LabAccessionNumberSyncJob.get_sidekiq_options['queue']} with args [#{location_id.inspect}]")
+    jid = Sync::LabAccessionNumberSyncJob.perform_async(100, location_id)
+    Rails.logger.info("[Facility DDE Listener] Queued lab accession numbers sync job #{jid} for #{facility_label}")
+  rescue StandardError => e
+    Rails.logger.error("[Facility DDE Listener] Failed to enqueue Sync::LabAccessionNumberSyncJob: #{e.class}: #{e.message}")
+    Rails.logger.error("[Facility DDE Listener] Enqueue backtrace: #{e.backtrace.first(3).join(' -> ')}") if e.backtrace
   end
 
   def enqueue_dde_ids_sync_job(batch_size, location_id)

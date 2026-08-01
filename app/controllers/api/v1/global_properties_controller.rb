@@ -25,7 +25,9 @@ module Api
         if property
           render json: { property.property => property.property_value }
         else
-          render json: { errors: ["Property not found"] }, status: :not_found
+          # An unset property is a normal lookup result, not an error; returning
+          # 404 makes browsers log the request in red on every page load.
+          render json: { params[:property] => nil }
         end
       end
 

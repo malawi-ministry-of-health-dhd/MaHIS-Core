@@ -361,16 +361,13 @@ module ArtService
                                        patient_id: @patient.patient_id,
                                        program_id: @program.program_id)
                               .where('encounter_datetime BETWEEN ? AND ?', *TimeUtils.day_bounds(@date)).last
-                                       
 
       return false unless prescription
 
-      complete = false
+      drug_orders = prescription.orders.includes(:drug_order).filter_map(&:drug_order)
+      return false if drug_orders.empty?
 
-      prescription.orders.each do |order|
-        complete = order.drug_order.amount_needed <= 0
-        break unless complete
-      end
+      complete = drug_orders.all? { |drug_order| drug_order.amount_needed <= 0 }
 
       # TODO: Implement this regimen thingy below...
       # if complete

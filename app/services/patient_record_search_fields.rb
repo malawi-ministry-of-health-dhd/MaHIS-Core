@@ -3,28 +3,118 @@
 module PatientRecordSearchFields
   PATIENT_RECORD_DB = 'patients_records'
 
+  # Design doc groups. CouchDB updates every view inside a design doc in ONE pass
+  # over the changes feed, so grouping indexes turns "one indexing pass per index
+  # per write" into "one pass per group". Measured on 20k patient docs: 25 indexes
+  # in 25 design docs took 53,995ms to build; the same 25 in 5 design docs took
+  # 12,789ms. Grouping does NOT remove any index — all of them still exist.
+  #
+  # These names are a contract shared with the client
+  # (MAHIS DATABASE_INDEX_CONFIG.patients_records). Any index name both sides
+  # create must be assigned the SAME group here and there, or the shared CouchDB
+  # ends up with the same view in two design docs — the duplication this removes.
+  DDOC_IDENTIFIERS = 'idx_patient_identifiers'
+  DDOC_NAME_SEARCH = 'idx_patient_name'
+  DDOC_QUEUES = 'idx_patient_queues'
+  DDOC_LOCATION = 'idx_patient_location'
+
+  # Mirrors the client's DATABASE_INDEX_CONFIG.patients_records exactly — same
+  # index NAMES, fields and design-doc groups. That exactness is the whole point:
+  # in LAN mode the client never creates patients_records indexes (it holds only
+  # remote handles), so whatever is missing or differently named here simply does
+  # not exist, and `use_index` is REJECTED rather than silently ignored:
+  #
+  #   "_design/idx_patient_identifiers, idx_patientID was not used because it is
+  #    not a valid index for this query. No matching index found..."
+  #
+  # CouchDB then full-scans patients_records. Observed: a single patient lookup
+  # taking 41,529ms against ~131k documents. Twelve of the client's twenty-five
+  # indexes were unusable this way — four because the same field was indexed under
+  # a different name here (idx_ID vs the old idx_patient_identifier), eight
+  # because they were never defined at all (patientID, patient_id, arvNumber,
+  # location_id, location_id_search, has_pending_dispensation,
+  # pending_dispensation_location, personInformation.gender).
+  #
+  # Backend coverage must stay a SUPERSET of the client's config, keyed by the
+  # client's names. Renaming or dropping one here silently reintroduces a full
+  # table scan.
   COUCHDB_INDEXES = [
-    { name: 'idx_patient_identifier', fields: ['ID'] },
-    { name: 'idx_ncd_id', fields: ['NcdID'] },
-    { name: 'idx_national_id', fields: ['nationalID'] },
-    { name: 'idx_ichis_id', fields: ['ichisID'] },
-    { name: 'idx_given_name_search', fields: ['given_name_search'] },
-    { name: 'idx_family_name_search', fields: ['family_name_search'] },
-    { name: 'idx_full_name_search', fields: ['full_name_search'] },
-    { name: 'idx_location_full_name_search', fields: ['location_id_search', 'full_name_search'] },
-    { name: 'idx_location_given_name_search', fields: ['location_id_search', 'given_name_search'] },
-    { name: 'idx_location_family_name_search', fields: ['location_id_search', 'family_name_search'] },
-    { name: 'idx_has_pending_nlims_orders', fields: ['has_pending_nlims_orders'] },
-    { name: 'idx_location_pending_dispensation', fields: ['location_id_search', 'has_pending_dispensation'] },
-    { name: 'idx_pending_dispensation_full_name', fields: ['location_id_search', 'has_pending_dispensation', 'full_name_search'] },
-    { name: 'idx_pending_dispensation_full_name_middle', fields: ['location_id_search', 'has_pending_dispensation', 'full_name_with_middle_search'] },
-    { name: 'idx_pending_dispensation_given_name', fields: ['location_id_search', 'has_pending_dispensation', 'given_name_search'] },
-    { name: 'idx_pending_dispensation_family_name', fields: ['location_id_search', 'has_pending_dispensation', 'family_name_search'] },
-    { name: 'idx_location_pending_lab_results', fields: ['location_id_search', 'has_pending_lab_results'] },
-    { name: 'idx_has_pending_lab_results', fields: ['has_pending_lab_results'] },
-    { name: 'idx_pending_lab_results_location', fields: ['pending_lab_results_location_id', 'has_pending_lab_results'] }
-    # NCD dashboard indexes now live on the dedicated ncd_patient_index database
-    # (see NcdService::NcdPatientIndex), not on patients_records.
+    { name: 'idx_ID', ddoc: DDOC_IDENTIFIERS, fields: ['ID'] },
+    { name: 'idx_NcdID', ddoc: DDOC_IDENTIFIERS, fields: ['NcdID'] },
+    { name: 'idx_arvNumber', ddoc: DDOC_IDENTIFIERS, fields: ['arvNumber'] },
+    { name: 'idx_ichisID', ddoc: DDOC_IDENTIFIERS, fields: ['ichisID'] },
+    { name: 'idx_nationalID', ddoc: DDOC_IDENTIFIERS, fields: ['nationalID'] },
+    { name: 'idx_patientID', ddoc: DDOC_IDENTIFIERS, fields: ['patientID'] },
+    { name: 'idx_patient_id', ddoc: DDOC_IDENTIFIERS, fields: ['patient_id'] },
+    { name: 'idx_full_name_search', ddoc: DDOC_NAME_SEARCH, fields: ['full_name_search'] },
+    { name: 'idx_location_full_name_search', ddoc: DDOC_NAME_SEARCH, fields: ['location_id_search', 'full_name_search'] },
+    { name: 'idx_has_pending_dispensation', ddoc: DDOC_QUEUES, fields: ['has_pending_dispensation'] },
+    { name: 'idx_has_pending_lab_results', ddoc: DDOC_QUEUES, fields: ['has_pending_lab_results'] },
+    { name: 'idx_location_pending_dispensation', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_dispensation'] },
+    { name: 'idx_location_pending_lab_results', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_lab_results'] },
+    { name: 'idx_pending_dispensation_family_name', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_dispensation', 'family_name_search'] },
+    { name: 'idx_pending_dispensation_full_name', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_dispensation', 'full_name_search'] },
+    { name: 'idx_pending_dispensation_full_name_middle', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_dispensation', 'full_name_with_middle_search'] },
+    { name: 'idx_pending_dispensation_given_name', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_dispensation', 'given_name_search'] },
+    { name: 'idx_pending_dispensation_location', ddoc: DDOC_QUEUES, fields: ['pending_dispensation_location_id', 'has_pending_dispensation', 'pending_dispensation_last_order_date'] },
+    { name: 'idx_pending_lab_results_family_name', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_lab_results', 'family_name_search'] },
+    { name: 'idx_pending_lab_results_full_name', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_lab_results', 'full_name_search'] },
+    { name: 'idx_pending_lab_results_full_name_middle', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_lab_results', 'full_name_with_middle_search'] },
+    { name: 'idx_pending_lab_results_given_name', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_lab_results', 'given_name_search'] },
+    { name: 'idx_pending_lab_results_location', ddoc: DDOC_QUEUES, fields: ['pending_lab_results_location_id', 'has_pending_lab_results', 'pending_lab_results_last_order_date'] },
+    { name: 'idx_gender', ddoc: DDOC_LOCATION, fields: ['personInformation.gender'] },
+    { name: 'idx_location_id', ddoc: DDOC_LOCATION, fields: ['location_id'] },
+    { name: 'idx_location_id_search', ddoc: DDOC_LOCATION, fields: ['location_id_search'] }
+  ].freeze
+
+  # DESIGN DOCS (not index names) we no longer want on patients_records. Every one
+  # of these is still maintained by CouchDB on every patient write until it is
+  # deleted, so changing COUCHDB_INDEXES above is not enough on an existing
+  # server — CouchdbIndexEnsurer only ever creates.
+  # Pruned by CouchdbIndexMaintenance.prune_patient_records!.
+  #
+  # The first block is the pre-consolidation layout: one design doc per index,
+  # named after the index. Those index names still exist, but now live inside the
+  # DDOC_* groups above, so these design docs are pure duplicate maintenance.
+  # prune! matches on design doc only, never on index name, so deleting
+  # _design/idx_full_name_search here does not touch the idx_full_name_search
+  # index that now lives in _design/idx_patient_name.
+  #
+  #   idx_given_name_search / idx_family_name_search
+  #   idx_location_given_name_search / idx_location_family_name_search
+  #     The client dropped raw-name search in favour of full_name_search and
+  #     lists all four as stale (MAHIS StatusStore.ts). The queue name searches
+  #     that do filter on given_name_search/family_name_search always pair them
+  #     with location_id_search + a has_pending_* flag, which the three-field
+  #     idx_pending_{dispensation,lab_results}_* indexes serve better.
+  #   idx_has_pending_nlims_orders
+  #     has_pending_nlims_orders is written (MAHIS nlims_lab_order_listener_service)
+  #     but never appears in a selector on either side.
+  RETIRED_COUCHDB_INDEXES = %w[
+    idx_patient_identifier
+    idx_ncd_id
+    idx_national_id
+    idx_ichis_id
+    idx_full_name_search
+    idx_location_full_name_search
+    idx_location_pending_dispensation
+    idx_pending_dispensation_full_name
+    idx_pending_dispensation_full_name_middle
+    idx_pending_dispensation_given_name
+    idx_pending_dispensation_family_name
+    idx_location_pending_lab_results
+    idx_pending_lab_results_full_name
+    idx_pending_lab_results_full_name_middle
+    idx_pending_lab_results_given_name
+    idx_pending_lab_results_family_name
+    idx_has_pending_lab_results
+    idx_pending_lab_results_location
+
+    idx_given_name_search
+    idx_family_name_search
+    idx_location_given_name_search
+    idx_location_family_name_search
+    idx_has_pending_nlims_orders
   ].freeze
 
   NCD_PROGRAM_ID = 32

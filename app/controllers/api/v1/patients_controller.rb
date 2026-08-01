@@ -549,7 +549,8 @@ module Api
             location_id: location_id.to_s,
             patient_id: record[:patientID] || record[:patient_id],
             identifier: record[:ID] || record[:identifier],
-            timestamp: Time.current.iso8601
+            timestamp: Time.current.iso8601,
+            reason: params[:change_reason].presence
           }
         }
 
