@@ -58,6 +58,7 @@ RSpec.configure do |config|
     'stage_spec.rb',
     'visit_service_spec.rb',
     'patient_record_operation_guard_spec.rb',
+    'patient_identity_manager_spec.rb',
     'couchdb_changes_listener_spec.rb',
     'batch_patient_sync_job_spec.rb',
     'bulk_patient_record_sync_job_spec.rb',

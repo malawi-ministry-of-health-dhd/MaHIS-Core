@@ -11,7 +11,19 @@ module PatientRecordService
       return register_patient!(record) if record[:personInformation] && record[:saveStatusPersonInformation] == 'pending'
 
       existing_patient_id = record[:patientID]
-      patient = Patient.unscoped.find_by(patient_id: existing_patient_id) if existing_patient_id.present?
+      patient = Patient.find_by(patient_id: existing_patient_id) if existing_patient_id.present?
+
+      # Offline/local records can retain a stale database patient_id after the
+      # server database has been restored or the patient has been re-created.
+      # Recover the canonical patient through the stable primary identifier
+      # before deciding that this is a new registration.
+      if patient.blank?
+        patient = find_patient_by_identifier(extract_incoming_identifier(record))
+        if patient.present?
+          existing_patient_id = patient.patient_id
+          record[:patientID] = existing_patient_id
+        end
+      end
 
       # No patient row backs this record yet. If it still carries person
       # information, it was never committed as 'pending' (e.g. a dependent
@@ -20,8 +32,9 @@ module PatientRecordService
       # patient instead of a phantom patient_id that later dereferences to nil.
       return register_patient!(record) if patient.blank? && record[:personInformation].present?
 
-      return { patient_id: existing_patient_id, id: record[:ID] } if existing_patient_id.blank?
-      return { patient_id: existing_patient_id, id: record[:ID] } if patient.blank?
+      # Do not pass a phantom patient_id into the clinical save operations.
+      # SavePatientRecordService converts this nil into a controlled 400 error.
+      return { patient_id: nil, id: extract_incoming_identifier(record) } if patient.blank?
 
       healed_identifier = ensure_primary_identifier(patient, extract_incoming_identifier(record), extract_location_id(record))
       record[:ID] = healed_identifier if healed_identifier.present?

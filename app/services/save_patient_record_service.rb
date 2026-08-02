@@ -29,6 +29,7 @@ class SavePatientRecordService
     identity_data = managers[:identity_manager].save_person_information(record)
     patient_id    = identity_data[:patient_id]
     return "Patient ID not found" unless patient_id
+    return "Patient ID not found" unless Patient.exists?(patient_id: patient_id)
 
     unless managers[:identity_manager].validate_ids(ids.national_id, ids.birth_id, ids.ichis_id)
       return "ID Validation Failed"
