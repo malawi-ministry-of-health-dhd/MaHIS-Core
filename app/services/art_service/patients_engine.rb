@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'set'
+
 module ArtService
   # Patients sub service.
   #
@@ -104,14 +106,14 @@ module ArtService
     end
 
     def current_arv_code
-      current_arv_code = global_property("site_prefix")&.property_value
-      raise "Global property `site_prefix` not set" unless current_arv_code
-      
-      current_arv_code
+      @current_arv_code ||= global_property("site_prefix")&.property_value
+      raise "Global property `site_prefix` not set" unless @current_arv_code
+
+      @current_arv_code
     end
 
     def arv_identifier_type
-      PatientIdentifierType.find_by_name("ARV Number")
+      @arv_identifier_type ||= PatientIdentifierType.find_by_name("ARV Number")
     end
 
     # Returns the start and end dates of the quarter for the given date.
@@ -136,11 +138,9 @@ module ArtService
       prev_quarter_start, prev_quarter_end = quarter_dates(current_quarter_start - 1.month)
 
       id = PatientIdentifier.where(
-        identifier_type: PatientIdentifierType.find_by_name('ARV Number'),
+        identifier_type: arv_identifier_type,
         date_created: (prev_quarter_start..prev_quarter_end)
-      ).order(date_created: :desc)
-       &.first
-       &.identifier
+      ).order(date_created: :desc).pick(:identifier)
 
       return max_arv_number if id.nil?
 
@@ -148,7 +148,7 @@ module ArtService
     end
 
     def max_arv_number
-      PatientIdentifier.where(identifier_type: arv_identifier_type).order(:date_created).last&.identifier
+      PatientIdentifier.where(identifier_type: arv_identifier_type).order(date_created: :desc).pick(:identifier)
     end
 
     # Returns the next available ARV identifier for the given date,
@@ -158,39 +158,28 @@ module ArtService
     # @return [Integer] the next available ARV identifier
     def next_available_id_in_current_quarter(date)
       prefix = current_arv_code
+      identifier_pattern = /\A#{Regexp.escape(prefix)}-ARV- *(\d+)/
+      last_available = extract_arv_sequence(last_arv_number_from_prev_quarter(date), identifier_pattern)
+      next_available = (last_available || 0) + 1
 
-      quarter_start, quarter_end = quarter_dates(date)
-      last_available = last_arv_number_from_prev_quarter(date)&.gsub("#{prefix}-ARV-", '')&.to_i
+      # Fetch only the scalar identifiers for this site. The composite
+      # (voided, identifier_type, identifier) index supports this prefix lookup,
+      # avoiding the previous full ActiveRecord object load for every ART site.
+      escaped_prefix = ActiveRecord::Base.sanitize_sql_like("#{prefix}-ARV-")
+      assigned_numbers = PatientIdentifier
+                         .where(identifier_type: arv_identifier_type)
+                         .where('identifier LIKE ?', "#{escaped_prefix}%")
+                         .pluck(:identifier)
+                         .filter_map { |identifier| extract_arv_sequence(identifier, identifier_pattern) }
+                         .to_set
 
-      next_available = (last_available + 1) rescue 1
-
-      # Find all ARV identifiers issued in the current quarter,
-      # greater than the last available number from the previous quarter
-      ids = PatientIdentifier.where(identifier_type: arv_identifier_type)
-
-      return next_available unless ids.any?
-
-      # Map the ARV identifiers to their assigned numbers
-      assigned_numbers = ids.map do |identifier|
-        Regexp.last_match(1).to_i if identifier.identifier =~ /#{prefix}-ARV- *(\d+)/
-      end.compact
-
-      # If there are no assigned numbers, return the next available
-      # number in the current quarter.
-      # 
-      # which is the last available number + 1
-      return next_available unless assigned_numbers.any?
-      # Find the lowest number not yet assigned
-      # in the current quarter by subtracting the assigned numbers from the possible number range
-      # and sorting the resulting array
-      available_numbers_this_qtr = (next_available..possible_number_range).to_a - assigned_numbers
-      # Return the lowest number
-      # which is the first element of the sorted array
-      available_numbers_this_qtr.sort.first
+      # Range#find is lazy, and Set#include? is constant-time. This avoids
+      # allocating, subtracting, and sorting up to arv_number_range entries.
+      (next_available..possible_number_range).find { |number| !assigned_numbers.include?(number) }
     end
 
     def possible_number_range
-      global_property('arv_number_range')&.property_value&.to_i || 100_000
+      @possible_number_range ||= global_property('arv_number_range')&.property_value&.to_i || 100_000
     end
 
     # Finds the next available ARV identifier for the given date,
@@ -244,6 +233,10 @@ module ArtService
     end
 
     private
+
+    def extract_arv_sequence(identifier, pattern)
+      pattern.match(identifier.to_s)&.[](1)&.to_i
+    end
 
     def patient_identifier(patient, identifier_type_name)
       identifier_type = PatientIdentifierType.find_by_name(identifier_type_name)

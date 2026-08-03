@@ -64,7 +64,8 @@ module PatientRecordSearchFields
     { name: 'idx_pending_lab_results_location', ddoc: DDOC_QUEUES, fields: ['pending_lab_results_location_id', 'has_pending_lab_results', 'pending_lab_results_last_order_date'] },
     { name: 'idx_gender', ddoc: DDOC_LOCATION, fields: ['personInformation.gender'] },
     { name: 'idx_location_id', ddoc: DDOC_LOCATION, fields: ['location_id'] },
-    { name: 'idx_location_id_search', ddoc: DDOC_LOCATION, fields: ['location_id_search'] }
+    { name: 'idx_location_id_search', ddoc: DDOC_LOCATION, fields: ['location_id_search'] },
+    { name: 'idx_referral_facility_id', ddoc: DDOC_LOCATION, fields: ['referral_facility_id'] }
   ].freeze
 
   # DESIGN DOCS (not index names) we no longer want on patients_records. Every one
