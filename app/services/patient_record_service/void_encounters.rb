@@ -13,12 +13,20 @@ module PatientRecordService
       return ok unless data.is_a?(Array) && data.any?
 
       collected_errors = []
+      record_patient_id = record[:patientID].presence || record[:patient_id].presence
 
       data.each do |void_request|
         reason = void_request[:reason]
+        patient_id = void_request[:patient_id].presence || record_patient_id
+        void_request[:patient_id] = patient_id if patient_id.present?
 
         unless reason.present?
           collected_errors << "Missing reason for request=#{void_request.inspect}"
+          next
+        end
+
+        unless patient_id.present?
+          collected_errors << "Missing patient_id for request=#{void_request.inspect}"
           next
         end
 
@@ -38,13 +46,26 @@ module PatientRecordService
 
         begin
           result = with_operation_guard(
-            patient_id: void_request[:patient_id],
+            patient_id: patient_id,
             operation_type: 'encounter.void',
             payload: void_request,
             target_type: 'Encounter'
           ) do
-            encounter = Encounter.find(encounter_id)
-            encounter_service.void(encounter, reason)
+            # Visit History is assembled across the patient's locations, so an
+            # encounter shown there may not belong to the logged-in location.
+            # Remove both default scopes, while constraining the lookup to the
+            # patient in this save request so an arbitrary encounter cannot be
+            # voided by ID alone.
+            encounter = Encounter.unscoped.where(patient_id: patient_id).find(encounter_id)
+
+            unless encounter.voided?
+              # Encounter callbacks load observations and orders through their
+              # location-scoped associations. Temporarily use the encounter's
+              # own location so those dependent records are voided as well.
+              with_encounter_location(encounter) do
+                encounter_service.void(encounter, reason)
+              end
+            end
             { target_type: 'Encounter', target_id: encounter_id }
           end
 
@@ -85,6 +106,15 @@ module PatientRecordService
 
     def encounter_service
       @encounter_service ||= EncounterService.new
+    end
+
+    def with_encounter_location(encounter)
+      previous_location = Location.current
+      encounter_location = encounter.location
+      Location.current = encounter_location if encounter_location.present?
+      yield
+    ensure
+      Location.current = previous_location
     end
   end
 end
