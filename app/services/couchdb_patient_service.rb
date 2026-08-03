@@ -256,14 +256,18 @@ class CouchdbPatientService
     def get_single_patient(patient_id)
       if couchdb_configured?
         begin
-          # Try to fetch existing document
-          patient_identifier = PatientIdentifier.where(patient_id: patient_id, identifier_type: 3)
-          identifier = patient_identifier[0][:identifier]
+          # Callers may supply either the numeric MySQL patient_id or the
+          # CouchDB document ID (the primary patient identifier). Resolve the
+          # former when possible and otherwise use the supplied document ID.
+          identifier = PatientIdentifier.unscoped
+                                        .where(patient_id: patient_id, identifier_type: 3, voided: 0)
+                                        .pick(:identifier)
+                                        .presence || patient_id.to_s
           response = RestClient.get(couchdb_url(PATIENTS_DB, URI.encode_www_form_component(identifier.to_s)))
           JSON.parse(response.body)
         rescue RestClient::NotFound
           # Patient doesn't exist, build new record
-          build_patient_record(patient_id)
+          patient_id.to_s.match?(/\A\d+\z/) ? build_patient_record(patient_id) : nil
         end
       else
         build_patient_record(patient_id)

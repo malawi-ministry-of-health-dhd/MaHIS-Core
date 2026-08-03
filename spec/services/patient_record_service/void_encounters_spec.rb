@@ -7,24 +7,63 @@ RSpec.describe PatientRecordService::VoidEncounters do
 
   describe '#void_encounters' do
     let(:operation_result) { double('OperationGuardResult', skipped?: false) }
-    let(:encounter) { instance_double(Encounter) }
+    let(:original_location) { instance_double(Location, location_id: 1310) }
+    let(:encounter_location) { instance_double(Location, location_id: 79) }
+    let(:encounter) { instance_double(Encounter, voided?: false, location: encounter_location) }
+    let(:encounter_scope) { double('EncounterScope') }
     let(:encounter_service) { instance_double(EncounterService, void: true) }
+
+    around do |example|
+      previous_location = Location.current
+      Location.current = original_location
+      example.run
+    ensure
+      Location.current = previous_location
+    end
 
     before do
       allow(saver).to receive(:with_operation_guard).and_yield.and_return(operation_result)
       allow(saver).to receive(:encounter_service).and_return(encounter_service)
-      allow(Encounter).to receive(:find).with('4821').and_return(encounter)
-      allow(Encounter).to receive(:find).with(4821).and_return(encounter)
+      allow(Encounter).to receive(:unscoped).and_return(encounter_scope)
+      allow(encounter_scope).to receive(:where).with(patient_id: 33).and_return(encounter_scope)
+      allow(encounter_scope).to receive(:find).with('4821').and_return(encounter)
+      allow(encounter_scope).to receive(:find).with(4821).and_return(encounter)
     end
 
     it 'voids a saved encounter by encounter_id' do
       result = saver.void_encounters(
-        { void_encounters: [{ id: 4821, reason: 'Mistake/ Wrong Entry' }] }.with_indifferent_access
+        { patientID: 33, void_encounters: [{ id: 4821, reason: 'Mistake/ Wrong Entry' }] }.with_indifferent_access
       )
 
       expect(result).to be_success
       expect(result.errors).to be_empty
       expect(encounter_service).to have_received(:void).with(encounter, 'Mistake/ Wrong Entry')
+      expect(saver).to have_received(:with_operation_guard).with(hash_including(patient_id: 33))
+      expect(Location.current).to eq(original_location)
+    end
+
+    it 'uses the encounter location while voiding cross-location dependent records' do
+      locations_during_void = []
+      allow(encounter_service).to receive(:void) { locations_during_void << Location.current }
+
+      saver.void_encounters(
+        { patientID: 33, void_encounters: [{ id: 4821, reason: 'Duplicate' }] }.with_indifferent_access
+      )
+
+      expect(locations_during_void).to eq([encounter_location])
+      expect(Location.current).to eq(original_location)
+    end
+
+    it 'treats an already-voided encounter as successful so stale history can be rebuilt' do
+      allow(encounter).to receive(:voided?).and_return(true)
+
+      result = saver.void_encounters(
+        { patientID: 33, void_encounters: [{ id: 4821, reason: 'Duplicate' }] }.with_indifferent_access
+      )
+
+      expect(result).to be_success
+      expect(result.errors).to be_empty
+      expect(encounter_service).not_to have_received(:void)
     end
 
     it 'resolves an unsaved encounter through its observation operation receipt' do
@@ -95,17 +134,27 @@ RSpec.describe PatientRecordService::VoidEncounters do
     end
 
     it 'collects an error when neither an encounter_id nor an operation_id is supplied' do
-      result = saver.void_encounters({ void_encounters: [{ reason: 'Duplicate' }] }.with_indifferent_access)
+      result = saver.void_encounters({ patientID: 33, void_encounters: [{ reason: 'Duplicate' }] }.with_indifferent_access)
 
-      expect(result).to be_success
+      expect(result).not_to be_success
       expect(result.errors.first).to include('Missing encounter_id or encounter_operation_id')
+      expect(encounter_service).not_to have_received(:void)
+    end
+
+    it 'rejects a void request that cannot be tied to a patient' do
+      result = saver.void_encounters(
+        { void_encounters: [{ id: 4821, reason: 'Duplicate' }] }.with_indifferent_access
+      )
+
+      expect(result).not_to be_success
+      expect(result.errors.first).to include('Missing patient_id')
       expect(encounter_service).not_to have_received(:void)
     end
 
     it 'collects an error when the reason is missing' do
       result = saver.void_encounters({ void_encounters: [{ id: 4821 }] }.with_indifferent_access)
 
-      expect(result).to be_success
+      expect(result).not_to be_success
       expect(result.errors.first).to include('Missing reason')
       expect(encounter_service).not_to have_received(:void)
     end

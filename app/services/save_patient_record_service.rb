@@ -581,16 +581,20 @@ class SavePatientRecordService
     allowed_encounter_types = allowed_encounter_types.compact.uniq
     return if allowed_encounter_types.empty?
 
+    refreshed_type_keys = allowed_encounter_types.map(&:to_s)
     original_observations_map = Array(record_value(patient_data, :observations))
                                   .each_with_object({}) do |obs, hash|
                                     encounter_type = record_value(obs, :encounter_type)
-                                    hash[encounter_type] = obs if encounter_type.present?
+                                    next if encounter_type.blank?
+                                    next if refreshed_type_keys.include?(encounter_type.to_s)
+
+                                    hash[encounter_type.to_s] = obs
                                   end
 
     new_observations = BuildPatientRecordService.build_all_observations(patient_id, allowed_encounter_types)
 
     updated_observations_hash = original_observations_map.merge(
-      new_observations.index_by { |obs| record_value(obs, :encounter_type) }
+      new_observations.index_by { |obs| record_value(obs, :encounter_type).to_s }
     )
 
     patient_data[:observations] = updated_observations_hash.values.as_json
