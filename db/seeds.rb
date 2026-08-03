@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require 'yaml'
 require 'open-uri'
 require 'fileutils'
 require 'digest/sha1'
@@ -19,10 +18,7 @@ if ENV['INITIAL_SETUP']
   end
 end
 
-db_config = YAML.load_file(
-  Rails.root.join('config', 'database.yml'),
-  aliases: true
-)[Rails.env]
+db_config = ActiveRecord::Base.connection_db_config.configuration_hash.stringify_keys
 
 username = db_config['username']
 password = db_config['password']
@@ -46,6 +42,7 @@ LOCATION_METADATA_TABLES = %w[
   location_tag_map
 ].freeze
 LOCATION_METADATA_STAGING_PREFIX = '_seed_metadata_'
+LOCATION_METADATA_USER_REFERENCE_COLUMNS = %w[creator changed_by retired_by].freeze
 LOCATION_METADATA_PRIMARY_KEYS = {
   'location' => %w[location_id],
   'location_attribute' => %w[location_attribute_id],
@@ -729,6 +726,39 @@ def drop_location_metadata_staging_tables!(conn)
   end
 end
 
+def normalize_location_metadata_user_references!(conn)
+  return 0 unless conn.table_exists?('users')
+
+  actor_user_id = seed_actor_user_id(conn)
+  return 0 if actor_user_id.blank?
+
+  normalized = 0
+
+  LOCATION_METADATA_TABLES.each do |table_name|
+    staging_table = location_metadata_staging_table(table_name)
+    next unless conn.table_exists?(staging_table)
+
+    reference_columns = column_names_for(conn, staging_table) & LOCATION_METADATA_USER_REFERENCE_COLUMNS
+
+    reference_columns.each do |column_name|
+      staging_table_sql = conn.quote_table_name(staging_table)
+      column_sql = conn.quote_column_name(column_name)
+
+      normalized += conn.update(<<~SQL)
+        UPDATE #{staging_table_sql} staging_table
+        LEFT JOIN users metadata_user
+          ON metadata_user.user_id = staging_table.#{column_sql}
+        SET staging_table.#{column_sql} = #{actor_user_id.to_i}
+        WHERE staging_table.#{column_sql} IS NOT NULL
+          AND metadata_user.user_id IS NULL
+      SQL
+    end
+  end
+
+  puts "Normalized #{normalized} missing location metadata user reference(s) to user_id=#{actor_user_id}." if normalized.positive?
+  normalized
+end
+
 def save_location_metadata_high_water_marks!(conn)
   LOCATION_METADATA_PRIMARY_KEYS.each do |table_name, primary_key|
     primary_key.each do |column_name|
@@ -792,6 +822,7 @@ def sync_location_metadata_from_dump!(file_path:, username:, password:, host:, p
     port: port,
     database: database
   )
+  normalize_location_metadata_user_references!(conn)
 
   ActiveRecord::Base.transaction do
     sync_location_metadata_tables!(conn)
@@ -1001,6 +1032,37 @@ def ensure_required_routines!(username:, password:, host:, port:, database:)
   return if still_missing.empty?
 
   raise "Routine bootstrap failed. Missing routines after import: #{still_missing.join(', ')}"
+end
+
+def ensure_arv_drug_view!
+  conn = ActiveRecord::Base.connection
+  required_tables = %w[drug concept_set concept_name]
+  missing_tables = required_tables.reject { |table_name| conn.table_exists?(table_name) }
+
+  unless missing_tables.empty?
+    puts "Skipping arv_drug view creation: missing tables #{missing_tables.join(', ')}."
+    return
+  end
+
+  conn.execute <<~SQL
+    CREATE OR REPLACE
+    SQL SECURITY INVOKER
+    VIEW arv_drug AS
+    SELECT drug.drug_id AS drug_id
+    FROM drug
+    WHERE drug.concept_id IN (
+      SELECT concept_set.concept_id
+      FROM concept_set
+      WHERE concept_set.concept_set = (
+        SELECT concept_id
+        FROM concept_name
+        WHERE name = 'Antiretroviral drugs'
+        LIMIT 1
+      )
+    );
+  SQL
+
+  puts 'Ensured arv_drug view exists.'
 end
 
 def concept_word_parts(phrase, locale)
@@ -1293,6 +1355,15 @@ def ensure_openmrs_user!(conn:, username:, password:, gender:, location_id:, pre
   SQL
 
   if existing_user_id.present?
+    if location_id.present?
+      conn.execute <<~SQL
+        UPDATE users
+        SET location_id = #{conn.quote(location_id.to_s)}
+        WHERE user_id = #{existing_user_id.to_i}
+          AND location_id IS NULL
+      SQL
+    end
+
     ensure_last_password_updated!(conn, existing_user_id)
     return existing_user_id.to_i
   end
@@ -1534,6 +1605,7 @@ rescue StandardError => e
   raise "Failed to import metadata from GitHub: #{e.message}"
 end
 
+ensure_arv_drug_view!
 ensure_facility_level_data!
 rebuild_concept_word_index!
 ensure_bootstrap_users!

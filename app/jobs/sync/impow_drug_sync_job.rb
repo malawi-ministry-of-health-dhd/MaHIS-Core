@@ -93,9 +93,9 @@ module Sync
         'description' => 'IMPOW Nutrition Program Drug Dosages (SFS, OTS, ITS)',
         'created_at' => Time.current.to_date.iso8601,
         'programs' => {
-          'sfs' => SFS_program_section,
+          'sfs' => sfs_program_section,
           'ots' => ots_program_section,
-          'its' => ITS_program_section
+          'its' => its_program_section
         },
         'views' => couchdb_views
       }
@@ -103,7 +103,7 @@ module Sync
 
     # ---- SFS (Supplementary Feeding Services) --------------------------
 
-    def SFS_program_section
+    def sfs_program_section
       concept_set = ConceptName.find_by(name: 'Supplementary Feeding Services')
 
       {
@@ -112,14 +112,14 @@ module Sync
         'concept_set_id' => concept_set&.concept_id,
         'description' => 'Supplementary Feeding Program for moderate acute malnutrition',
         'drugs' => {
-          'rusf' => rusf_SFS_section,
+          'rusf' => rusf_sfs_section,
           'csb_plus' => csb_plus_section,
           'csb_plus_plus' => csb_plus_plus_section
         }
       }
     end
 
-    def rusf_SFS_section
+    def rusf_sfs_section
       build_simple_section('Ready-to-Use Supplementary Food (RUSF)', 'Supplementary Feeding Services')
     end
 
@@ -434,7 +434,7 @@ module Sync
 
     # ---- ITS (Inpatient Therapeutic Service) ---------------------------
 
-    def ITS_program_section
+    def its_program_section
       concept_set = ConceptName.find_by(name: 'Inpatient Therapeutic Service')
 
       {
@@ -445,7 +445,7 @@ module Sync
         'drugs' => {
           'f75' => f75_section,
           'f100' => f100_section,
-          'rutf_ITS' => rutf_ITS_section,
+          'rutf_ITS' => rutf_its_section,
           'malaria_drugs' => malaria_drugs_section,
           'vitamin_a' => vitamin_a_section,
           'deworming' => deworming_section,
@@ -486,7 +486,7 @@ module Sync
       )
     end
 
-    def rutf_ITS_section
+    def rutf_its_section
       build_simple_section(
         'Ready-to-Use Therapeutic Food (RUTF)',
         'Inpatient Therapeutic Service',

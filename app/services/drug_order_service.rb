@@ -597,7 +597,7 @@ module DrugOrderService
     end
 
     def raise_model_error(model, prefix)
-      errors = model.errors.map { |k, v| "#{k}: #{v}" }.join(', ')
+      errors = model.errors.full_messages.join(', ')
       raise InvalidParameterError, "#{prefix}: #{errors}"
     end
   end

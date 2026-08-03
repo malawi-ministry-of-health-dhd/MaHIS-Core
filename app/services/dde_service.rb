@@ -278,7 +278,7 @@ class DdeService
     # Check if person if available in DDE if not add person using doc_id
     response, status = dde_client.post('search_by_doc_id', doc_id:)
     if !response.blank? && status.to_i == 200
-      response, status = dde_client.post('reassign_npid', doc_id:)
+      response, status = dde_client.post('reassign_npid', doc_id:, location_id: current_footprint_location_id)
     elsif response.blank? && status.to_i == 200
       return push_local_patient_to_dde(Patient.find(patient_ids['patient_id']))
     end
@@ -336,10 +336,47 @@ class DdeService
     )
   end
 
+  # Maps a MaHIS (centralised) location_id back to the original EMR location_id
+  # known to DDE. Resolution: location's 'Facility Code' attribute ->
+  # db/locations_x_facilities.csv (facility_code -> original location_id).
+  # Returns nil when no mapping exists (e.g. single-site setups where the IDs
+  # already match).
+  def self.legacy_dde_location_id(mahis_location_id)
+    facility_code_type = LocationAttributeType.find_by(name: 'Facility Code')
+    return nil unless facility_code_type
+
+    facility_code = LocationAttribute.find_by(location_id: mahis_location_id,
+                                              attribute_type_id: facility_code_type.location_attribute_type_id)
+                                     &.value_reference
+    return nil if facility_code.blank?
+
+    facility_code_to_legacy_location_id[facility_code]
+  end
+
+  # facility_code => original EMR location_id, loaded once from
+  # db/locations_x_facilities.csv.
+  def self.facility_code_to_legacy_location_id
+    @facility_code_to_legacy_location_id ||= begin
+      csv_path = Rails.root.join('db', 'locations_x_facilities.csv')
+      if File.exist?(csv_path)
+        require 'csv'
+        CSV.foreach(csv_path, headers: true).each_with_object({}) do |row, map|
+          map[row['facility_code']] = row['location_id'].to_i
+        end
+      else
+        LOGGER.warn("#{csv_path} not found: DDE location ids will not be mapped to legacy EMR ids")
+        {}
+      end
+    end
+  end
+
   private
 
   def current_footprint_location_id
-    Location.current_health_center&.location_id
+    mahis_location_id = Location.current_health_center&.location_id
+    return nil unless mahis_location_id
+
+    self.class.legacy_dde_location_id(mahis_location_id) || mahis_location_id
   end
 
   def find_remote_patients_by_npid(npid)
@@ -554,7 +591,7 @@ class DdeService
   end
 
   # Converts an openmrs patient structure to a DDE person structure
-  def openmrs_to_dde_patient(patient, npid)
+  def openmrs_to_dde_patient(patient, npid = nil)
     LOGGER.debug "Converting OpenMRS person to dde_patient: #{patient}"
     person = patient.person
 
@@ -569,6 +606,7 @@ class DdeService
       npid:,
       birthdate: person.birthdate,
       birthdate_estimated: person.birthdate_estimated, # Convert to bool?
+      location_id: current_footprint_location_id,
       attributes: {
         current_district: person_address&.state_province,
         current_traditional_authority: person_address&.township_division,

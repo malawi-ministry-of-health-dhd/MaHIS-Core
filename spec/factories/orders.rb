@@ -6,7 +6,8 @@ FactoryBot.define do
     association :order_type
     association :encounter
     association :patient
-    provider { User.first }
+    provider { User.current || User.unscoped.first }
+    orderer { provider&.user_id }
     creator { 1 }
   end
 end

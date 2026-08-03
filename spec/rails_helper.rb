@@ -52,12 +52,14 @@ RSpec.configure do |config|
     'report_spec.rb',
     'cohort_builder_spec.rb',
     'medication_order_saver_spec.rb',
+    'push_dde_footprints_job_spec.rb',
     'drug_order_service_spec.rb',
     'user_service_spec.rb',
     'hts_dashboard_channel_spec.rb',
     'stage_spec.rb',
     'visit_service_spec.rb',
     'patient_record_operation_guard_spec.rb',
+    'patient_identity_manager_spec.rb',
     'couchdb_changes_listener_spec.rb',
     'batch_patient_sync_job_spec.rb',
     'bulk_patient_record_sync_job_spec.rb',
@@ -111,23 +113,38 @@ RSpec.configure do |config|
 
   # Ensure User.current is set before each test (prepend ensures it runs before let! blocks)
   config.prepend_before(:each) do
-    # User with ID 1 should exist from seeds
-    User.current = User.find_by(user_id: 1) || User.first
-    Location.current = Location.find_by(location_id: 700) || Location.first
+    # User is location-scoped, so the current actor and facility must agree.
+    # Resolve the bootstrap actor without the scope, then select its facility.
+    test_user = User.unscoped.find_by(user_id: 1) || User.unscoped.first
+    Location.current = Location.unscoped.find_by(location_id: test_user&.location_id) ||
+                       Location.unscoped.find_by(location_id: 700) ||
+                       Location.unscoped.first
+    User.current = test_user
   end
 end
 
 # Required by Auditable model concern...
-# Set sensible defaults for tests
-if Location.count.zero?
-  Location.create!(
-    location_id: 700,
-    name: 'Test Location',
-    creator: 1,
-    date_created: Time.now,
-    retired: 0,
-    uuid: SecureRandom.uuid
-  )
+# Set sensible defaults for tests — bootstrap seed data bypassing FK/validations
+begin
+  ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS=0')
+  unless Person.find_by(person_id: 1)
+    Person.new(person_id: 1, gender: 'M', birthdate: Date.parse('1980-01-01'),
+               birthdate_estimated: 0, creator: 1, date_created: Time.now,
+               uuid: SecureRandom.uuid).save!(validate: false)
+  end
+  unless Location.find_by(location_id: 700)
+    Location.new(location_id: 700, name: 'Test Location', creator: 1,
+                 date_created: Time.now, retired: 0,
+                 uuid: SecureRandom.uuid).save!(validate: false)
+  end
+  unless User.find_by(user_id: 1)
+    User.new(user_id: 1, username: 'admin', password: SecureRandom.hex(16),
+             salt: SecureRandom.hex(16), person_id: 1, location_id: 700,
+             creator: 1, date_created: Time.now, retired: 0,
+             uuid: SecureRandom.uuid, system_id: 'admin').save!(validate: false)
+  end
+ensure
+  ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS=1')
 end
 
 # Helper method to get a default provider person for tests
@@ -152,5 +169,8 @@ def default_provider
 end
 
 # Set current location and user for tests
-Location.current = Location.find_by(location_id: 700) || Location.first
-User.current = User.find_by(user_id: 1) || User.first
+default_test_user = User.unscoped.find_by(user_id: 1) || User.unscoped.first
+Location.current = Location.unscoped.find_by(location_id: default_test_user&.location_id) ||
+                   Location.unscoped.find_by(location_id: 700) ||
+                   Location.unscoped.first
+User.current = default_test_user
