@@ -130,8 +130,9 @@ module ImpowService
     def format_gender_age(gender, birthdate, patient_id)
       return "#{gender} / N/A" unless birthdate
 
-      patient = Patient.find(patient_id)
-      age_in_months = patient.age_in_months(Date.today)
+      # Calculate age directly from birthdate using @date (selected batch date)
+      age_in_days = (@date - birthdate.to_date).to_i
+      age_in_months = (age_in_days / 30.4375).to_i
       age_in_years = age_in_months / 12
 
       if age_in_years >= 2
