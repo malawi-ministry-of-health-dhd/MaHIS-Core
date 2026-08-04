@@ -359,8 +359,11 @@ module ImpowService
       appointment_encounter = EncounterType.find_by_name('APPOINTMENT')
       return [] unless appointment_encounter
 
+      # Get current location
+      current_location_id = Location.current.location_id
+
       # Query for patients with appointments on the given date
-      # who are currently enrolled in the program
+      # who are currently enrolled in the program and at the current location
       sql = <<~SQL
         SELECT DISTINCT
           p.patient_id,
@@ -379,6 +382,7 @@ module ImpowService
           AND e.voided = 0
           AND e.encounter_type = #{appointment_encounter.encounter_type_id}
           AND e.program_id = #{@program.program_id}
+          AND e.location_id = #{current_location_id}
         INNER JOIN patient p ON p.patient_id = e.patient_id
           AND p.voided = 0
         INNER JOIN person per ON per.person_id = p.patient_id
