@@ -4,12 +4,17 @@ module ImpowService
   # Service for managing expected patients for clinic day
   # Handles patient listing, outcome retrieval, and status determination
   class ExpectedPatientsEngine
-    def initialize(program:, date: Date.today)
+    DEFAULT_PER_PAGE = 10
+    MAX_PER_PAGE = 100
+
+    def initialize(program:, date: Date.today, page: 1, per_page: DEFAULT_PER_PAGE)
       @program = program
       @date = date
+      @page = [page.to_i, 1].max # Ensure page is at least 1
+      @per_page = [[per_page.to_i, MAX_PER_PAGE].min, 1].max # Clamp between 1 and MAX_PER_PAGE
     end
 
-    # Get all expected patients for the clinic day with formatted data
+    # Get paginated expected patients for the clinic day with formatted data
     def fetch_expected_patients
       appointment_engine = AppointmentEngine.new(
         program: @program,
@@ -17,11 +22,26 @@ module ImpowService
         retro_date: @date
       )
 
-      patients = appointment_engine.expected_patients_for_clinic_day(@date)
+      all_patients = appointment_engine.expected_patients_for_clinic_day(@date)
+      total_count = all_patients.size
       
-      patients.map do |patient|
+      # Calculate pagination
+      offset = (@page - 1) * @per_page
+      paginated_patients = all_patients.slice(offset, @per_page) || []
+      
+      formatted_patients = paginated_patients.map do |patient|
         format_patient_data(patient)
       end
+
+      {
+        data: formatted_patients,
+        pagination: {
+          current_page: @page,
+          per_page: @per_page,
+          total_count: total_count,
+          total_pages: (total_count.to_f / @per_page).ceil
+        }
+      }
     end
 
     private

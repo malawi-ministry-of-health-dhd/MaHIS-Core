@@ -13,17 +13,21 @@ module Api
       def expected_patients
         program_id = params.require(:program_id)
         date = params[:date]&.to_date || Date.today
+        page = params[:page] || 1
+        per_page = params[:per_page] || 10
 
         program = Program.find(program_id)
         
         service = ImpowService::ExpectedPatientsEngine.new(
           program: program,
-          date: date
+          date: date,
+          page: page,
+          per_page: per_page
         )
         
-        patients = service.fetch_expected_patients
+        result = service.fetch_expected_patients
 
-        render json: patients
+        render json: result
       end
     end
   end
