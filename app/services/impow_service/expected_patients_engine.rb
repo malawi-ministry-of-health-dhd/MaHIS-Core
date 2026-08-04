@@ -7,11 +7,19 @@ module ImpowService
     DEFAULT_PER_PAGE = 10
     MAX_PER_PAGE = 20
 
+    # Encounter types for status determination (resolved once per request)
+    STATUS_ENCOUNTER_TYPES = {
+      anthropometry: ['VITALS', 'ANTHROPOMETRY'],
+      assessment: ['CONSULTATION', 'MEDICAL ASSESSMENT'],
+      dispensation: ['TREATMENT', 'DISPENSING']
+    }.freeze
+
     def initialize(program:, date: Date.today, page: 1, per_page: DEFAULT_PER_PAGE)
       @program = program
       @date = date
       @page = [page.to_i, 1].max # Ensure page is at least 1
       @per_page = [[per_page.to_i, MAX_PER_PAGE].min, 1].max # Clamp between 1 and MAX_PER_PAGE
+      @encounter_index = nil
     end
 
     # Get paginated expected patients for the clinic day with formatted data
@@ -22,12 +30,19 @@ module ImpowService
         retro_date: @date
       )
 
-      all_patients = appointment_engine.expected_patients_for_clinic_day(@date)
-      total_count = all_patients.size
+      # Fetch paginated patients and total count from database
+      result = appointment_engine.expected_patients_for_clinic_day(
+        @date, 
+        page: @page, 
+        per_page: @per_page
+      )
       
-      # Calculate pagination
-      offset = (@page - 1) * @per_page
-      paginated_patients = all_patients.slice(offset, @per_page) || []
+      paginated_patients = result[:patients]
+      total_count = result[:total_count]
+
+      # Batch-load encounters for all patients on this page
+      patient_ids = paginated_patients.map { |p| p[:patient_id] }
+      build_encounter_index(patient_ids) unless patient_ids.empty?
       
       formatted_patients = paginated_patients.map do |patient|
         format_patient_data(patient)
@@ -45,6 +60,28 @@ module ImpowService
     end
 
     private
+
+    # Build an index of encounters for batch lookup: patient_id => Set of encounter type names
+    def build_encounter_index(patient_ids)
+      # Resolve encounter types once
+      type_names = STATUS_ENCOUNTER_TYPES.values.flatten
+      types = EncounterType.where(name: type_names).index_by(&:encounter_type_id)
+      
+      # Batch-load all encounters for paginated patients on @date
+      rows = Encounter.where(
+        patient_id: patient_ids,
+        encounter_type: types.keys,
+        program_id: @program.program_id,
+        voided: 0
+      ).where(
+        'DATE(encounter_datetime) = ?', @date.to_date
+      ).pluck(:patient_id, :encounter_type)
+      
+      # Build index: patient_id => Set of encounter type names
+      @encounter_index = rows.each_with_object(Hash.new { |h, k| h[k] = Set.new }) do |(pid, type_id), acc|
+        acc[pid] << types[type_id].name.upcase
+      end
+    end
 
     def format_patient_data(patient)
       {
@@ -85,8 +122,9 @@ module ImpowService
     def format_gender_age(gender, birthdate, patient_id)
       return "#{gender} / N/A" unless birthdate
 
-      patient = Patient.find(patient_id)
-      age_in_months = patient.age_in_months(Date.today)
+      # Calculate age directly from birthdate without loading Patient model
+      age_in_days = (@date - birthdate.to_date).to_i
+      age_in_months = (age_in_days / 30.4375).to_i
       age_in_years = age_in_months / 12
 
       if age_in_years >= 2
@@ -100,19 +138,17 @@ module ImpowService
     end
 
     def determine_patient_status(patient_id)
-      patient = Patient.find(patient_id)
+      # Use pre-loaded encounter index instead of querying per patient
+      patient_encounters = @encounter_index[patient_id] || Set.new
       
       # Check if anthropometry is done
-      anthropometry_done = encounter_exists?(patient, 'VITALS') ||
-                           encounter_exists?(patient, 'ANTHROPOMETRY')
+      anthropometry_done = STATUS_ENCOUNTER_TYPES[:anthropometry].any? { |type| patient_encounters.include?(type) }
       
       # Check if medical assessment is done
-      assessment_done = encounter_exists?(patient, 'CONSULTATION') ||
-                        encounter_exists?(patient, 'MEDICAL ASSESSMENT')
+      assessment_done = STATUS_ENCOUNTER_TYPES[:assessment].any? { |type| patient_encounters.include?(type) }
       
       # Check if dispensation is done
-      dispensation_done = encounter_exists?(patient, 'TREATMENT') ||
-                          encounter_exists?(patient, 'DISPENSING')
+      dispensation_done = STATUS_ENCOUNTER_TYPES[:dispensation].any? { |type| patient_encounters.include?(type) }
 
       if dispensation_done && anthropometry_done
         'Complete'
@@ -126,20 +162,6 @@ module ImpowService
     rescue StandardError => e
       Rails.logger.error("Error determining patient status for patient #{patient_id}: #{e.message}")
       'Pending'
-    end
-
-    def encounter_exists?(patient, encounter_type_name)
-      encounter_type = EncounterType.find_by_name(encounter_type_name)
-      return false unless encounter_type
-
-      Encounter.where(
-        patient_id: patient.patient_id,
-        encounter_type: encounter_type.encounter_type_id,
-        program_id: @program.program_id,
-        voided: 0
-      ).where(
-        'DATE(encounter_datetime) = ?', @date.strftime('%Y-%m-%d')
-      ).exists?
     end
   end
 end

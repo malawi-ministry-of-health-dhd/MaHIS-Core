@@ -348,19 +348,54 @@ module ImpowService
     end
 
     # Get expected patients for clinic day based on appointment dates
-    def expected_patients_for_clinic_day(date = Date.today)
+    def expected_patients_for_clinic_day(date = Date.today, page: 1, per_page: 10)
       date = date.to_date if date.respond_to?(:to_date)
       
       # Get appointment concept
       appointment_concept = ConceptName.find_by_name('Appointment date')
-      return [] unless appointment_concept
+      return { patients: [], total_count: 0 } unless appointment_concept
 
       # Get encounter types that might have appointments
       appointment_encounter = EncounterType.find_by_name('APPOINTMENT')
-      return [] unless appointment_encounter
+      return { patients: [], total_count: 0 } unless appointment_encounter
 
       # Get current location
       current_location_id = Location.current.location_id
+
+      # Build base WHERE clause conditions
+      base_conditions = <<~SQL
+        WHERE obs.concept_id = #{appointment_concept.concept_id}
+          AND obs.voided = 0
+          AND DATE(obs.value_datetime) = DATE('#{date.strftime('%Y-%m-%d')}')
+          AND (pp.date_completed IS NULL OR DATE(pp.date_completed) > DATE('#{date.strftime('%Y-%m-%d')}'))
+      SQL
+
+      # First, get the total count
+      count_sql = <<~SQL
+        SELECT COUNT(DISTINCT p.patient_id) AS total_count
+        FROM obs
+        INNER JOIN encounter e ON e.encounter_id = obs.encounter_id 
+          AND e.voided = 0
+          AND e.encounter_type = #{appointment_encounter.encounter_type_id}
+          AND e.program_id = #{@program.program_id}
+          AND e.location_id = #{current_location_id}
+        INNER JOIN patient p ON p.patient_id = e.patient_id
+          AND p.voided = 0
+        INNER JOIN person per ON per.person_id = p.patient_id
+        LEFT JOIN patient_program pp ON pp.patient_id = p.patient_id 
+          AND pp.program_id = #{@program.program_id}
+          AND pp.voided = 0
+        #{base_conditions}
+      SQL
+
+      count_result = ActiveRecord::Base.connection.select_one(count_sql)
+      total_count = count_result['total_count'].to_i
+
+      # Return early if no patients
+      return { patients: [], total_count: 0 } if total_count.zero?
+
+      # Calculate pagination
+      offset = (page.to_i - 1) * per_page.to_i
 
       # Query for patients with appointments on the given date
       # who are currently enrolled in the program and at the current location
@@ -434,16 +469,14 @@ module ImpowService
                   AND ps3.voided = 0
               )
           )
-        WHERE obs.concept_id = #{appointment_concept.concept_id}
-          AND obs.voided = 0
-          AND DATE(obs.value_datetime) = DATE('#{date.strftime('%Y-%m-%d')}')
-          AND (pp.date_completed IS NULL OR DATE(pp.date_completed) > DATE('#{date.strftime('%Y-%m-%d')}'))
+        #{base_conditions}
         ORDER BY pn.family_name, pn.given_name
+        LIMIT #{per_page.to_i} OFFSET #{offset}
       SQL
 
       results = ActiveRecord::Base.connection.select_all(sql)
       
-      results.map do |row|
+      patients = results.map do |row|
         {
           patient_id: row['patient_id'],
           national_id: row['national_id'] || 'N/A',
@@ -457,6 +490,8 @@ module ImpowService
           program_state: row['program_state']
         }
       end
+
+      { patients: patients, total_count: total_count }
     end
   end
 end
