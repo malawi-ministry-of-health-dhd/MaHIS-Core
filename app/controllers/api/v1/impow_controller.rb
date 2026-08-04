@@ -28,7 +28,7 @@ module Api
           {
             patientId: patient[:national_id],
             name: format_patient_name(patient[:given_name], patient[:family_name]),
-            genderAge: format_gender_age(patient[:gender], patient[:birthdate]),
+            genderAge: format_gender_age(patient[:gender], patient[:birthdate], patient[:patient_id]),
             program: program.name,
             status: determine_patient_status(patient[:patient_id], date, program_id),
             patient_id: patient[:patient_id]
@@ -44,16 +44,22 @@ module Api
         "#{given_name} #{family_name}".strip
       end
 
-      def format_gender_age(gender, birthdate)
+      def format_gender_age(gender, birthdate, patient_id)
         return "#{gender} / N/A" unless birthdate
 
-        age_in_months = ((Date.today - birthdate.to_date) / 30.44).to_i
-        age_in_years = age_in_months / 12
+        begin
+          patient = Patient.find(patient_id)
+          age_in_months = patient.age_in_months(Date.today)
+          age_in_years = age_in_months / 12
 
-        if age_in_years >= 2
-          "#{gender} / #{age_in_years}y"
-        else
-          "#{gender} / #{age_in_months}m"
+          if age_in_years >= 2
+            "#{gender} / #{age_in_years}y"
+          else
+            "#{gender} / #{age_in_months}m"
+          end
+        rescue StandardError => e
+          Rails.logger.error("Error calculating age: #{e.message}")
+          "#{gender} / N/A"
         end
       end
 
