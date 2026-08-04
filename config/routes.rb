@@ -55,6 +55,8 @@ Rails.application.routes.draw do
       get '/check_username', to: 'users#check_username_exist'
       post '/auth/passkeys/register', to: 'passkeys#register'
       post '/auth/passkeys/authenticate', to: 'passkeys#authenticate'
+      get '/users/:user_id/passkeys', to: 'passkeys#index'
+      delete '/users/:user_id/passkeys', to: 'passkeys#reset'
       resources :users do
         post '/activate', to: 'users#activate'
         post '/deactivate', to: 'users#deactivate'

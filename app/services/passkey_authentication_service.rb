@@ -112,6 +112,33 @@ module PasskeyAuthenticationService
       active_credentials(user).any?
     end
 
+    # Devices a superuser can see before deciding to reset, without exposing the
+    # stored public keys or credential ids.
+    def device_summaries(user)
+      active_credentials(user).map do |credential|
+        {
+          nickname: credential['nickname'],
+          transports: credential['transports'].presence,
+          last_used_at: credential['last_used_at']
+        }
+      end
+    end
+
+    # Revokes every passkey a user has registered so their next login enrols the
+    # device they are on. The extra security layer stays enabled — this is the
+    # recovery path for a lost, wiped or replaced device, and the alternative is
+    # switching the layer off entirely. Revoked entries are kept rather than
+    # deleted so the history remains available for investigations.
+    def revoke_all_credentials!(user, revoked_at: Time.current)
+      credentials = load_credentials(user)
+      revoked = credentials.count { |credential| credential['revoked_at'].blank? }
+      return 0 if revoked.zero?
+
+      credentials.each { |credential| credential['revoked_at'] ||= revoked_at.iso8601 }
+      save_credentials(user, credentials)
+      revoked
+    end
+
     private
 
     def ensure_webauthn_id!(user)
