@@ -103,6 +103,8 @@ module ImpowService
         patientId: patient['national_id'] || "N/A",
         name: format_patient_name(patient['given_name'], patient['family_name']),
         genderAge: format_gender_age(patient['gender'], patient['birthdate'], patient['patient_id']),
+        gender: patient['gender'],
+        birthdate: patient['birthdate'],
         triage_datetime: patient['triage_datetime']
       }
     end

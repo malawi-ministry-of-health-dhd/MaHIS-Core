@@ -88,33 +88,6 @@ module Api
         Rails.logger.error("Error fetching batch anthropometry patients: #{e.message}")
         render json: { error: e.message }, status: :internal_server_error
       end
-
-      # GET /api/v1/impow/metrics
-      # Get active caseload metrics for the current month
-      # Params:
-      #   - program_id: required
-      #   - date: optional (defaults to today)
-      def metrics
-        program_id = params.require(:program_id)
-        date = params[:date]&.to_date || Date.today
-        location_id = Location.current.location_id
-
-        cache_key = "impow_metrics_#{program_id}_#{date}_#{location_id}"
-
-        # Try to get from cache first
-        cached_result = Rails.cache.read(cache_key)
-        
-        if cached_result
-          render json: cached_result
-        else
-          # Metrics are being calculated in background, trigger job and return calculating status
-          ImpowMetricsJob.perform_async(program_id, date.to_s, location_id)
-          render json: { calculating: true, ots: 0, sfs: 0, defaulters: 0 }
-        end
-      rescue StandardError => e
-        Rails.logger.error("Error fetching metrics: #{e.message}")
-        render json: { error: e.message }, status: :internal_server_error
-      end
     end
   end
 end
