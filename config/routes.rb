@@ -185,6 +185,9 @@ Rails.application.routes.draw do
       #NRU
       get '/nru/dashboard', to: 'nru#dashboard'
 
+      # IMPOW
+      get '/impow/expected_patients', to: 'impow#expected_patients'
+
       # Locations
       resources :locations do
         get('/label', to: redirect do |params, _request|

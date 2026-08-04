@@ -346,5 +346,86 @@ module ImpowService
       # end
       @amounts_brought_to_clinic
     end
+
+    # Get expected patients for clinic day based on appointment dates
+    def expected_patients_for_clinic_day(date = Date.today)
+      date = date.to_date if date.respond_to?(:to_date)
+      
+      # Get appointment concept
+      appointment_concept = ConceptName.find_by_name('Appointment date')
+      return [] unless appointment_concept
+
+      # Get encounter types that might have appointments
+      appointment_encounter = EncounterType.find_by_name('APPOINTMENT')
+      return [] unless appointment_encounter
+
+      # Query for patients with appointments on the given date
+      # who are currently enrolled in the program
+      sql = <<~SQL
+        SELECT DISTINCT
+          p.patient_id,
+          p.voided AS patient_voided,
+          pn.given_name,
+          pn.family_name,
+          per.gender,
+          per.birthdate,
+          pi.identifier AS national_id,
+          obs.value_datetime AS appointment_date,
+          pp.date_enrolled,
+          pp.date_completed,
+          ps.state AS program_state
+        FROM obs
+        INNER JOIN encounter e ON e.encounter_id = obs.encounter_id 
+          AND e.voided = 0
+          AND e.encounter_type = #{appointment_encounter.encounter_type_id}
+          AND e.program_id = #{@program.program_id}
+        INNER JOIN patient p ON p.patient_id = e.patient_id
+          AND p.voided = 0
+        INNER JOIN person per ON per.person_id = p.patient_id
+        LEFT JOIN person_name pn ON pn.person_id = p.patient_id 
+          AND pn.voided = 0
+        LEFT JOIN patient_identifier pi ON pi.patient_id = p.patient_id 
+          AND pi.voided = 0
+          AND pi.identifier_type = (
+            SELECT patient_identifier_type_id 
+            FROM patient_identifier_type 
+            WHERE name = 'National id' 
+            LIMIT 1
+          )
+        LEFT JOIN patient_program pp ON pp.patient_id = p.patient_id 
+          AND pp.program_id = #{@program.program_id}
+          AND pp.voided = 0
+        LEFT JOIN patient_state ps ON ps.patient_program_id = pp.patient_program_id
+          AND ps.voided = 0
+          AND ps.start_date = (
+            SELECT MAX(ps2.start_date)
+            FROM patient_state ps2
+            WHERE ps2.patient_program_id = pp.patient_program_id
+              AND ps2.voided = 0
+          )
+        WHERE obs.concept_id = #{appointment_concept.concept_id}
+          AND obs.voided = 0
+          AND DATE(obs.value_datetime) = DATE('#{date.strftime('%Y-%m-%d')}')
+          AND (pp.date_completed IS NULL OR DATE(pp.date_completed) > DATE('#{date.strftime('%Y-%m-%d')}'))
+        ORDER BY pn.family_name, pn.given_name
+      SQL
+
+      results = ActiveRecord::Base.connection.select_all(sql)
+      
+      results.map do |row|
+        {
+          patient_id: row['patient_id'],
+          national_id: row['national_id'] || 'N/A',
+          given_name: row['given_name'],
+          family_name: row['family_name'],
+          gender: row['gender'],
+          birthdate: row['birthdate'],
+          appointment_date: row['appointment_date'],
+          date_enrolled: row['date_enrolled'],
+          date_completed: row['date_completed'],
+          program_state: row['program_state']
+        }
+      end
+    end
   end
 end
