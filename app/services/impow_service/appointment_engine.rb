@@ -364,6 +364,7 @@ module ImpowService
 
       # Query for patients with appointments on the given date
       # who are currently enrolled in the program and at the current location
+      # Deduplicates by restricting each optional join to one row per patient
       sql = <<~SQL
         SELECT DISTINCT
           p.patient_id,
@@ -388,6 +389,12 @@ module ImpowService
         INNER JOIN person per ON per.person_id = p.patient_id
         LEFT JOIN person_name pn ON pn.person_id = p.patient_id 
           AND pn.voided = 0
+          AND pn.person_name_id = (
+            SELECT MAX(pn2.person_name_id)
+            FROM person_name pn2
+            WHERE pn2.person_id = p.patient_id
+              AND pn2.voided = 0
+          )
         LEFT JOIN patient_identifier pi ON pi.patient_id = p.patient_id 
           AND pi.voided = 0
           AND pi.identifier_type = (
@@ -396,16 +403,36 @@ module ImpowService
             WHERE name = 'National id' 
             LIMIT 1
           )
+          AND pi.patient_identifier_id = (
+            SELECT MAX(pi2.patient_identifier_id)
+            FROM patient_identifier pi2
+            WHERE pi2.patient_id = p.patient_id
+              AND pi2.voided = 0
+              AND pi2.identifier_type = pi.identifier_type
+          )
         LEFT JOIN patient_program pp ON pp.patient_id = p.patient_id 
           AND pp.program_id = #{@program.program_id}
           AND pp.voided = 0
+          AND pp.patient_program_id = (
+            SELECT MAX(pp2.patient_program_id)
+            FROM patient_program pp2
+            WHERE pp2.patient_id = p.patient_id
+              AND pp2.program_id = #{@program.program_id}
+              AND pp2.voided = 0
+          )
         LEFT JOIN patient_state ps ON ps.patient_program_id = pp.patient_program_id
           AND ps.voided = 0
-          AND ps.start_date = (
-            SELECT MAX(ps2.start_date)
+          AND ps.patient_state_id = (
+            SELECT MAX(ps2.patient_state_id)
             FROM patient_state ps2
             WHERE ps2.patient_program_id = pp.patient_program_id
               AND ps2.voided = 0
+              AND ps2.start_date = (
+                SELECT MAX(ps3.start_date)
+                FROM patient_state ps3
+                WHERE ps3.patient_program_id = pp.patient_program_id
+                  AND ps3.voided = 0
+              )
           )
         WHERE obs.concept_id = #{appointment_concept.concept_id}
           AND obs.voided = 0

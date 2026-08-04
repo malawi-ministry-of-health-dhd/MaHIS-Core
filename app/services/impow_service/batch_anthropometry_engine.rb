@@ -52,6 +52,7 @@ module ImpowService
       vitals_type_ids = [vitals_enc&.encounter_type_id, anthropometry_enc&.encounter_type_id].compact
       return [] if vitals_type_ids.empty?
 
+      # Deduplicate by restricting each optional join to one row per patient
       sql = <<~SQL
         SELECT DISTINCT
           p.patient_id,
@@ -67,6 +68,12 @@ module ImpowService
         INNER JOIN person per ON per.person_id = p.patient_id
         LEFT JOIN person_name pn ON pn.person_id = p.patient_id
           AND pn.voided = 0
+          AND pn.person_name_id = (
+            SELECT MAX(pn2.person_name_id)
+            FROM person_name pn2
+            WHERE pn2.person_id = p.patient_id
+              AND pn2.voided = 0
+          )
         LEFT JOIN patient_identifier pi ON pi.patient_id = p.patient_id
           AND pi.voided = 0
           AND pi.identifier_type = (
@@ -74,6 +81,13 @@ module ImpowService
             FROM patient_identifier_type
             WHERE name = 'National id'
             LIMIT 1
+          )
+          AND pi.patient_identifier_id = (
+            SELECT MAX(pi2.patient_identifier_id)
+            FROM patient_identifier pi2
+            WHERE pi2.patient_id = p.patient_id
+              AND pi2.voided = 0
+              AND pi2.identifier_type = pi.identifier_type
           )
         WHERE triage.encounter_type = #{triage_enc.encounter_type_id}
           AND triage.program_id = #{@program.program_id}

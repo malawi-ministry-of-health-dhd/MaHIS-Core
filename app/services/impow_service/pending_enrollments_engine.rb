@@ -131,7 +131,8 @@ module ImpowService
     end
 
     def format_patient_name(person)
-      names = person.person_names.where(voided: 0).first
+      # Get the latest person_name (by person_name_id) to ensure deterministic results
+      names = person.person_names.where(voided: 0).order(person_name_id: :desc).first
       return 'Unknown' unless names
 
       "#{names.given_name} #{names.family_name}".strip
