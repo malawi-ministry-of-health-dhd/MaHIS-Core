@@ -5,7 +5,7 @@ module ImpowService
   # Handles patient listing, outcome retrieval, and status determination
   class ExpectedPatientsEngine
     DEFAULT_PER_PAGE = 10
-    MAX_PER_PAGE = 100
+    MAX_PER_PAGE = 20
 
     def initialize(program:, date: Date.today, page: 1, per_page: DEFAULT_PER_PAGE)
       @program = program

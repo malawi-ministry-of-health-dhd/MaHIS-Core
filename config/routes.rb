@@ -187,6 +187,7 @@ Rails.application.routes.draw do
 
       # IMPOW
       get '/impow/expected_patients', to: 'impow#expected_patients'
+      get '/impow/pending_enrollments', to: 'impow#pending_enrollments'
 
       # Locations
       resources :locations do
