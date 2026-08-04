@@ -30,6 +30,7 @@ module Api
             name: format_patient_name(patient[:given_name], patient[:family_name]),
             genderAge: format_gender_age(patient[:gender], patient[:birthdate], patient[:patient_id]),
             program: program.name,
+            outcome: get_current_outcome(patient[:patient_id], program_id, date) || 'N/A',
             status: determine_patient_status(patient[:patient_id], date, program_id),
             patient_id: patient[:patient_id]
           }
@@ -39,6 +40,28 @@ module Api
       end
 
       private
+
+      def get_current_outcome(patient_id, program_id, date)
+        begin
+          patient_program = PatientProgram.find_by(
+            patient_id: patient_id,
+            program_id: program_id
+          )
+          
+          return nil unless patient_program
+          
+          # Get current state using the model's method
+          current_state = patient_program.current_state(date)
+          return nil unless current_state
+          
+          # Get the state name from program_workflow_state
+          workflow_state = ProgramWorkflowState.find_by(program_workflow_state_id: current_state.state)
+          workflow_state&.concept&.concept_names&.first&.name
+        rescue StandardError => e
+          Rails.logger.error("Error getting current outcome: #{e.message}")
+          nil
+        end
+      end
 
       def format_patient_name(given_name, family_name)
         "#{given_name} #{family_name}".strip
