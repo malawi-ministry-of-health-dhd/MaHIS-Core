@@ -3,7 +3,11 @@
 module Api
   module V1
     class PasskeysController < ApplicationController
-      skip_before_action :authenticate, only: %i[register authenticate]
+      # The passkey ceremony action is called `verify` rather than `authenticate`
+      # so it does not shadow ApplicationController#authenticate, which every
+      # other action here relies on as its `before_action` auth check. The route
+      # still exposes it as /auth/passkeys/authenticate.
+      skip_before_action :authenticate, only: %i[register verify]
 
       def register
         session_token, credential = params.require(%i[session_token credential])
@@ -18,7 +22,7 @@ module Api
         render json: { errors: [e.message] }, status: :unauthorized
       end
 
-      def authenticate
+      def verify
         session_token, credential = params.require(%i[session_token credential])
         user = PasskeyAuthenticationService.authenticate(
           session_token:,

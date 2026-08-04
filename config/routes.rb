@@ -54,7 +54,7 @@ Rails.application.routes.draw do
       resources :dispensations, only: %i[index create destroy]
       get '/check_username', to: 'users#check_username_exist'
       post '/auth/passkeys/register', to: 'passkeys#register'
-      post '/auth/passkeys/authenticate', to: 'passkeys#authenticate'
+      post '/auth/passkeys/authenticate', to: 'passkeys#verify'
       get '/users/:user_id/passkeys', to: 'passkeys#index'
       delete '/users/:user_id/passkeys', to: 'passkeys#reset'
       resources :users do
