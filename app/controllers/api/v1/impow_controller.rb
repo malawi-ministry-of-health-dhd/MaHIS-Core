@@ -30,6 +30,9 @@ module Api
         result = service.fetch_expected_patients
 
         render json: result
+      rescue StandardError => e
+        Rails.logger.error("Error fetching expected patients: #{e.message}")
+        render json: { error: e.message }, status: :internal_server_error
       end
 
       # GET /api/v1/impow/pending_enrollments
@@ -57,6 +60,9 @@ module Api
         result = service.fetch_pending_enrollments
 
         render json: result
+      rescue StandardError => e
+        Rails.logger.error("Error fetching pending enrollments: #{e.message}")
+        render json: { error: e.message }, status: :internal_server_error
       end
 
       # GET /api/v1/impow/batch_anthropometry/patients

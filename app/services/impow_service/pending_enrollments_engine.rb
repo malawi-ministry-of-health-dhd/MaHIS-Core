@@ -115,7 +115,7 @@ module ImpowService
       }
     rescue StandardError => e
       Rails.logger.error("Error formatting referral data for patient #{referral_data[:patient_id]}: #{e.message}")
-      nil
+      raise # Re-raise to expose formatting errors instead of silently skipping patients
     end
 
     def get_national_id(patient)

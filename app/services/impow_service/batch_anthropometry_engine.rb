@@ -108,7 +108,7 @@ module ImpowService
       ActiveRecord::Base.connection.select_all(sql).to_a
     rescue StandardError => e
       Rails.logger.error("Error finding patients awaiting anthropometry: #{e.message}")
-      []
+      raise # Re-raise to expose database errors instead of hiding patients
     end
 
     def format_patient_data(patient)
