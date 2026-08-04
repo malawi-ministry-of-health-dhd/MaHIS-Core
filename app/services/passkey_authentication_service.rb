@@ -213,7 +213,10 @@ module PasskeyAuthenticationService
     def save_credentials(user, credentials)
       prop = UserProperty.find_or_initialize_by(user_id: user.user_id, property: CREDENTIALS_PROP)
       prop.property_value = credentials.to_json
-      prop.save!
+      # UserProperty requires its user, and User is location-scoped through
+      # Locatable, so an administrator managing someone at another facility would
+      # fail that validation. Same reason `manageable_user` unscopes the lookup.
+      User.unscoped { prop.save! }
     end
 
     def active_credentials(user)
