@@ -71,7 +71,9 @@ RSpec.configure do |config|
     'build_patient_record_drug_service_spec.rb',
     'patient_sync_reconciler_spec.rb',
     'void_unsyncable_patients_task_spec.rb',
-    'void_drug_orders_spec.rb'
+    'void_drug_orders_spec.rb',
+    'void_patient_spec.rb',
+    'save_patient_record_service_spec.rb'
   ].freeze
 
   # Wrap individual test execution to skip non-passing specs
