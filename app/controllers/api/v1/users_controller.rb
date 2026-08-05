@@ -81,9 +81,11 @@ module Api
         target_user = find_user(params[:id])
         return unless validate_sensitive_user_update(target_user, sensitive_update_fields(update_params))
 
-        if update_params[:location_id] && !validate_location(update_params[:location_id])
-          return
-        end
+        # The client resends the user's existing location on every save, so only a real
+        # change needs authorising; find_user already gated access to the target user.
+        location_changed = update_params[:location_id].present? &&
+                           update_params[:location_id].to_i != target_user.location_id.to_i
+        return if location_changed && !validate_location(update_params[:location_id])
 
         user = UserService.update_user target_user, update_params
 
