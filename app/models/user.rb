@@ -85,11 +85,35 @@ class User < RetirableRecord
 
     @managed_location_ids ||= begin
       ids = [location_id.to_i]
-      if district_superuser?
-        ids += Location.where(parent_location: location_id).pluck(:location_id).map(&:to_i)
-      end
+      ids += district_location_ids if district_superuser?
       ids.compact.uniq
     end
+  end
+
+  # Every location in the same district as this user's own facility. A District
+  # Superuser manages users across their whole district, so the scope must be the
+  # district's facilities — the children of their *own* facility are wards/villages,
+  # which is why scoping on `parent_location: location_id` alone locked them to a
+  # single facility. Matches how the facility picker lists a district's facilities
+  # (GET /locations?district=<county_district>).
+  def district_location_ids
+    own_location = Location.unscoped.find_by(location_id:)
+    return [] if own_location.nil?
+
+    conditions = ['parent_location = :own_id']
+    values = { own_id: own_location.location_id }
+
+    if own_location.parent_location.present?
+      conditions << '(location_id = :district_id OR parent_location = :district_id)'
+      values[:district_id] = own_location.parent_location
+    end
+
+    if own_location.county_district.present?
+      conditions << 'county_district = :district_name'
+      values[:district_name] = own_location.county_district
+    end
+
+    Location.where(conditions.join(' OR '), values).pluck(:location_id).map(&:to_i)
   end
 
   def as_json(options = {})

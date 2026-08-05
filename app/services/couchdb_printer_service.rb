@@ -79,6 +79,7 @@ class CouchdbPrinterService
         'port' => printer_data[:port],
         'location_id' => printer_data[:location_id],
         'printer_name' => printer_data[:printer_name],
+        'printer_type' => printer_data[:printer_type].presence || 'small_label',
         'created_at' => Time.current.iso8601,
         'updated_at' => Time.current.iso8601
       }
@@ -116,6 +117,7 @@ class CouchdbPrinterService
           'port' => printer_data[:port] || existing_data['port'],
           'location_id' => printer_data[:location_id] || existing_data['location_id'],
           'printer_name' => printer_data[:printer_name] || existing_data['printer_name'],
+          'printer_type' => printer_data[:printer_type].presence || existing_data['printer_type'].presence || 'small_label',
           'updated_at' => Time.current.iso8601
         })
 
