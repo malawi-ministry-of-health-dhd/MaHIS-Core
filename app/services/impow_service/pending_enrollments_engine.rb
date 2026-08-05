@@ -39,20 +39,22 @@ module ImpowService
     # Find referred patients with database-level pagination
     # Returns the latest pending referral per patient (deduplicated)
     def find_referred_patients_with_pagination
-      # Get "Referred to OS" state ID
-      referred_state = ProgramWorkflowState.joins(:concept)
-                                          .joins('INNER JOIN concept_name ON concept.concept_id = concept_name.concept_id')
-                                          .where('concept_name.name = ?', 'Referred to OS')
-                                          .first
+      # Get "Referred to OS" state ID scoped to the program
+      referred_state = ProgramWorkflowState.find_by_name_and_program(
+        name: 'Referred to OS',
+        program_id: @program.program_id
+      )
 
       return { patients: [], total_count: 0 } unless referred_state
 
-      # Get enrollment state IDs once
+      # Get enrollment state IDs once, scoped to the program
       enrollment_states = ['Admitted In OTS', 'On SFS']
-      enrollment_state_ids = ProgramWorkflowState.joins(:concept)
-                                                 .joins('INNER JOIN concept_name ON concept.concept_id = concept_name.concept_id')
-                                                 .where('concept_name.name IN (?)', enrollment_states)
-                                                 .pluck(:program_workflow_state_id)
+      enrollment_state_ids = enrollment_states.map do |state_name|
+        ProgramWorkflowState.find_by_name_and_program(
+          name: state_name,
+          program_id: @program.program_id
+        )&.program_workflow_state_id
+      end.compact
 
       return { patients: [], total_count: 0 } if enrollment_state_ids.empty?
 
@@ -63,7 +65,7 @@ module ImpowService
       base_conditions = <<~SQL
         WHERE ps_ref.state = #{referred_state.program_workflow_state_id}
           AND ps_ref.start_date >= '#{start_date.strftime('%Y-%m-%d')}'
-          AND ps_ref.start_date <= '#{@date.strftime('%Y-%m-%d')}'
+          AND ps_ref.start_date < '#{(@date + 1.day).strftime('%Y-%m-%d')}'
           AND ps_ref.voided = 0
           AND pp.voided = 0
           AND NOT EXISTS (
@@ -108,11 +110,11 @@ module ImpowService
           SELECT 
             pp.patient_id,
             MAX(ps_ref.start_date) AS referral_date,
-            pp.program_id AS referring_program_id
+            MAX(pp.program_id) AS referring_program_id
           FROM patient_state ps_ref
           INNER JOIN patient_program pp ON pp.patient_program_id = ps_ref.patient_program_id
           #{base_conditions}
-          GROUP BY pp.patient_id, pp.program_id
+          GROUP BY pp.patient_id
         ) latest_ref
         INNER JOIN patient p ON p.patient_id = latest_ref.patient_id
           AND p.voided = 0
@@ -141,7 +143,7 @@ module ImpowService
               AND pi2.identifier_type = pi.identifier_type
           )
         LEFT JOIN program prog ON prog.program_id = latest_ref.referring_program_id
-        ORDER BY latest_ref.referral_date DESC
+        ORDER BY latest_ref.referral_date DESC, latest_ref.patient_id ASC
         LIMIT #{@per_page} OFFSET #{offset}
       SQL
 
@@ -180,7 +182,8 @@ module ImpowService
     end
 
     def format_patient_name_from_data(given_name, family_name)
-      "#{given_name} #{family_name}".strip
+      name = "#{given_name} #{family_name}".strip
+      name.empty? ? 'N/A' : name
     end
 
     def format_gender_age_from_data(gender, birthdate, patient_id)

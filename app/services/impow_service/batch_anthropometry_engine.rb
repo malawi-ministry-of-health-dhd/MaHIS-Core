@@ -184,6 +184,8 @@ module ImpowService
 
       # Combine queries and deduplicate by patient_id (keep earliest encounter)
       # Use GROUP BY for MySQL compatibility
+      return [] if triage_query.blank? && appointment_query.blank?
+
       sql = <<~SQL
         SELECT 
           patient_id,

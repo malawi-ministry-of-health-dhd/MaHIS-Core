@@ -72,6 +72,7 @@ module ImpowService
         patient_id: patient_ids,
         encounter_type: types.keys,
         program_id: @program.program_id,
+        location_id: Location.current.location_id,
         voided: 0
       ).where(
         'DATE(encounter_datetime) = ?', @date.to_date

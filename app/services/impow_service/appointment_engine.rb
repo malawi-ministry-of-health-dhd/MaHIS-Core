@@ -385,6 +385,13 @@ module ImpowService
         LEFT JOIN patient_program pp ON pp.patient_id = p.patient_id 
           AND pp.program_id = #{@program.program_id}
           AND pp.voided = 0
+          AND pp.patient_program_id = (
+            SELECT MAX(pp2.patient_program_id)
+            FROM patient_program pp2
+            WHERE pp2.patient_id = p.patient_id
+              AND pp2.program_id = #{@program.program_id}
+              AND pp2.voided = 0
+          )
         #{base_conditions}
       SQL
 
@@ -470,7 +477,9 @@ module ImpowService
               )
           )
         #{base_conditions}
-        ORDER BY pn.family_name, pn.given_name
+        GROUP BY p.patient_id, pn.given_name, pn.family_name, per.gender, per.birthdate, 
+                 pi.identifier, obs.value_datetime, pp.date_enrolled, pp.date_completed, ps.state
+        ORDER BY pn.family_name, pn.given_name, p.patient_id
         LIMIT #{per_page.to_i} OFFSET #{offset}
       SQL
 
