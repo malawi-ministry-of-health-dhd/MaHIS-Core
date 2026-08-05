@@ -122,21 +122,7 @@ module Api
           end
 
           if extra_security_login_enabled?(user)
-            if PasskeyAuthenticationService.required_for?(user)
-              passkey_challenge = PasskeyAuthenticationService.authentication_options(user)
-              render json: {
-                passkey_authentication_required: true,
-                passkey_session: passkey_challenge[:session_token],
-                public_key: passkey_challenge[:options]
-              }, status: :accepted
-            else
-              passkey_challenge = PasskeyAuthenticationService.registration_options(user)
-              render json: {
-                passkey_registration_required: true,
-                passkey_session: passkey_challenge[:session_token],
-                public_key: passkey_challenge[:options]
-              }, status: :accepted
-            end
+            render json: passkey_challenge_response(user), status: :accepted
           else
             render json: LoginResponseService.build(user, UserService.new_authentication_token(user)), status: :ok
           end
@@ -179,21 +165,7 @@ module Api
         end
 
         if extra_security_login_enabled?(user)
-          if PasskeyAuthenticationService.required_for?(user)
-            passkey_challenge = PasskeyAuthenticationService.authentication_options(user)
-            return render json: {
-              passkey_authentication_required: true,
-              passkey_session: passkey_challenge[:session_token],
-              public_key: passkey_challenge[:options]
-            }, status: :accepted
-          end
-
-          passkey_challenge = PasskeyAuthenticationService.registration_options(user)
-          return render json: {
-            passkey_registration_required: true,
-            passkey_session: passkey_challenge[:session_token],
-            public_key: passkey_challenge[:options]
-          }, status: :accepted
+          return render json: passkey_challenge_response(user), status: :accepted
         end
 
         response = LoginResponseService.build(
@@ -325,6 +297,27 @@ module Api
       def extra_security_login_enabled?(user)
         property = UserProperty.find_by(user_id: user.user_id, property: 'extra_security_login')
         property&.property_value&.downcase == 'true'
+      end
+
+      # Passkeys are per-platform, so the challenge depends on which platform is
+      # logging in: `platform` says where the request came from and `enroll_device`
+      # is set by a client whose authenticator holds no passkey yet.
+      def passkey_challenge_response(user)
+        platform = PasskeyAuthenticationService.normalize_platform(params[:platform])
+        enroll = ActiveModel::Type::Boolean.new.cast(params[:enroll_device]) || false
+
+        case PasskeyAuthenticationService.next_step_for(user, platform:, enroll_requested: enroll)
+        when :register
+          challenge = PasskeyAuthenticationService.registration_options(user, platform:)
+          { passkey_registration_required: true,
+            passkey_session: challenge[:session_token],
+            public_key: challenge[:options] }
+        else
+          challenge = PasskeyAuthenticationService.authentication_options(user, platform:)
+          { passkey_authentication_required: true,
+            passkey_session: challenge[:session_token],
+            public_key: challenge[:options] }
+        end
       end
 
       def validate_roles(roles)
