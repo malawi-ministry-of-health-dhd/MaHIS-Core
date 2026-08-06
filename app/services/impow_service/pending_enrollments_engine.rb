@@ -63,9 +63,15 @@ module ImpowService
         []
       end
 
-      # Base query: Patient programs created for OS / IMPOW
+      # Base query: Patient programs enrolled/created within the referral window.
+      # Both bounds are explicit: >= start_date prevents records older than REFERRAL_WINDOW_DAYS,
+      # and <= @date prevents future-dated rows from leaking into the result.
+      # Parentheses on the OR make grouping explicit when Rails combines with other clauses.
       base_query = PatientProgram.where(program_id: os_program_ids, voided: 0)
-                                 .where('date_enrolled >= ? OR date_created >= ?', start_date, start_date)
+                                 .where(
+                                   '(date_enrolled >= ? AND date_enrolled <= ?) OR (date_created >= ? AND date_created <= ?)',
+                                   start_date, @date, start_date, @date
+                                 )
 
       base_query = base_query.where.not(patient_id: admitted_patient_ids) if admitted_patient_ids.any?
 
