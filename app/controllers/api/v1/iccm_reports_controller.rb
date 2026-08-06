@@ -5,7 +5,8 @@ module Api
     class IccmReportsController < ApplicationController
       def daily_stats
         location_id = params[:location_id].presence || dashboard_location_id
-        render json: IccmService::Dashboard.dashboard_stats(location_id: location_id)
+        date = params[:date].presence ? Date.parse(params[:date]) : Date.today
+        render json: IccmService::Dashboard.dashboard_stats(location_id: location_id, date: date)
       end
 
       private

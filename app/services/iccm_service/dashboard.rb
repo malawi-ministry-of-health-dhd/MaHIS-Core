@@ -12,13 +12,16 @@ module IccmService
     HOME_TREATMENT_DECISION_NAME = 'Treat at home'
     YES_CONCEPT_NAME = 'Yes'
 
-    def self.dashboard_stats(location_id: nil)
-      danger_sign_ids = decision_patient_ids(DECISION_CONCEPT_NAME, REFERRAL_DECISION_NAMES, location_id)
-      treated_at_home_ids = decision_patient_ids(DECISION_CONCEPT_NAME, [HOME_TREATMENT_DECISION_NAME], location_id)
-      sam_enrolled_ids = decision_patient_ids(SAM_ENROLLED_CONCEPT_NAME, [YES_CONCEPT_NAME], location_id)
+    def self.dashboard_stats(location_id: nil, date: Date.today)
+      month_start = date.to_date.beginning_of_month
+      month_end = date.to_date.end_of_month
+
+      danger_sign_ids = decision_patient_ids(DECISION_CONCEPT_NAME, REFERRAL_DECISION_NAMES, location_id, month_start, month_end)
+      treated_at_home_ids = decision_patient_ids(DECISION_CONCEPT_NAME, [HOME_TREATMENT_DECISION_NAME], location_id, month_start, month_end)
+      sam_enrolled_ids = decision_patient_ids(SAM_ENROLLED_CONCEPT_NAME, [YES_CONCEPT_NAME], location_id, month_start, month_end)
 
       {
-        total_registered: total_registered_count(location_id, danger_sign_ids | treated_at_home_ids | sam_enrolled_ids),
+        total_registered: total_registered_count(location_id, month_start, month_end, danger_sign_ids | treated_at_home_ids | sam_enrolled_ids),
         danger_signs: danger_sign_ids.size,
         treated_at_home: treated_at_home_ids.size,
         sam_enrolled: sam_enrolled_ids.size
@@ -31,14 +34,15 @@ module IccmService
         DEFAULT_PROGRAM_ID
     end
 
-    def self.total_registered_count(location_id, decision_patient_ids = [])
+    def self.total_registered_count(location_id, month_start, month_end, decision_patient_ids = [])
       scope = PatientProgram.where(program_id: program_id, voided: false)
+        .where(date_enrolled: month_start..month_end)
       scope = scope.where(location_id: location_id) if location_id
       enrolled_ids = scope.distinct.pluck(:patient_id)
       (enrolled_ids | decision_patient_ids).size
     end
 
-    def self.decision_patient_ids(question_name, answer_names, location_id)
+    def self.decision_patient_ids(question_name, answer_names, location_id, month_start, month_end)
       question_concept_id = ConceptName.where(name: question_name, voided: 0).pick(:concept_id)
       return [] unless question_concept_id
 
@@ -46,6 +50,7 @@ module IccmService
       return [] if answer_concept_ids.empty?
 
       scope = Observation.where(concept_id: question_concept_id, value_coded: answer_concept_ids, voided: false)
+        .where(obs_datetime: month_start..month_end)
       scope = scope.where(location_id: location_id) if location_id
       scope.distinct.pluck(:person_id)
     end
