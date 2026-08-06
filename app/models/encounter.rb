@@ -6,6 +6,11 @@ class Encounter < VoidableRecord
 
   include Locatable
 
+  # Historical encounters copied during an exact-duplicate merge must not be
+  # presented to callbacks as new clinical activity. This flag is thread-local
+  # so a cleanup task cannot suppress footprint jobs in other worker threads.
+  thread_mattr_accessor :suppress_dde_footprint_push, default: false
+
   # before_save :before_save
   after_create :after_create
   after_commit :refresh_mnh_stats_after_commit, on: %i[create update]
@@ -88,6 +93,8 @@ class Encounter < VoidableRecord
   end
 
   def after_create
+    return if self.class.suppress_dde_footprint_push
+
     dde_enabled = GlobalProperty.find_by_property 'dde_enabled'
     return unless if dde_enabled.blank?
                     false
