@@ -104,10 +104,12 @@ module ImpowService
             )
             #{exclusion_fragment}
           GROUP BY patient_id
-          ORDER BY MAX(COALESCE(date_enrolled, date_created)) DESC
+          ORDER BY MAX(COALESCE(date_enrolled, date_created)) DESC,
+                   MAX(patient_program_id) DESC
           LIMIT #{@per_page} OFFSET #{offset}
         ) cohort ON cohort.latest_pp_id = pp.patient_program_id
-        ORDER BY COALESCE(pp.date_enrolled, pp.date_created) DESC
+        ORDER BY COALESCE(pp.date_enrolled, pp.date_created) DESC,
+                 pp.patient_program_id DESC
       SQL
 
       pending_pps = PatientProgram.find_by_sql(paginated_sql)
