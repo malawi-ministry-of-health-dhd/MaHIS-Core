@@ -51,11 +51,13 @@ module ImpowService
 
       start_date = @date - REFERRAL_WINDOW_DAYS.days
 
-      # Patient IDs that already have an active admission state (OTS or SFS)
+      # Patient IDs that are CURRENTLY in an active admission state (OTS or SFS).
+      # end_date IS NULL means the state is still open — discharged patients (end_date IS NOT NULL)
+      # are intentionally excluded so they can re-appear if referred again.
       admitted_patient_ids = if enrollment_state_ids.any?
         PatientState.joins(:patient_program)
                     .where(patient_program: { program_id: os_program_ids, voided: 0 })
-                    .where(state: enrollment_state_ids, voided: 0)
+                    .where(state: enrollment_state_ids, voided: 0, end_date: nil)
                     .pluck(:patient_id)
       else
         []
