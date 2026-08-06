@@ -65,9 +65,9 @@ module Api
         # Frontend sends flat JSON (no root key wrapper), so permit directly from params.
         # Fall back to a nested :printer_configuration key for API clients that wrap the body.
         if params[:printer_configuration].present?
-          params.require(:printer_configuration).permit(:ip_address, :location_id, :printer_name, :port)
+          params.require(:printer_configuration).permit(:ip_address, :location_id, :printer_name, :port, :printer_type)
         else
-          params.permit(:ip_address, :location_id, :printer_name, :port)
+          params.permit(:ip_address, :location_id, :printer_name, :port, :printer_type)
         end
       end
     end
