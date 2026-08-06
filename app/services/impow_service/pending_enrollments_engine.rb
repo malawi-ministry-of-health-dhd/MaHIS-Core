@@ -79,11 +79,38 @@ module ImpowService
       return { patients: [], total_count: 0 } if total_count.zero?
 
       offset = (@page - 1) * @per_page
-      subquery_ids = base_query.group(:patient_id).pluck('MAX(patient_program_id)')
-      pending_pps = PatientProgram.where(patient_program_id: subquery_ids)
-                                 .order(date_enrolled: :desc, patient_program_id: :desc)
-                                 .limit(@per_page)
-                                 .offset(offset)
+
+      # Build the admission exclusion fragment once for reuse.
+      # Uses unqualified patient_id because this fragment goes inside the derived table
+      # where the outer pp alias is not in scope.
+      exclusion_fragment = admitted_patient_ids.any? ? "AND patient_id NOT IN (#{admitted_patient_ids.join(',')})" : ''
+
+      # Derived-table query: group by patient_id to get the latest patient_program per patient,
+      # then apply ORDER, LIMIT, and OFFSET entirely in the database.
+      # This avoids loading the full cohort into Ruby memory and avoids MySQL's
+      # restriction on LIMIT inside an IN subquery.
+      paginated_sql = <<~SQL
+        SELECT pp.*
+        FROM patient_program pp
+        INNER JOIN (
+          SELECT patient_id, MAX(patient_program_id) AS latest_pp_id
+          FROM patient_program
+          WHERE program_id IN (#{os_program_ids.join(',')})
+            AND voided = 0
+            AND (
+              (date_enrolled >= #{ActiveRecord::Base.connection.quote(start_date)} AND date_enrolled <= #{ActiveRecord::Base.connection.quote(@date)})
+              OR
+              (date_created >= #{ActiveRecord::Base.connection.quote(start_date)} AND date_created <= #{ActiveRecord::Base.connection.quote(@date)})
+            )
+            #{exclusion_fragment}
+          GROUP BY patient_id
+          ORDER BY MAX(COALESCE(date_enrolled, date_created)) DESC
+          LIMIT #{@per_page} OFFSET #{offset}
+        ) cohort ON cohort.latest_pp_id = pp.patient_program_id
+        ORDER BY COALESCE(pp.date_enrolled, pp.date_created) DESC
+      SQL
+
+      pending_pps = PatientProgram.find_by_sql(paginated_sql)
 
       national_id_type_id = PatientIdentifierType.find_by(name: 'National id')&.id
 
