@@ -112,32 +112,44 @@ module ImpowService
 
       pending_pps = PatientProgram.find_by_sql(paginated_sql)
 
-      national_id_type_id = PatientIdentifierType.find_by(name: 'National id')&.id
+      # Eager-load patient associations to avoid N+1 queries per row
+      ActiveRecord::Associations::Preloader.new(
+        records: pending_pps,
+        associations: { patient: { person: :names, patient_identifiers: [] } }
+      ).call
+
+      national_id_type_ids = PatientIdentifierType.where(name: ['National id', 'Old national id']).pluck(:patient_identifier_type_id)
 
       patients = pending_pps.map do |pp_rec|
-        pat = Patient.find(pp_rec.patient_id)
+        # Use association instead of Patient.find to prevent extra queries and RecordNotFound exceptions
+        pat = pp_rec.patient
+        next unless pat && pat.person
+
         person = pat.person
         name_obj = person.names.reject { |n| n.voided == 1 || n.voided == true }.first
         full_name = name_obj ? "#{name_obj.given_name} #{name_obj.family_name}".strip : 'N/A'
 
         identifiers = pat.patient_identifiers.reject { |i| i.voided == 1 || i.voided == true }
-        nat_id = identifiers.find { |i| i.identifier_type == national_id_type_id }&.identifier || identifiers.first&.identifier || 'N/A'
+        # Strictly look up National ID; return 'N/A' if missing instead of falling back to arbitrary identifier types
+        nat_id = identifiers.find { |i| national_id_type_ids.include?(i.identifier_type) }&.identifier || 'N/A'
 
-        # Find referring program (e.g. HIV Program if patient has active HIV enrollment)
-        other_programs = PatientProgram.where(patient_id: pat.id, voided: 0)
-                                       .where.not(program_id: os_program_ids)
-        ref_program_name = other_programs.first&.program&.name || 'HIV PROGRAM'
-        ref_program_name = ref_program_name.sub(/\s+PROGRAM$/i, '')
+        # Find referring program (most recent non-OS enrollment; returns 'Unknown' if patient has no other program)
+        other_program = PatientProgram.where(patient_id: pat.id, voided: 0)
+                                      .where.not(program_id: os_program_ids)
+                                      .order(date_enrolled: :desc, date_created: :desc)
+                                      .first
+        ref_program_name = other_program&.program&.name
+        ref_label = ref_program_name ? ref_program_name.sub(/\s+PROGRAM$/i, '') : 'Unknown'
 
         {
           patientId: nat_id,
           name: full_name,
           genderAge: format_gender_age_from_data(person.gender, person.birthdate, pat.id),
-          referredFrom: ref_program_name,
+          referredFrom: ref_label,
           referralDate: format_referral_date(pp_rec.date_enrolled || pp_rec.date_created),
           patient_id: pat.id
         }
-      end
+      end.compact
 
       { patients: patients, total_count: total_count }
     end
