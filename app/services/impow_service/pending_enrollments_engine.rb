@@ -8,6 +8,9 @@ module ImpowService
     MAX_PER_PAGE = 20
     REFERRAL_WINDOW_DAYS = 30
 
+    # Stable program names — resolve IDs at runtime rather than hardcoding them
+    OS_PROGRAM_NAMES = ['OS PROGRAM', 'ICCM/IMPOW PROGRAM'].freeze
+
     def initialize(program:, date: Date.today, page: 1, per_page: DEFAULT_PER_PAGE)
       @program = program
       @date = date.to_date rescue Date.today
@@ -35,7 +38,7 @@ module ImpowService
     # Find referred patients with database-level pagination
     # Returns patients enrolled/referred to OS/IMPOW who have NOT been admitted to OTS/SFS yet
     def find_referred_patients_with_pagination
-      os_program_ids = [40, 42]
+      os_program_ids = impow_program_ids
 
       # Enrollment state names in OS Program
       enrollment_states = ['Admitted In OTS', 'On SFS']
@@ -102,6 +105,16 @@ module ImpowService
       end
 
       { patients: patients, total_count: total_count }
+    end
+
+    # Resolve IMPOW-related program IDs by name and memoize for this instance.
+    # Raises if none are found so misconfigured environments fail loudly.
+    def impow_program_ids
+      @impow_program_ids ||= begin
+        ids = Program.where(name: OS_PROGRAM_NAMES).pluck(:program_id)
+        raise "No IMPOW programs found for names: #{OS_PROGRAM_NAMES.join(', ')}" if ids.empty?
+        ids
+      end
     end
 
     def format_gender_age_from_data(gender, birthdate, patient_id)
