@@ -116,4 +116,38 @@ module CouchdbSync
       retry
     end
   end
+
+  # Deletes a document by id. No-op (returns false) when the document is
+  # already gone. Raises if CouchDB is configured but the delete otherwise
+  # fails, after retrying transient connection errors like the write path.
+  #
+  # Deliberately ignores skip_couchdb_sync? — that flag exists so the listener
+  # can suppress create_patient_record's normal upsert (the listener does its
+  # own follow-up write instead). A void's delete is a one-time terminal
+  # action with no such follow-up, so it must run even when called from
+  # listener-triggered processing.
+  def delete_from_couchdb(db_name, doc_id)
+    return false unless couchdb_configured?
+    return false if doc_id.to_s.empty?
+
+    encoded_doc_id = URI.encode_www_form_component(doc_id.to_s)
+    doc_url = couchdb_url(db_name, encoded_doc_id)
+
+    attempt = 1
+    begin
+      existing_doc = RestClient.get(doc_url)
+      rev = JSON.parse(existing_doc.body)['_rev']
+      RestClient.delete("#{doc_url}?rev=#{rev}")
+      true
+    rescue RestClient::NotFound
+      false
+    rescue RestClient::Conflict, *TRANSIENT_CONNECTION_ERRORS => e
+      raise if attempt >= MAX_RETRY_ATTEMPTS
+
+      Rails.logger.warn("CouchDB delete_from_couchdb(#{db_name}/#{doc_id}) attempt #{attempt} failed: #{e.class}: #{e.message}")
+      attempt += 1
+      sleep(0.1 * attempt)
+      retry
+    end
+  end
 end
