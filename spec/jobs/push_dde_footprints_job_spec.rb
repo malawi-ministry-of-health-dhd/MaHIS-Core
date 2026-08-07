@@ -65,5 +65,22 @@ RSpec.describe PushDdeFootprintsJob, type: :job do
 
       expect(location_at_init&.location_id).to eq(location_id)
     end
+
+    it 'ignores location context left behind by a previous Sidekiq job' do
+      stale_location = Location.new(location_id: 999_999)
+      Location.current = stale_location
+
+      expect do
+        described_class.perform_now(
+          program_id: program.id,
+          patient_id: patient.id,
+          location_id: location_id,
+          date: date,
+          creator_id: creator_id
+        )
+      end.not_to raise_error
+
+      expect(Location.current).to eq(stale_location)
+    end
   end
 end

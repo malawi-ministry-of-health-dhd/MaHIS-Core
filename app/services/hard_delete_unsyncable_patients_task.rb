@@ -70,11 +70,14 @@ class HardDeleteUnsyncablePatientsTask
     )
   SQL
 
-  def initialize(env = ENV)
+  def initialize(env = ENV, candidate_scope: nil, criteria_label: nil, **legacy_env)
+    env = legacy_env if legacy_env.any?
     @apply = env['APPLY'].to_s == '1'
     @confirmation = env['CONFIRM'].to_s
     requested_batch_size = positive_integer(env['BATCH_SIZE'], DEFAULT_BATCH_SIZE)
     @batch_size = [requested_batch_size, MAX_BATCH_SIZE].min
+    @candidate_scope_override = candidate_scope
+    @criteria_label = criteria_label
 
     validate_options!
   end
@@ -105,6 +108,8 @@ class HardDeleteUnsyncablePatientsTask
   end
 
   def candidate_scope
+    return @candidate_scope_override.call if @candidate_scope_override
+
     Patient.unscoped
            .where(voided: 0)
            .where(
@@ -114,9 +119,13 @@ class HardDeleteUnsyncablePatientsTask
 
   def print_report(candidate_count, clinical_count, shared_person_count)
     puts "\n===== HARD DELETE Unsyncable Patient Records ====="
-    puts 'Criteria: active patient matching either:'
-    puts '  - no valid type-3 identifier and no patient_program row'
-    puts '  - active given name or family name equals "test"'
+    if @criteria_label
+      puts "Criteria: #{@criteria_label}"
+    else
+      puts 'Criteria: active patient matching either:'
+      puts '  - no valid type-3 identifier and no patient_program row'
+      puts '  - active given name or family name equals "test"'
+    end
     puts "Complete patient records selected: #{candidate_count}"
     puts "Selected patients with clinical data: #{clinical_count}"
     puts "Shared staff/provider person identities retained: #{shared_person_count}"
@@ -236,6 +245,7 @@ class HardDeleteUnsyncablePatientsTask
       delete_join(connection, 'obs', 'obs_id', TEMP_OBSERVATIONS)
       delete_join(connection, 'orders', 'order_id', TEMP_ORDERS)
 
+      rehome_visits_with_surviving_encounters(connection)
       delete_tables_with_column(
         connection,
         'visit_id',
@@ -339,13 +349,40 @@ class HardDeleteUnsyncablePatientsTask
       FROM visit
       INNER JOIN #{quoted(connection, TEMP_BATCH)} batch
         ON batch.id = visit.patient_id
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM encounter surviving_encounter
+        LEFT JOIN #{quoted(connection, TEMP_ENCOUNTERS)} target_encounter
+          ON target_encounter.id = surviving_encounter.encounter_id
+        WHERE surviving_encounter.visit_id = visit.visit_id
+          AND target_encounter.id IS NULL
+      )
     SQL
-    insert_ids(connection, TEMP_VISITS, <<~SQL.squish)
-      SELECT encounter.visit_id
-      FROM encounter
-      INNER JOIN #{quoted(connection, TEMP_ENCOUNTERS)} target_encounter
-        ON target_encounter.id = encounter.encounter_id
-      WHERE encounter.visit_id IS NOT NULL
+  end
+
+  # A merge can move encounters to the primary patient while preserving their
+  # existing visit_id. In that case the visit is clinical data shared with the
+  # surviving patient and must be transferred, not deleted with the secondary.
+  def rehome_visits_with_surviving_encounters(connection)
+    visits = connection.quote_table_name('visit')
+    batch = quoted(connection, TEMP_BATCH)
+    encounters = quoted(connection, TEMP_ENCOUNTERS)
+    connection.execute(<<~SQL.squish)
+      UPDATE #{visits} target_visit
+      INNER JOIN #{batch} original_owner
+        ON original_owner.id = target_visit.patient_id
+      INNER JOIN (
+        SELECT surviving_encounter.visit_id,
+               MIN(surviving_encounter.patient_id) AS surviving_patient_id
+        FROM encounter surviving_encounter
+        LEFT JOIN #{encounters} target_encounter
+          ON target_encounter.id = surviving_encounter.encounter_id
+        WHERE surviving_encounter.visit_id IS NOT NULL
+          AND target_encounter.id IS NULL
+        GROUP BY surviving_encounter.visit_id
+      ) surviving_visit
+        ON surviving_visit.visit_id = target_visit.visit_id
+      SET target_visit.patient_id = surviving_visit.surviving_patient_id
     SQL
   end
 

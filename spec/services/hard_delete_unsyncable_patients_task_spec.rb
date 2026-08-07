@@ -66,6 +66,7 @@ RSpec.describe HardDeleteUnsyncablePatientsTask do
       allow(task).to receive(:delete_nonstandard_foreign_keys)
       allow(task).to receive(:delete_tables_with_column)
       allow(task).to receive(:delete_join)
+      allow(task).to receive(:rehome_visits_with_surviving_encounters)
       allow(task).to receive(:delete_merge_audits)
       allow(task).to receive(:delete_nonstandard_patient_references)
       allow(task).to receive(:delete_patient_program_children)
@@ -77,6 +78,42 @@ RSpec.describe HardDeleteUnsyncablePatientsTask do
         .with(requires_new: true).ordered.and_yield
 
       task.send(:delete_batch, connection)
+    end
+  end
+
+  describe 'visit handling' do
+    it 'selects only candidate-owned visits with no surviving encounter for deletion' do
+      task = described_class.new({})
+      connection = double('connection')
+      captured = []
+      allow(connection).to receive(:quote_table_name) { |name| "`#{name}`" }
+      allow(task).to receive(:truncate_temp_table)
+      allow(task).to receive(:insert_ids) do |_connection, table, sql|
+        captured << [table, sql]
+      end
+
+      task.send(:prepare_related_ids, connection)
+
+      visit_sql = captured.find { |table, _sql| table == described_class::TEMP_VISITS }.last
+      expect(visit_sql).to include('batch.id = visit.patient_id')
+      expect(visit_sql).to include('NOT EXISTS')
+      expect(visit_sql).to include('target_encounter.id IS NULL')
+      expect(captured.count { |table, _sql| table == described_class::TEMP_VISITS }).to eq(1)
+    end
+
+    it 'transfers candidate-owned visits to a patient with a surviving encounter' do
+      task = described_class.new({})
+      connection = double('connection')
+      allow(connection).to receive(:quote_table_name) { |name| "`#{name}`" }
+      allow(connection).to receive(:execute)
+
+      task.send(:rehome_visits_with_surviving_encounters, connection)
+
+      expect(connection).to have_received(:execute) do |sql|
+        expect(sql).to include('UPDATE `visit` target_visit')
+        expect(sql).to include('MIN(surviving_encounter.patient_id) AS surviving_patient_id')
+        expect(sql).to include('SET target_visit.patient_id = surviving_visit.surviving_patient_id')
+      end
     end
   end
 end
