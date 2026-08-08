@@ -66,12 +66,17 @@ RSpec.configure do |config|
     'base_sync_job_spec.rb',
     'clinical_data_deduplication_job_spec.rb',
     'hard_delete_unsyncable_patients_task_spec.rb',
+    'exact_duplicate_patient_cleanup_task_spec.rb',
+    'duplicate_identifier_cleanup_task_spec.rb',
+    'dde_merging_service_spec.rb',
     'ncd_identifier_cleanup_spec.rb',
     'mnh_stats_sync_job_spec.rb',
     'build_patient_record_drug_service_spec.rb',
     'patient_sync_reconciler_spec.rb',
     'void_unsyncable_patients_task_spec.rb',
-    'void_drug_orders_spec.rb'
+    'void_drug_orders_spec.rb',
+    'void_patient_spec.rb',
+    'save_patient_record_service_spec.rb'
   ].freeze
 
   # Wrap individual test execution to skip non-passing specs

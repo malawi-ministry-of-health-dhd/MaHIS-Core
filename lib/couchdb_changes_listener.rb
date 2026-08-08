@@ -513,7 +513,14 @@ class CouchdbChangesListener
       if db_name == 'patients_records' && !processed_data.is_a?(Hash)
         raise "Patient record processing did not return a payload: #{processed_data.inspect}"
       end
-      
+
+      if processed_data.is_a?(Hash) && (processed_data['deleted_from_couchdb'] || processed_data[:deleted_from_couchdb])
+        # The processor (e.g. a patient void) already deleted this document on
+        # purpose — there's nothing left to fetch or mark as processed.
+        Rails.logger.info("[CouchDB Listener] Document #{doc_id} in #{db_name} was deleted by the processor; skipping processed-marker update")
+        return true
+      end
+
       update_result = update_couchdb_with_retry(doc_id, processed_data, source_rev: doc['_rev'])
 
       if update_result == :stale && db_name == 'patients_records'

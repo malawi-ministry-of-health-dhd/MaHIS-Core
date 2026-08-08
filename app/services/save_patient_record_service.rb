@@ -55,6 +55,15 @@ class SavePatientRecordService
       raise
     end
 
+    # Voiding the patient row makes every default-scoped Patient lookup below
+    # (find_patient, primary-identifier check, etc.) come back empty, since
+    # VoidableRecord's default_scope excludes voided rows. Finalize from the
+    # already-known record instead of running it through the live-patient
+    # rebuild path.
+    if operation_results[:void_patient]&.success?
+      return finalize_voided_patient_record(patient_id, record, operation_results, overall_sync_status)
+    end
+
     history_base = resolve_history_base(patient_id, record)
     patient_record = build_and_save_patient_record(patient_id, record, operation_results, overall_sync_status,
                                                    created_lab_orders: managers[:lab_data_manager].created_lab_orders,
@@ -204,7 +213,8 @@ class SavePatientRecordService
       observation_saver:      PatientRecordService::ObservationSaver.new,
       void_encounters:        PatientRecordService::VoidEncounters.new,
       merge_patients_manager: PatientRecordService::MergePatientManager.new,
-      void_drug_orders:       PatientRecordService::VoidDrugOrders.new
+      void_drug_orders:       PatientRecordService::VoidDrugOrders.new,
+      void_patient:           PatientRecordService::VoidPatient.new
     }
   end
 
@@ -227,7 +237,8 @@ class SavePatientRecordService
       save_dispensation_data: run_if(dispensations_pending?(record)) { managers[:medication_order_saver].save_dispensation_data(patient_id, record) },
       void_drug_orders:       run_if(drug_order_voids_pending?(record)) { managers[:void_drug_orders].void_drug_orders(patient_id, record) },
       save_all_observations:  run_if(observations_pending?(record)) { managers[:observation_saver].save_all_observations(patient_id, record) },
-      void_encounters:        run_if(encounter_voids_pending?(record)) { managers[:void_encounters].void_encounters(record) }
+      void_encounters:        run_if(encounter_voids_pending?(record)) { managers[:void_encounters].void_encounters(record) },
+      void_patient:           run_if(patient_void_pending?(record)) { managers[:void_patient].void_patient(patient_id, record) }
     }
   end
 
@@ -364,6 +375,57 @@ class SavePatientRecordService
   rescue StandardError => e
     Rails.logger.warn("[SavePatientRecord] could not resolve history base for #{record_value(record, :ID)}: #{e.class}: #{e.message}")
     nil
+  end
+
+  # Builds the response/CouchDB doc for a patient that was just voided. Reuses
+  # the last-known-good CouchDB doc (or the incoming record, when no doc is
+  # configured/available) rather than rebuilding from MySQL, since the patient
+  # row and its dependents are voided by this point.
+  #
+  # We don't want to keep voided patients' documents in CouchDB at all, so the
+  # doc is deleted outright rather than upserted with a `voided` flag. Deletion
+  # replicates like any other change, so every device eventually drops its copy
+  # too. If the delete itself fails (e.g. a transient CouchDB outage), we fall
+  # back to upserting with `voided: true` so the doc is at least excluded from
+  # search (see NOT_VOIDED_SELECTOR on the client) instead of staying fully
+  # visible with no signal at all.
+  def finalize_voided_patient_record(patient_id, record, operation_results, overall_sync_status)
+    base = resolve_history_base(patient_id, record) || record
+    patient_record = base.as_json.with_indifferent_access
+
+    patient_record['patientID']    = patient_id
+    patient_record['sync_status']  = overall_sync_status
+    patient_record['void_patient'] = nil
+    patient_record['voided']       = true
+    patient_record['operation_errors'] = operation_results
+      .reject           { |_k, r| r.errors.empty? }
+      .transform_values  { |r| r.errors }
+      .as_json
+
+    if couchdb_configured?
+      patient_record['_id'] = patient_record['ID']
+
+      begin
+        delete_from_couchdb('patients_records', patient_record['ID'].to_s)
+        # Tells the CouchDB changes listener the document is gone on purpose,
+        # so it skips trying to fetch and re-mark a now-nonexistent doc.
+        patient_record['deleted_from_couchdb'] = true
+      rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH => e
+        Rails.logger.warn("CouchDB connection error while deleting voided patient #{patient_record['ID']}: #{e.class}: #{e.message}")
+        sync_voided_patient_fallback(patient_record)
+      rescue StandardError => e
+        Rails.logger.error("CouchDB delete failed for voided patient #{patient_record['ID']}: #{e.class}: #{e.message}")
+        sync_voided_patient_fallback(patient_record)
+      end
+    end
+
+    patient_record.as_json
+  end
+
+  def sync_voided_patient_fallback(patient_record)
+    sync_to_couchdb(patient_record, 'patients_records', patient_record['ID'].to_s)
+  rescue StandardError => e
+    Rails.logger.error("CouchDB fallback sync failed for voided patient #{patient_record['ID']}: #{e.class}: #{e.message}")
   end
 
   # Re-attach read-only history the online client stripped from its payload, so
@@ -581,16 +643,20 @@ class SavePatientRecordService
     allowed_encounter_types = allowed_encounter_types.compact.uniq
     return if allowed_encounter_types.empty?
 
+    refreshed_type_keys = allowed_encounter_types.map(&:to_s)
     original_observations_map = Array(record_value(patient_data, :observations))
                                   .each_with_object({}) do |obs, hash|
                                     encounter_type = record_value(obs, :encounter_type)
-                                    hash[encounter_type] = obs if encounter_type.present?
+                                    next if encounter_type.blank?
+                                    next if refreshed_type_keys.include?(encounter_type.to_s)
+
+                                    hash[encounter_type.to_s] = obs
                                   end
 
     new_observations = BuildPatientRecordService.build_all_observations(patient_id, allowed_encounter_types)
 
     updated_observations_hash = original_observations_map.merge(
-      new_observations.index_by { |obs| record_value(obs, :encounter_type) }
+      new_observations.index_by { |obs| record_value(obs, :encounter_type).to_s }
     )
 
     patient_data[:observations] = updated_observations_hash.values.as_json
@@ -821,5 +887,9 @@ class SavePatientRecordService
 
   def encounter_voids_pending?(record)
     Array.wrap(record_value(record, :void_encounters)).any?
+  end
+
+  def patient_void_pending?(record)
+    record_value(record_value(record, :void_patient) || {}, :reason).to_s.strip.present?
   end
 end

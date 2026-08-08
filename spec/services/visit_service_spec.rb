@@ -15,6 +15,7 @@ RSpec.describe VisitService do
   after do
     if @patient
       Stage.where(patient_id: @patient.patient_id).delete_all
+      Encounter.where(patient_id: @patient.patient_id).delete_all
       Visit.where(patient_id: @patient.patient_id).delete_all
       PatientIdentifier.where(patient_id: @patient.patient_id).delete_all
       Patient.where(patient_id: @patient.patient_id).delete_all
@@ -68,7 +69,7 @@ RSpec.describe VisitService do
       location_id: stale_patient_location_id
     )
 
-    expect(Visit.find(data['visit_id']).location_id).to eq(@location_id)
+    expect(Visit.find(data['visit_id']).location_id).to eq(@location_id.to_i)
     expect(data[:location_id]).to eq(@location_id.to_s)
   end
 
@@ -81,10 +82,11 @@ RSpec.describe VisitService do
       identifier: @identifier,
       stage: 'VITALS',
       program_id: OPD_PROGRAM_ID,
-      location_id: stale_patient_location_id
+      location_id: stale_patient_location_id,
+      arrival_time: Time.current
     )
 
-    expect(Stage.find(data[:id]).location_id).to eq(@location_id)
+    expect(Stage.find(data[:id]).location_id).to eq(@location_id.to_i)
     expect(data[:location_id]).to eq(@location_id.to_s)
     expect(data[:visit_id]).to eq(visit.visit_id)
   end

@@ -38,6 +38,7 @@ config/*.yml
 *.pid.lock
 *.pid
 db/schema.rb
+db/structure.sql
 
 *.DS_Store
 
