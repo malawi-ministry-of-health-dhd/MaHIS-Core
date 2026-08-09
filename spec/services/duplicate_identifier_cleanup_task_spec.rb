@@ -270,7 +270,8 @@ RSpec.describe DuplicateIdentifierCleanupTask do
       3 => [identifier_row.new('NEW-NPID', Time.current, 3)]
     }
     identifiers = instance_double(ActiveRecord::Associations::CollectionProxy, as_json: [])
-    patient = instance_double(Patient, patient_id: 123, patient_identifiers: identifiers)
+    person = instance_double(Person, uuid: SecureRandom.uuid)
+    patient = instance_double(Patient, patient_id: 123, patient_identifiers: identifiers, person: person)
     allow(BuildPatientRecordService).to receive(:extract_tei).and_return('')
 
     record = BuildPatientRecordService.build_basic_info(patient, nil, identifiers_by_type)

@@ -566,7 +566,8 @@ class CouchdbChangesListener
     return true if patient_id.blank?
 
     lab_orders_data = BuildPatientRecordService.build_lab_orders_data(patient_id).as_json
-    document_id = (processed_data["ID"] || processed_data[:ID] || current_doc&.dig("ID") || doc_id).to_s
+    document_id = PatientRecordIdentityService.document_id(record: processed_data) ||
+                  PatientRecordIdentityService.document_id(record: current_doc) || doc_id.to_s
 
     unless update_couchdb_patient_lab_orders_only(document_id, lab_orders_data)
       raise "Failed to true-up labOrders for patient CouchDB document #{document_id}"
@@ -780,26 +781,44 @@ class CouchdbChangesListener
     end
   end
 
-  # CouchDB doc ids are immutable, but the canonical identifier for patient
-  # documents (the type-3 'National id') can change after the doc is first
-  # written — for example when DDE re-links a patient or a merge runs. When
-  # that happens we rewrite the document under the canonical id so `_id`
-  # stays aligned with the `ID` field consumers read.
+  # Patient documents use a permanent internal record UUID. Older documents
+  # keyed by NPID are migrated once, after which changing an NPID updates only
+  # the indexed ID field and never renames the CouchDB document again.
   def canonical_doc_id(updated_doc)
     return nil unless db_name == 'patients_records'
 
-    identifier = updated_doc['ID'] || updated_doc[:ID]
-    identifier.to_s.strip.presence
+    direct_id = PatientRecordIdentityService.document_id(record: updated_doc)
+    return direct_id if direct_id.present?
+
+    patient_id = updated_doc['patientID'] || updated_doc[:patientID] ||
+                 updated_doc['patient_id'] || updated_doc[:patient_id]
+    patient = Patient.unscoped.includes(:person).find_by(patient_id:) if patient_id.present?
+    PatientRecordIdentityService.document_id(patient:)
   end
 
   def rename_couchdb_document(old_id, new_id, document_data)
     Rails.logger.info("[CouchDB Listener] Renaming document #{old_id} -> #{new_id} in #{db_name}")
 
-    if fetch_current_document(new_id)
-      Rails.logger.error(
-        "[CouchDB Listener] Cannot rename #{old_id} -> #{new_id} in #{db_name}: target id already exists. Updating old doc in place."
+    if (target_doc = fetch_current_document(new_id))
+      # A force/bulk sync may have created the UUID-keyed document before an
+      # offline device replicates its old NPID-keyed copy. The processor has
+      # already applied that offline copy to MySQL and rebuilt the complete
+      # patient record, so write it onto the canonical target revision and
+      # tombstone the obsolete source instead of leaving two patient docs.
+      Rails.logger.info(
+        "[CouchDB Listener] Canonical target #{new_id} already exists; folding #{old_id} into it"
       )
-      return update_couchdb_document_direct(old_id, document_data)
+      migrated_doc = target_doc.merge(
+        document_data.reject { |key, _| key.to_s == '_id' || key.to_s == '_rev' }
+      )
+      migrated_doc['_id'] = new_id
+      migrated_doc['_rev'] = target_doc['_rev']
+      updated = update_couchdb_document_direct(new_id, migrated_doc)
+      raise "Failed to update canonical patient document #{new_id}" unless updated
+
+      old_doc_rev = document_data['_rev']
+      delete_couchdb_document_direct(old_id, old_doc_rev) if old_doc_rev.present?
+      return true
     end
 
     new_doc = document_data.reject { |key, _| key.to_s == '_id' || key.to_s == '_rev' }
