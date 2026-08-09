@@ -61,6 +61,15 @@ RSpec.describe SavePatientRecordService do
       expect(described_class.new.send(:patient_void_pending?, record)).to be false
     end
   end
+  describe '#legacy_dde_identifier_void_pending?' do
+    it 'requires at least one nonblank legacy identifier value' do
+      service = described_class.new
+
+      expect(service.send(:legacy_dde_identifier_void_pending?, { voidLegacyDdeIdentifiers: [' OLD123 '] })).to be true
+      expect(service.send(:legacy_dde_identifier_void_pending?, { voidLegacyDdeIdentifiers: [' '] })).to be false
+      expect(service.send(:legacy_dde_identifier_void_pending?, {})).to be false
+    end
+  end
 
   describe '#finalize_voided_patient_record' do
     it 'builds a response from the CouchDB history base, clearing the pending void request' do
