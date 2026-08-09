@@ -73,15 +73,21 @@ class SavePatientRecordService
 
     if couchdb_configured?
       begin
-        patient_record["_id"] = patient_record["ID"]
-        sync_to_couchdb(patient_record, "patients_records", "#{patient_record["ID"]}")
+        document_id = PatientRecordIdentityService.document_id(record: patient_record)
+        patient_record["_id"] = document_id
+        sync_to_couchdb(patient_record, "patients_records", document_id)
+        retire_legacy_npid_documents(patient_record)
       rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH => e
         Rails.logger.warn("CouchDB connection error during patient record sync for #{patient_record["ID"]}: #{e.class}: #{e.message}")
       rescue StandardError => e
         Rails.logger.error("CouchDB sync failed for patient #{patient_record["ID"]}: #{e.class}: #{e.message}")
       end
     end
-    enqueue_dde_id_top_up(patient_record, record) if should_top_up_dde_ids && couchdb_configured?
+    assignment_succeeded = operation_results[:assign_dde_identifier].nil? ||
+                           operation_results[:assign_dde_identifier].success?
+    if should_top_up_dde_ids && assignment_succeeded && couchdb_configured?
+      enqueue_dde_id_top_up(patient_record, record)
+    end
 
     patient_record
   end
@@ -97,6 +103,30 @@ class SavePatientRecordService
     NcdService::NcdPatientIndex.upsert_records([patient_record])
   rescue StandardError => e
     Rails.logger.error("[NCD] Failed to refresh NCD patient index for #{patient_record['ID']}: #{e.message}")
+  end
+
+  def retire_legacy_npid_documents(patient_record)
+    patient_id = record_value(patient_record, :patientID).to_i
+    document_id = PatientRecordIdentityService.document_id(record: patient_record)
+    candidates = [
+      record_value(patient_record, :ID),
+      record_value(patient_record, :legacyDdeID),
+      *Array.wrap(record_value(patient_record, :legacyDdeIDs)),
+      ("patient:#{document_id}" if document_id.present?)
+    ].map { |value| value.to_s.strip }.reject(&:blank?).uniq
+
+    candidates.each do |candidate|
+      next if candidate == document_id
+
+      legacy_doc = fetch_couchdb_doc('patients_records', candidate)
+      next unless legacy_doc
+      next unless (legacy_doc['patientID'] || legacy_doc['patient_id']).to_i == patient_id
+
+      delete_from_couchdb('patients_records', candidate)
+      Rails.logger.info("Retired legacy NPID-keyed CouchDB document #{candidate} for patient #{patient_id}")
+    end
+  rescue StandardError => e
+    Rails.logger.warn("Could not retire legacy CouchDB document for patient #{patient_id}: #{e.class}: #{e.message}")
   end
 
   # Mark an online (REST) patient record as already listener-processed so the
@@ -221,6 +251,9 @@ class SavePatientRecordService
   def execute_patient_operations(patient_id, record, managers)
     {
       update_person_info:     run_if(person_information_edit?(record)) { managers[:identity_manager].update_person_information(patient_id, record) },
+      assign_dde_identifier:  run_if(dde_identifier_assignment_pending?(record)) {
+        managers[:identity_manager].assign_dde_identifier(patient_id, record)
+      },
       void_legacy_dde_ids:    run_if(legacy_dde_identifier_void_pending?(record)) {
         managers[:identity_manager].void_legacy_dde_identifiers(patient_id, record)
       },
@@ -251,12 +284,20 @@ class SavePatientRecordService
     latest_encounter = BuildPatientRecordService.find_latest_encounter(patient_id)
     changed_operation_results = changed_operations(operation_results)
     identifiers_by_type = BuildPatientRecordService.patient_identifiers_by_type(patient)
+    dde_assignment = PatientRecordIdentityService.assignment_state(patient_id)
+    primary_identifier = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 3, patient_id)
+    legacy_dde_ids = BuildPatientRecordService.patient_identifier_values_from_map(identifiers_by_type, 2)
+    legacy_dde_ids << primary_identifier if dde_assignment[:pending] && primary_identifier.present?
+    legacy_dde_ids = legacy_dde_ids.uniq { |identifier| identifier.to_s.strip.upcase }
 
+    PatientRecordIdentityService.apply!(patient_data, patient:)
     patient_data[:encounter_datetime]    = latest_encounter&.encounter_datetime
     patient_data[:location_id]           = latest_encounter.location_id if latest_encounter&.location_id.present?
-    patient_data[:ID]                    = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 3, patient_id)
-    patient_data[:legacyDdeID]           = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 2, patient_id)
-    patient_data[:legacyDdeIDs]          = BuildPatientRecordService.patient_identifier_values_from_map(identifiers_by_type, 2)
+    patient_data[:ID]                    = dde_assignment[:pending] ? '' : primary_identifier
+    patient_data[:legacyDdeID]           = legacy_dde_ids.last.to_s
+    patient_data[:legacyDdeIDs]          = legacy_dde_ids
+    patient_data[:identifierAssignmentStatus] = dde_assignment[:pending] ? 'pending' : 'assigned'
+    patient_data[:duplicateIdentifierOwnerCount] = dde_assignment[:duplicate_owner_count].to_i
     patient_data[:nationalID]            = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 28, patient_id)
     patient_data[:patientID]             = patient_id
     patient_data[:NcdID]                 = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 31, patient_id)
@@ -283,6 +324,9 @@ class SavePatientRecordService
         name    = person&.names&.first
         address = person&.addresses&.first
         patient_data[:personInformation] = BuildPatientRecordService.build(person, name, address, patient)
+
+      when :assign_dde_identifier
+        patient_data[:assignDdeIdentifier] = nil
 
       when :void_legacy_dde_ids
         patient_data[:voidLegacyDdeIdentifiers] = []
@@ -375,8 +419,10 @@ class SavePatientRecordService
   def resolve_history_base(patient_id, record)
     return nil unless couchdb_configured? && !skip_couchdb_sync?
 
-    doc_id = record_value(record, :ID).to_s
-    base   = doc_id.present? ? fetch_couchdb_doc('patients_records', doc_id) : nil
+    document_id = PatientRecordIdentityService.document_id(record: record)
+    base = document_id.present? ? fetch_couchdb_doc('patients_records', document_id) : nil
+    legacy_doc_id = record_value(record, :ID).to_s
+    base ||= fetch_couchdb_doc('patients_records', legacy_doc_id) if legacy_doc_id.present?
     base ||= (patient_id ? BuildPatientRecordService.build_patient_record(patient_id) : nil)
     base
   rescue StandardError => e
@@ -410,10 +456,13 @@ class SavePatientRecordService
       .as_json
 
     if couchdb_configured?
-      patient_record['_id'] = patient_record['ID']
+      document_id = PatientRecordIdentityService.document_id(record: patient_record) ||
+                    PatientRecordIdentityService.document_id(patient: Patient.unscoped.includes(:person).find_by(patient_id:)) ||
+                    record_value(patient_record, :ID).to_s.presence
+      patient_record['_id'] = document_id
 
       begin
-        delete_from_couchdb('patients_records', patient_record['ID'].to_s)
+        delete_from_couchdb('patients_records', document_id)
         # Tells the CouchDB changes listener the document is gone on purpose,
         # so it skips trying to fetch and re-mark a now-nonexistent doc.
         patient_record['deleted_from_couchdb'] = true
@@ -430,7 +479,7 @@ class SavePatientRecordService
   end
 
   def sync_voided_patient_fallback(patient_record)
-    sync_to_couchdb(patient_record, 'patients_records', patient_record['ID'].to_s)
+    sync_to_couchdb(patient_record, 'patients_records', patient_record['_id'].to_s)
   rescue StandardError => e
     Rails.logger.error("CouchDB fallback sync failed for voided patient #{patient_record['ID']}: #{e.class}: #{e.message}")
   end
@@ -710,6 +759,9 @@ class SavePatientRecordService
 
   def ensure_primary_identifier_persisted!(patient_id, patient_record)
     identifier = patient_record.with_indifferent_access[:ID].to_s.strip
+    assignment_status = patient_record.with_indifferent_access[:identifierAssignmentStatus].to_s
+    return if identifier.blank? && assignment_status == 'pending'
+
     raise "Primary identifier missing for patient #{patient_id}" if identifier.blank?
 
     saved_identifier = PatientIdentifier.unscoped.find_by(
@@ -760,8 +812,9 @@ class SavePatientRecordService
   end
 
   def should_top_up_dde_ids_after_save?(record)
-    record_value(record, :saveStatusPersonInformation).to_s == 'pending' &&
-      record_value(record, :ID).to_s.strip.present?
+    new_registration = record_value(record, :saveStatusPersonInformation).to_s == 'pending'
+    deferred_assignment = dde_identifier_assignment_pending?(record)
+    (new_registration || deferred_assignment) && record_value(record, :ID).to_s.strip.present?
   end
 
   def enqueue_dde_id_top_up(patient_record, source_record)
@@ -818,6 +871,11 @@ class SavePatientRecordService
 
   def legacy_dde_identifier_void_pending?(record)
     Array.wrap(record_value(record, :voidLegacyDdeIdentifiers)).any? { |identifier| identifier.to_s.strip.present? }
+  end
+
+  def dde_identifier_assignment_pending?(record)
+    request = record_value(record, :assignDdeIdentifier) || {}
+    record_value(request, :npid).to_s.strip.present?
   end
 
   def merge_requested?(record)

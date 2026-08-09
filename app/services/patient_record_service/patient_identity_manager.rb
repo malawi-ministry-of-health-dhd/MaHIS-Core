@@ -12,6 +12,7 @@ module PatientRecordService
 
       existing_patient_id = record[:patientID]
       patient = Patient.find_by(patient_id: existing_patient_id) if existing_patient_id.present?
+      patient ||= find_patient_by_record_uuid(record)
 
       # Offline/local records can retain a stale database patient_id after the
       # server database has been restored or the patient has been re-created.
@@ -52,7 +53,8 @@ module PatientRecordService
       patient             = find_patient_by_identifier(incoming_identifier)
 
       if patient.blank?
-        person  = create_person(record[:personInformation])
+        person_info = record[:personInformation].merge(uuid: PatientRecordIdentityService.record_uuid(record: record))
+        person  = create_person(person_info)
         patient = create_patient(person.person_id, record)
       end
 
@@ -186,6 +188,96 @@ module PatientRecordService
       log_and_fail("Failed to void legacy DDE identifiers", e)
     end
 
+    # Completes a deferred identifier assignment. Offline clients submit an
+    # NPID that was reserved from their local DDE pool; online clients submit
+    # one allocated by the API. The operation is idempotent so listener retries
+    # cannot give the patient a second identifier.
+    def assign_dde_identifier(patient_id, record)
+      request = record[:assignDdeIdentifier] || record['assignDdeIdentifier'] || {}
+      npid = (request[:npid] || request['npid']).to_s.strip.upcase
+      raise 'A reserved DDE NPID is required' if npid.blank?
+
+      patient = Patient.includes(:patient_programs, :patient_identifiers, person: %i[names addresses person_attributes]).find(patient_id)
+      existing = PatientIdentifier.unscoped.find_by(
+        patient_id:,
+        identifier_type: 3,
+        identifier: npid,
+        voided: 0
+      )
+
+      unless existing
+        conflicting_owner = PatientIdentifier.unscoped.where(identifier_type: 3, identifier: npid, voided: 0)
+                                               .where.not(patient_id:)
+                                               .pick(:patient_id)
+        raise "DDE NPID #{npid} is already assigned to patient #{conflicting_owner}" if conflicting_owner
+
+        # DdeMergingService deliberately voids the patient's active NPID,
+        # DDE document ID and legacy aliases while linking the new DDE person.
+        # Snapshot both current and legacy NPIDs so every old barcode remains
+        # searchable after that link is completed.
+        previous_aliases = PatientIdentifier.unscoped.where(patient_id:, identifier_type: 2, voided: 0)
+                                            .order(:date_created, :patient_identifier_id)
+                                            .pluck(:identifier, :location_id)
+        previous_current_npids = PatientIdentifier.unscoped.where(patient_id:, identifier_type: 3, voided: 0)
+                                                   .order(:date_created, :patient_identifier_id)
+                                                   .pluck(:identifier, :location_id)
+        # Recreate the duplicated current NPID last so legacyDdeID (the indexed
+        # scalar search alias) points to the identifier that led the user to
+        # this reassignment workflow. legacyDdeIDs still carries every alias.
+        previous_npids = previous_aliases + previous_current_npids
+        if DdeService.dde_enabled?
+          program = patient.patient_programs.order(:date_enrolled).first&.program ||
+                    Program.find_by(program_id: record[:program_id] || record['program_id']) ||
+                    Program.find(14)
+          DdeService.new(program:).create_patient(patient, npid)
+        else
+          PatientIdentifier.create!(
+            patient_id:,
+            identifier_type: 3,
+            identifier: npid,
+            location_id: record[:location_id] || record['location_id'] || User.current&.location_id,
+            preferred: 1
+          )
+        end
+
+        current = PatientIdentifier.unscoped.find_by(patient_id:, identifier_type: 3, identifier: npid, voided: 0)
+        raise "DDE did not assign requested NPID #{npid} to patient #{patient_id}" unless current
+
+        PatientIdentifier.transaction do
+          PatientIdentifier.unscoped.where(patient_id:, identifier_type: 3, voided: 0)
+                           .where.not(patient_identifier_id: current.id)
+                           .find_each { |identifier| identifier.void("Replaced by deferred DDE NPID #{npid}") }
+
+          previous_npids.each do |old_npid, location_id|
+            old_npid = old_npid.to_s.strip
+            next if old_npid.blank? || old_npid.casecmp?(npid)
+            next if PatientIdentifier.unscoped.exists?(
+              patient_id:,
+              identifier_type: 2,
+              identifier: old_npid,
+              voided: 0
+            )
+
+            PatientIdentifier.create!(
+              patient_id:,
+              identifier_type: 2,
+              identifier: old_npid,
+              location_id: location_id.presence || current.location_id,
+              preferred: 0
+            )
+          end
+        end
+      end
+
+      record[:ID] = npid
+      record[:identifierAssignmentStatus] = 'assigned'
+      record[:assignDdeIdentifier] = nil
+      record['assignDdeIdentifier'] = nil if record.respond_to?(:key?) && record.key?('assignDdeIdentifier')
+      changed_ok
+    rescue StandardError => e
+      log_and_fail('Failed to assign deferred DDE identifier', e)
+    end
+
     def create_ncd_identifier(patient_id, record)
       ncd_id = record[:NcdID].presence || record['NcdID'].presence
       unsaved_ncd_id = record[:unsavedNcdID].presence || record['unsavedNcdID'].presence
@@ -305,7 +397,14 @@ module PatientRecordService
     end
 
     def extract_incoming_identifier(record)
-      record[:ID].presence || record[:_id].presence
+      record[:ID].presence
+    end
+
+    def find_patient_by_record_uuid(record)
+      record_uuid = PatientRecordIdentityService.record_uuid(record:)
+      return nil if record_uuid.blank?
+
+      Person.unscoped.find_by(uuid: record_uuid)&.patient
     end
 
     def find_patient_by_identifier(identifier)
