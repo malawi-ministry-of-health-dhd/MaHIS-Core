@@ -3,6 +3,28 @@
 require 'rails_helper'
 
 RSpec.describe DdeMergingService do
+  describe '#create_local_patient_identifier' do
+    it 'uses the unscoped creator location when linking a DDE identifier' do
+      service = described_class.new(nil, nil)
+      patient = instance_double(Patient, id: 559_604, creator: 2498)
+      creator = instance_double(User, location_id: 32)
+      users = double('unscoped users')
+      identifier_type = instance_double(PatientIdentifierType)
+      identifier = instance_double(PatientIdentifier)
+
+      allow(User).to receive(:unscoped).and_return(users)
+      allow(users).to receive(:find_by).with(user_id: 2498).and_return(creator)
+      allow(service).to receive(:patient_identifier_type).with('National id').and_return(identifier_type)
+      allow(PatientIdentifier).to receive(:create!).and_return(identifier)
+      allow(patient).to receive(:reload).and_return(patient)
+
+      expect(service.send(:create_local_patient_identifier, patient, 'KHYMWE', 'National id')).to eq(identifier)
+      expect(PatientIdentifier).to have_received(:create!).with(
+        identifier: 'KHYMWE', type: identifier_type, location_id: 32, patient:
+      )
+    end
+  end
+
   describe '#matching_observation' do
     it 'safely compares observation text containing an apostrophe' do
       observation = Observation.new(

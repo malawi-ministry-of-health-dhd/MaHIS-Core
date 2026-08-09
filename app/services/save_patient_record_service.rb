@@ -253,6 +253,8 @@ class SavePatientRecordService
     patient_data[:encounter_datetime]    = latest_encounter&.encounter_datetime
     patient_data[:location_id]           = latest_encounter.location_id if latest_encounter&.location_id.present?
     patient_data[:ID]                    = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 3, patient_id)
+    patient_data[:legacyDdeID]           = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 2, patient_id)
+    patient_data[:legacyDdeIDs]          = BuildPatientRecordService.patient_identifier_values_from_map(identifiers_by_type, 2)
     patient_data[:nationalID]            = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 28, patient_id)
     patient_data[:patientID]             = patient_id
     patient_data[:NcdID]                 = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 31, patient_id)

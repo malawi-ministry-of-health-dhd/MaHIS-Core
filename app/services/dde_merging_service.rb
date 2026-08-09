@@ -182,15 +182,19 @@ class DdeMergingService
   end
 
   def create_local_patient_identifier(patient, value, type_name)
-    user = User.where(user_id:patient.creator).first
-    
-    identifier = PatientIdentifier.create(identifier: value,
-                                          type: patient_identifier_type(type_name),
-                                          location_id: user["location_id"],
-                                          patient:)
-    return patient.reload && identifier if identifier.errors.empty?
+    creator = User.unscoped.find_by(user_id: patient.creator)
+    location_id = creator&.location_id.presence ||
+                  PatientIdentifier.unscoped.where(patient_id: patient.id).where.not(location_id: [nil, 0])
+                                   .order(date_created: :desc, patient_identifier_id: :desc).pick(:location_id) ||
+                  Location.current&.location_id || User.current&.location_id
+    raise "Could not resolve a location for patient #{patient.id} DDE identifier" if location_id.blank?
 
-    raise "Could not save DDE identifier: #{type_name} due to #{identifier.errors.as_json}"
+    identifier = PatientIdentifier.create!(identifier: value,
+                                           type: patient_identifier_type(type_name),
+                                           location_id:,
+                                           patient:)
+    patient.reload
+    identifier
   end
 
   # Patch primary_patient missing name data using secondary_patient
