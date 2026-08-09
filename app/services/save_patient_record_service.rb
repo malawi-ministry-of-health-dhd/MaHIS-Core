@@ -218,10 +218,12 @@ class SavePatientRecordService
     }
   end
 
-
   def execute_patient_operations(patient_id, record, managers)
     {
       update_person_info:     run_if(person_information_edit?(record)) { managers[:identity_manager].update_person_information(patient_id, record) },
+      void_legacy_dde_ids:    run_if(legacy_dde_identifier_void_pending?(record)) {
+        managers[:identity_manager].void_legacy_dde_identifiers(patient_id, record)
+      },
       merge_patients:         run_if(merge_requested?(record)) { managers[:merge_patients_manager].merge_patients(patient_id, record) },
       manage_guardian:        run_if(guardian_work_pending?(record)) { managers[:guardian_manager].manage_guardian(patient_id, record) },
       create_relationship:    run_if(relationships_pending?(record)) { managers[:guardian_manager].create_relationship(record) },
@@ -253,6 +255,8 @@ class SavePatientRecordService
     patient_data[:encounter_datetime]    = latest_encounter&.encounter_datetime
     patient_data[:location_id]           = latest_encounter.location_id if latest_encounter&.location_id.present?
     patient_data[:ID]                    = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 3, patient_id)
+    patient_data[:legacyDdeID]           = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 2, patient_id)
+    patient_data[:legacyDdeIDs]          = BuildPatientRecordService.patient_identifier_values_from_map(identifiers_by_type, 2)
     patient_data[:nationalID]            = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 28, patient_id)
     patient_data[:patientID]             = patient_id
     patient_data[:NcdID]                 = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 31, patient_id)
@@ -279,6 +283,9 @@ class SavePatientRecordService
         name    = person&.names&.first
         address = person&.addresses&.first
         patient_data[:personInformation] = BuildPatientRecordService.build(person, name, address, patient)
+
+      when :void_legacy_dde_ids
+        patient_data[:voidLegacyDdeIdentifiers] = []
 
       when :manage_guardian, :create_relationship
         patient_data[:guardianInformation] = BuildPatientRecordService.build_guardian_data(patient_id)
@@ -807,6 +814,10 @@ class SavePatientRecordService
 
   def person_information_edit?(record)
     record_value(record, :personInformation).present? && record_value(record, :saveStatusPersonInformation) == 'edit'
+  end
+
+  def legacy_dde_identifier_void_pending?(record)
+    Array.wrap(record_value(record, :voidLegacyDdeIdentifiers)).any? { |identifier| identifier.to_s.strip.present? }
   end
 
   def merge_requested?(record)

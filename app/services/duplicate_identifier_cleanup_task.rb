@@ -8,6 +8,8 @@ require 'fileutils'
 # - multiple different values of one type on the same patient;
 # - repeated identical identifier rows on the same patient.
 class DuplicateIdentifierCleanupTask
+  class DeferredDdeRepair < StandardError; end
+
   CONFIRMATION = 'REPAIR_REVIEWED_IDENTIFIER_DUPLICATES'
   DDE_CONFIRMATION = 'REQUEST_FRESH_DDE_IDENTIFIERS'
   UNATTENDED_CONFIRMATION = 'REPAIR_ALL_SUPPORTED_IDENTIFIER_DUPLICATES_WITHOUT_REVIEW'
@@ -19,12 +21,14 @@ class DuplicateIdentifierCleanupTask
   DDE_DOC_TYPE = 27
   OLD_NPID_TYPE = 2
   DDE_PURGED_TYPES = [DDE_NPID_TYPE, DDE_DOC_TYPE, OLD_NPID_TYPE].freeze
+  MULTIPLE_VALUE_EXCLUDED_IDENTIFIER_TYPES = (EXCLUDED_IDENTIFIER_TYPES + [OLD_NPID_TYPE]).freeze
   TRUTHY = %w[1 true yes y].freeze
   HEADERS = %w[
     approved collision_kind action identifier_type identifier_type_name
     current_identifier keeper_patient_id target_patient_id
     keeper_identifier_row_id target_identifier_row_id replacement_identifier note
   ].freeze
+  DEFERRED_HEADERS = (HEADERS + ['deferred_reason']).freeze
 
   def initialize(env = ENV)
     @apply = truthy?(env['APPLY'])
@@ -36,6 +40,10 @@ class DuplicateIdentifierCleanupTask
     @operator_user_id = env['USER_ID'].to_i
     @approval_path = expanded_path(env['APPROVAL_FILE']) if env['APPROVAL_FILE'].present?
     @output_path = expanded_path(env['OUTPUT'].presence || Rails.root.join('tmp', 'duplicate_identifier_review.csv'))
+    @deferred_path = expanded_path(
+      env['DEFERRED_OUTPUT'].presence || Rails.root.join('tmp', 'deferred_identifier_repairs.csv')
+    )
+    @deferred_rows = {}
     @limit = [[env.fetch('LIMIT', DEFAULT_LIMIT).to_i, 1].max, MAX_LIMIT].min
     validate_options!
   end
@@ -100,29 +108,43 @@ class DuplicateIdentifierCleanupTask
   def apply_all_supported_rows
     total = 0
 
-    loop do
-      candidates = cross_patient_rows + multiple_value_rows + repeated_row_rows
-      supported = unattended_batch(candidates)
-      break if supported.empty?
+    begin
+      loop do
+        candidates = cross_patient_rows + multiple_value_rows + repeated_row_rows
+        supported = unattended_batch(candidates)
+        break if supported.empty?
 
-      with_operator_context { apply_rows!(supported) }
-      total += supported.length
-      puts "Completed unattended identifier batch: #{total} supported repair(s) applied"
+        applied = with_operator_context { apply_rows!(supported) }
+        total += applied
+        puts "Completed unattended identifier batch: #{total} supported repair(s) applied"
+      end
+    ensure
+      # Keep the report accurate even if a later, unrelated repair aborts the
+      # task after some DDE rows have already been deferred.
+      write_deferred_report!
     end
 
     unresolved = (cross_patient_rows + multiple_value_rows + repeated_row_rows)
                  .select { |row| row['action'] == 'assign_reviewed_value' }
     puts "\nCompleted all #{total} supported unattended identifier repair(s)."
+    if @deferred_rows.any?
+      puts "Deferred #{@deferred_rows.length} DDE repair(s); their local identifiers were left unchanged."
+      puts "Deferred report: #{@deferred_path}"
+    end
     if unresolved.any?
       puts "#{unresolved.length} shared non-DDE identifier row(s) remain because their identifier types have no automatic number source."
       puts 'ARV and NCD identifiers were excluded and were not changed.'
+    elsif @deferred_rows.any?
+      puts 'No other supported duplicate identifiers remain. ARV and NCD identifiers were excluded.'
     else
       puts 'No supported duplicate identifiers remain. ARV and NCD identifiers were excluded.'
     end
   end
 
   def unattended_batch(candidates)
-    supported = candidates.reject { |row| row['action'] == 'assign_reviewed_value' }
+    supported = candidates.reject do |row|
+      row['action'] == 'assign_reviewed_value' || @deferred_rows.key?(deferred_row_key(row))
+    end
     dde_patients = {}
 
     supported.select do |row|
@@ -139,10 +161,40 @@ class DuplicateIdentifierCleanupTask
   end
 
   def apply_rows!(rows)
+    applied = 0
     rows.each_with_index do |row, index|
-      apply_row!(row)
-      puts "Applied #{index + 1}/#{rows.length}: #{row['action']} for patient #{row['target_patient_id']}"
+      begin
+        apply_row!(row)
+        applied += 1
+        puts "Applied #{index + 1}/#{rows.length}: #{row['action']} for patient #{row['target_patient_id']}"
+      rescue DeferredDdeRepair => e
+        raise unless @unattended
+
+        remember_deferred_row(row, e.message)
+        puts "Deferred #{index + 1}/#{rows.length}: #{row['action']} for patient " \
+             "#{row['target_patient_id']} — #{e.message}"
+      end
     end
+    applied
+  end
+
+  def remember_deferred_row(row, reason)
+    values = HEADERS.to_h { |header| [header, row[header]] }
+    @deferred_rows[deferred_row_key(row)] = values.merge('deferred_reason' => reason)
+  end
+
+  def deferred_row_key(row)
+    [row['action'].to_s, row['target_identifier_row_id'].to_i]
+  end
+
+  def write_deferred_report!
+    FileUtils.mkdir_p(File.dirname(@deferred_path))
+    CSV.open(@deferred_path, 'w', write_headers: true, headers: DEFERRED_HEADERS) do |csv|
+      @deferred_rows.each_value do |row|
+        csv << DEFERRED_HEADERS.map { |header| row[header] }
+      end
+    end
+    File.chmod(0o600, @deferred_path)
   end
 
   def with_operator_context
@@ -207,31 +259,220 @@ class DuplicateIdentifierCleanupTask
       raise "DDE_CONFIRM=#{DDE_CONFIRMATION} is required for type-3 reassignment"
     end
 
-    doc_type = PatientIdentifierType.find(DDE_DOC_TYPE)
-    doc_id = PatientIdentifier.find_by(patient:, type: doc_type)&.identifier
-    if doc_id.present? && PatientIdentifier.where(type: doc_type, identifier: doc_id).where.not(patient_id: patient.id).exists?
-      raise "Patient #{patient.id} shares DDE document ID #{doc_id}; automatic remote reassignment is unsafe"
+    doc_id = current_dde_document_id(patient.id)
+    shared_owners = shared_dde_document_owners(doc_id)
+    if shared_owners.many?
+      lookup_service = DdeService.new(program: dde_program_for(patient))
+      patient = shared_document_repair_target!(lookup_service, patient, doc_id, owners: shared_owners)
+      doc_id = current_dde_document_id(patient.id)
     end
 
-    program = patient.patient_programs.order(:date_enrolled).first&.program || Program.find(14)
-    service = DdeService.new(program:)
-    if doc_id.present?
-      service.reassign_patient_npid('patient_id' => patient.id, 'doc_id' => doc_id)
+    previous_identifiers = active_dde_identifier_snapshots(patient.id)
+    previous_npids = previous_identifiers.select { |identifier| identifier[:identifier_type] == DDE_NPID_TYPE }
+    service = DdeService.new(program: dde_program_for(patient))
+    begin
+      PatientIdentifier.transaction do
+        if shared_owners.many?
+          # Two nonmatching local patients cannot safely reassign the same remote
+          # DDE person: doing so would also change the keeper's identity. Detach
+          # only the demographically nonmatching target and give it a separate
+          # remote person UUID and NPID.
+          puts "Patient #{patient.id} shares DDE document ID #{doc_id}; registering a separate DDE person"
+          provision_separate_dde_identity!(service, patient, excluding_doc_id: doc_id)
+        elsif doc_id.present?
+          begin
+            service.reassign_patient_npid('patient_id' => patient.id, 'doc_id' => doc_id)
+          rescue DdeService::MissingRemotePatientError
+            # This patient is a non-keeper in a duplicated-NPID group. The
+            # selected keeper retains the shared NPID; a stale UUID that this
+            # proxy cannot resolve is discarded locally and replaced with an
+            # independent DDE person UUID and NPID.
+            puts "Patient #{patient.id} DDE document #{doc_id} is missing locally; " \
+                 'registering a separate DDE person'
+            provision_separate_dde_identity!(service, patient, excluding_doc_id: doc_id)
+          end
+        else
+          service.create_patient(patient, nil)
+        end
+
+        current_npid = PatientIdentifier.where(patient_id: patient.id, identifier_type: DDE_NPID_TYPE)
+                                        .order(date_created: :desc, patient_identifier_id: :desc).first
+        raise "DDE did not assign a new type-3 identifier to patient #{patient.id}" unless current_npid
+        if previous_npids.any? { |identifier| normalize(identifier[:identifier]) == normalize(current_npid.identifier) }
+          raise "DDE returned existing NPID #{current_npid.identifier} for patient #{patient.id}; duplicate was not repaired"
+        end
+
+        consolidate_dde_identifiers!(patient.id, current_npid, previous_identifiers)
+      end
+    rescue UnprocessableEntityError => e
+      raise DeferredDdeRepair,
+            "DDE rejected patient #{patient.id}: #{e.message}; local identifiers were left unchanged"
+    end
+  end
+
+  def current_dde_document_id(patient_id)
+    PatientIdentifier.where(patient_id:, identifier_type: DDE_DOC_TYPE)
+                     .order(date_created: :desc, patient_identifier_id: :desc)
+                     .first&.identifier
+  end
+
+  def dde_program_for(patient)
+    patient.patient_programs.order(:date_enrolled).first&.program || Program.find(14)
+  end
+
+  def shared_dde_document_owners(doc_id)
+    return [] if doc_id.blank?
+
+    patient_ids = PatientIdentifier.where(identifier_type: DDE_DOC_TYPE)
+                                   .where('UPPER(TRIM(identifier)) = ?', normalize(doc_id))
+                                   .distinct
+                                   .pluck(:patient_id)
+    Patient.where(patient_id: patient_ids)
+           .includes(person: %i[names addresses])
+           .select { |owner| owner.person.present? }
+           .sort_by(&:id)
+  end
+
+  def shared_document_repair_target!(service, requested_patient, doc_id, owners:)
+    remote_matches = service.find_remote_matches_by_doc_id(doc_id)
+    if remote_matches.empty?
+      raise DeferredDdeRepair,
+            "shared DDE document #{doc_id} is not in the local proxy; keeper is unknown pending master sync"
+    end
+    if remote_matches.many?
+      raise DeferredDdeRepair,
+            "shared DDE document #{doc_id} returned multiple local-proxy records; no patient was changed"
+    end
+
+    remote = remote_matches.first
+    keepers = owners.select { |owner| exact_remote_demographics?(owner, remote) }
+    unless keepers.one?
+      raise DeferredDdeRepair,
+            "shared DDE document #{doc_id} matched #{keepers.length} local patient(s); exactly one keeper is required"
+    end
+
+    keeper = keepers.first
+    return requested_patient unless keeper.id == requested_patient.id
+
+    target = owners.reject { |owner| owner.id == keeper.id }.min_by(&:id)
+    unless target
+      raise DeferredDdeRepair, "shared DDE document #{doc_id} has no non-keeper patient to repair"
+    end
+
+    puts "Patient #{requested_patient.id} matches shared DDE document #{doc_id}; " \
+         "keeping it and repairing nonmatching patient #{target.id} instead"
+    target
+  end
+
+  def detach_shared_dde_identity!(patient_id)
+    PatientIdentifier.unscoped
+                     .where(patient_id:, identifier_type: [DDE_NPID_TYPE, DDE_DOC_TYPE])
+                     .delete_all
+  end
+
+  def provision_separate_dde_identity!(service, patient, excluding_doc_id:)
+    reusable_remote = reusable_remote_dde_person(service, patient, excluding_doc_id:)
+    detach_shared_dde_identity!(patient.id)
+    if reusable_remote
+      puts "Reusing unlinked DDE person #{reusable_remote['doc_id']} with NPID #{reusable_remote['npid']}"
+      service.link_local_patient_to_remote(patient.reload, reusable_remote)
     else
-      service.create_patient(patient, nil)
+      service.create_patient(patient.reload, nil)
+    end
+  end
+
+  def reusable_remote_dde_person(service, patient, excluding_doc_id:)
+    matches = service.find_remote_demographic_matches(patient).select do |remote|
+      remote_doc_id = remote['doc_id'].to_s.strip
+      remote_doc_id.present? &&
+        normalize(remote_doc_id) != normalize(excluding_doc_id) &&
+        exact_remote_demographics?(patient, remote) &&
+        !PatientIdentifier.where(identifier_type: DDE_DOC_TYPE, identifier: remote_doc_id).exists?
     end
 
-    current_npid = PatientIdentifier.where(patient_id: patient.id, identifier_type: DDE_NPID_TYPE)
-                                    .order(date_created: :desc).first
-    raise "DDE did not assign a new type-3 identifier to patient #{patient.id}" unless current_npid
+    return matches.first if matches.one?
+    return nil if matches.empty?
 
-    PatientIdentifier.unscoped.where(patient_id: patient.id, identifier_type: DDE_NPID_TYPE)
-                     .where.not(patient_identifier_id: current_npid.id).delete_all
-    current_doc = PatientIdentifier.where(patient_id: patient.id, identifier_type: DDE_DOC_TYPE)
-                                   .order(date_created: :desc).first
-    PatientIdentifier.unscoped.where(patient_id: patient.id, identifier_type: DDE_DOC_TYPE)
-                     .where.not(patient_identifier_id: current_doc&.id).delete_all
-    PatientIdentifier.unscoped.where(patient_id: patient.id, identifier_type: OLD_NPID_TYPE).delete_all
+    raise "Patient #{patient.id} has multiple unlinked exact DDE matches: #{matches.map { |match| match['doc_id'] }.join(', ')}"
+  end
+
+  def exact_remote_demographics?(patient, remote)
+    person = patient.person
+    name = person&.names&.first
+    address = person&.addresses&.first
+    attributes = remote['attributes'] || {}
+    return false unless person && name
+
+    local_values = [
+      name.given_name,
+      name.family_name,
+      person.gender&.first,
+      person.birthdate,
+      address&.state_province,
+      address&.township_division,
+      address&.city_village
+    ]
+    remote_values = [
+      remote['given_name'],
+      remote['family_name'],
+      remote['gender']&.first,
+      remote['birthdate'],
+      attributes['current_district'],
+      attributes['current_traditional_authority'],
+      attributes['current_village']
+    ]
+
+    local_values.zip(remote_values).all? { |local, remote_value| normalize_demographic(local) == normalize_demographic(remote_value) }
+  end
+
+  def normalize_demographic(value)
+    value.to_s.strip.downcase.gsub(/[^a-z0-9]/, '')
+  end
+
+  # DDE's linking service voids the patient's old type-2 and type-3 rows before
+  # saving the newly allocated NPID. Snapshot them first so every historical
+  # NPID remains an active "Old identification number" alias after cleanup.
+  def active_dde_identifier_snapshots(patient_id)
+    PatientIdentifier.unscoped
+                     .where(patient_id:, identifier_type: [DDE_NPID_TYPE, OLD_NPID_TYPE], voided: 0)
+                     .order(:date_created, :patient_identifier_id)
+                     .map do |identifier|
+      {
+        identifier: identifier.identifier.to_s.strip,
+        identifier_type: identifier.identifier_type.to_i,
+        location_id: identifier.location_id
+      }
+    end
+                     .reject { |identifier| identifier[:identifier].blank? }
+  end
+
+  def consolidate_dde_identifiers!(patient_id, current_npid, previous_identifiers)
+    current_doc = PatientIdentifier.where(patient_id:, identifier_type: DDE_DOC_TYPE)
+                                   .order(date_created: :desc, patient_identifier_id: :desc).first
+    legacy_identifiers = previous_identifiers
+                         .reject { |identifier| normalize(identifier[:identifier]) == normalize(current_npid.identifier) }
+                         .uniq { |identifier| normalize(identifier[:identifier]) }
+
+    PatientIdentifier.transaction do
+      PatientIdentifier.unscoped.where(patient_id:, identifier_type: DDE_NPID_TYPE)
+                       .where.not(patient_identifier_id: current_npid.id).delete_all
+      doc_rows = PatientIdentifier.unscoped.where(patient_id:, identifier_type: DDE_DOC_TYPE)
+      current_doc ? doc_rows.where.not(patient_identifier_id: current_doc.id).delete_all : doc_rows.delete_all
+
+      # Replace any active/voided legacy rows with one compact active row per
+      # historical NPID. This retains search aliases without retaining duplicate
+      # or voided identifier rows.
+      PatientIdentifier.unscoped.where(patient_id:, identifier_type: OLD_NPID_TYPE).delete_all
+      legacy_identifiers.each do |legacy|
+        PatientIdentifier.create!(
+          patient_id:,
+          identifier_type: OLD_NPID_TYPE,
+          identifier: legacy[:identifier],
+          location_id: legacy[:location_id].presence || current_npid.location_id,
+          preferred: 0
+        )
+      end
+    end
   end
 
   def delete_identifier_row!(row)
@@ -300,7 +541,7 @@ class DuplicateIdentifierCleanupTask
         FROM patient_identifier pi
         INNER JOIN patient p ON p.patient_id = pi.patient_id AND p.voided = 0
         WHERE pi.voided = 0
-          AND pi.identifier_type NOT IN (#{EXCLUDED_IDENTIFIER_TYPES.join(', ')})
+          AND pi.identifier_type NOT IN (#{MULTIPLE_VALUE_EXCLUDED_IDENTIFIER_TYPES.join(', ')})
           AND NULLIF(TRIM(pi.identifier), '') IS NOT NULL
       ), distinct_values AS (
         SELECT active_rows.*,

@@ -68,6 +68,7 @@ RSpec.configure do |config|
     'hard_delete_unsyncable_patients_task_spec.rb',
     'exact_duplicate_patient_cleanup_task_spec.rb',
     'duplicate_identifier_cleanup_task_spec.rb',
+    'dde_service_spec.rb',
     'dde_merging_service_spec.rb',
     'ncd_identifier_cleanup_spec.rb',
     'mnh_stats_sync_job_spec.rb',
