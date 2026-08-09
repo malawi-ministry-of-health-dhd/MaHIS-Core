@@ -140,6 +140,10 @@ class ExactDuplicatePatientCleanupTask
   end
 
   def apply_all_candidates
+    # Each unattended run owns this report; do not leave failures from an older
+    # completed run looking like unresolved failures from the current run.
+    write_failure_report([])
+
     pending_pairs = pending_merged_secondary_pairs
     if pending_pairs.any?
       puts "\nRecovering #{pending_pairs.length} previously merged secondary patient record(s) pending permanent deletion."

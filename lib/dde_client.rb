@@ -113,7 +113,12 @@ class DdeClient
   def exec_request(resource)
     LOGGER.debug "Executing DDE request (#{resource})"
     response = yield build_uri(resource), headers
-    LOGGER.debug "Handling DDE response:\n\tStatus - #{response.code}\n\tBody - #{response.body}"
+    logged_body = if resource.to_s == 'login'
+                    response.body.to_s.gsub(/("access_token"\s*:\s*")[^"]+"/, '\\1[REDACTED]"')
+                  else
+                    response.body
+                  end
+    LOGGER.debug "Handling DDE response:\n\tStatus - #{response.code}\n\tBody - #{logged_body}"
     handle_response response
   rescue RestClient::Unauthorized => e
     LOGGER.error "DdeClient suppressed exception: #{e}"

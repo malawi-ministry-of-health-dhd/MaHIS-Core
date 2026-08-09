@@ -157,6 +157,35 @@ module PatientRecordService
       log_and_fail("Failed to update person information", e)
     end
 
+    # Retires historical DDE/NPID aliases after a user has found the patient by
+    # an old barcode and confirmed that the replacement barcode was printed.
+    # Values are required so a stale/offline request only targets the exact
+    # aliases the user saw, never every identifier belonging to the patient.
+    def void_legacy_dde_identifiers(patient_id, record)
+      requested = Array(
+        record[:voidLegacyDdeIdentifiers] || record['voidLegacyDdeIdentifiers']
+      ).map { |identifier| identifier.to_s.strip }
+       .reject(&:blank?)
+       .uniq { |identifier| identifier.upcase }
+      return ok if requested.empty?
+
+      requested_values = requested.map(&:upcase)
+      matching = PatientIdentifier.where(patient_id:, identifier_type: 2).select do |identifier|
+        requested_values.include?(identifier.identifier.to_s.strip.upcase)
+      end
+
+      reason = 'Legacy DDE identifier retired after replacement barcode confirmation'
+      PatientIdentifier.transaction do
+        matching.each { |identifier| identifier.void(reason) }
+      end
+
+      record[:voidLegacyDdeIdentifiers] = []
+      record['voidLegacyDdeIdentifiers'] = [] if record.respond_to?(:key?) && record.key?('voidLegacyDdeIdentifiers')
+      changed_ok
+    rescue StandardError => e
+      log_and_fail("Failed to void legacy DDE identifiers", e)
+    end
+
     def create_ncd_identifier(patient_id, record)
       ncd_id = record[:NcdID].presence || record['NcdID'].presence
       unsaved_ncd_id = record[:unsavedNcdID].presence || record['unsavedNcdID'].presence

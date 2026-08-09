@@ -72,6 +72,8 @@ module BuildPatientRecordService
       {
         patientID: patient.patient_id,
         ID: patient_identifier_from_map(identifiers_by_type, 3, patient.patient_id),
+        legacyDdeID: patient_identifier_from_map(identifiers_by_type, 2, patient.patient_id),
+        legacyDdeIDs: patient_identifier_values_from_map(identifiers_by_type, 2),
         nationalID: patient_identifier_from_map(identifiers_by_type, 28, patient.patient_id),
         NcdID: patient_identifier_from_map(identifiers_by_type, 31, patient.patient_id),
         ichisID: patient_identifier_from_map(identifiers_by_type, 10, patient.patient_id),
