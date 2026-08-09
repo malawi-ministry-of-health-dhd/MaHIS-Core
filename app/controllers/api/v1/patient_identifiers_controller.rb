@@ -46,7 +46,8 @@ module Api
 
       # DELETE /patient_identifiers/1
       def destroy
-        if @patient_identifier.void("Voided by #{User.current.username}")
+        reason = params[:reason].presence || "Voided by #{User.current.username}"
+        if @patient_identifier.void(reason)
           render status: :no_content
         else
           render status: :internal_server_error, json: @patient_identifier.errors
