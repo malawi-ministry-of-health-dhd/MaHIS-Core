@@ -4,6 +4,7 @@ class DdeService
   require_relative './dde_service/matcher'
 
   class DdeError < StandardError; end
+  class MissingRemotePatientError < DdeError; end
 
   CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
   DDE_LOCATION_ID = CONFIG['DDE_LOCATION_ID'] || ""
@@ -275,12 +276,18 @@ class DdeService
     patient = patient_id.blank? ? nil : Patient.find(patient_id)
 
     # We have a doc_id thus we can re-assign npid in DDE
-    # Check if person if available in DDE if not add person using doc_id
+    # Check whether the permanent person UUID is available in this DDE proxy.
+    # A blank 200 and a 404 both mean the proxy does not currently know it;
+    # identifier cleanup must defer instead of creating a second person.
     response, status = dde_client.post('search_by_doc_id', doc_id:)
+    if response.blank? && [200, 404].include?(status.to_i)
+      raise MissingRemotePatientError, "DDE document #{doc_id} was not found"
+    end
+
     if !response.blank? && status.to_i == 200
       response, status = dde_client.post('reassign_npid', doc_id:, location_id: current_footprint_location_id)
-    elsif response.blank? && status.to_i == 200
-      return push_local_patient_to_dde(Patient.find(patient_ids['patient_id']))
+    else
+      raise DdeError, "Failed to find DDE document #{doc_id}: DDE Response => #{status} - #{response}"
     end
 
     unless status == 200 && !response.empty?
@@ -310,6 +317,27 @@ class DdeService
       patient = Patient.create(patient_id: person.id)
       merging_service.link_local_to_remote_patient(patient, remote_patient)
     end
+  end
+
+  # Used by identifier recovery when a previous DDE request succeeded remotely
+  # but its local transaction rolled back. The caller still verifies that the
+  # returned remote record is an unlinked exact demographic match.
+  def find_remote_demographic_matches(patient)
+    name = patient.person&.names&.first
+    return [] unless name
+
+    find_remote_patients_by_name_and_gender(name.given_name, name.family_name, patient.person.gender&.first)
+  end
+
+  # Identifier cleanup must establish which local owner of a shared document
+  # is the real DDE person before detaching anyone. Keep the HTTP lookup inside
+  # this service while exposing the result to that recovery workflow.
+  def find_remote_matches_by_doc_id(doc_id)
+    find_remote_patients_by_doc_id(doc_id)
+  end
+
+  def link_local_patient_to_remote(patient, remote_patient)
+    merging_service.link_local_to_remote_patient(patient, remote_patient)
   end
 
   ##
@@ -594,9 +622,26 @@ class DdeService
   def openmrs_to_dde_patient(patient, npid = nil)
     LOGGER.debug "Converting OpenMRS person to dde_patient: #{patient}"
     person = patient.person
+    person_name = person&.names&.first
+    person_address = person&.addresses&.first
+    required_demographics = {
+      given_name: person_name&.given_name,
+      family_name: person_name&.family_name,
+      gender: person&.gender,
+      birthdate: person&.birthdate,
+      home_district: person_address&.address2,
+      home_village: person_address&.neighborhood_cell,
+      home_traditional_authority: person_address&.county_district
+    }
+    missing_demographics = required_demographics.select { |_field, value| value.blank? }.keys
+    if missing_demographics.any?
+      error = UnprocessableEntityError.new(
+        "Patient #{patient.id} is missing required DDE demographics: #{missing_demographics.join(', ')}"
+      )
+      error.add_entity(patient)
+      raise error
+    end
 
-    person_name = person.names[0]
-    person_address = person.addresses[0]
     person_attributes = filter_person_attributes(person.person_attributes)
 
     dde_patient = HashWithIndifferentAccess.new(
