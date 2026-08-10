@@ -4,6 +4,7 @@
 module PatientRecordService
   class VaccineManager < BaseSaver
     ENCOUNTER_TYPE_MAPPING = SavePatientRecordService::ENCOUNTER_TYPE_MAPPING
+    IMMUNIZATION_PROGRAM_NAME = 'IMMUNIZATION PROGRAM'
 
     def save_vaccines(patient_id, record)
       orders = record.dig(:vaccineAdministration, :orders)
@@ -16,6 +17,17 @@ module PatientRecordService
         return OperationResult.new(success: true, errors: ["Encounter type #{ENCOUNTER_TYPE_MAPPING[:treatment]} not found"])
       end
 
+      # Vaccines always belong to the immunization program, no matter which program
+      # (PNC, Labour, EPI, ...) the record was captured under.
+      immunization_program = Program.find_by_name(IMMUNIZATION_PROGRAM_NAME)
+
+      unless immunization_program
+        return OperationResult.new(success: true, errors: ["Program #{IMMUNIZATION_PROGRAM_NAME} not found"])
+      end
+
+      vaccine_record = record.merge(program_id: immunization_program.program_id)
+      ensure_immunization_enrollment!(patient_id, immunization_program, record)
+
       orders.each do |order|
         begin
           result = with_operation_guard(
@@ -25,11 +37,11 @@ module PatientRecordService
             target_type: 'Order'
           ) do
             ActiveRecord::Base.transaction(requires_new: true) do
-              encounter_id = create_encounter(patient_id, encounter_type.id, record)
+              encounter_id = create_encounter(patient_id, encounter_type.id, vaccine_record)
               obs = build_drugs_dispensed_observation(order, record)
 
               AdministerVaccineService.administer_vaccine(
-                encounter_id, [order], record[:program_id], [obs],
+                encounter_id, [order], immunization_program.program_id, [obs],
                 record[:provider_id], record[:location_id]
               )
 
@@ -93,6 +105,28 @@ module PatientRecordService
     end
 
     private
+
+    # Vaccines captured outside EPI (e.g. PNC catch-up doses) would otherwise be
+    # invisible to immunization reports, which filter by enrollment.
+    def ensure_immunization_enrollment!(patient_id, program, record)
+      active = PatientProgram.unscoped.where(
+        program_id: program.program_id,
+        patient_id: patient_id,
+        voided: 0,
+        date_completed: nil
+      ).exists?
+      return if active
+
+      PatientProgram.create!(
+        program_id: program.program_id,
+        patient_id: patient_id,
+        date_enrolled: value_for(record, :encounter_datetime) || Time.now,
+        location_id: value_for(record, :location_id) || Location.current&.location_id
+      )
+      Rails.logger.info("Enrolled patient #{patient_id} in #{program.name} for vaccine administration")
+    rescue StandardError => e
+      log_error("Failed to enroll patient #{patient_id} in #{program.name}", e)
+    end
 
     def build_drugs_dispensed_observation(order, record)
       concept_id = ConceptName.find_by_name('Drugs dispensed')&.concept_id
