@@ -110,8 +110,9 @@ RSpec.describe SavePatientRecordService do
 
     it 'deletes the CouchDB document instead of upserting it when CouchDB is configured' do
       service = described_class.new
+      document_id = '71626396-c320-42b2-afa7-dec5834c595d'
       operation_results = { void_patient: PatientRecordService::OperationResult.new(success: true, errors: []) }
-      allow(service).to receive(:resolve_history_base).and_return({ 'ID' => 'ABC123' })
+      allow(service).to receive(:resolve_history_base).and_return({ 'ID' => 'ABC123', '_id' => document_id })
       allow(service).to receive(:couchdb_configured?).and_return(true)
       allow(service).to receive(:delete_from_couchdb).and_return(true)
       allow(service).to receive(:sync_to_couchdb)
@@ -119,15 +120,17 @@ RSpec.describe SavePatientRecordService do
       record = { void_patient: { reason: 'Duplicate' } }.with_indifferent_access
       result = service.send(:finalize_voided_patient_record, 33, record, operation_results, 'synced')
 
-      expect(service).to have_received(:delete_from_couchdb).with('patients_records', 'ABC123')
+      expect(service).to have_received(:delete_from_couchdb).with('patients_records', document_id)
       expect(service).not_to have_received(:sync_to_couchdb)
+      expect(result['_id']).to eq(document_id)
       expect(result['deleted_from_couchdb']).to be true
     end
 
     it 'falls back to upserting a voided flag when the CouchDB delete fails' do
       service = described_class.new
+      document_id = '71626396-c320-42b2-afa7-dec5834c595d'
       operation_results = { void_patient: PatientRecordService::OperationResult.new(success: true, errors: []) }
-      allow(service).to receive(:resolve_history_base).and_return({ 'ID' => 'ABC123' })
+      allow(service).to receive(:resolve_history_base).and_return({ 'ID' => 'ABC123', '_id' => document_id })
       allow(service).to receive(:couchdb_configured?).and_return(true)
       allow(service).to receive(:delete_from_couchdb).and_raise(StandardError, 'boom')
       allow(service).to receive(:sync_to_couchdb)
@@ -135,7 +138,8 @@ RSpec.describe SavePatientRecordService do
       record = { void_patient: { reason: 'Duplicate' } }.with_indifferent_access
       result = service.send(:finalize_voided_patient_record, 33, record, operation_results, 'synced')
 
-      expect(service).to have_received(:sync_to_couchdb).with(hash_including('voided' => true), 'patients_records', 'ABC123')
+      expect(service).to have_received(:sync_to_couchdb)
+        .with(hash_including('_id' => document_id, 'ID' => 'ABC123', 'voided' => true), 'patients_records', document_id)
       expect(result['deleted_from_couchdb']).to be_nil
     end
   end
