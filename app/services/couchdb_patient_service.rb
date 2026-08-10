@@ -260,12 +260,20 @@ class CouchdbPatientService
 
     def get_single_patient(patient_id)
       if couchdb_configured?
+        local_patient = nil
+
         begin
-          patient = Patient.unscoped.includes(:person).find_by(patient_id: patient_id) if patient_id.to_s.match?(/\A\d+\z/)
-          document_id = PatientRecordIdentityService.document_id(patient:) || patient_id.to_s
+          local_patient = Patient.unscoped.includes(:person).find_by(patient_id: patient_id) if patient_id.to_s.match?(/\A\d+\z/)
+          document_id = PatientRecordIdentityService.document_id(patient: local_patient) || patient_id.to_s
           response = RestClient.get(couchdb_url(PATIENTS_DB, URI.encode_www_form_component(document_id)))
           JSON.parse(response.body)
         rescue RestClient::NotFound
+          # A numeric ID that resolves to a local patient is not a legacy DDE
+          # identifier. On a newly registered patient, searching for it using
+          # the legacy-identifier Mango selector causes a full CouchDB scan.
+          # Build the missing UUID document directly instead.
+          return build_patient_record(patient_id) if local_patient
+
           by_identifier = find_patient_document_by_identifier(patient_id)
           return by_identifier if by_identifier
 
