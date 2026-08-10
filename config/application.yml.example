@@ -100,7 +100,12 @@ ohsp:
 # Configuration for MIUM/MEMIS integration. These service credentials are used
 # server-side by MaHIS-Core so they are not shipped in the frontend config.json.
 mium:
+  # Public base URL handed to the browser, which talks to MIUM directly.
   url: https://mahistest.health.gov.mw/memis2/api
+  # Optional. Used ONLY for the server-to-server service login (POST /mium/token).
+  # MIUM normally runs on this same host, so point this at it directly and skip the
+  # public hostname, DNS and reverse proxy. Falls back to `url` when omitted.
+  token_url: http://127.0.0.1:4000/api
   username: username
   password: password
 
