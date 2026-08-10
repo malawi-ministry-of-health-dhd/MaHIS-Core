@@ -163,6 +163,88 @@ def get_validated_location_id_manual
   end
 end
 
+# Prompt for which programs to migrate; HIV is always included and cannot be deselected.
+# Returns a Hash { program_id => name } sourced entirely from the source DB.
+def select_programs_to_migrate(source_db, hiv_program_id)
+  # Only show programs that have actual clinical encounter data in the source DB
+  all_programs = ActiveRecord::Base.connection.select_all(<<~SQL
+    SELECT p.program_id, p.name
+    FROM #{source_db}.program p
+    WHERE p.retired = 0
+      AND EXISTS (
+        SELECT 1 FROM #{source_db}.encounter e
+        WHERE e.program_id = p.program_id AND e.voided = 0
+      )
+    ORDER BY p.name
+  SQL
+                                                         ).each_with_object({}) do |row, h|
+    h[row['program_id'].to_i] =
+      row['name']
+  end
+
+  hiv_name = all_programs[hiv_program_id] || 'HIV PROGRAM'
+
+  selected = if ENV['PROGRAM_IDS']
+               tokens = ENV['PROGRAM_IDS'].split(',').map(&:strip)
+               malformed = tokens.reject { |t| t.match?(/\A\d+\z/) }
+               if malformed.any?
+                 puts "⚠️  PROGRAM_IDS contains non-numeric tokens: #{malformed.join(', ')} — ignoring"
+               end
+               ids = tokens.select { |t| t.match?(/\A\d+\z/) }.map(&:to_i).uniq
+               invalid = ids - all_programs.keys
+               if invalid.any?
+                 puts "⚠️  PROGRAM_IDS contains unknown program IDs: #{invalid.join(', ')} — ignoring"
+                 ids -= invalid
+               end
+               # Append HIV after validation so it is never subject to the invalid-ID filter
+               ids << hiv_program_id unless ids.include?(hiv_program_id)
+               all_programs.select { |id, _| ids.include?(id) }.merge(hiv_program_id => hiv_name)
+             elsif $stdin.isatty
+               interactive_program_selection(all_programs, hiv_program_id, hiv_name)
+             else
+               puts 'Auto-selecting HIV program only (non-interactive)'
+               { hiv_program_id => hiv_name }
+             end
+
+  puts "✓ Programs selected: #{selected.values.join(', ')}"
+  selected
+end
+
+def interactive_program_selection(all_programs, hiv_program_id, hiv_name)
+  puts "\n" + '=' * 60
+  puts 'PROGRAM SELECTION (source database programs)'
+  puts '=' * 60
+  puts 'Available programs (* = always included):'
+  indexed = all_programs.each_with_index.map { |(id, name), idx| [idx + 1, id, name] }
+  indexed.each do |num, id, name|
+    marker = id == hiv_program_id ? '*' : ' '
+    puts "  #{marker} #{num}. #{name} (ID: #{id})"
+  end
+  puts '=' * 60
+
+  loop do
+    print 'Add programs to migrate (comma-separated numbers), or press Enter for HIV only: '
+    input = $stdin.gets.chomp.strip
+
+    if input.empty?
+      puts '✓ Migrating HIV program only'
+      return { hiv_program_id => hiv_name }
+    end
+
+    nums = input.split(',').map { |s| s.strip.to_i }
+    invalid_nums = nums.reject { |n| n >= 1 && n <= indexed.size }
+    if invalid_nums.any?
+      puts "✗ Invalid selection(s): #{invalid_nums.join(', ')}. Enter numbers between 1 and #{indexed.size}."
+      next
+    end
+
+    chosen = nums.map { |n| indexed[n - 1] }.each_with_object({}) { |(_, id, name), h| h[id] = name }
+    chosen[hiv_program_id] ||= hiv_name
+    puts "✓ Migrating: #{chosen.values.join(', ')}"
+    return chosen
+  end
+end
+
 # Load Database Configuration
 database_config = Psych.load(File.read('config/database.yml'), aliases: true).freeze
 source_db = database_config['centralized_source_db']['database']
@@ -181,6 +263,16 @@ ActiveRecord::Base.establish_connection(
 )
 puts "✓ Connection pool configured: #{pool_size} connections, #{optimal_thread_count} threads"
 SITE_ID = get_validated_location_id(source_db)
+# Query source DB directly so the ID used for filtering matches the source schema
+_hiv_row = ActiveRecord::Base.connection.select_one(
+  "SELECT program_id FROM #{source_db}.program WHERE name = 'HIV PROGRAM' AND retired = 0 LIMIT 1"
+)
+abort('✗ Fatal: HIV PROGRAM not found in source database program table — cannot continue.') unless _hiv_row
+HIV_PROGRAM_ID = _hiv_row['program_id'].to_i
+# Keys = program_ids, values = program names — both sourced from the source DB
+SELECTED_PROGRAMS = select_programs_to_migrate(source_db, HIV_PROGRAM_ID).freeze
+SELECTED_PROGRAM_IDS = SELECTED_PROGRAMS.keys.freeze
+SELECTED_PROGRAM_NAMES = SELECTED_PROGRAMS.values.freeze
 DEST_DB = ActiveRecord::Base.connection.current_database
 SITE_USER_MAPPING = Rails.root.join('log', "users_mapping_#{SITE_ID}.json")
 File.write(SITE_USER_MAPPING, '{}') unless File.exist?(SITE_USER_MAPPING)
@@ -223,10 +315,9 @@ ORDER_ID_CACHE = {}
 PROGRAM_ID_CACHE = {}
 OBS_ID_CACHE = {}
 
-# HIV Program filtering caches
-HIV_PATIENT_IDS = Set.new
-HIV_ENCOUNTER_IDS = Set.new
-HIV_PROGRAM_ID = Program.find_by(name: 'HIV PROGRAM').program_id.to_i # HIV PROGRAM program_id
+# Program filtering caches (indexed by selected program IDs)
+SELECTED_PROGRAM_PATIENT_IDS = Set.new
+SELECTED_PROGRAM_ENCOUNTER_IDS = Set.new
 
 # Track orphaned references for data quality reporting
 ORPHANED_REFERENCES = Hash.new { |h, k| h[k] = [] }
@@ -449,85 +540,72 @@ rescue StandardError => e
   puts "⚠️  Could not create migration_progress table: #{e.message}"
 end
 
-# Load HIV patient IDs from source database for filtering
-def load_hiv_patient_ids(source_db)
-  puts "\n🔍 Loading HIV program patient IDs from source..."
+# Load patient IDs for selected programs from source database
+def load_selected_program_patient_ids(source_db)
+  puts "\n🔍 Loading selected program patient IDs from source..."
 
-  # Get all patient_ids enrolled in HIV program (program_id = 1)
   result = ActiveRecord::Base.connection.execute(<<~SQL)
     SELECT DISTINCT patient_id#{' '}
     FROM #{source_db}.patient_program#{' '}
-    WHERE program_id = #{HIV_PROGRAM_ID}
+    WHERE program_id IN (#{SELECTED_PROGRAM_IDS.join(',')})
   SQL
 
   result.each do |row|
-    HIV_PATIENT_IDS.add(row[0])
+    SELECTED_PROGRAM_PATIENT_IDS.add(row[0])
   end
 
-  puts "✓ Loaded #{HIV_PATIENT_IDS.size} HIV patient IDs"
+  puts "✓ Loaded #{SELECTED_PROGRAM_PATIENT_IDS.size} patient IDs for selected program(s)"
 end
 
-# Load HIV encounter IDs from source database for filtering
-def load_hiv_encounter_ids(source_db)
-  puts '🔍 Loading HIV encounter IDs from source...'
+# Load encounter IDs for selected programs; NULL program_id encounters treated as HIV.
+def load_selected_program_encounter_ids(source_db)
+  puts '🔍 Loading selected program encounter IDs from source...'
 
-  # Get all encounters linked to HIV program or with no program assigned
   result = ActiveRecord::Base.connection.execute(<<~SQL)
     SELECT DISTINCT encounter_id#{' '}
     FROM #{source_db}.encounter#{' '}
-    WHERE program_id = #{HIV_PROGRAM_ID} OR program_id IS NULL
+    WHERE program_id IN (#{SELECTED_PROGRAM_IDS.join(',')}) OR program_id IS NULL
   SQL
 
   result.each do |row|
-    HIV_ENCOUNTER_IDS.add(row[0])
+    SELECTED_PROGRAM_ENCOUNTER_IDS.add(row[0])
   end
 
-  puts "✓ Loaded #{HIV_ENCOUNTER_IDS.size} HIV encounter IDs"
+  puts "✓ Loaded #{SELECTED_PROGRAM_ENCOUNTER_IDS.size} encounter IDs for selected program(s)"
 end
 
-# Pre-build a persistent HIV encounter IDs cache table in the target DB.
-# This eliminates the repeated inline subquery against the 11M-row mpc.encounter table
-# on every batch — turning O(n_batches * subquery_cost) into O(1) table creation + O(n_batches * index_lookup).
-def create_hiv_encounter_ids_cache(source_db)
+# Pre-build a persistent encounter IDs cache table for all selected programs.
+# NULL program_id encounters are always included (treated as HIV).
+def create_program_encounter_ids_cache(source_db)
   conn = ActiveRecord::Base.connection
 
-  # Check if the cache table already exists and is populated — skip expensive rebuild on restart.
-  existing_count = begin
-    conn.select_value("SELECT COUNT(*) FROM #{DEST_DB}.hiv_enc_ids_cache").to_i
-  rescue StandardError
-    0
-  end
-
+  prog_names = SELECTED_PROGRAM_IDS.join(',')
   source_count = begin
     conn.select_value(
-      "SELECT COUNT(DISTINCT encounter_id) FROM #{source_db}.encounter WHERE program_id = #{HIV_PROGRAM_ID} OR program_id IS NULL"
+      "SELECT COUNT(DISTINCT encounter_id) FROM #{source_db}.encounter WHERE program_id IN (#{SELECTED_PROGRAM_IDS.join(',')}) OR program_id IS NULL"
     ).to_i
   rescue StandardError
     0
   end
 
-  if existing_count > 0 && existing_count == source_count
-    puts "✅ HIV encounter IDs cache already populated: #{existing_count} IDs (skipping rebuild)"
-    return
-  end
-
-  puts "\n🔧 Building HIV encounter IDs cache table (#{existing_count} existing vs #{source_count} source)..."
+  puts "\n🔧 Building program encounter IDs cache table (programs: #{prog_names}, #{source_count} source encounters)..."
   start = Time.now
-  conn.execute("DROP TABLE IF EXISTS #{DEST_DB}.hiv_enc_ids_cache")
+  conn.execute("DROP TABLE IF EXISTS #{DEST_DB}.prog_enc_ids_cache")
   conn.execute(<<~SQL)
-    CREATE TABLE #{DEST_DB}.hiv_enc_ids_cache (
+    CREATE TABLE #{DEST_DB}.prog_enc_ids_cache (
       encounter_id INT NOT NULL,
       PRIMARY KEY (encounter_id)
     ) ENGINE=InnoDB ROW_FORMAT=COMPRESSED
   SQL
   conn.execute(<<~SQL)
-    INSERT INTO #{DEST_DB}.hiv_enc_ids_cache (encounter_id)
-    SELECT DISTINCT encounter_id FROM #{source_db}.encounter WHERE program_id = #{HIV_PROGRAM_ID} OR program_id IS NULL
+    INSERT INTO #{DEST_DB}.prog_enc_ids_cache (encounter_id)
+    SELECT DISTINCT encounter_id FROM #{source_db}.encounter WHERE program_id IN (#{SELECTED_PROGRAM_IDS.join(',')}) OR program_id IS NULL
   SQL
-  count = conn.select_value("SELECT COUNT(*) FROM #{DEST_DB}.hiv_enc_ids_cache").to_i
-  puts "✅ HIV encounter IDs cache ready: #{count} IDs (#{(Time.now - start).round(1)}s)"
+  count = conn.select_value("SELECT COUNT(*) FROM #{DEST_DB}.prog_enc_ids_cache").to_i
+  puts "✅ Program encounter IDs cache ready: #{count} IDs (#{(Time.now - start).round(1)}s)"
 rescue StandardError => e
-  puts "⚠️  Could not create hiv_enc_ids_cache: #{e.message} — falling back to inline subquery"
+  puts "❌ Could not create prog_enc_ids_cache: #{e.message}"
+  raise
 end
 
 # Build a table of source HIV obs_ids whose UUIDs are NOT yet present in the target DB.
@@ -540,7 +618,7 @@ end
 def build_obs_pending_table(source_db)
   conn = ActiveRecord::Base.connection
 
-  puts "\n🔧 Building obs_pending table (UUID diff: source HIV obs vs target obs)..."
+  puts "\n🔧 Building obs_pending table (UUID diff: source selected-program obs vs target obs)..."
   start = Time.now
 
   conn.execute("DROP TABLE IF EXISTS #{DEST_DB}.obs_pending")
@@ -554,7 +632,7 @@ def build_obs_pending_table(source_db)
     INSERT INTO #{DEST_DB}.obs_pending (obs_id)
     SELECT o.obs_id
     FROM #{source_db}.obs o
-    INNER JOIN #{DEST_DB}.hiv_enc_ids_cache h ON h.encounter_id = o.encounter_id
+    INNER JOIN #{DEST_DB}.prog_enc_ids_cache h ON h.encounter_id = o.encounter_id
     LEFT JOIN #{DEST_DB}.obs t ON t.uuid = o.uuid
     WHERE t.obs_id IS NULL
   SQL
@@ -809,30 +887,31 @@ rescue StandardError => e
   raise
 end
 
-# Check if a table should be filtered for HIV program only
-def hiv_filter_required?(table_name)
+# Check if a table should be filtered by selected programs
+def program_filter_required?(table_name)
   %w[patient_program encounter patient_state orders obs drug_order
      pharmacy_obs].include?(table_name.to_s)
 end
 
-# Build HIV filter WHERE clause for specific tables
-def build_hiv_filter_clause(table_name, source_db)
+# Build program filter WHERE clause for specific tables
+def build_program_filter_clause(table_name, source_db)
+  prog_in = SELECTED_PROGRAM_IDS.join(',')
   case table_name.to_s
   when 'patient_program'
-    "program_id = #{HIV_PROGRAM_ID}"
+    "program_id IN (#{prog_in})"
   when 'patient_identifier'
-    "patient_id IN (SELECT DISTINCT patient_id FROM #{source_db}.patient_program WHERE program_id = #{HIV_PROGRAM_ID})"
+    "patient_id IN (SELECT DISTINCT patient_id FROM #{source_db}.patient_program WHERE program_id IN (#{prog_in}))"
   when 'encounter'
-    "(program_id = #{HIV_PROGRAM_ID} OR program_id IS NULL)"
+    # NULL program_id encounters are treated as HIV
+    "(program_id IN (#{prog_in}) OR program_id IS NULL)"
   when 'patient_state'
-    # patient_state references patient_program_id, so we need to get HIV patient_program IDs
-    # This is trickier - we'll filter this in populate_records instead
+    # filtered in populate_records pre-pass instead
     nil
   when 'orders', 'obs'
-    # Use pre-built cache table (O(index_lookup)) instead of inline subquery (O(11M rows * n_batches))
-    "encounter_id IN (SELECT encounter_id FROM #{DEST_DB}.hiv_enc_ids_cache)"
+    # Use pre-built cache table (O(index_lookup)) instead of inline subquery
+    "encounter_id IN (SELECT encounter_id FROM #{DEST_DB}.prog_enc_ids_cache)"
   when 'drug_order'
-    "order_id IN (SELECT o.order_id FROM #{source_db}.orders o JOIN #{DEST_DB}.hiv_enc_ids_cache h ON h.encounter_id = o.encounter_id)"
+    "order_id IN (SELECT o.order_id FROM #{source_db}.orders o JOIN #{DEST_DB}.prog_enc_ids_cache h ON h.encounter_id = o.encounter_id)"
   end
 end
 
@@ -1362,9 +1441,9 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
     batch_ranges = (min_id..max_id).each_slice(batch_size).to_a
   end
 
-  # Build HIV filter for counting records
-  hiv_filter = build_hiv_filter_clause(table_name_str, source_db) if hiv_filter_required?(table_name_str)
-  count_where = hiv_filter ? " WHERE #{hiv_filter}" : ''
+  # Build program filter for counting records
+  prog_filter = build_program_filter_clause(table_name_str, source_db) if program_filter_required?(table_name_str)
+  count_where = prog_filter ? " WHERE #{prog_filter}" : ''
 
   processed_records = 0
   total_records = if test_limit
@@ -1376,7 +1455,7 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
                   end
 
   puts "🧪 TEST MODE: Limiting to #{test_limit} records per table" if test_limit
-  puts "🔍 HIV FILTER: Processing #{total_records} HIV-related records from #{table_name_str}" if hiv_filter
+  puts "🔍 PROGRAM FILTER: Processing #{total_records} selected-program records from #{table_name_str}" if prog_filter
   num_threads = test_limit ? 1 : optimal_threads
   # Hard-cap threads for large memory-intensive tables to prevent RAM exhaustion.
   # Override with OBS_THREADS env var (default 5).
@@ -1438,11 +1517,11 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
           nil # Non-fatal: worst case the default (short) timeout still applies
         end
 
-        # Reuse the HIV filter built earlier
+        # Reuse the program filter built earlier
 
         records = if test_limit
                     # In test mode, just get first N records without ID range filtering
-                    where_clause = hiv_filter
+                    where_clause = prog_filter
                     query_with_columns("#{source_db}.#{table_name_str}", where_clause, test_limit, nil, target_model)
                   elsif %w[global_property user_role user_property].include?(table_name_str)
                     where_clause = table_name_str == 'global_property' ? migratable_global_property_where : nil
@@ -1453,12 +1532,12 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
 
                     if obs_pending_active
                       # Filter to only the obs_ids in obs_pending (UUID-verified missing records).
-                      # obs_pending already incorporates the HIV filter, so no separate hiv_filter needed.
+                      # obs_pending already incorporates the program filter, so no separate prog_filter needed.
                       where_clause = "#{column_name} IN (SELECT obs_id FROM #{DEST_DB}.obs_pending WHERE obs_id >= #{batch_range.first} AND obs_id <= #{batch_range.last})"
                     else
-                      # Standard range + HIV filter path (non-obs tables, or obs without pending table).
+                      # Standard range + program filter path (non-obs tables, or obs without pending table).
                       where_parts = ["#{column_name} >= #{batch_range.first} AND #{column_name} <= #{batch_range.last}"]
-                      where_parts << hiv_filter if hiv_filter
+                      where_parts << prog_filter if prog_filter
                       where_clause = where_parts.join(' AND ')
                     end
 
@@ -1471,7 +1550,7 @@ def process_in_batches(source_db, table_name, batch_size = nil, target_model = n
 
         # Track the highest source obs_id committed for site-independent crash-resume.
         # Uses batch_range.last (the ID upper bound), not the actual max in records,
-        # so it is safe even when the batch contains sparse IDs (non-HIV obs filtered out).
+        # so it is safe even when the batch contains sparse IDs (non-selected-program obs filtered out).
         # On resume we subtract a large safety margin, so any small over-estimate is fine.
         if table_name_str == 'obs'
           batch_end = batch_range.last
@@ -1623,39 +1702,38 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
                       target_model.unscoped.where(uuid: record_keys).pluck(:uuid).to_set
                     end
 
-    # HIV Program Filtering PRE-PASS: Remove non-HIV PatientState records BEFORE FK remapping.
-    # PatientState has patient_program_id as a FK. Non-HIV patient_programs are never migrated
+    # Program Filtering PRE-PASS: Remove non-selected PatientState records BEFORE FK remapping.
+    # PatientState has patient_program_id as a FK. Non-selected patient_programs are never migrated
     # to the target DB, so their patient_program_ids would not be found during FK mapping.
     # We must filter using source patient_program_ids (still unmapped at this point).
     if target_model.to_s == 'PatientState' && records.any? && records.first.key?(:patient_program_id)
       source_pp_ids = records.map { |r| r[:patient_program_id] }.compact.uniq
       if source_pp_ids.any?
-        hiv_pp_ids = ActiveRecord::Base.connection.select_values(<<~SQL)
+        selected_pp_ids = ActiveRecord::Base.connection.select_values(<<~SQL)
           SELECT patient_program_id
           FROM #{source_db}.patient_program
           WHERE patient_program_id IN (#{source_pp_ids.join(',')})
-          AND program_id = #{HIV_PROGRAM_ID}
+          AND program_id IN (#{SELECTED_PROGRAM_IDS.join(',')})
         SQL
-        hiv_pp_ids_set = Set.new(hiv_pp_ids)
-        records.reject! { |r| !hiv_pp_ids_set.include?(r[:patient_program_id]) }
+        selected_pp_ids_set = Set.new(selected_pp_ids)
+        records.reject! { |r| !selected_pp_ids_set.include?(r[:patient_program_id]) }
       end
     end
 
-    # HIV Program Filtering PRE-PASS: Remove non-HIV LimsAcknowledgementStatus records BEFORE FK remapping.
-    # lims_acknowledgement_statuses has no SQL-level HIV filter, so we filter here using source order_ids
+    # Program Filtering PRE-PASS: Remove non-selected LimsAcknowledgementStatus records BEFORE FK remapping.
+    # lims_acknowledgement_statuses has no SQL-level program filter, so we filter here using source order_ids
     # (before they are remapped to destination IDs by get_order_ids).
     if target_model.to_s == 'LimsAcknowledgementStatus' && records.any? && records.first.key?(:order_id)
       source_lims_order_ids = records.map { |r| r[:order_id] }.compact.uniq
       if source_lims_order_ids.any?
-        hiv_lims_order_ids = ActiveRecord::Base.connection.select_values(<<~SQL)
+        selected_lims_order_ids = ActiveRecord::Base.connection.select_values(<<~SQL)
           SELECT o.order_id
           FROM #{source_db}.orders o
-          JOIN #{source_db}.encounter e ON e.encounter_id = o.encounter_id
+          JOIN #{DEST_DB}.prog_enc_ids_cache e ON e.encounter_id = o.encounter_id
           WHERE o.order_id IN (#{source_lims_order_ids.join(',')})
-          AND e.program_id = #{HIV_PROGRAM_ID}
         SQL
-        hiv_lims_order_ids_set = Set.new(hiv_lims_order_ids)
-        records.reject! { |r| !hiv_lims_order_ids_set.include?(r[:order_id]) }
+        selected_lims_order_ids_set = Set.new(selected_lims_order_ids)
+        records.reject! { |r| !selected_lims_order_ids_set.include?(r[:order_id]) }
       end
     end
 
@@ -1674,27 +1752,27 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
       records = send(mapping_method, records, foreign_key, source_db)
     end
 
-    # HIV Program Filtering: Filter pharmacy_obs records not related to HIV program.
-    # DrugOrder: already filtered at SQL level via build_hiv_filter_clause — no post-FK filter needed.
+    # Program Filtering: Filter pharmacy_obs records not related to selected programs.
+    # DrugOrder: already filtered at SQL level via build_program_filter_clause — no post-FK filter needed.
     # LimsAcknowledgementStatus: filtered in the PRE-PASS above, before FK remapping.
     # Both were removed from this post-FK filter because order_ids are remapped to destination IDs
     # at this point, making source DB lookups incorrect (causing ~47% of valid records to be dropped).
     if target_model.to_s == 'Pharmacy'
-      # Keep only pharmacy_obs records linked to HIV observations
-      if HIV_ENCOUNTER_IDS.empty?
-        puts '⚠️  WARNING: HIV_ENCOUNTER_IDS is empty for Pharmacy filtering. Skipping all records.'
+      # Keep only pharmacy_obs records linked to selected-program observations
+      if SELECTED_PROGRAM_ENCOUNTER_IDS.empty?
+        puts '⚠️  WARNING: SELECTED_PROGRAM_ENCOUNTER_IDS is empty for Pharmacy filtering. Skipping all records.'
         records.clear
       elsif records.any? && records.first.key?(:dispensation_obs_id)
         source_obs_ids = records.map { |r| r[:dispensation_obs_id] }.compact.uniq
         if source_obs_ids.any?
-          hiv_obs_ids = ActiveRecord::Base.connection.select_values(<<~SQL)
+          selected_obs_ids = ActiveRecord::Base.connection.select_values(<<~SQL)
             SELECT obs_id#{' '}
             FROM #{source_db}.obs#{' '}
             WHERE obs_id IN (#{source_obs_ids.join(',')})#{' '}
-            AND encounter_id IN (#{HIV_ENCOUNTER_IDS.to_a.join(',')})
+            AND encounter_id IN (#{SELECTED_PROGRAM_ENCOUNTER_IDS.to_a.join(',')})
           SQL
-          hiv_obs_ids_set = Set.new(hiv_obs_ids)
-          records.reject! { |r| !hiv_obs_ids_set.include?(r[:dispensation_obs_id]) }
+          selected_obs_ids_set = Set.new(selected_obs_ids)
+          records.reject! { |r| !selected_obs_ids_set.include?(r[:dispensation_obs_id]) }
         end
       end
     end
@@ -2478,27 +2556,28 @@ if User.current.nil?
   end
 end
 
-# Load HIV program IDs for filtering clinical data
+# Display selected programs and load filtering data
 puts "\n" + '=' * 80
-puts 'HIV PROGRAM FILTERING ENABLED'
+puts 'PROGRAM FILTERING ENABLED'
 puts '=' * 80
 puts '📋 Migration Scope:'
 puts '   ✓ ALL person and patient records will be migrated'
-puts '   ✓ ONLY HIV program clinical data will be migrated'
+puts "   ✓ Clinical data for: #{SELECTED_PROGRAM_NAMES.join(', ')}"
+puts '   ✓ Encounters with no program_id are included (treated as HIV)'
 puts '=' * 80 + "\n"
 
 if resume_group >= 5
   # Groups 5+ (obs, lims, drug_order) use SQL subquery filters, not in-memory Sets.
-  # Skip loading large HIV ID Sets (~1GB RAM) during resume.
-  puts '⏭️  Skipping HIV ID Set loading (Groups 5+ use SQL subquery filters)'
+  # Skip loading large ID Sets (~1GB RAM) during resume.
+  puts '⏭️  Skipping program ID Set loading (Groups 5+ use SQL subquery filters)'
 else
-  load_hiv_patient_ids(source_db)
-  load_hiv_encounter_ids(source_db)
+  load_selected_program_patient_ids(source_db)
+  load_selected_program_encounter_ids(source_db)
 end
 
-# Pre-build HIV encounter IDs cache table for fast SQL filtering on every obs/orders/drug_order batch.
+# Pre-build encounter IDs cache table for all selected programs.
 # This is idempotent: drops and recreates on each run. Takes ~30-60s but saves hours over 3000+ batches.
-create_hiv_encounter_ids_cache(source_db)
+create_program_encounter_ids_cache(source_db)
 
 # -----------------------------------------------------------------------
 # PRE-FLIGHT: Verify concept mapping covers all concept_id and value_coded
@@ -2510,19 +2589,19 @@ if CONCEPT_ID_MAP.any? && ENV['SKIP_PREFLIGHT'] != 'true'
   puts "\n🔍 Pre-flight concept mapping coverage check..."
   conn = ActiveRecord::Base.connection
 
-  # Collect all distinct concept_ids used as obs question in source HIV obs
+  # Collect all distinct concept_ids used as obs question in source selected-program obs
   question_ids = conn.execute(<<~SQL).map { |r| r[0].to_i }
     SELECT DISTINCT o.concept_id
     FROM #{source_db}.obs o
-    INNER JOIN #{DEST_DB}.hiv_enc_ids_cache h ON h.encounter_id = o.encounter_id
+    INNER JOIN #{DEST_DB}.prog_enc_ids_cache h ON h.encounter_id = o.encounter_id
     WHERE o.voided = 0
   SQL
 
-  # Collect all distinct value_coded values used as obs answer in source HIV obs
+  # Collect all distinct value_coded values used as obs answer in source selected-program obs
   answer_ids = conn.execute(<<~SQL).map { |r| r[0].to_i }
     SELECT DISTINCT o.value_coded
     FROM #{source_db}.obs o
-    INNER JOIN #{DEST_DB}.hiv_enc_ids_cache h ON h.encounter_id = o.encounter_id
+    INNER JOIN #{DEST_DB}.prog_enc_ids_cache h ON h.encounter_id = o.encounter_id
     WHERE o.voided = 0 AND o.value_coded IS NOT NULL
   SQL
 
