@@ -39,8 +39,10 @@ module Api
           url: build_mium_url(login_base_url, 'auth/login'),
           payload: { username: config[:username], password: config[:password] }.to_json,
           headers: { content_type: :json, accept: :json },
-          open_timeout: 6,
-          read_timeout: 10
+          # Split so the whole login attempt cannot exceed 5 seconds: the client
+          # waits on this call during sign-in, so it must fail fast.
+          open_timeout: 2,
+          read_timeout: 3
         )
 
         login_payload = JSON.parse(login_response.body)
