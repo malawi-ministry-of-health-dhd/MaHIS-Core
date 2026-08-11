@@ -70,5 +70,23 @@ RSpec.describe PatientRecordService::VaccineManager do
       expect(PatientProgram).to have_received(:create!)
         .with(hash_including(program_id: 33, patient_id: 123, location_id: 700))
     end
+
+    # The CouchDB listener hands records over as HashWithIndifferentAccess
+    # (couchdb_changes_listener.rb), the REST endpoint as ActionController::Parameters.
+    it 'overrides the program for offline records synced from CouchDB' do
+      manager.save_vaccines(123, record.deep_stringify_keys.with_indifferent_access)
+
+      expect(AdministerVaccineService).to have_received(:administer_vaccine)
+        .with(4321, anything, 33, anything, 7, 700)
+      expect(manager).to have_received(:create_encounter)
+        .with(123, treatment_encounter_type.id, hash_including('program_id' => 33))
+    end
+
+    it 'overrides the program for records posted through the REST endpoint' do
+      manager.save_vaccines(123, ActionController::Parameters.new(record.deep_stringify_keys))
+
+      expect(AdministerVaccineService).to have_received(:administer_vaccine)
+        .with(4321, anything, 33, anything, 7, 700)
+    end
   end
 end
