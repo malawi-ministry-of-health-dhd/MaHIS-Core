@@ -48,5 +48,16 @@ module BuildPatientRecordService
       ''
     end
 
+    def patient_identifier_values_from_map(identifiers_by_type, identifier_type_id)
+      Array(identifiers_by_type[identifier_type_id.to_i])
+        .sort_by { |row| [row.date_created || Time.at(0), row.patient_identifier_id.to_i] }
+        .map { |row| row.identifier.to_s.strip }
+        .reject(&:blank?)
+        .uniq { |identifier| identifier.upcase }
+    rescue StandardError => e
+      Rails.logger.error("Error getting patient identifiers for type #{identifier_type_id}: #{e.message}")
+      []
+    end
+
   end
 end

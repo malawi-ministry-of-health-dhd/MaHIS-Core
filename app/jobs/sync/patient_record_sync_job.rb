@@ -10,7 +10,7 @@ module Sync
       return unless Patient.exists?(patient_id: patient_id)
       
       patient_record = BuildPatientRecordService.build_patient_record(patient_id)
-      doc_id = patient_record[:ID] || patient_record.dig(:record, :ID)
+      doc_id = PatientRecordIdentityService.document_id(record: patient_record)
       
       raise "Missing patient ID for CouchDB sync" if doc_id.blank?
       
@@ -29,7 +29,7 @@ module Sync
     end
     
     def generate_document_id(patient_record)
-      patient_record[:ID] || patient_record.dig(:record, :ID)
+      PatientRecordIdentityService.document_id(record: patient_record)
     end
   end
 end

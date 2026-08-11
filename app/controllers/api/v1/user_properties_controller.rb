@@ -29,7 +29,10 @@ module Api
       end
 
       def create(success_response_status: :created)
-        name, value = params.require %i[property property_value]
+        name, = params.require %i[property]
+        # A blank value is a legitimate write — it clears the property (e.g. a user with no
+        # activities selected). `require` treats an empty string as missing and would 400.
+        value = params.fetch(:property_value, '').to_s
 
         provider = User.current.user_id
         provider = params[:user_id] if params.include?(:user_id)

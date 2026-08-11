@@ -54,7 +54,9 @@ Rails.application.routes.draw do
       resources :dispensations, only: %i[index create destroy]
       get '/check_username', to: 'users#check_username_exist'
       post '/auth/passkeys/register', to: 'passkeys#register'
-      post '/auth/passkeys/authenticate', to: 'passkeys#authenticate'
+      post '/auth/passkeys/authenticate', to: 'passkeys#verify'
+      get '/users/:user_id/passkeys', to: 'passkeys#index'
+      delete '/users/:user_id/passkeys', to: 'passkeys#reset'
       resources :users do
         post '/activate', to: 'users#activate'
         post '/deactivate', to: 'users#deactivate'
@@ -185,6 +187,12 @@ Rails.application.routes.draw do
 
       #NRU
       get '/nru/dashboard', to: 'nru#dashboard'
+
+      # IMPOW
+      get '/impow/expected_patients', to: 'impow#expected_patients'
+      get '/impow/pending_enrollments', to: 'impow#pending_enrollments'
+      get '/impow/metrics', to: 'impow#metrics'
+      get '/impow/batch_anthropometry/patients', to: 'impow#batch_anthropometry_patients'
 
       # Locations
       resources :locations do

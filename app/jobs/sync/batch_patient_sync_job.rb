@@ -40,7 +40,7 @@ module Sync
         # documents already exist. Count/presence reconciliation cannot detect
         # those stale documents, and the normal date watermark may exclude the
         # imported encounters. Bypass the watermark and rebuild every eligible
-        # patient (patients without a usable document ID remain excluded).
+        # patient (patients without a permanent Person UUID remain excluded).
         Rails.logger.info('Forced full patient sync requested; bypassing the incremental encounter watermark')
         location_id = nil
         parsed_since_date = nil
@@ -105,10 +105,9 @@ module Sync
       ActiveModel::Type::Boolean.new.cast(value)
     end
 
-    # Seed progress from the achievable CouchDB total: distinct canonical
-    # nonblank, non-voided type-3 identifiers (one per non-voided patient).
+    # Seed progress from the number of patients with a permanent record UUID.
     def initialize_patient_progress
-      total = PatientSyncReconciler.distinct_primary_identifier_count
+      total = PatientSyncReconciler.syncable_patient_count
       synced = CouchdbPatientService.patient_record_count.to_i
       SyncProgress.start('patients_records', total)
       SyncProgress.set('patients_records', [synced, total].min) if total.positive?

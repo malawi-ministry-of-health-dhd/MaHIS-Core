@@ -151,10 +151,9 @@ module Sync
     end
 
     # Update the patient progress row from CouchDB's actual doc count (ground
-    # truth) against the achievable total of distinct canonical primary
-    # identifiers, not against every MySQL patient or every identifier row.
+    # truth) against the number of patients with a permanent record UUID.
     def refresh_patient_progress
-      total = PatientSyncReconciler.distinct_primary_identifier_count
+      total = PatientSyncReconciler.syncable_patient_count
       SyncProgress.ensure('patients_records', total)
     rescue StandardError => e
       Sidekiq.logger.warn("EnsurePatientIndexesJob: could not refresh patient progress: #{e.class}: #{e.message}")
