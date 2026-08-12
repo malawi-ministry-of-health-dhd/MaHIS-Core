@@ -187,9 +187,7 @@ def select_programs_to_migrate(source_db, hiv_program_id)
   selected = if ENV['PROGRAM_IDS']
                tokens = ENV['PROGRAM_IDS'].split(',').map(&:strip)
                malformed = tokens.reject { |t| t.match?(/\A\d+\z/) }
-               if malformed.any?
-                 puts "⚠️  PROGRAM_IDS contains non-numeric tokens: #{malformed.join(', ')} — ignoring"
-               end
+               puts "⚠️  PROGRAM_IDS contains non-numeric tokens: #{malformed.join(', ')} — ignoring" if malformed.any?
                ids = tokens.select { |t| t.match?(/\A\d+\z/) }.map(&:to_i).uniq
                invalid = ids - all_programs.keys
                if invalid.any?
@@ -314,6 +312,8 @@ ENCOUNTER_ID_CACHE = {}
 ORDER_ID_CACHE = {}
 PROGRAM_ID_CACHE = {}
 OBS_ID_CACHE = {}
+# source_patient_id => dest_person_id for patients matched by identifier_type 27
+TYPE27_PERSON_MAP = {}
 
 # Program filtering caches (indexed by selected program IDs)
 SELECTED_PROGRAM_PATIENT_IDS = Set.new
@@ -1603,8 +1603,97 @@ ensure
 end
 
 # Populate Person
+def build_type27_person_map(source_db)
+  rows = ActiveRecord::Base.connection.select_all(<<~SQL).to_a
+    SELECT si.patient_id AS src_patient_id,
+           di.patient_id AS dest_person_id,
+           si.identifier,
+           COUNT(di.patient_id) OVER (PARTITION BY si.identifier) AS dest_count
+    FROM #{source_db}.patient_identifier si
+    JOIN #{DEST_DB}.patient_identifier di
+      ON  di.identifier      = si.identifier
+      AND di.identifier_type = si.identifier_type
+    WHERE si.identifier_type = 27
+      AND si.voided = 0
+      AND di.voided = 0
+  SQL
+
+  conflicts = []
+  rows.each do |row|
+    src_id   = row['src_patient_id'].to_i
+    dest_id  = row['dest_person_id'].to_i
+    if row['dest_count'].to_i > 1
+      conflicts << row['identifier']
+      next
+    end
+    TYPE27_PERSON_MAP[src_id] = dest_id
+    PERSON_ID_CACHE[src_id]   = dest_id
+  end
+
+  if conflicts.uniq.any?
+    conflicts.uniq.each { |id| ORPHANED_REFERENCES[:type27_conflicts] << id }
+    puts "⚠️  #{conflicts.uniq.size} identifier(s) with ambiguous type-27 matches — excluded from map (data integrity violation)"
+  end
+
+  puts "✓ Found #{TYPE27_PERSON_MAP.size} patient(s) matched via identifier type 27"
+end
+
+def migrate_latest_demographic(source_table, dest_model, group_keys, source_db)
+  return if TYPE27_PERSON_MAP.empty?
+
+  src_ids = TYPE27_PERSON_MAP.keys
+  dest_ids = TYPE27_PERSON_MAP.values
+
+  source_records = query_with_columns(
+    "#{source_db}.#{source_table}",
+    "person_id IN (#{src_ids.join(',')})"
+  ).map(&:symbolize_keys)
+  return if source_records.empty?
+
+  source_records.each { |r| r[:person_id] = TYPE27_PERSON_MAP[r[:person_id].to_i] }
+
+  # Build a lookup of the latest dest date_created per group key
+  dest_max = dest_model.unscoped
+                       .where(person_id: dest_ids)
+                       .group(*group_keys)
+                       .maximum(:date_created)
+
+  to_void   = []
+  to_insert = []
+
+  source_records.group_by { |r| group_keys.map { |k| r[k] } }.each do |gkey, src_group|
+    src_latest = src_group.max_by { |r| r[:date_created].to_datetime rescue Time.at(0) }
+    dest_key   = group_keys.size == 1 ? gkey.first : gkey
+    dest_max_date = dest_max[dest_key]
+
+    if dest_max_date.nil? || src_latest[:date_created].to_datetime > dest_max_date.to_datetime
+      # Mark existing dest records for this group as voided
+      to_void << gkey
+      src_latest[:person_id] = TYPE27_PERSON_MAP[src_latest[:person_id]] || src_latest[:person_id]
+      src_latest[dest_model.primary_key.to_sym] = nil
+      to_insert << src_latest
+    end
+  end
+
+  return if to_void.empty?
+
+  to_void.each do |gkey|
+    cond = group_keys.zip(gkey).to_h
+    dest_model.unscoped.where(cond.merge(person_id: dest_ids)).update_all(
+      voided: 1,
+      date_voided: Time.now,
+      void_reason: 'Superseded by newer source record during type-27 migration',
+      voided_by: 1
+    )
+  end
+
+  dest_model.unscoped.insert_all(to_insert.compact) if to_insert.any?
+  puts "  ✓ #{source_table}: voided #{to_void.size} dest record(s), inserted #{to_insert.size} newer source record(s)"
+end
+
 def populate_person(person_data, source_db)
   person_data.symbolize_keys!
+  source_person_id = person_data[:person_id].to_i
   person_data[:person_id] = nil
 
   %i[changed_by creator voided_by].each do |key|
@@ -1613,6 +1702,8 @@ def populate_person(person_data, source_db)
 
   existing_person = Person.unscoped.find_by(uuid: person_data[:uuid])
   return existing_person.person_id if existing_person
+
+  return TYPE27_PERSON_MAP[source_person_id] if TYPE27_PERSON_MAP.key?(source_person_id)
 
   new_person = Person.new(person_data)
   new_person.save!(validate: false)
@@ -1631,7 +1722,9 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
                     patient_ids = records.map { |r| r[:patient_id] }
                     uuids = query_with_columns("#{source_db}.person",
                                                "person_id in (#{patient_ids.join(', ')})").pluck('uuid')
-                    Person.unscoped.where(uuid: uuids).pluck(:person_id)
+                    uuid_matched   = Person.unscoped.where(uuid: uuids).pluck(:person_id)
+                    type27_matched = patient_ids.filter_map { |id| TYPE27_PERSON_MAP[id.to_i] }
+                    (uuid_matched + type27_matched).uniq
                   when 'DrugOrder'
                     order_ids = records.map { |r| r[:order_id] }
                     uuids = query_with_columns("#{source_db}.orders",
@@ -1737,6 +1830,11 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
       end
     end
 
+    # For type-27 matched patients, demographics are handled by migrate_latest_demographic
+    if TYPE27_PERSON_MAP.any? && %w[PersonName PersonAddress PersonAttribute].include?(target_model.to_s)
+      records.reject! { |r| TYPE27_PERSON_MAP.key?(r[:person_id].to_i) }
+    end
+
     # Update foreign key mappings
     # Skip obs_group_id for Observations - will be updated in separate batch later
     # Skip obs_id for Orders - obs don't exist yet, will be backfilled after obs migration
@@ -1750,6 +1848,16 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
 
     keys_to_process.each do |foreign_key, mapping_method|
       records = send(mapping_method, records, foreign_key, source_db)
+    end
+
+    # Skip patient_identifier records already present in destination by content (not UUID)
+    if target_model.to_s == 'PatientIdentifier' && records.any?
+      patient_ids_in_batch = records.map { |r| r[:patient_id] }.compact.uniq
+      existing_pi = PatientIdentifier.unscoped
+                                     .where(patient_id: patient_ids_in_batch)
+                                     .pluck(:patient_id, :identifier_type, :identifier)
+                                     .map { |pid, type, id| [pid, type, id] }.to_set
+      records.reject! { |r| existing_pi.include?([r[:patient_id], r[:identifier_type], r[:identifier]]) }
     end
 
     # Program Filtering: Filter pharmacy_obs records not related to selected programs.
@@ -2972,6 +3080,8 @@ if __FILE__ == $0
     [group6_models, 'Group_6']
   ]
 
+  build_type27_person_map(source_db)
+
   groups.each do |group, group_name|
     group_num = group_name.gsub('Group_', '').to_i
     if resume_group > 0 && group_num < resume_group
@@ -2979,6 +3089,14 @@ if __FILE__ == $0
       next
     end
     populate_group(group, group_name, source_db)
+
+    if group_name == 'Group_1' && TYPE27_PERSON_MAP.any?
+      puts '  → Merging latest demographics for type-27 matched patients...'
+      migrate_latest_demographic('person_name',      PersonName,      [:person_id],                             source_db)
+      migrate_latest_demographic('person_address',   PersonAddress,   [:person_id],                             source_db)
+      migrate_latest_demographic('person_attribute', PersonAttribute, [:person_id, :person_attribute_type_id],  source_db)
+    end
+
     clear_migrated_caches(group_name)
   end
 
