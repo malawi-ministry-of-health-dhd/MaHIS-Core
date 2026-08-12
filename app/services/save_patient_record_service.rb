@@ -60,7 +60,8 @@ class SavePatientRecordService
     # VoidableRecord's default_scope excludes voided rows. Finalize from the
     # already-known record instead of running it through the live-patient
     # rebuild path.
-    if operation_results[:void_patient]&.success?
+  
+    if operation_results[:void_patient]&.changed?
       return finalize_voided_patient_record(patient_id, record, operation_results, overall_sync_status)
     end
 
