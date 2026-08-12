@@ -182,15 +182,19 @@ class DdeMergingService
   end
 
   def create_local_patient_identifier(patient, value, type_name)
-    user = User.where(user_id:patient.creator).first
-    
-    identifier = PatientIdentifier.create(identifier: value,
-                                          type: patient_identifier_type(type_name),
-                                          location_id: user["location_id"],
-                                          patient:)
-    return patient.reload && identifier if identifier.errors.empty?
+    creator = User.unscoped.find_by(user_id: patient.creator)
+    location_id = creator&.location_id.presence ||
+                  PatientIdentifier.unscoped.where(patient_id: patient.id).where.not(location_id: [nil, 0])
+                                   .order(date_created: :desc, patient_identifier_id: :desc).pick(:location_id) ||
+                  Location.current&.location_id || User.current&.location_id
+    raise "Could not resolve a location for patient #{patient.id} DDE identifier" if location_id.blank?
 
-    raise "Could not save DDE identifier: #{type_name} due to #{identifier.errors.as_json}"
+    identifier = PatientIdentifier.create!(identifier: value,
+                                           type: patient_identifier_type(type_name),
+                                           location_id:,
+                                           patient:)
+    patient.reload
+    identifier
   end
 
   # Patch primary_patient missing name data using secondary_patient
@@ -385,8 +389,11 @@ class DdeMergingService
     drug_order_hash.delete('order_id')
 
     drug_order_hash['order_id'] = primary_order.id
-    drug_order = DrugOrder.create!(drug_order_hash)
-    raise "Could not merge patient drug orders: #{drug_order.errors.as_json}" unless drug_order.errors.empty?
+    # The source database contains historical drug orders created before
+    # equivalent_daily_dose became mandatory. Copy the already-persisted data
+    # as-is; database foreign keys still validate the new order relationship.
+    drug_order = DrugOrder.new(drug_order_hash)
+    drug_order.save!(validate: false)
   end
 
   # strip off secondary_patient all program enrollments and blesses primary patient
@@ -572,13 +579,27 @@ class DdeMergingService
     primary_encounter_hash.delete('creator')
     primary_encounter_hash.delete('encounter_id')
     primary_encounter_hash['patient_id'] = primary_patient.id
-    primary_encounter = Encounter.create(primary_encounter_hash)
-    unless primary_encounter.errors.empty?
-      raise "Could not merge patient encounters: #{primary_encounter.errors.as_json}"
-    end
+    primary_encounter = Encounter.new(primary_encounter_hash)
+    persist_copied_encounter!(primary_encounter, encounter.provider_id)
 
     common_encounter_void(encounter, primary_patient, primary_encounter.id)
     primary_encounter.id
+  end
+
+  def persist_copied_encounter!(encounter, provider_id)
+    return encounter if encounter.save
+
+    provider_is_only_error = encounter.errors.attribute_names.uniq == [:provider]
+    provider_exists = Person.unscoped.where(person_id: provider_id).exists?
+    unless provider_is_only_error && provider_exists
+      raise "Could not merge patient encounters: #{encounter.errors.as_json}"
+    end
+
+    # Historical encounters may reference a provider person who was later
+    # voided during a staff merge. The FK is still valid, but belongs_to hides
+    # that person through Person's active-only scope. Preserve the encounter.
+    encounter.save!(validate: false)
+    encounter
   end
 
   def create_new_encounter_raw(encounter, primary_patient)

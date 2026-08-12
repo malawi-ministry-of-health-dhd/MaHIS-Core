@@ -40,6 +40,7 @@ module PatientRecordSearchFields
   # table scan.
   COUCHDB_INDEXES = [
     { name: 'idx_ID', ddoc: DDOC_IDENTIFIERS, fields: ['ID'] },
+    { name: 'idx_legacyDdeID', ddoc: DDOC_IDENTIFIERS, fields: ['legacyDdeID'] },
     { name: 'idx_NcdID', ddoc: DDOC_IDENTIFIERS, fields: ['NcdID'] },
     { name: 'idx_arvNumber', ddoc: DDOC_IDENTIFIERS, fields: ['arvNumber'] },
     { name: 'idx_ichisID', ddoc: DDOC_IDENTIFIERS, fields: ['ichisID'] },

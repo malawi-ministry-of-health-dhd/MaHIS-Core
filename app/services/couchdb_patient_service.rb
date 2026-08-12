@@ -225,8 +225,13 @@ class CouchdbPatientService
 
     def get_multiple_patients(patient_ids)
       return false unless couchdb_configured?
-      # Use CouchDB _all_docs endpoint with keys parameter
-      keys_payload = { keys: patient_ids }.to_json
+      # Resolve numeric MySQL IDs to their permanent CouchDB record IDs. Values
+      # that are already document IDs remain unchanged for compatibility.
+      resolved = patient_ids.index_with do |value|
+        patient = Patient.unscoped.includes(:person).find_by(patient_id: value) if value.to_s.match?(/\A\d+\z/)
+        PatientRecordIdentityService.document_id(patient:) || value.to_s
+      end
+      keys_payload = { keys: resolved.values }.to_json
       
       response = RestClient.post(
         "#{couchdb_url(PATIENTS_DB, '_all_docs')}?include_docs=true",
@@ -242,8 +247,8 @@ class CouchdbPatientService
         .map { |row| row['doc'] }
 
       # Handle missing patients by creating them
-      found_ids = records.map { |doc| doc['patientID'] }
-      missing_ids = patient_ids - found_ids
+      found_ids = records.map { |doc| doc['patientID'].to_s }
+      missing_ids = patient_ids.reject { |value| found_ids.include?(value.to_s) }
       
       missing_ids.each do |missing_id|
         new_record = build_patient_record(missing_id)
@@ -255,17 +260,23 @@ class CouchdbPatientService
 
     def get_single_patient(patient_id)
       if couchdb_configured?
+        local_patient = nil
+
         begin
-          # Callers may supply either the numeric MySQL patient_id or the
-          # CouchDB document ID (the primary patient identifier). Resolve the
-          # former when possible and otherwise use the supplied document ID.
-          identifier = PatientIdentifier.unscoped
-                                        .where(patient_id: patient_id, identifier_type: 3, voided: 0)
-                                        .pick(:identifier)
-                                        .presence || patient_id.to_s
-          response = RestClient.get(couchdb_url(PATIENTS_DB, URI.encode_www_form_component(identifier.to_s)))
+          local_patient = Patient.unscoped.includes(:person).find_by(patient_id: patient_id) if patient_id.to_s.match?(/\A\d+\z/)
+          document_id = PatientRecordIdentityService.document_id(patient: local_patient) || patient_id.to_s
+          response = RestClient.get(couchdb_url(PATIENTS_DB, URI.encode_www_form_component(document_id)))
           JSON.parse(response.body)
         rescue RestClient::NotFound
+          # A numeric ID that resolves to a local patient is not a legacy DDE
+          # identifier. On a newly registered patient, searching for it using
+          # the legacy-identifier Mango selector causes a full CouchDB scan.
+          # Build the missing UUID document directly instead.
+          return build_patient_record(patient_id) if local_patient
+
+          by_identifier = find_patient_document_by_identifier(patient_id)
+          return by_identifier if by_identifier
+
           # Patient doesn't exist, build new record
           patient_id.to_s.match?(/\A\d+\z/) ? build_patient_record(patient_id) : nil
         end
@@ -294,25 +305,45 @@ class CouchdbPatientService
       return unless couchdb_configured?
 
       # Ensure the document has the required CouchDB fields
+      document_id = PatientRecordIdentityService.document_id(record: record_data)
       doc_data = record_data.as_json.merge({
-        '_id' => record_data[:ID] || record_data.dig(:record, :ID),
+        '_id' => document_id,
         'last_sync_at' => Time.current.iso8601,
         'sync_status' => 'synced'
       })
 
       # Check if document exists to get _rev
       begin
-        existing_doc = RestClient.get(couchdb_url(PATIENTS_DB, URI.encode_www_form_component(patient_id.to_s)))
+        existing_doc = RestClient.get(couchdb_url(PATIENTS_DB, URI.encode_www_form_component(document_id)))
         doc_data['_rev'] = JSON.parse(existing_doc.body)['_rev']
       rescue RestClient::NotFound
         # New document, no _rev needed
       end
 
       RestClient.put(
-        couchdb_url(PATIENTS_DB, URI.encode_www_form_component(patient_id.to_s)),
+        couchdb_url(PATIENTS_DB, URI.encode_www_form_component(document_id)),
         doc_data.to_json,
         { content_type: :json, accept: :json }
       )
+    end
+
+    def find_patient_document_by_identifier(identifier)
+      response = RestClient.post(
+        couchdb_url(PATIENTS_DB, '_find'),
+        {
+          selector: {
+            '$or' => [
+              { 'ID' => identifier.to_s },
+              { 'legacyDdeID' => identifier.to_s }
+            ]
+          },
+          limit: 1
+        }.to_json,
+        { content_type: :json, accept: :json }
+      )
+      JSON.parse(response.body).fetch('docs', []).first
+    rescue StandardError
+      nil
     end
   end
 end
