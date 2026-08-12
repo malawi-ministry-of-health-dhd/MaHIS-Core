@@ -170,16 +170,7 @@ module ImpowService
       
       if result
         concept_name = ConceptName.find_by(concept_id: result['concept_id'])&.name
-        # Determine if OTS or SFS based on state name
-        if concept_name&.include?('OTS')
-          { program: 'OTS' }
-        elsif concept_name&.include?('SFS')
-          { program: 'SFS' }
-        else
-          { program: 'Unknown' }
-        end
-      else
-        { program: 'Unknown' }
+        return concept_name ? { program: concept_name } : { program: 'Unknown' }
       end
     rescue StandardError => e
       Rails.logger.error("Error getting program info for patient #{patient_id}: #{e.message}")
