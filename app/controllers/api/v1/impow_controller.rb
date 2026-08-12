@@ -94,6 +94,36 @@ module Api
         Rails.logger.error("Error fetching batch anthropometry patients: #{e.message}")
         render json: { error: e.message }, status: :internal_server_error
       end
+
+      # GET /api/v1/impow/batch_medical_assessment/patients
+      # Get patients who have done anthropometry but not medical assessment
+      # Params:
+      #   - program_id: required
+      #   - date: optional (defaults to today)
+      #   - page: optional (defaults to 1)
+      #   - per_page: optional (defaults to 20)
+      def batch_medical_assessment_patients
+        program_id = params.require(:program_id)
+        date = params[:date]&.to_date || Date.today
+        page = params[:page] || 1
+        per_page = params[:per_page] || 20
+
+        program = Program.find(program_id)
+        
+        service = ImpowService::BatchMedicalAssessmentEngine.new(
+          program: program,
+          date: date,
+          page: page,
+          per_page: per_page
+        )
+        
+        result = service.fetch_patients_awaiting_assessment
+
+        render json: result
+      rescue StandardError => e
+        Rails.logger.error("Error fetching batch medical assessment patients: #{e.message}")
+        render json: { error: e.message }, status: :internal_server_error
+      end
     end
   end
 end
