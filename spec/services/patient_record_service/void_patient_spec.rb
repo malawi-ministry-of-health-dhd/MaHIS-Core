@@ -22,6 +22,7 @@ RSpec.describe PatientRecordService::VoidPatient do
       result = saver.void_patient(33, { void_patient: { reason: 'Duplicate' } }.with_indifferent_access)
 
       expect(result).to be_success
+      expect(result).to be_changed
       expect(result.errors).to be_empty
       expect(patient_service).to have_received(:void_patient).with(patient, 'Duplicate', daemonize: false)
       expect(saver).to have_received(:with_operation_guard).with(hash_including(patient_id: 33, operation_type: 'patient.void'))
@@ -31,6 +32,7 @@ RSpec.describe PatientRecordService::VoidPatient do
       result = saver.void_patient(33, {}.with_indifferent_access)
 
       expect(result).to be_success
+      expect(result).not_to be_changed
       expect(patient_service).not_to have_received(:void_patient)
     end
 

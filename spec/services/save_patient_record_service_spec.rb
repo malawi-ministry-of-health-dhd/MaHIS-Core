@@ -3,6 +3,47 @@
 require 'rails_helper'
 
 RSpec.describe SavePatientRecordService do
+  describe '#create_patient_record' do
+    it 'does not finalize a patient as voided when the void operation is a successful no-op' do
+      service = described_class.new
+      identity_manager = double(
+        'PatientIdentityManager',
+        save_person_information: { patient_id: 33 },
+        validate_ids: true
+      )
+      lab_data_manager = double('LabDataManager', created_lab_orders: [])
+      managers = {
+        identity_manager: identity_manager,
+        lab_data_manager: lab_data_manager
+      }
+      operation_results = {
+        save_all_observations: PatientRecordService::OperationResult.ok(changed: true),
+        void_patient: PatientRecordService::OperationResult.ok
+      }
+      record = {
+        ID: 'ABC123',
+        program_id: 1,
+        provider_id: 7,
+        location_id: 32,
+        encounter_datetime: '2026-08-12',
+        otherPersonInformation: {}
+      }.with_indifferent_access
+      built_record = { 'patientID' => 33, 'ID' => 'ABC123' }
+
+      allow(service).to receive(:initialize_managers).and_return(managers)
+      allow(Patient).to receive(:exists?).with(patient_id: 33).and_return(true)
+      allow(service).to receive(:execute_patient_operations).and_return(operation_results)
+      allow(service).to receive(:resolve_history_base).and_return(nil)
+      allow(service).to receive(:build_and_save_patient_record).and_return(built_record)
+      allow(service).to receive(:ensure_primary_identifier_persisted!)
+      allow(service).to receive(:enqueue_post_save_side_effects)
+      allow(service).to receive(:couchdb_configured?).and_return(false)
+      expect(service).not_to receive(:finalize_voided_patient_record)
+
+      expect(service.create_patient_record(record)).to eq(built_record)
+    end
+  end
+
   describe '#rebuild_all_observations' do
     it 'removes a stale encounter type when MySQL has no non-voided observations for it' do
       patient_data = {
