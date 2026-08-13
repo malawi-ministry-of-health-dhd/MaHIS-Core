@@ -89,8 +89,8 @@ RSpec.describe Sync::BatchPatientSyncJob, type: :job do
   describe 'patient eligibility and progress' do
     subject(:job) { described_class.new }
 
-    it 'uses distinct canonical primary identifiers as the achievable progress total' do
-      allow(PatientSyncReconciler).to receive(:distinct_primary_identifier_count).and_return(128_825)
+    it 'uses UUID-addressable patients as the achievable progress total' do
+      allow(PatientSyncReconciler).to receive(:syncable_patient_count).and_return(128_825)
       allow(CouchdbPatientService).to receive(:patient_record_count).and_return(103_546)
       allow(SyncProgress).to receive(:start)
       allow(SyncProgress).to receive(:set)
