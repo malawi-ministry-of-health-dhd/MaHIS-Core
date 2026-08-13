@@ -16,7 +16,7 @@ module Api
       end
 
       def guardians
-        render json: paginate(service.find_guardians).collect(&:relation)
+        render json: paginate(service.find_guardians)
       end
 
       def create
