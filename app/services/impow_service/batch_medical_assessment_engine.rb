@@ -62,6 +62,18 @@ module ImpowService
           AND anthro.location_id = #{@location_id}
           AND anthro.voided = 0
           AND DATE(anthro.encounter_datetime) IN ('#{@date}', '#{yesterday}')
+          AND anthro.encounter_id = (
+            SELECT e.encounter_id
+            FROM encounter e
+            WHERE e.patient_id = p.patient_id
+              AND e.encounter_type IN (#{vitals_ids})
+              AND e.program_id = #{@program.program_id}
+              AND e.location_id = #{@location_id}
+              AND e.voided = 0
+              AND DATE(e.encounter_datetime) IN ('#{@date}', '#{yesterday}')
+            ORDER BY e.encounter_datetime DESC
+            LIMIT 1
+          )
           AND NOT EXISTS (
             SELECT 1 FROM encounter assess
             WHERE assess.patient_id = p.patient_id
@@ -221,6 +233,8 @@ module ImpowService
         concept_name = ConceptName.find_by(concept_id: result['concept_id'])&.name
         return concept_name ? { program: concept_name } : { program: 'Unknown' }
       end
+      
+      { program: 'Unknown' }
     rescue StandardError => e
       Rails.logger.error("Error getting program info for patient #{patient_id}: #{e.message}")
       { program: 'Unknown' }
