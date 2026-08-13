@@ -30,9 +30,14 @@ module Api
         result = service.fetch_expected_patients
 
         render json: result
+      rescue ActionController::ParameterMissing => e
+        render json: { error: 'Missing required parameter' }, status: :bad_request
+      rescue ActiveRecord::RecordNotFound
+        render json: { error: 'Program not found' }, status: :not_found
       rescue StandardError => e
         Rails.logger.error("Error fetching expected patients: #{e.message}")
-        render json: { error: e.message }, status: :internal_server_error
+        Rails.logger.error(e.backtrace.join("\n"))
+        render json: { error: 'Internal server error' }, status: :internal_server_error
       end
 
       # GET /api/v1/impow/pending_enrollments
@@ -60,9 +65,14 @@ module Api
         result = service.fetch_pending_enrollments
 
         render json: result
+      rescue ActionController::ParameterMissing => e
+        render json: { error: 'Missing required parameter' }, status: :bad_request
+      rescue ActiveRecord::RecordNotFound
+        render json: { error: 'Program not found' }, status: :not_found
       rescue StandardError => e
         Rails.logger.error("Error fetching pending enrollments: #{e.message}")
-        render json: { error: e.message }, status: :internal_server_error
+        Rails.logger.error(e.backtrace.join("\n"))
+        render json: { error: 'Internal server error' }, status: :internal_server_error
       end
 
       # GET /api/v1/impow/batch_anthropometry/patients
@@ -90,9 +100,14 @@ module Api
         result = service.fetch_patients_awaiting_anthropometry
 
         render json: result
+      rescue ActionController::ParameterMissing => e
+        render json: { error: 'Missing required parameter' }, status: :bad_request
+      rescue ActiveRecord::RecordNotFound
+        render json: { error: 'Program not found' }, status: :not_found
       rescue StandardError => e
         Rails.logger.error("Error fetching batch anthropometry patients: #{e.message}")
-        render json: { error: e.message }, status: :internal_server_error
+        Rails.logger.error(e.backtrace.join("\n"))
+        render json: { error: 'Internal server error' }, status: :internal_server_error
       end
 
       # GET /api/v1/impow/batch_medical_assessment/patients
@@ -120,9 +135,14 @@ module Api
         result = service.fetch_patients_awaiting_assessment
 
         render json: result
+      rescue ActionController::ParameterMissing => e
+        render json: { error: 'Missing required parameter' }, status: :bad_request
+      rescue ActiveRecord::RecordNotFound
+        render json: { error: 'Program not found' }, status: :not_found
       rescue StandardError => e
         Rails.logger.error("Error fetching batch medical assessment patients: #{e.message}")
-        render json: { error: e.message }, status: :internal_server_error
+        Rails.logger.error(e.backtrace.join("\n"))
+        render json: { error: 'Internal server error' }, status: :internal_server_error
       end
     end
   end

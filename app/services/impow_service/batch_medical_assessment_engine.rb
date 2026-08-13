@@ -21,14 +21,14 @@ module ImpowService
     # 1. Patients with vitals/anthropometry today or yesterday
     # 2. BUT no medical assessment, treatment, or dispensing on that same day
     def fetch_patients_awaiting_assessment
-      patients = find_patients_needing_assessment
-      total_count = patients.size
+      # Get total count with separate COUNT query
+      total_count = count_patients_needing_assessment
       
-      # Paginate
+      # Get paginated results using database-level LIMIT and OFFSET
       offset = (@page - 1) * @per_page
-      paginated_patients = patients.slice(offset, @per_page) || []
+      patients = find_patients_needing_assessment(limit: @per_page, offset: offset)
       
-      formatted_patients = paginated_patients.map do |patient_data|
+      formatted_patients = patients.map do |patient_data|
         format_patient_data(patient_data)
       end
 
@@ -45,32 +45,49 @@ module ImpowService
 
     private
 
-    def find_patients_needing_assessment
-      # Find encounter types
-      vitals_enc = EncounterType.find_by_name('VITALS')
-      anthropometry_enc = EncounterType.find_by_name('ANTHROPOMETRY')
-      medical_assessment_enc = EncounterType.find_by_name('MEDICAL ASSESSMENT')
-      consultation_enc = EncounterType.find_by_name('CONSULTATION')
-      treatment_enc = EncounterType.find_by_name('TREATMENT')
-      dispensing_enc = EncounterType.find_by_name('DISPENSING')
-      
-      vitals_type_ids = [vitals_enc&.encounter_type_id, anthropometry_enc&.encounter_type_id].compact
-      return [] if vitals_type_ids.empty?
+    def count_patients_needing_assessment
+      encounter_type_ids = get_encounter_type_ids
+      return 0 if encounter_type_ids[:vitals].empty? || encounter_type_ids[:assessment].empty?
 
-      # Assessment/treatment encounter types (any of these means patient has been assessed/treated)
-      assessment_type_ids = [
-        medical_assessment_enc&.encounter_type_id,
-        consultation_enc&.encounter_type_id,
-        treatment_enc&.encounter_type_id,
-        dispensing_enc&.encounter_type_id
-      ].compact
-      return [] if assessment_type_ids.empty?
-
-      # Include today and yesterday
       yesterday = @date - 1.day
+      vitals_ids = encounter_type_ids[:vitals].join(',')
+      assessment_ids = encounter_type_ids[:assessment].join(',')
 
-      # Query patients who have vitals/anthropometry but no assessment/treatment
-      # Check both today and yesterday
+      sql = <<~SQL
+        SELECT COUNT(DISTINCT p.patient_id) AS total
+        FROM encounter anthro
+        INNER JOIN patient p ON p.patient_id = anthro.patient_id AND p.voided = 0
+        WHERE anthro.encounter_type IN (#{vitals_ids})
+          AND anthro.program_id = #{@program.program_id}
+          AND anthro.location_id = #{@location_id}
+          AND anthro.voided = 0
+          AND DATE(anthro.encounter_datetime) IN ('#{@date}', '#{yesterday}')
+          AND NOT EXISTS (
+            SELECT 1 FROM encounter assess
+            WHERE assess.patient_id = p.patient_id
+              AND assess.program_id = #{@program.program_id}
+              AND assess.location_id = #{@location_id}
+              AND assess.encounter_type IN (#{assessment_ids})
+              AND assess.voided = 0
+              AND DATE(assess.encounter_datetime) = DATE(anthro.encounter_datetime)
+          )
+      SQL
+
+      result = ActiveRecord::Base.connection.select_one(sql)
+      result['total'].to_i
+    rescue StandardError => e
+      Rails.logger.error("Error counting patients needing medical assessment: #{e.message}")
+      0
+    end
+
+    def find_patients_needing_assessment(limit:, offset:)
+      encounter_type_ids = get_encounter_type_ids
+      return [] if encounter_type_ids[:vitals].empty? || encounter_type_ids[:assessment].empty?
+
+      yesterday = @date - 1.day
+      vitals_ids = encounter_type_ids[:vitals].join(',')
+      assessment_ids = encounter_type_ids[:assessment].join(',')
+
       sql = <<~SQL
         SELECT 
           p.patient_id,
@@ -108,29 +125,59 @@ module ImpowService
               AND pi2.voided = 0
               AND pi2.identifier_type = pi.identifier_type
           )
-        WHERE anthro.encounter_type IN (#{vitals_type_ids.join(',')})
+        WHERE anthro.encounter_type IN (#{vitals_ids})
           AND anthro.program_id = #{@program.program_id}
           AND anthro.location_id = #{@location_id}
           AND anthro.voided = 0
           AND DATE(anthro.encounter_datetime) IN ('#{@date}', '#{yesterday}')
+          AND anthro.encounter_id = (
+            SELECT e.encounter_id
+            FROM encounter e
+            WHERE e.patient_id = p.patient_id
+              AND e.encounter_type IN (#{vitals_ids})
+              AND e.program_id = #{@program.program_id}
+              AND e.location_id = #{@location_id}
+              AND e.voided = 0
+              AND DATE(e.encounter_datetime) IN ('#{@date}', '#{yesterday}')
+            ORDER BY e.encounter_datetime DESC
+            LIMIT 1
+          )
           AND NOT EXISTS (
             SELECT 1 FROM encounter assess
             WHERE assess.patient_id = p.patient_id
               AND assess.program_id = #{@program.program_id}
               AND assess.location_id = #{@location_id}
-              AND assess.encounter_type IN (#{assessment_type_ids.join(',')})
+              AND assess.encounter_type IN (#{assessment_ids})
               AND assess.voided = 0
               AND DATE(assess.encounter_datetime) = DATE(anthro.encounter_datetime)
           )
-        GROUP BY p.patient_id, pn.given_name, pn.family_name, per.gender, per.birthdate, 
-                 pi.identifier, anthro.encounter_datetime
         ORDER BY anthro.encounter_datetime DESC
+        LIMIT #{limit} OFFSET #{offset}
       SQL
 
       ActiveRecord::Base.connection.select_all(sql).to_a
     rescue StandardError => e
       Rails.logger.error("Error finding patients needing medical assessment: #{e.message}")
       raise # Re-raise to expose database errors instead of hiding patients
+    end
+
+    def get_encounter_type_ids
+      vitals_enc = EncounterType.find_by_name('VITALS')
+      anthropometry_enc = EncounterType.find_by_name('ANTHROPOMETRY')
+      medical_assessment_enc = EncounterType.find_by_name('MEDICAL ASSESSMENT')
+      consultation_enc = EncounterType.find_by_name('CONSULTATION')
+      treatment_enc = EncounterType.find_by_name('TREATMENT')
+      dispensing_enc = EncounterType.find_by_name('DISPENSING')
+      
+      {
+        vitals: [vitals_enc&.encounter_type_id, anthropometry_enc&.encounter_type_id].compact,
+        assessment: [
+          medical_assessment_enc&.encounter_type_id,
+          consultation_enc&.encounter_type_id,
+          treatment_enc&.encounter_type_id,
+          dispensing_enc&.encounter_type_id
+        ].compact
+      }
     end
 
     def format_patient_data(patient)
@@ -151,12 +198,14 @@ module ImpowService
     end
 
     def get_patient_program_info(patient_id)
-      # Get current patient program state
+      # Get current patient program state active on @date
       sql = <<~SQL
         SELECT ps.state, pws.concept_id
         FROM patient_program pp
         INNER JOIN patient_state ps ON ps.patient_program_id = pp.patient_program_id
           AND ps.voided = 0
+          AND ps.start_date <= '#{@date}'
+          AND (ps.end_date IS NULL OR ps.end_date >= '#{@date}')
         INNER JOIN program_workflow_state pws ON pws.program_workflow_state_id = ps.state
         WHERE pp.patient_id = #{patient_id}
           AND pp.program_id = #{@program.program_id}
