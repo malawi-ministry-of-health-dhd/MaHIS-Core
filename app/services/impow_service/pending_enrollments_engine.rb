@@ -36,54 +36,47 @@ module ImpowService
     private
 
     # Find referred patients with database-level pagination
-    # Returns patients enrolled/referred to OS/IMPOW who have NOT been admitted to OTS/SFS yet
+    # Returns only patients whose CURRENT state is "Referred To OS" — i.e. genuinely
+    # referred from a module (OPD, HIV, ITS, ICCM/IMPOW, etc.) and awaiting enrollment.
+    # Patients with no state, already admitted (Admitted In OTS/On SFS), or routed
+    # elsewhere (e.g. Referred To ITS, Cured, Died) are excluded.
     def find_referred_patients_with_pagination
       os_program_ids = impow_program_ids
 
-      # Enrollment state names in OS Program
-      enrollment_states = ['Admitted In OTS', 'On SFS']
-      enrollment_state_ids = enrollment_states.map do |state_name|
+      # "Referred To OS" state, resolved per program since its ID differs by program
+      referred_state_ids = os_program_ids.filter_map do |program_id|
         ProgramWorkflowState.find_by_name_and_program(
-          name: state_name,
-          program_id: @program.program_id
+          name: 'Referred To OS',
+          program_id: program_id
         )&.program_workflow_state_id
-      end.compact
+      end
+      return { patients: [], total_count: 0 } if referred_state_ids.empty?
 
       start_date = @date - REFERRAL_WINDOW_DAYS.days
 
-      # Patient IDs that are CURRENTLY in an active admission state (OTS or SFS).
-      # end_date IS NULL means the state is still open — discharged patients (end_date IS NOT NULL)
-      # are intentionally excluded so they can re-appear if referred again.
-      admitted_patient_ids = if enrollment_state_ids.any?
-        PatientState.joins(:patient_program)
-                    .where(patient_program: { program_id: os_program_ids, voided: 0 })
-                    .where(state: enrollment_state_ids, voided: 0, end_date: nil)
-                    .pluck(:patient_id)
-      else
-        []
-      end
+      # Patient IDs CURRENTLY in the "Referred To OS" state.
+      # end_date IS NULL means the state is still open — once a patient is admitted,
+      # discharged, or routed elsewhere, this state is closed and they drop off the list.
+      pending_patient_ids = PatientState.joins(:patient_program)
+                                        .where(patient_program: { program_id: os_program_ids, voided: 0 })
+                                        .where(state: referred_state_ids, voided: 0, end_date: nil)
+                                        .pluck(:patient_id)
+      return { patients: [], total_count: 0 } if pending_patient_ids.empty?
 
       # Base query: Patient programs enrolled/created within the referral window.
       # Both bounds are explicit: >= start_date prevents records older than REFERRAL_WINDOW_DAYS,
       # and <= @date prevents future-dated rows from leaking into the result.
       # Parentheses on the OR make grouping explicit when Rails combines with other clauses.
-      base_query = PatientProgram.where(program_id: os_program_ids, voided: 0)
+      base_query = PatientProgram.where(program_id: os_program_ids, voided: 0, patient_id: pending_patient_ids)
                                  .where(
                                    '(date_enrolled >= ? AND date_enrolled <= ?) OR (date_created >= ? AND date_created <= ?)',
                                    start_date, @date, start_date, @date
                                  )
 
-      base_query = base_query.where.not(patient_id: admitted_patient_ids) if admitted_patient_ids.any?
-
       total_count = base_query.select(:patient_id).distinct.count
       return { patients: [], total_count: 0 } if total_count.zero?
 
       offset = (@page - 1) * @per_page
-
-      # Build the admission exclusion fragment once for reuse.
-      # Uses unqualified patient_id because this fragment goes inside the derived table
-      # where the outer pp alias is not in scope.
-      exclusion_fragment = admitted_patient_ids.any? ? "AND patient_id NOT IN (#{admitted_patient_ids.join(',')})" : ''
 
       # Derived-table query: group by patient_id to get the latest patient_program per patient,
       # then apply ORDER, LIMIT, and OFFSET entirely in the database.
@@ -97,12 +90,12 @@ module ImpowService
           FROM patient_program
           WHERE program_id IN (#{os_program_ids.join(',')})
             AND voided = 0
+            AND patient_id IN (#{pending_patient_ids.join(',')})
             AND (
               (date_enrolled >= #{ActiveRecord::Base.connection.quote(start_date)} AND date_enrolled <= #{ActiveRecord::Base.connection.quote(@date)})
               OR
               (date_created >= #{ActiveRecord::Base.connection.quote(start_date)} AND date_created <= #{ActiveRecord::Base.connection.quote(@date)})
             )
-            #{exclusion_fragment}
           GROUP BY patient_id
           ORDER BY MAX(COALESCE(date_enrolled, date_created)) DESC,
                    MAX(patient_program_id) DESC
