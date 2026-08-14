@@ -60,6 +60,8 @@ RSpec.configure do |config|
     'visit_service_spec.rb',
     'patient_record_operation_guard_spec.rb',
     'patient_identity_manager_spec.rb',
+    'patient_record_identity_service_spec.rb',
+    'couchdb_patient_service_spec.rb',
     'couchdb_changes_listener_spec.rb',
     'batch_patient_sync_job_spec.rb',
     'bulk_patient_record_sync_job_spec.rb',
@@ -68,6 +70,7 @@ RSpec.configure do |config|
     'hard_delete_unsyncable_patients_task_spec.rb',
     'exact_duplicate_patient_cleanup_task_spec.rb',
     'duplicate_identifier_cleanup_task_spec.rb',
+    'dde_service_spec.rb',
     'dde_merging_service_spec.rb',
     'ncd_identifier_cleanup_spec.rb',
     'mnh_stats_sync_job_spec.rb',
@@ -76,7 +79,8 @@ RSpec.configure do |config|
     'void_unsyncable_patients_task_spec.rb',
     'void_drug_orders_spec.rb',
     'void_patient_spec.rb',
-    'save_patient_record_service_spec.rb'
+    'save_patient_record_service_spec.rb',
+    'vaccine_manager_spec.rb'
   ].freeze
 
   # Wrap individual test execution to skip non-passing specs

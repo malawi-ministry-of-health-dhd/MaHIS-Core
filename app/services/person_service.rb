@@ -33,7 +33,8 @@ class PersonService
         gender: params[:gender],
         birthdate: params[:birthdate],
         birthdate_estimated: params[:birthdate_estimated],
-        creator: User.current.id
+        creator: User.current.id,
+        uuid: PatientRecordIdentityService.normalize_uuid(params[:uuid])
       )
     end
   end
