@@ -85,8 +85,9 @@ end
 group :development do
   gem 'listen'
   # gem 'spring-watcher-listen', '~> 2.0.0'
-  gem 'web-console', '>= 3.3.0'
+  gem 'rack-mini-profiler'
   gem 'ruby-lsp', require: false
+  gem 'web-console', '>= 3.3.0'
 end
 
 # Windows does not include zoneinfo files, so bundle the tzinfo-data gem

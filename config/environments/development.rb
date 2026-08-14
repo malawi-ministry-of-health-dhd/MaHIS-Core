@@ -56,9 +56,9 @@ Rails.application.configure do
   settings = YAML.load_file(yml_file_path)
 
   # Use the settings from the YAML file in Rails configuration
-  host1 = settings['host1']
+  settings['host1']
 
-  config.hosts << "mahisdev.health.gov.mw"
+  config.hosts << 'mahisdev.health.gov.mw'
 
   # Store uploaded files on the local file system (see config/storage.yml for options)
   config.active_storage.service = :local
@@ -73,7 +73,7 @@ Rails.application.configure do
   # synchronously inside the HTTP request, which makes lab order saves take
   # seconds on any server running in development mode. Requires a running
   # sidekiq process (bundle exec sidekiq).
-  config.active_job.queue_adapter = :sidekiq
+  config.active_job.queue_adapter = :async
 
   # Disable retries - fail immediately on error
   config.active_job.retry_jitter = 0.0

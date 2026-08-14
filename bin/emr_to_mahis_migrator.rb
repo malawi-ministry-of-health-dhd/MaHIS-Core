@@ -436,6 +436,7 @@ def ensure_migration_indexes(source_db)
     [source_db, 'encounter',                    'idx_enc_voided',               'voided'],
     [source_db, 'obs',                          'idx_obs_obs_id',               'obs_id'],
     [source_db, 'obs',                          'idx_obs_voided',               'voided'],
+    [source_db, 'obs',                          'idx_obs_encounter_id',         'encounter_id'],
     [source_db, 'drug_order',                   'idx_drug_order_order_id',      'order_id'],
     [source_db, 'orders',                       'idx_orders_voided',            'voided'],
     [source_db, 'lims_acknowledgement_statuses', 'idx_lims_src_order_id', 'order_id'],
@@ -1646,40 +1647,52 @@ def migrate_latest_demographic(source_table, dest_model, group_keys, source_db)
 
   source_records = query_with_columns(
     "#{source_db}.#{source_table}",
-    "person_id IN (#{src_ids.join(',')})"
+    "person_id IN (#{src_ids.join(',')}) AND voided = 0"
   ).map(&:symbolize_keys)
   return if source_records.empty?
 
   source_records.each { |r| r[:person_id] = TYPE27_PERSON_MAP[r[:person_id].to_i] }
 
-  # Build a lookup of the latest dest date_created per group key
-  dest_max = dest_model.unscoped
-                       .where(person_id: dest_ids)
-                       .group(*group_keys)
-                       .maximum(:date_created)
+  # Reconcile each mapped person independently. For person_name and person_address,
+  # group_keys already includes person_id; add it for person_attribute as well.
+  reconciliation_keys = group_keys.include?(:person_id) ? group_keys : [:person_id, *group_keys]
+
+  # Build a lookup of the latest active destination date_created per person/group key.
+  dest_max = dest_model
+             .where(person_id: dest_ids)
+             .group(*reconciliation_keys)
+             .maximum(:date_created)
 
   to_void   = []
   to_insert = []
 
-  source_records.group_by { |r| group_keys.map { |k| r[k] } }.each do |gkey, src_group|
-    src_latest = src_group.max_by { |r| r[:date_created].to_datetime rescue Time.at(0) }
-    dest_key   = group_keys.size == 1 ? gkey.first : gkey
+  source_records.group_by { |r| reconciliation_keys.map { |k| r[k] } }.each do |gkey, src_group|
+    src_latest = src_group.max_by do |r|
+      r[:date_created].to_datetime
+    rescue StandardError
+      Time.at(0)
+    end
+    dest_key = reconciliation_keys.size == 1 ? gkey.first : gkey
     dest_max_date = dest_max[dest_key]
 
-    if dest_max_date.nil? || src_latest[:date_created].to_datetime > dest_max_date.to_datetime
-      # Mark existing dest records for this group as voided
-      to_void << gkey
-      src_latest[:person_id] = TYPE27_PERSON_MAP[src_latest[:person_id]] || src_latest[:person_id]
-      src_latest[dest_model.primary_key.to_sym] = nil
-      to_insert << src_latest
-    end
+    next unless dest_max_date.nil? || src_latest[:date_created].to_datetime > dest_max_date.to_datetime
+
+    # Mark existing dest records for this group as voided
+    to_void << gkey
+    src_latest[:person_id] = TYPE27_PERSON_MAP[src_latest[:person_id]] || src_latest[:person_id]
+    src_latest[dest_model.primary_key.to_sym] = nil
+    src_latest[:voided] = 0 if src_latest.key?(:voided)
+    src_latest[:date_voided] = nil if src_latest.key?(:date_voided)
+    src_latest[:void_reason] = nil if src_latest.key?(:void_reason)
+    src_latest[:voided_by] = nil if src_latest.key?(:voided_by)
+    to_insert << src_latest
   end
 
   return if to_void.empty?
 
   to_void.each do |gkey|
-    cond = group_keys.zip(gkey).to_h
-    dest_model.unscoped.where(cond.merge(person_id: dest_ids)).update_all(
+    cond = reconciliation_keys.zip(gkey).to_h
+    dest_model.unscoped.where(cond.merge(voided: 0)).update_all(
       voided: 1,
       date_voided: Time.now,
       void_reason: 'Superseded by newer source record during type-27 migration',
@@ -3092,9 +3105,12 @@ if __FILE__ == $0
 
     if group_name == 'Group_1' && TYPE27_PERSON_MAP.any?
       puts '  → Merging latest demographics for type-27 matched patients...'
-      migrate_latest_demographic('person_name',      PersonName,      [:person_id],                             source_db)
-      migrate_latest_demographic('person_address',   PersonAddress,   [:person_id],                             source_db)
-      migrate_latest_demographic('person_attribute', PersonAttribute, [:person_id, :person_attribute_type_id],  source_db)
+      migrate_latest_demographic('person_name',      PersonName,      [:person_id],
+                                 source_db)
+      migrate_latest_demographic('person_address',   PersonAddress,   [:person_id],
+                                 source_db)
+      migrate_latest_demographic('person_attribute', PersonAttribute, %i[person_id person_attribute_type_id],
+                                 source_db)
     end
 
     clear_migrated_caches(group_name)
