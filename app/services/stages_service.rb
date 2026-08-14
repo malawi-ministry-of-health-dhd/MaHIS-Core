@@ -291,11 +291,10 @@ class StagesService
   end
 
   def encounter_creator_name(encounter, patient)
-    if encounter&.creator
-      User.find_by(user_id: encounter.creator)&.name
-    else
-      User.find_by(user_id: patient.creator)&.name
-    end
+    creator_id = encounter&.creator || patient&.creator
+    return nil if creator_id.blank?
+
+    User.find_by(user_id: creator_id)&.name
   end
 
   def broadcast_stage_update(event_name, data)
