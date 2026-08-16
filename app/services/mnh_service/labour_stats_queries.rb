@@ -111,10 +111,10 @@ module MnhService
     end
 
     def obstetric_complication_percentages
-      total = total_labour_mothers
-      return {} if total.zero?
-
-      obstetric_complication_counts.transform_values { |count| percentage_of(count, total) }
+      # Always emit the keys (percentage_of already yields 0.0 for a zero total);
+      # dropping them made clients treat a missing "none" percentage as 0 and
+      # report 100% complications on an empty dataset.
+      obstetric_complication_counts.transform_values { |count| percentage_of(count, total_labour_mothers) }
     end
 
     def caesarean_section_count

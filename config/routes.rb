@@ -192,6 +192,7 @@ Rails.application.routes.draw do
       get '/impow/pending_enrollments', to: 'impow#pending_enrollments'
       get '/impow/metrics', to: 'impow#metrics'
       get '/impow/batch_anthropometry/patients', to: 'impow#batch_anthropometry_patients'
+      get '/impow/batch_medical_assessment/patients', to: 'impow#batch_medical_assessment_patients'
 
       # Locations
       resources :locations do
