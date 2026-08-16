@@ -15,10 +15,22 @@ class LabResultsQueueService
     Lab::Metadata::HTS_ORDER_TYPE_NAME
   ].freeze
   LAB_RESULT_CONCEPT_NAME = Lab::Metadata::TEST_RESULT_CONCEPT_NAME
+  TEST_TYPE_CONCEPT_NAME = Lab::Metadata::TEST_TYPE_CONCEPT_NAME
 
   # Only surface patients whose pending lab orders are from the last week; older
   # unresulted orders are handled elsewhere and would otherwise bloat the queue.
   PENDING_WINDOW_DAYS = 7
+
+  # Orders that are only waiting for an HTS or a Viral Load result are usually
+  # resulted somewhere else (the HTS flow, or a reference lab), so by default
+  # they are kept out of the lab technician's queue. Each user can opt back in
+  # from Configurations -> Lab Results Queue; both properties default to false.
+  SHOW_HTS_ONLY_ORDERS_PROPERTY = 'lab_queue_show_hts_only_orders'
+  SHOW_VIRAL_LOAD_ONLY_ORDERS_PROPERTY = 'lab_queue_show_viral_load_only_orders'
+
+  # Both spellings exist in the dictionary, so match on all of them rather than
+  # betting on the one a particular site happens to have seeded.
+  VIRAL_LOAD_CONCEPT_NAMES = ['Viral Load', 'HIV Viral Load', 'HIV viral load'].freeze
 
   class << self
     def patients_awaiting_results(filters = {})
@@ -29,7 +41,11 @@ class LabResultsQueueService
       search = filters[:search].to_s.strip
       search = '' if search.match?(/\A(undefined|null)\z/i)
 
-      pending_sql = pending_lab_results_patients_sql(location_id)
+      pending_sql = pending_lab_results_patients_sql(
+        location_id,
+        show_hts_only: user_property_enabled?(SHOW_HTS_ONLY_ORDERS_PROPERTY),
+        show_viral_load_only: user_property_enabled?(SHOW_VIRAL_LOAD_ONLY_ORDERS_PROPERTY)
+      )
       rows_sql = pending_lab_results_patient_rows_sql(pending_sql, search)
 
       rows = ActiveRecord::Base.connection.select_all(
@@ -124,12 +140,12 @@ class LabResultsQueueService
       ]
     end
 
-    def pending_lab_results_patients_sql(location_id)
+    def pending_lab_results_patients_sql(location_id, show_hts_only: false, show_viral_load_only: false)
       # Resolve the lab order-type and result-concept id(s) once so the main scan
       # can filter orders directly by order_type_id (indexed) and the per-order
       # existence check is a direct, indexed obs lookup — instead of joining to
       # order_type and concept_name for every candidate order.
-      order_type_ids = lab_order_type_ids
+      order_type_ids = lab_order_type_ids(include_hts: show_hts_only)
       result_concept_ids = lab_result_concept_ids
 
       # No configured lab order types means nothing can be a lab order.
@@ -162,6 +178,14 @@ class LabResultsQueueService
         binds << result_concept_ids
       end
 
+      unless show_viral_load_only
+        viral_load_clause, viral_load_binds = exclude_viral_load_only_orders_clause
+        if viral_load_clause
+          where_clauses << viral_load_clause
+          binds.concat(viral_load_binds)
+        end
+      end
+
       if location_id.present?
         where_clauses << 'e.location_id = ?'
         binds << location_id
@@ -185,12 +209,67 @@ class LabResultsQueueService
       ])
     end
 
-    def lab_order_type_ids
-      OrderType.where(name: LAB_ORDER_TYPE_NAMES).distinct.pluck(:order_type_id)
+    # Keeps an order only when it isn't waiting for Viral Load results alone: it
+    # either has no pending Viral Load test at all, or it carries another test
+    # besides Viral Load. A mixed order (say Viral Load + Full blood count) is
+    # still real lab work, so it stays in the queue.
+    def exclude_viral_load_only_orders_clause
+      test_type_ids = test_type_concept_ids
+      viral_load_ids = viral_load_test_concept_ids
+      return [nil, []] if test_type_ids.empty? || viral_load_ids.empty?
+
+      [
+        <<~SQL.squish,
+          (
+            NOT EXISTS (
+              SELECT 1
+              FROM obs viral_load_test
+              WHERE viral_load_test.order_id = lo.order_id
+                AND viral_load_test.voided = 0
+                AND viral_load_test.concept_id IN (?)
+                AND viral_load_test.value_coded IN (?)
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM obs other_test
+              WHERE other_test.order_id = lo.order_id
+                AND other_test.voided = 0
+                AND other_test.concept_id IN (?)
+                AND (other_test.value_coded IS NULL OR other_test.value_coded NOT IN (?))
+            )
+          )
+        SQL
+        [test_type_ids, viral_load_ids, test_type_ids, viral_load_ids]
+      ]
+    end
+
+    def lab_order_type_ids(include_hts: true)
+      names = include_hts ? LAB_ORDER_TYPE_NAMES : LAB_ORDER_TYPE_NAMES - [Lab::Metadata::HTS_ORDER_TYPE_NAME]
+
+      OrderType.where(name: names).distinct.pluck(:order_type_id)
     end
 
     def lab_result_concept_ids
       ConceptName.where(voided: 0, name: LAB_RESULT_CONCEPT_NAME).distinct.pluck(:concept_id)
+    end
+
+    def test_type_concept_ids
+      ConceptName.where(voided: 0, name: TEST_TYPE_CONCEPT_NAME).distinct.pluck(:concept_id)
+    end
+
+    # Compared case-insensitively: reference name columns are utf8_bin on TiDB,
+    # where an exact-name lookup silently misses differently cased spellings.
+    def viral_load_test_concept_ids
+      ConceptName.where(voided: 0)
+                 .where('LOWER(name) IN (?)', VIRAL_LOAD_CONCEPT_NAMES.map(&:downcase))
+                 .distinct.pluck(:concept_id)
+    end
+
+    def user_property_enabled?(property)
+      user_id = User.current&.user_id
+      return false if user_id.blank?
+
+      UserProperty.find_by(user_id:, property:)&.property_value.to_s.strip.casecmp?('true')
     end
 
     def format_row(row)
