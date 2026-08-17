@@ -290,6 +290,10 @@ class PatientService
         )',
         'AMOUNT DISPENSED'
       )
+      .where(
+        '(orders.fulfiller_status IS NULL OR orders.fulfiller_status <> ?)',
+        DrugOrderService::OUT_OF_STOCK_STATUS
+      )
       .order('orders.start_date DESC')
   
     # Add program_id condition only if it is not nil
