@@ -96,7 +96,7 @@ class StockManagementService
         quantity = fetch_parameter(item, :quantity)
         barcode = fetch_parameter(item, :barcode)
         product_code = fetch_parameter(item, :product_code)
-        manufacture = fetch_parameter(item, :manufacture)
+        manufacture = item.fetch(:manufacture, nil)  # Optional parameter
         pack_size = item[:pack_size]
 
         delivery_date = fetch_parameter_as_date(item, :delivery_date, Date.today)

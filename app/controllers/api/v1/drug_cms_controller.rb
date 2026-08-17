@@ -11,7 +11,7 @@ module Api
         filters = filter_context
         query = DrugCms.all
         query = query.for_program(filters[:program_id]) if filters[:program_id]
-        query = query.for_location(filters[:location_id]) if filters[:location_id]
+        # query = query.for_locat ion(filters[:location_id]) if filters[:location_id]
         render json: paginate(query), status: :ok
       end
 
