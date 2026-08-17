@@ -65,7 +65,9 @@ class StockManagementService
   def create_batches(batches)
     ActiveRecord::Base.connection.transaction do
       batches.map do |batch|
-        add_items_to_batch(batch[:batch_number], batch[:items], location_id: batch[:location_id])
+        add_items_to_batch(batch[:batch_number], batch[:items], 
+                          location_id: batch[:location_id], 
+                          program_id: batch[:program_id])
       end
     end
   end
@@ -73,8 +75,10 @@ class StockManagementService
   # Add list of drugs to stock
   #
   # @param{batch_number} A batch number that came with the drugs package
-  # @param{drugs} A list of structures (hashes) containing the stock items
-  #               (see description below for the stock item structure).
+  # @param{stock_items} A list of structures (hashes) containing the stock items
+  #                     (see description below for the stock item structure).
+  # @param{location_id} Location ID for the batch
+  # @param{program_id} Program ID for the batch
   #
   # Inventory item structure:
   #       {
@@ -83,9 +87,9 @@ class StockManagementService
   #         expiry_date: *string   # A date conforming to ISO 8601 (ie YYYY-MM-DD)
   #         delivery_date: string  # Similar to above but is not required (defaults to today if not specified)
   #       }
-  def add_items_to_batch(batch_number, stock_items, location_id: nil)
+  def add_items_to_batch(batch_number, stock_items, location_id: nil, program_id: nil)
     ActiveRecord::Base.transaction do
-      batch = find_or_create_batch(batch_number, location_id:)
+      batch = find_or_create_batch(batch_number, location_id: location_id, program_id: program_id)
 
       stock_items.each_with_index do |item, _i|
         drug_id = fetch_parameter(item, :drug_id)
@@ -124,12 +128,19 @@ class StockManagementService
   end
 
   # Returns an ActiveRecord queryset for retrieving batches on record
-  def find_all_batches
-    PharmacyBatch.order(date_created: :desc)
+  def find_all_batches(filters = {})
+    query = PharmacyBatch.order(date_created: :desc)
+    query = query.for_program(filters[:program_id]) if filters[:program_id]
+    query = query.for_location(filters[:location_id]) if filters[:location_id]
+    query
   end
 
-  def find_batch_by_batch_number(batch_number)
-    batch = PharmacyBatch.find_by_batch_number(batch_number)
+  def find_batch_by_batch_number(batch_number, filters = {})
+    query = PharmacyBatch
+    query = query.for_program(filters[:program_id]) if filters[:program_id]
+    query = query.for_location(filters[:location_id]) if filters[:location_id]
+    
+    batch = query.find_by_batch_number(batch_number)
     raise NotFoundError, "Batch ##{batch_number} does not exist" unless batch
 
     batch
@@ -162,7 +173,8 @@ class StockManagementService
     query = query.where(pharmacy_batch_id: filters[:pharmacy_batch_id]) if filters[:pharmacy_batch_id]
     query = query.where(pack_size: filters[:pack_size]) if filters[:pack_size]
     query = query.where("pharmacy_batches.batch_number = ?", filters[:batch_number]) if filters[:batch_number]
-    query = query.where("pharmacy_batches.location_id = ?", User.current.location_id) 
+    query = query.where("pharmacy_batches.location_id = ?", filters[:location_id]) if filters[:location_id]
+    query = query.where("pharmacy_batch_items.program_id = ?", filters[:program_id]) if filters[:program_id]
     query = query.where('drug.name LIKE ?', "#{filters[:drug_name]}%") if filters[:drug_name]
     query = query.where('current_quantity > 0')
     query = query.where('expiry_date > ?', "#{ Date.today}")
@@ -244,8 +256,8 @@ class StockManagementService
   query
 end
 
-  def void_batch(batch_number, reason)
-    batch = find_batch_by_batch_number(batch_number)
+  def void_batch(batch_number, reason, filters = {})
+    batch = find_batch_by_batch_number(batch_number, filters)
     batch.items.each { |item| item.void(reason) }
     batch.void(reason)
   end
@@ -386,9 +398,9 @@ end
   DAYS_IN_MONTH = 30
 
   # Returns stats for time to drug depletion
-  def drug_consumption(drug_id)
-    consumption_rate = drug_consumption_rate(drug_id)
-    stock_level = drug_stock_level(drug_id)
+  def drug_consumption(drug_id, filters = {})
+    consumption_rate = drug_consumption_rate(drug_id, filters)
+    stock_level = drug_stock_level(drug_id, filters)
 
     stock_level_in_days = consumption_rate.zero? ? DAYS_IN_MONTH : stock_level / consumption_rate
     stock_level_in_months = stock_level_in_days / DAYS_IN_MONTH
@@ -396,7 +408,7 @@ end
     {
       stock_level_in_months:,
       stock_level:,
-      consumption_rate: drug_consumption_rate(drug_id)
+      consumption_rate: drug_consumption_rate(drug_id, filters)
     }
   end
 
@@ -464,11 +476,11 @@ end
     end
   end
 
-  def find_or_create_batch(batch_number, location_id: nil)
-    batch = PharmacyBatch.find_by(batch_number: batch_number, location_id: location_id)
+  def find_or_create_batch(batch_number, location_id: nil, program_id: nil)
+    batch = PharmacyBatch.unscoped.find_by(batch_number: batch_number, location_id: location_id, program_id: program_id)
     return batch if batch
 
-    PharmacyBatch.create(batch_number:, location_id:)
+    PharmacyBatch.create(batch_number: batch_number, location_id: location_id, program_id: program_id)
   end
 
   def create_batch_item(batch, drug_id, pack_size, quantity, delivery_date, expiry_date, product_code, barcode,manufacture)
@@ -536,26 +548,32 @@ end
   end
 
   # Returns the total amount of drug currently in stock
-  def drug_stock_level(drug_id, as_of_date: nil)
+  def drug_stock_level(drug_id, filters = {}, as_of_date: nil)
     as_of_date ||= Date.today
-    PharmacyBatchItem.where('drug_id = ? AND expiry_date >= ?', drug_id, as_of_date)\
-                     .sum(:current_quantity)
+    query = PharmacyBatchItem.where('drug_id = ? AND expiry_date >= ?', drug_id, as_of_date)
+    query = query.for_program(filters[:program_id]) if filters[:program_id]
+    query = query.for_location(filters[:location_id]) if filters[:location_id]
+    query.sum(:current_quantity)
   end
 
   DRUG_CONSUMPTION_RATE_INTERVAL = 90 # Period in days to account for in drug consumption rate
 
   # Returns rate at which drug is being used up.
-  def drug_consumption_rate(drug_id, as_of_date: nil)
+  def drug_consumption_rate(drug_id, filters = {}, as_of_date: nil)
     # TODO: Implement some sort of caching for this method
     as_of_date ||= DRUG_CONSUMPTION_RATE_INTERVAL.days.ago.to_date
 
-    total_drugs_consumed = Pharmacy.joins(:item, :type)
-                                   .where(transaction_date: as_of_date..Float::INFINITY)
-                                   .merge(PharmacyBatchItem.where(drug_id:))
-                                   .merge(PharmacyEncounterType.where(name: STOCK_DEBIT))
-                                   .select('SUM(ABS(quantity)) AS count')
-                                   .first
-                                   &.count
+    query = Pharmacy.joins(:item, :type)
+                    .where(transaction_date: as_of_date..Float::INFINITY)
+                    .merge(PharmacyBatchItem.where(drug_id:))
+                    .merge(PharmacyEncounterType.where(name: STOCK_DEBIT))
+    
+    query = query.for_program(filters[:program_id]) if filters[:program_id]
+    query = query.for_location(filters[:location_id]) if filters[:location_id]
+    
+    total_drugs_consumed = query.select('SUM(ABS(quantity)) AS count')
+                                .first
+                                &.count
 
     (total_drugs_consumed || 0) / (Date.today - as_of_date).to_i
   end

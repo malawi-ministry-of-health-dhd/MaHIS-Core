@@ -8,7 +8,11 @@ module Api
 
       # Return drug_cms array of objects
       def index
-        render json: paginate(DrugCms.all), status: :ok
+        filters = filter_context
+        query = DrugCms.all
+        query = query.for_program(filters[:program_id]) if filters[:program_id]
+        query = query.for_location(filters[:location_id]) if filters[:location_id]
+        render json: paginate(query), status: :ok
       end
 
       # show specific record on drug_cms/#
@@ -18,7 +22,8 @@ module Api
 
       # create new drug_cms
       def create
-        new_drug = DrugCms.create(create_parameters)
+        create_params = create_parameters.merge(filter_context)
+        new_drug = DrugCms.create(create_params)
         handle_errors(new_drug) unless new_drug.errors.blank?
         render json: new_drug, status: :created
       end
@@ -34,7 +39,8 @@ module Api
       def search
         kwd = params[:keyword]
         if kwd.present?
-          render json: service.search_drug_cms(kwd), status: :ok
+          filters = filter_context
+          render json: service.search_drug_cms(kwd, filters), status: :ok
         else
           render json: []
         end
@@ -48,6 +54,13 @@ module Api
       end
 
       private
+
+      def filter_context
+        {
+          program_id: params[:program_id] || User.current&.program&.program_id,
+          location_id: params[:location_id] || User.current.location_id
+        }
+      end
 
       def service
         DrugCmsService.new
@@ -64,11 +77,11 @@ module Api
       end
 
       def update_parameters
-        params.permit(:id, :code, :drug_inventory_id, :name, :short_name, :tabs, :pack_size, :weight, :strength)
+        params.permit(:id, :code, :drug_inventory_id, :name, :short_name, :tabs, :pack_size, :weight, :strength, :program_id, :location_id)
       end
 
       def create_parameters
-        params.permit(:code, :drug_inventory_id, :name, :short_name, :tabs, :pack_size, :weight, :strength)
+        params.permit(:code, :drug_inventory_id, :name, :short_name, :tabs, :pack_size, :weight, :strength, :program_id, :location_id)
       end
     end
   end
