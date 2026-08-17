@@ -4,13 +4,12 @@ class DrugCms < VoidableRecord
   self.table_name = :drug_cms
   self.primary_key = :id
 
-  include Locatable
-
   belongs_to :drug, foreign_key: :drug_inventory_id
   belongs_to :program, foreign_key: :program_id, primary_key: :program_id, optional: true
+  belongs_to :location, foreign_key: :location_id, primary_key: :location_id, optional: true
   
   validates :name, presence: true, uniqueness: { scope: [:program_id, :location_id] }
-  validates :short_name, uniqueness: { scope: [:program_id, :location_id] }
+  validates :short_name, uniqueness: { scope: [:program_id, :location_id], allow_blank: true }
   validates :code, presence: true, uniqueness: { scope: [:program_id, :location_id] }
   validates :pack_size, presence: true, numericality: { only_integer: true, greater_than: 0 }
   
