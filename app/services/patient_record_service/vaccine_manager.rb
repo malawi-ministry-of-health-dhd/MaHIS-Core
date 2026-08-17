@@ -121,7 +121,7 @@ module PatientRecordService
         program_id: program.program_id,
         patient_id: patient_id,
         date_enrolled: value_for(record, :encounter_datetime) || Time.now,
-        location_id: value_for(record, :location_id) || Location.current&.location_id
+        location_id: value_for(record, :location_id) || Location.current&.location_id || User.current&.location_id
       )
       Rails.logger.info("Enrolled patient #{patient_id} in #{program.name} for vaccine administration")
     rescue StandardError => e

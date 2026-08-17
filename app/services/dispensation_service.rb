@@ -86,6 +86,22 @@ module DispensationService
       end
     end
 
+    # Records a stock-out against a drug order. The order is NOT voided: the
+    # prescription stands, the pharmacy simply could not fill it. The flag lives on
+    # orders.fulfiller_status so it survives a patient-record rebuild, which
+    # regenerates MedicationOrder.saved from a fixed field list.
+    def mark_out_of_stock(drug_order, reason: nil)
+      order = drug_order.order
+      raise "DrugOrder #{drug_order.order_id} has no order row" if order.blank?
+      return order if order.fulfiller_status == DrugOrderService::OUT_OF_STOCK_STATUS
+
+      order.update!(
+        fulfiller_status: DrugOrderService::OUT_OF_STOCK_STATUS,
+        fulfiller_comment: reason.presence || 'Out of stock'
+      )
+      order
+    end
+
     def void_dispensations(drug_order)
       voided_dispensations = ActiveRecord::Base.transaction do
         observations = lambda do |concept_names|
