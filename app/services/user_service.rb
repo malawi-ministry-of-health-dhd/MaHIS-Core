@@ -26,7 +26,8 @@ module UserService
   class UserCreateError < StandardError; end
   class UserUpdateError < InvalidParameterError; end
 
-  def self.find_users(role: nil, search_string: nil, username: nil, include_deactivated: false, location_id: nil, location_ids: nil)
+  def self.find_users(role: nil, roles: nil, search_string: nil, username: nil, include_deactivated: false,
+                      location_id: nil, location_ids: nil)
     # Check current user permissions
     is_global_superuser = User.current.global_superuser?
     is_district_superuser = User.current.district_superuser?
@@ -43,9 +44,15 @@ module UserService
     # Unscope deactivated_on if requested
     query = query.unscope(where: :deactivated_on) if include_deactivated
 
-    # Filter by role if provided
-    if role
-      query = query.joins(:roles).where(user_roles: { role: role })
+    # Filter by role if provided. `roles` matches any of the given roles, so a
+    # user holding one of them is included; a user with several selected roles is
+    # still returned once thanks to the distinct below.
+    selected_roles = Array(roles).reject(&:blank?)
+    selected_roles = Array(role).reject(&:blank?) if selected_roles.empty?
+
+    if selected_roles.any?
+      query = query.joins(:roles).where(user_roles: { role: selected_roles })
+      query = query.distinct if selected_roles.size > 1
     end
 
     if location_id.present?

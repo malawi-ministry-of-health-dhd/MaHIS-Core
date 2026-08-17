@@ -11,7 +11,11 @@ module Api
       skip_before_action :authenticate, only: %i[login confirm_supervision reset_password]
 
       def index
-        filters = params.permit(:role, :search_string, :include_deactivated, :location_id, location_ids: []).to_hash.transform_keys(&:to_sym)
+        # `roles` is the multi-select counterpart to `role`, mirroring how
+        # `location_ids` complements `location_id`. It has to be permitted as an
+        # array explicitly, otherwise strong params drops it.
+        filters = params.permit(:role, :search_string, :include_deactivated, :location_id,
+                                location_ids: [], roles: []).to_hash.transform_keys(&:to_sym)
         query = service.find_users(**filters) 
 
         render json: {
