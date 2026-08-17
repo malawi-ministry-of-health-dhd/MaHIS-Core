@@ -6,10 +6,18 @@ module Api
       class DrugsController < ApplicationController
         def drug_consumption
           drug_id = params.require(:drug_id)
-          render json: stock_management_service.drug_consumption(drug_id)
+          filters = filter_context
+          render json: stock_management_service.drug_consumption(drug_id, filters)
         end
 
         private
+
+        def filter_context
+          {
+            program_id: params[:program_id] || User.current&.program&.program_id,
+            location_id: params[:location_id] || User.current.location_id
+          }
+        end
 
         def stock_management_service
           StockManagementService.new

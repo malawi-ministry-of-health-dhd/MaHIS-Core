@@ -6,12 +6,12 @@ module Api
       class BatchesController < ApplicationController
         #  GET /pharmacy/batches
         def index
-          render json: paginate(service.find_all_batches)
+          render json: paginate(service.find_all_batches(filter_params))
         end
 
         # GET /pharmacy/batches/:batch_number
         def show
-          render json: service.find_batch_by_batch_number(params[:id])
+          render json: service.find_batch_by_batch_number(params[:id], filter_params)
         end
 
 
@@ -21,7 +21,9 @@ module Api
         #
         #   {
         #     batch_number: string,
-        #     drugs: [
+        #     program_id: integer (optional, defaults to current user's program),
+        #     location_id: string (optional, defaults to current user's location),
+        #     items: [
         #       {
         #          drug_id: *int,
         #          pack_size: int,
@@ -36,12 +38,15 @@ module Api
 
 
         def create
-          batch_params = params['_json']          
-          user_program = User.current.programs { |x| x["name"] == "IMMUNIZATION PROGRAM" }
-          if user_program.present?
-            location_id = User.current.location_id
-            batch_params.each { |param| param["location_id"] = location_id }
-          end           
+          batch_params = params['_json']
+          program_id = params[:program_id] || User.current&.program&.program_id
+          location_id = params[:location_id] || User.current.location_id
+          
+          batch_params.each do |param|
+            param['program_id'] = program_id
+            param['location_id'] = location_id
+          end
+          
           render json: service.create_batches(batch_params), status: :created
         end
         
@@ -53,12 +58,19 @@ module Api
 
         # DELETE /pharmacy/batches/:batch_number
         def destroy
-          service.void_batch(params[:id], params.require(:reason))
+          service.void_batch(params[:id], params.require(:reason), filter_params)
 
           render status: :no_content
         end
 
         private
+
+        def filter_params
+          {
+            program_id: params[:program_id] || User.current&.program&.program_id,
+            location_id: params[:location_id] || User.current.location_id
+          }
+        end
 
         def service
           StockManagementService.new
