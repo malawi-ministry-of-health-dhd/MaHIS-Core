@@ -32,6 +32,5 @@ class Pharmacy < VoidableRecord
       self.program_id ||= item.program_id
       self.location_id ||= item.location_id
     end
-    # Program ID should be set from item or explicitly
   end
 end
