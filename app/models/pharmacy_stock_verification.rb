@@ -19,6 +19,7 @@ class PharmacyStockVerification < VoidableRecord
   private
 
   def set_program_id
-    self.program_id ||= User.current&.program&.program_id
+    # Program ID should be set explicitly when creating verifications
+    # self.program_id is already set from params or will be nil
   end
 end

@@ -57,7 +57,7 @@ module Api
 
       def filter_context
         {
-          program_id: params[:program_id] || User.current&.program&.program_id,
+          program_id: params[:program_id],
           location_id: params[:location_id] || User.current.location_id
         }
       end

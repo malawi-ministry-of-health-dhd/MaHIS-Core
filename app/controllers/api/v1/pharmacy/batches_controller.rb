@@ -39,12 +39,11 @@ module Api
 
         def create
           batch_params = params['_json']
-          program_id = params[:program_id] || User.current&.program&.program_id
-          location_id = params[:location_id] || User.current.location_id
           
+          # Set defaults only if not already present in batch params
           batch_params.each do |param|
-            param['program_id'] = program_id
-            param['location_id'] = location_id
+            param['program_id'] ||= params[:program_id]
+            param['location_id'] ||= params[:location_id] || User.current.location_id
           end
           
           render json: service.create_batches(batch_params), status: :created
@@ -67,7 +66,7 @@ module Api
 
         def filter_params
           {
-            program_id: params[:program_id] || User.current&.program&.program_id,
+            program_id: params[:program_id],
             location_id: params[:location_id] || User.current.location_id
           }
         end
