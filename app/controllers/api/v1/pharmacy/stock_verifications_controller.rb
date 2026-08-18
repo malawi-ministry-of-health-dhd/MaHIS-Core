@@ -51,9 +51,7 @@ module Api
 
         def filter_context
           {
-            program_id: params[:program_id] || User.current&.program&.program_id,
-            location_id: params[:location_id] || User.current.location_id
-          }
+          program_id: params[:program_id],
         end
 
         # Use callbacks to share common setup or constraints between actions.
