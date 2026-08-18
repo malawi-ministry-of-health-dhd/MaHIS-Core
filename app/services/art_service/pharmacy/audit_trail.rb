@@ -114,20 +114,42 @@ module ArtService
 
         def drill_transactions(from: nil, to: nil, transaction_date: nil, drug_id: nil, batch_number: nil,
                                transaction_reason: nil, program_id: nil, location_id: nil)
-          transaction_reason_condition = if transaction_reason == 'Reversing voided drug dispensation'
-                                           "SUBSTR(pharmacy_obs.transaction_reason, 1, 34) = '#{transaction_reason}'"
-                                         else
-                                           "pharmacy_obs.transaction_reason = '#{transaction_reason}'"
-                                         end
           query = transactions(from&.to_date, to&.to_date, transaction_date&.to_date, program_id, location_id)
-            .joins(:type, :item, :user)
-            .left_joins(:dispensation)
+            .joins('INNER JOIN pharmacy_encounter_type ON pharmacy_encounter_type.retired = FALSE 
+                    AND pharmacy_encounter_type.pharmacy_encounter_type_id = pharmacy_obs.pharmacy_encounter_type')
+            .joins('INNER JOIN pharmacy_batch_items ON pharmacy_batch_items.voided = FALSE 
+                    AND pharmacy_batch_items.id = pharmacy_obs.batch_item_id')
+            .joins('INNER JOIN users ON users.retired = 0 
+                    AND users.user_id = pharmacy_obs.creator')
+            .joins('INNER JOIN drug ON drug.retired = FALSE 
+                    AND drug.drug_id = pharmacy_batch_items.drug_id')
+            .joins('INNER JOIN pharmacy_batches ON pharmacy_batches.voided = FALSE 
+                    AND pharmacy_batches.id = pharmacy_batch_items.pharmacy_batch_id')
+            .joins('LEFT OUTER JOIN obs ON obs.voided = 0 
+                    AND obs.obs_id = pharmacy_obs.dispensation_obs_id')
             .joins('LEFT JOIN alternative_drug_names ON alternative_drug_names.drug_inventory_id = pharmacy_batch_items.drug_id')
-            .merge(batch_items(drug_id:, batch_number:, program_id:, location_id:))
-            .merge(transaction_types)
-            .where(transaction_reason_condition)
+
+          # Filter by drug_id and batch_number if provided
+          query = query.where('drug.drug_id = ?', drug_id) if drug_id
+          query = query.where('pharmacy_batches.batch_number = ?', batch_number) if batch_number
+          
+          # Filter by program and location for batch items
+          query = query.where('pharmacy_batch_items.program_id = ?', program_id) if program_id
+          query = query.where('pharmacy_batch_items.location_id = ?', location_id) if location_id
+
+          # Only filter by transaction_reason if provided
+          if transaction_reason.present?
+            transaction_reason_condition = if transaction_reason == 'Reversing voided drug dispensation'
+                                             "SUBSTR(pharmacy_obs.transaction_reason, 1, 34) = '#{transaction_reason}'"
+                                           else
+                                             "pharmacy_obs.transaction_reason = '#{transaction_reason}'"
+                                           end
+            query = query.where(transaction_reason_condition)
+          end
+
+          query
             .order('pharmacy_obs.transaction_date DESC')
-            .select <<~SQL
+            .select(<<~SQL
               pharmacy_obs.date_created AS creation_date,
               pharmacy_obs.transaction_date AS transaction_date,
               pharmacy_encounter_type.name AS transaction_type,
@@ -142,7 +164,7 @@ module ArtService
               users.username,
               pharmacy_obs.transaction_reason
             SQL
-          query
+            )
         end
 
         def group_transactions(from: nil, to: nil, transaction_date: nil, drug_id: nil, batch_number: nil, 
