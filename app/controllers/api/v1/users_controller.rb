@@ -335,26 +335,17 @@ module Api
         true
       end
 
-      # Only a Global Superuser may grant these roles
-      GLOBAL_ONLY_ROLES = ['Global Superuser', 'District Superuser'].freeze
+      # Only a Global Superuser may grant these roles. Kept as an alias of the
+      # canonical list on User so existing references keep working.
+      GLOBAL_ONLY_ROLES = User::GLOBAL_ONLY_ROLE_NAMES
 
+      # The rank rule itself lives on User#may_assign_role?, so the role lists the
+      # API hands out and the roles it accepts on write cannot drift apart.
       def validate_role_permissions(roles)
         return true if roles.blank?
-        return true if User.current.global_superuser?
-
-        current_rank = User.current.superuser_rank
 
         roles.each do |role|
-          role_rank = User::SUPERUSER_ROLE_RANK[role.to_s.strip.downcase]
-          next if role_rank.nil? # ordinary (non-superuser) role — anyone may assign it
-
-          # Global Superuser / District Superuser may only ever be granted by a Global Superuser.
-          forbidden = GLOBAL_ONLY_ROLES.any? { |gr| gr.casecmp(role.to_s).zero? }
-          # Any other superuser role may only be granted by someone of equal or higher rank,
-          # so a user can never grant a role that outranks their own.
-          forbidden ||= current_rank < role_rank
-
-          next unless forbidden
+          next if User.current.may_assign_role?(role)
 
           render json: { errors: ["You are not authorised to assign the '#{role}' role"] }, status: :forbidden
           return false
