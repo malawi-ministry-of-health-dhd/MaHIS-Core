@@ -18,6 +18,5 @@ class PharmacyBatchItemReallocation < VoidableRecord
       self.program_id ||= item.program_id
       self.location_id ||= item.location_id unless location_id.present? # Don't override reallocation destination
     end
-    # Program ID should be set from item or explicitly
   end
 end

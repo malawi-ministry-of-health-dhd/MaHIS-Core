@@ -7,7 +7,6 @@ class PharmacyBatch < VoidableRecord
   has_many :items, class_name: 'PharmacyBatchItem'
 
   after_void :void_items
-  before_save :set_program_id
 
   # Scopes for filtering
   scope :for_program, ->(program_id) { where(program_id: program_id) if program_id.present? }
@@ -25,12 +24,5 @@ class PharmacyBatch < VoidableRecord
 
   def void_items(reason)
     items.each { |item| item.void(reason) }
-  end
-
-  private
-
-  def set_program_id
-    # Program ID should be set explicitly when creating batches
-    # self.program_id is already set from params or will be nil
   end
 end

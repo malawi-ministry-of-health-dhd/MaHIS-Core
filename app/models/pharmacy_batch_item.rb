@@ -56,6 +56,5 @@ class PharmacyBatchItem < VoidableRecord
       self.program_id ||= batch.program_id
       self.location_id ||= batch.location_id
     end
-    # Program ID should be set from batch or explicitly
   end
 end
