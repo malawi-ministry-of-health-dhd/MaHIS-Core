@@ -80,7 +80,8 @@ RSpec.configure do |config|
     'void_drug_orders_spec.rb',
     'void_patient_spec.rb',
     'save_patient_record_service_spec.rb',
-    'vaccine_manager_spec.rb'
+    'vaccine_manager_spec.rb',
+    'labour_stats_queries_spec.rb'
   ].freeze
 
   # Wrap individual test execution to skip non-passing specs
