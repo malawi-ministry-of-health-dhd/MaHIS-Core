@@ -194,6 +194,7 @@ Rails.application.routes.draw do
       get '/impow/metrics', to: 'impow#metrics'
       get '/impow/batch_anthropometry/patients', to: 'impow#batch_anthropometry_patients'
       get '/impow/batch_medical_assessment/patients', to: 'impow#batch_medical_assessment_patients'
+      get '/impow/batch_dispensation/patients', to: 'impow#batch_dispensation_patients'
 
       # Locations
       resources :locations do
