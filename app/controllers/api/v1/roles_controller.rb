@@ -15,6 +15,8 @@ module Api
         end
 
         roles = params[:paginate] == 'true' ? paginate(roles_query) : roles_query.order(:role)
+        roles = restrict_to_selectable(roles) if params[:assignable].to_s == 'true'
+
         render json: serialize_roles(roles)
       end
 
@@ -113,6 +115,17 @@ module Api
         permitted_params << :location_id if Role.location_scoped?
 
         params.permit(permitted_params)
+      end
+
+      # Narrows a role list to what the caller may grant, plus any role they
+      # already hold. Callers asking for `assignable=true` are building a role
+      # picker or filter, and should not be shown roles they can never act on --
+      # the same rule UsersController applies when roles are written.
+      def restrict_to_selectable(roles)
+        return roles unless User.current
+
+        selectable = User.current.selectable_role_names(roles.map(&:role))
+        roles.select { |role| selectable.include?(role.role) }
       end
 
       def authorize_role_management
