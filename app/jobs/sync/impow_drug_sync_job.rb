@@ -445,7 +445,7 @@ module Sync
         'drugs' => {
           'f75' => f75_section,
           'f100' => f100_section,
-          'rutf_ITS' => rutf_its_section,
+          'rutf_its' => rutf_its_section,
           'malaria_drugs' => malaria_drugs_section,
           'vitamin_a' => vitamin_a_section,
           'deworming' => deworming_section,
@@ -490,7 +490,18 @@ module Sync
       build_simple_section(
         'Ready-to-Use Therapeutic Food (RUTF)',
         'Inpatient Therapeutic Service',
-        { 'description' => 'Used during rehabilitation phase in ITS' }
+        { 'description' => 'Used during rehabilitation phase in ITS',
+          'dose_basis' => '165 kcal/kg/day',
+          'note' => 'Dose given per day and per week based on weight band',
+          'weight_bands' => Impow::OtsDrugDosageService.all_rutf_weight_bands.map do |band|
+            {
+              'min_kg' => band[:min],
+              'max_kg' => band[:max] == Float::INFINITY ? nil : band[:max],
+              'sachets_per_day' => band[:day],
+              'sachets_per_week' => band[:week]
+            }
+          end
+        }
       )
     end
 
