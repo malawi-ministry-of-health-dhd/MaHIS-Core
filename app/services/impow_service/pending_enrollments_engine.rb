@@ -60,6 +60,7 @@ module ImpowService
       pending_patient_ids = PatientState.joins(:patient_program)
                                         .where(patient_program: { program_id: os_program_ids, voided: 0 })
                                         .where(state: referred_state_ids, voided: 0, end_date: nil)
+                                        .where.not(patient_program: { patient_id: hiv_referrals_not_on_art }) # exclude HIV referrals never on ART
                                         .pluck(:patient_id)
       return { patients: [], total_count: 0 } if pending_patient_ids.empty?
 
@@ -147,6 +148,22 @@ module ImpowService
       end.compact
 
       { patients: patients, total_count: total_count }
+    end
+
+    # HIV-referred patient IDs never on ART; excluded via subquery.
+    def hiv_referrals_not_on_art
+      hiv_program_id = Program.find_by(name: 'HIV PROGRAM')&.program_id
+      return PatientProgram.none.select(:patient_id) unless hiv_program_id
+
+      on_art_state_id = ProgramWorkflowState.find_by_name_and_program(name: 'On antiretrovirals', program_id: hiv_program_id)&.program_workflow_state_id
+      return PatientProgram.none.select(:patient_id) unless on_art_state_id
+
+      on_art_patient_ids = PatientState.joins(:patient_program)
+                                       .where(patient_program: { program_id: hiv_program_id, voided: 0 })
+                                       .where(state: on_art_state_id, voided: 0)
+                                       .select(:patient_id)
+
+      PatientProgram.where(program_id: hiv_program_id, voided: 0).where.not(patient_id: on_art_patient_ids).select(:patient_id)
     end
 
     # Resolve IMPOW-related program IDs by name and memoize for this instance.
