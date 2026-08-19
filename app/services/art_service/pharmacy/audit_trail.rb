@@ -14,6 +14,8 @@ module ArtService
         #   to: date on which the audit trail should end
         #   drug_id: trail should only be limited to these drugs
         #   batch_number: trail should only be limited to this batch
+        #   program_id: filter by program
+        #   location_id: filter by location
         #
         # Returns: Array of hashes
         #   {
@@ -39,14 +41,14 @@ module ArtService
             .map { |transaction| serialize_grouped_transaction(transaction) }
         end
 
-        def stock_report
-          stock_summary
+        def stock_report(filters = {})
+          stock_summary(filters)
         end
 
         private
 
-        def stock_summary
-          ActiveRecord::Base.connection.select_all <<~SQL
+        def stock_summary(filters = {})
+          sql = <<~SQL
             SELECT
             pharmacy_batch_items.product_code,
             GROUP_CONCAT(distinct(batch_number)) AS batch_numbers,
@@ -92,27 +94,62 @@ module ArtService
             WHERE `pharmacy_obs`.`voided` = FALSE
             AND `pharmacy_batch_items`.`voided` = FALSE
             AND `pharmacy_encounter_type`.`retired` = FALSE
+          SQL
+
+          # Add program and location filters
+          if filters[:program_id].present?
+            sql += " AND `pharmacy_batch_items`.`program_id` = #{ActiveRecord::Base.connection.quote(filters[:program_id])}"
+          end
+          if filters[:location_id].present?
+            sql += " AND `pharmacy_batch_items`.`location_id` = #{ActiveRecord::Base.connection.quote(filters[:location_id])}"
+          end
+
+          sql += <<~SQL
             GROUP BY pharmacy_batch_items.product_code, drug.name
             ORDER BY pharmacy_batch_items.product_code ASC
           SQL
+
+          ActiveRecord::Base.connection.select_all(sql)
         end
 
         def drill_transactions(from: nil, to: nil, transaction_date: nil, drug_id: nil, batch_number: nil,
-                               transaction_reason: nil)
-          transaction_reason_condition = if transaction_reason == 'Reversing voided drug dispensation'
-                                           "SUBSTR(pharmacy_obs.transaction_reason, 1, 34) = '#{transaction_reason}'"
-                                         else
-                                           "pharmacy_obs.transaction_reason = '#{transaction_reason}'"
-                                         end
-          transactions(from&.to_date, to&.to_date, transaction_date&.to_date)
-            .joins(:type, :item, :user)
-            .left_joins(:dispensation)
+                               transaction_reason: nil, program_id: nil, location_id: nil)
+          query = transactions(from&.to_date, to&.to_date, transaction_date&.to_date, program_id, location_id)
+            .joins('INNER JOIN pharmacy_encounter_type ON pharmacy_encounter_type.retired = FALSE 
+                    AND pharmacy_encounter_type.pharmacy_encounter_type_id = pharmacy_obs.pharmacy_encounter_type')
+            .joins('INNER JOIN pharmacy_batch_items ON pharmacy_batch_items.voided = FALSE 
+                    AND pharmacy_batch_items.id = pharmacy_obs.batch_item_id')
+            .joins('INNER JOIN users ON users.retired = 0 
+                    AND users.user_id = pharmacy_obs.creator')
+            .joins('INNER JOIN drug ON drug.retired = FALSE 
+                    AND drug.drug_id = pharmacy_batch_items.drug_id')
+            .joins('INNER JOIN pharmacy_batches ON pharmacy_batches.voided = FALSE 
+                    AND pharmacy_batches.id = pharmacy_batch_items.pharmacy_batch_id')
+            .joins('LEFT OUTER JOIN obs ON obs.voided = 0 
+                    AND obs.obs_id = pharmacy_obs.dispensation_obs_id')
             .joins('LEFT JOIN alternative_drug_names ON alternative_drug_names.drug_inventory_id = pharmacy_batch_items.drug_id')
-            .merge(batch_items(drug_id:, batch_number:))
-            .merge(transaction_types)
-            .where(transaction_reason_condition)
+
+          # Filter by drug_id and batch_number if provided
+          query = query.where('drug.drug_id = ?', drug_id) if drug_id
+          query = query.where('pharmacy_batches.batch_number = ?', batch_number) if batch_number
+          
+          # Filter by program and location for batch items
+          query = query.where('pharmacy_batch_items.program_id = ?', program_id) if program_id
+          query = query.where('pharmacy_batch_items.location_id = ?', location_id) if location_id
+
+          # Only filter by transaction_reason if provided
+          if transaction_reason.present?
+            transaction_reason_condition = if transaction_reason == 'Reversing voided drug dispensation'
+                                             "SUBSTR(pharmacy_obs.transaction_reason, 1, 34) = '#{transaction_reason}'"
+                                           else
+                                             "pharmacy_obs.transaction_reason = '#{transaction_reason}'"
+                                           end
+            query = query.where(transaction_reason_condition)
+          end
+
+          query
             .order('pharmacy_obs.transaction_date DESC')
-            .select <<~SQL
+            .select(<<~SQL
               pharmacy_obs.date_created AS creation_date,
               pharmacy_obs.transaction_date AS transaction_date,
               pharmacy_encounter_type.name AS transaction_type,
@@ -127,10 +164,12 @@ module ArtService
               users.username,
               pharmacy_obs.transaction_reason
             SQL
+            )
         end
 
-        def group_transactions(from: nil, to: nil, transaction_date: nil, drug_id: nil, batch_number: nil)
-          transactions(from&.to_date, to&.to_date, transaction_date&.to_date)
+        def group_transactions(from: nil, to: nil, transaction_date: nil, drug_id: nil, batch_number: nil, 
+                               program_id: nil, location_id: nil)
+          transactions(from&.to_date, to&.to_date, transaction_date&.to_date, program_id, location_id)
             .joins(:type, :item, :user)
             .left_joins(:dispensation)
             .joins('LEFT JOIN alternative_drug_names ON alternative_drug_names.drug_inventory_id = pharmacy_batch_items.drug_id')
@@ -159,19 +198,23 @@ module ArtService
             SQL
         end
 
-        def transactions(from, to, transactions_date)
+        def transactions(from, to, transactions_date, program_id = nil, location_id = nil)
           query = ::Pharmacy.all
           query = query.where("pharmacy_encounter_type_id != #{PharmacyEncounterType.find_by_name('Tins in previous stock').id}")
           query = query.where('DATE(pharmacy_obs.transaction_date) >= ?', from) if from
           query = query.where('DATE(pharmacy_obs.transaction_date) <= ?', to) if to
           query = query.where('DATE(pharmacy_obs.transaction_date) = ?', transactions_date) if transactions_date
+          query = query.for_program(program_id) if program_id
+          query = query.for_location(location_id) if location_id
           query
         end
 
-        def batch_items(drug_id: nil, batch_number: nil)
+        def batch_items(drug_id: nil, batch_number: nil, program_id: nil, location_id: nil)
           items = PharmacyBatchItem.joins(:drug, :batch)
           items = items.merge(Drug.where(drug_id:)) if drug_id
           items = items.merge(PharmacyBatch.where(batch_number:)) if batch_number
+          items = items.for_program(program_id) if program_id
+          items = items.for_location(location_id) if location_id
 
           items
         end
