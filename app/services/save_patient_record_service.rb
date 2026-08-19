@@ -78,6 +78,7 @@ class SavePatientRecordService
         patient_record["_id"] = document_id
         sync_to_couchdb(patient_record, "patients_records", document_id)
         retire_legacy_npid_documents(patient_record)
+        enqueue_art_summary_couchdb_true_up(patient_id, patient_record)
       rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH => e
         Rails.logger.warn("CouchDB connection error during patient record sync for #{patient_record["ID"]}: #{e.class}: #{e.message}")
       rescue StandardError => e
@@ -756,6 +757,23 @@ class SavePatientRecordService
     )
   rescue StandardError => e
     Rails.logger.warn("Failed to enqueue labOrders CouchDB true-up for patient #{patient_id}: #{e.class}: #{e.message}")
+  end
+
+  # Only ART patients carry an art_summary doc section; skip the job entirely
+  # for everyone else. A brand-new ART patient's first save can carry an empty
+  # {} (not yet populated client-side), so check the section exists rather
+  # than requiring it to be non-empty. Delayed so it runs after this request's
+  # own CouchDB sync above has landed, avoiding a write race against it.
+  def enqueue_art_summary_couchdb_true_up(patient_id, patient_record)
+    return unless record_value(patient_record, :art_summary).is_a?(Hash)
+
+    RebuildArtSummaryJob.set(wait: 30.seconds).perform_later(
+      patient_id,
+      trigger: 'save_patient_record_art_summary_true_up',
+      metadata: {}
+    )
+  rescue StandardError => e
+    Rails.logger.warn("Failed to enqueue art_summary CouchDB true-up for patient #{patient_id}: #{e.class}: #{e.message}")
   end
 
   def ensure_primary_identifier_persisted!(patient_id, patient_record)

@@ -211,6 +211,44 @@ class CouchdbPatientService
 
     private
 
+    # Registration-time fields that clients can miss on their initial save: some
+    # (art_start_date) are only computed server-side after enrollment finishes,
+    # others (hiv_test_date, hiv_test_location, reason_for_art_eligibility) are
+    # built across multiple client-side sub-forms (registration + staging) whose
+    # saves can race ahead of the observation that would let a client compute
+    # them locally. Either way the client-supplied art_summary can permanently
+    # miss them since art_summary is never rebuilt on write. Self-heal on read
+    # instead: only ART patients carry an art_summary, and only pay for the
+    # (single) MySQL recompute when something is actually missing.
+    REGISTRATION_ROOT_FIELDS = %w[art_start_date hiv_test_date hiv_test_location reason_for_art_eligibility].freeze
+
+    def refresh_art_start_date(record, local_patient)
+      return record unless record.is_a?(Hash) && local_patient
+
+      art_summary = record['art_summary']
+      return record unless art_summary.is_a?(Hash)
+      return record unless REGISTRATION_ROOT_FIELDS.any? { |field| art_summary[field].blank? }
+
+      fresh_values = ArtService::PatientSummaryBuilder.new(local_patient.patient_id).build
+      changed = false
+
+      REGISTRATION_ROOT_FIELDS.each do |field|
+        next if art_summary[field].present?
+
+        fresh_value = fresh_values[field]
+        next if fresh_value.blank?
+
+        art_summary[field] = fresh_value
+        changed = true
+      end
+
+      save_patient_record(record, local_patient.patient_id) if changed
+      record
+    rescue StandardError => e
+      Rails.logger.warn("Could not refresh registration fields for patient #{local_patient&.patient_id}: #{e.class}: #{e.message}")
+      record
+    end
+
     def design_doc_count(db_name)
       response = RestClient.get(couchdb_url(db_name, '_design_docs'))
       JSON.parse(response.body)['rows'].length
@@ -321,23 +359,6 @@ class CouchdbPatientService
         doc_data.to_json,
         { content_type: :json, accept: :json }
       )
-    end
-
-    def refresh_art_start_date(record, patient)
-      return record unless patient
-
-      art_start_date = ActiveRecord::Base.connection.select_value(<<~SQL)
-        SELECT date_antiretrovirals_started(#{patient.patient_id}, CURRENT_DATE())
-      SQL
-      return record if art_start_date.blank? || record.dig('art_summary', 'art_start_date').to_s == art_start_date.to_s
-
-      record['art_summary'] ||= {}
-      record['art_summary']['art_start_date'] = art_start_date.to_s
-      save_patient_record(record, patient.patient_id)
-      record
-    rescue StandardError => e
-      Rails.logger.warn "Unable to refresh ART start date for patient #{patient&.patient_id}: #{e.message}"
-      record
     end
 
     def find_patient_document_by_identifier(identifier)
