@@ -211,56 +211,35 @@ class CouchdbPatientService
 
     private
 
-    # Registration-time fields that clients can miss on their initial save: some
-    # (art_start_date) are only computed server-side after enrollment finishes,
-    # others (hiv_test_date, hiv_test_location, reason_for_art_eligibility) are
-    # built across multiple client-side sub-forms (registration + staging) whose
-    # saves can race ahead of the observation that would let a client compute
-    # them locally. Either way the client-supplied art_summary can permanently
-    # miss them since art_summary is never rebuilt on write. Self-heal on read
-    # instead: only ART patients carry an art_summary, and only pay for the
-    # (single) MySQL recompute when something is actually missing.
-    REGISTRATION_ROOT_FIELDS = %w[art_start_date hiv_test_date hiv_test_location reason_for_art_eligibility].freeze
-    MAX_REGISTRATION_FIELD_MERGE_ATTEMPTS = 3
+    MAX_ART_SUMMARY_REFRESH_ATTEMPTS = 3
 
-    def refresh_art_start_date(record, local_patient)
+    def refresh_art_summary(record, local_patient)
       return record unless record.is_a?(Hash) && local_patient
 
       art_summary = record['art_summary']
       return record unless art_summary.is_a?(Hash)
-      return record unless REGISTRATION_ROOT_FIELDS.any? { |field| art_summary[field].blank? }
 
-      fresh_values = ArtService::PatientSummaryBuilder.new(local_patient.patient_id).build
-      merge_missing_registration_fields(local_patient.patient_id, fresh_values) || record
+      fresh_art_summary = ArtService::PatientSummaryBuilder.new(local_patient.patient_id).build.as_json
+      replace_art_summary(local_patient.patient_id, fresh_art_summary) || record
     rescue StandardError => e
-      Rails.logger.warn("Could not refresh registration fields for patient #{local_patient&.patient_id}: #{e.class}: #{e.message}")
+      Rails.logger.warn("Could not refresh ART summary for patient #{local_patient&.patient_id}: #{e.class}: #{e.message}")
       record
     end
 
     # Re-fetches the CouchDB document immediately before writing so the merge
     # is based on the latest revision rather than the (possibly stale) body
     # fetched before the MySQL rebuild ran, and retries on revision conflicts.
-    def merge_missing_registration_fields(patient_id, fresh_values)
+    def replace_art_summary(patient_id, fresh_art_summary)
       document_id = PatientRecordIdentityService.document_id(patient: Patient.unscoped.find_by(patient_id:)) || patient_id.to_s
 
-      MAX_REGISTRATION_FIELD_MERGE_ATTEMPTS.times do
+      MAX_ART_SUMMARY_REFRESH_ATTEMPTS.times do
         latest_doc = JSON.parse(RestClient.get(couchdb_url(PATIENTS_DB,
                                                            URI.encode_www_form_component(document_id))).body)
         art_summary = latest_doc['art_summary']
         return latest_doc unless art_summary.is_a?(Hash)
+        return latest_doc if art_summary == fresh_art_summary
 
-        changed = false
-        REGISTRATION_ROOT_FIELDS.each do |field|
-          next if art_summary[field].present?
-
-          fresh_value = fresh_values[field]
-          next if fresh_value.blank?
-
-          art_summary[field] = fresh_value
-          changed = true
-        end
-
-        return latest_doc unless changed
+        latest_doc['art_summary'] = fresh_art_summary
 
         begin
           save_patient_record(latest_doc, patient_id)
@@ -328,7 +307,7 @@ class CouchdbPatientService
           end
           document_id = PatientRecordIdentityService.document_id(patient: local_patient) || patient_id.to_s
           response = RestClient.get(couchdb_url(PATIENTS_DB, URI.encode_www_form_component(document_id)))
-          refresh_art_start_date(JSON.parse(response.body), local_patient)
+          refresh_art_summary(JSON.parse(response.body), local_patient)
         rescue RestClient::NotFound
           # A numeric ID that resolves to a local patient is not a legacy DDE
           # identifier. On a newly registered patient, searching for it using

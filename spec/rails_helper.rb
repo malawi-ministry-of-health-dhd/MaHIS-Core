@@ -54,6 +54,7 @@ RSpec.configure do |config|
     'medication_order_saver_spec.rb',
     'push_dde_footprints_job_spec.rb',
     'drug_order_service_spec.rb',
+    'patient_summary_builder_spec.rb',
     'user_service_spec.rb',
     'hts_dashboard_channel_spec.rb',
     'stage_spec.rb',
