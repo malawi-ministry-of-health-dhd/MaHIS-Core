@@ -4,10 +4,13 @@ module ArtService
   class VlReminder
     attr_reader :patient, :program, :date
 
-    def initialize(patient_id:, date: nil)
+    # preloaded: an optional ArtService::VlBatchLoader shared across many patients
+    # (e.g. by a report) to avoid each instance re-querying the same lab order data.
+    def initialize(patient_id:, date: nil, preloaded: nil)
       @program = Program.find_by_name('HIV PROGRAM')
       @patient = Patient.find(patient_id)
       @date = date&.to_date || Date.today
+      @preloaded = preloaded
     end
 
     ##
@@ -81,6 +84,8 @@ module ArtService
     #   duration: An ActiveSupport::Duration specifying the period to search for a viral load
     #             starting from set date going back (default: 12 months)
     def find_patient_recent_viral_load(duration: 12.months)
+      return @preloaded.recent_viral_load(patient.patient_id, date, duration) if @preloaded
+
       Lab::LabOrder.where(concept: ConceptName.where(name: ['Blood', 'DBS (Free drop to DBS card)', 'DBS (Using capillary tube)', 'Plasma'])\
                   .select(:concept_id), patient:)
                    .where('start_date BETWEEN DATE(?) AND DATE(?)', (date - duration), date)
@@ -93,15 +98,22 @@ module ArtService
     ##
     # Returns patient's last viral load before now
     def find_patient_last_viral_load
-      specimens = ConceptName.where(name: ['Blood', 'DBS (Free drop to DBS card)', 'DBS (Using capillary tube)'])
-                             .select(:concept_id)
+      # Called several times per patient (due_date calc + struct_vl_info); memoize to avoid re-querying
+      return @find_patient_last_viral_load if defined?(@find_patient_last_viral_load)
 
-      Lab::LabOrder.where(concept: specimens, patient:)
-                   .where('start_date <= DATE(?)', date)
-                   .joins(:tests)
-                   .merge(viral_load_tests)
-                   .order(:start_date)
-                   .last
+      @find_patient_last_viral_load = if @preloaded
+        @preloaded.last_viral_load(patient.patient_id, date)
+      else
+        specimens = ConceptName.where(name: ['Blood', 'DBS (Free drop to DBS card)', 'DBS (Using capillary tube)'])
+                               .select(:concept_id)
+
+        Lab::LabOrder.where(concept: specimens, patient:)
+                     .where('start_date <= DATE(?)', date)
+                     .joins(:tests)
+                     .merge(viral_load_tests)
+                     .order(:start_date)
+                     .last
+      end
     end
 
     def viral_load_tests
@@ -132,12 +144,16 @@ module ArtService
     ##
     # Returns the most recent viral load skip in the last specified period.
     def find_patient_recent_viral_load_skip(duration: 6.months)
-      Observation.where(concept: ConceptName.where(name: ['Delayed milestones', 'Tests ordered'])
-                                            .select(:concept_id),
-                        person_id: patient.patient_id)
-                 .where('obs_datetime BETWEEN DATE(?) AND (?)', date - duration, date)
-                 .order(:obs_datetime)
-                 .last
+      # Repeatedly called per patient with the same default duration; memoize per duration
+      @find_patient_recent_viral_load_skip ||= {}
+      return @find_patient_recent_viral_load_skip[duration] if @find_patient_recent_viral_load_skip.key?(duration)
+
+      @find_patient_recent_viral_load_skip[duration] = Observation.where(
+        concept: ConceptName.where(name: ['Delayed milestones', 'Tests ordered']).select(:concept_id),
+        person_id: patient.patient_id
+      ).where('obs_datetime BETWEEN DATE(?) AND (?)', date - duration, date)
+       .order(:obs_datetime)
+       .last
     end
 
     ##

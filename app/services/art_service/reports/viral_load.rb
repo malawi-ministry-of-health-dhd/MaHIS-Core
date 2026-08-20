@@ -23,6 +23,9 @@ module ArtService
         clients = potential_get_clients
         return [] if clients.blank?
 
+        @batch_loader = ArtService::VlBatchLoader.new(patient_ids: clients.map { |c| c[:patient_id] },
+                                                      start_date: @start_date, end_date: @end_date)
+
         clients_due_list = []
 
         clients.each do |person|
@@ -260,22 +263,7 @@ module ArtService
       end
 
       def last_vl_result(patient_id)
-        viral_load_concept = ConceptName.where(name: 'HIV Viral Load').select(:concept_id)
-        result_sql = <<~SQL
-          INNER JOIN obs AS parent
-            ON parent.obs_id = obs.obs_group_id
-            AND parent.concept_id IN (SELECT concept_id FROM concept_name WHERE name = 'Lab test result' AND voided = 0)
-            AND parent.voided = 0
-            AND parent.person_id = #{patient_id}
-        SQL
-
-        measure = Observation.joins(result_sql)
-                             .where(concept: viral_load_concept)
-                             .where('(obs.value_numeric IS NOT NULL OR obs.value_text IS NOT NULL)
-                                 AND obs.obs_datetime < DATE(?) + INTERVAL 1 DAY',
-                                    @end_date)
-                             .order(obs_datetime: :desc)
-                             .first
+        measure = @batch_loader.last_vl_result(patient_id)
 
         return OpenStruct.new(order_date: 'N/A', result_date: 'N/A', result_value: 'N/A') unless measure
 
@@ -294,7 +282,7 @@ module ArtService
       end
 
       def get_vl_due_info(patient_id, appointment_date)
-        vl_info = ArtService::VlReminder.new(patient_id:, date: appointment_date)
+        vl_info = ArtService::VlReminder.new(patient_id:, date: appointment_date, preloaded: @batch_loader)
         vl_info.vl_reminder_info
       end
     end
