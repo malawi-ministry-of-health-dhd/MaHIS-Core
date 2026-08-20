@@ -221,6 +221,7 @@ class CouchdbPatientService
     # instead: only ART patients carry an art_summary, and only pay for the
     # (single) MySQL recompute when something is actually missing.
     REGISTRATION_ROOT_FIELDS = %w[art_start_date hiv_test_date hiv_test_location reason_for_art_eligibility].freeze
+    MAX_REGISTRATION_FIELD_MERGE_ATTEMPTS = 3
 
     def refresh_art_start_date(record, local_patient)
       return record unless record.is_a?(Hash) && local_patient
@@ -230,23 +231,48 @@ class CouchdbPatientService
       return record unless REGISTRATION_ROOT_FIELDS.any? { |field| art_summary[field].blank? }
 
       fresh_values = ArtService::PatientSummaryBuilder.new(local_patient.patient_id).build
-      changed = false
-
-      REGISTRATION_ROOT_FIELDS.each do |field|
-        next if art_summary[field].present?
-
-        fresh_value = fresh_values[field]
-        next if fresh_value.blank?
-
-        art_summary[field] = fresh_value
-        changed = true
-      end
-
-      save_patient_record(record, local_patient.patient_id) if changed
-      record
+      merge_missing_registration_fields(local_patient.patient_id, fresh_values) || record
     rescue StandardError => e
       Rails.logger.warn("Could not refresh registration fields for patient #{local_patient&.patient_id}: #{e.class}: #{e.message}")
       record
+    end
+
+    # Re-fetches the CouchDB document immediately before writing so the merge
+    # is based on the latest revision rather than the (possibly stale) body
+    # fetched before the MySQL rebuild ran, and retries on revision conflicts.
+    def merge_missing_registration_fields(patient_id, fresh_values)
+      document_id = PatientRecordIdentityService.document_id(patient: Patient.unscoped.find_by(patient_id:)) || patient_id.to_s
+
+      MAX_REGISTRATION_FIELD_MERGE_ATTEMPTS.times do
+        latest_doc = JSON.parse(RestClient.get(couchdb_url(PATIENTS_DB,
+                                                           URI.encode_www_form_component(document_id))).body)
+        art_summary = latest_doc['art_summary']
+        return latest_doc unless art_summary.is_a?(Hash)
+
+        changed = false
+        REGISTRATION_ROOT_FIELDS.each do |field|
+          next if art_summary[field].present?
+
+          fresh_value = fresh_values[field]
+          next if fresh_value.blank?
+
+          art_summary[field] = fresh_value
+          changed = true
+        end
+
+        return latest_doc unless changed
+
+        begin
+          save_patient_record(latest_doc, patient_id)
+          return latest_doc
+        rescue RestClient::Conflict
+          next # document changed between our fetch and save; retry with a fresh fetch
+        end
+      end
+
+      nil
+    rescue RestClient::NotFound
+      nil
     end
 
     def design_doc_count(db_name)

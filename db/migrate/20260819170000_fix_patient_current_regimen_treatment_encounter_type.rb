@@ -8,7 +8,19 @@
 # Fixes it by resolving the TREATMENT encounter_type_id dynamically instead
 # of hardcoding an id that isn't portable across sites.
 class FixPatientCurrentRegimenTreatmentEncounterType < ActiveRecord::Migration[8.1]
+  TREATMENT_ENCOUNTER_TYPE_LOOKUP_SQL = <<~SQL
+    SELECT encounter_type_id FROM encounter_type
+    WHERE name = 'TREATMENT' AND retired = 0
+    ORDER BY encounter_type_id ASC
+    LIMIT 1
+  SQL
+
   def up
+    treatment_encounter_type_id = select_value(TREATMENT_ENCOUNTER_TYPE_LOOKUP_SQL)
+    if treatment_encounter_type_id.blank?
+      raise ActiveRecord::IrreversibleMigration, 'No active TREATMENT encounter_type found'
+    end
+
     execute('DROP FUNCTION IF EXISTS patient_current_regimen')
     execute(<<~SQL)
       CREATE FUNCTION `patient_current_regimen`(`my_patient_id` INT, `my_date` DATE) RETURNS varchar(10) CHARSET utf8mb3 COLLATE utf8mb3_unicode_ci
@@ -19,7 +31,7 @@ class FixPatientCurrentRegimenTreatmentEncounterType < ActiveRecord::Migration[8
         DECLARE treatment_encounter_type_id INT;
 
         SET treatment_encounter_type_id = (
-          SELECT encounter_type_id FROM encounter_type WHERE name = 'TREATMENT' LIMIT 1
+          #{TREATMENT_ENCOUNTER_TYPE_LOOKUP_SQL}
         );
 
         SET max_obs_datetime = (
