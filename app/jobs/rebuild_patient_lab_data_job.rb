@@ -10,8 +10,9 @@ class RebuildPatientLabDataJob < ApplicationJob
 
   queue_as :patient_records
 
-  # Retry with exponential backoff on failures
-  retry_on StandardError, wait: :exponentially_longer, attempts: 5
+  # Retry with exponential backoff on failures (2^x seconds: 1s, 4s, 9s, 16s, 25s)
+
+  sidekiq_options retry: 5
 
   def perform(patient_id, trigger:, metadata: {})
     Rails.logger.info("RebuildPatientLabDataJob: Starting rebuild for patient #{patient_id} - Trigger: #{trigger}")
@@ -50,12 +51,12 @@ class RebuildPatientLabDataJob < ApplicationJob
   private
 
   def patient_document_id(patient_id)
-    patient = Patient.includes(:patient_identifiers).find_by(patient_id: patient_id)
+    patient = Patient.includes(:person).find_by(patient_id: patient_id)
     raise "Patient not found for labOrders rebuild: #{patient_id}" unless patient
+    raise "Person not found for patient #{patient_id}" unless patient.person
 
-    identifiers_by_type = BuildPatientRecordService.patient_identifiers_by_type(patient)
-    document_id = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 3, patient_id)
-    raise "Patient record ID missing for labOrders rebuild: #{patient_id}" if document_id.blank?
+    document_id = patient.person.uuid
+    raise "Person UUID missing for patient #{patient_id}" if document_id.blank?
 
     document_id
   end
@@ -97,7 +98,7 @@ class RebuildPatientLabDataJob < ApplicationJob
       retry
     end
   rescue RestClient::NotFound
-    raise "Patient CouchDB document #{document_id} not found; cannot update labOrders only"
+    raise "Patient CouchDB document #{document_id}: #{doc_url} not found; cannot update labOrders only"
   end
 
   def track_rebuild_event(patient_id, trigger, _metadata, duration)
