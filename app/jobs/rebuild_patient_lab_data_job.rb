@@ -98,7 +98,7 @@ class RebuildPatientLabDataJob < ApplicationJob
       retry
     end
   rescue RestClient::NotFound
-    raise "Patient CouchDB document #{document_id}: #{doc_url} not found; cannot update labOrders only"
+    raise "Patient CouchDB document #{document_id} not found; cannot update labOrders only"
   end
 
   def track_rebuild_event(patient_id, trigger, _metadata, duration)
