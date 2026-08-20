@@ -6,11 +6,14 @@ module ImpowService
   class PendingEnrollmentsEngine
     DEFAULT_PER_PAGE = 10
     MAX_PER_PAGE = 20
-    REFERRAL_WINDOW_DAYS = 7
+    REFERRAL_WINDOW_DAYS = 30
+
+    # Stable program names — resolve IDs at runtime rather than hardcoding them
+    OS_PROGRAM_NAMES = ['OS PROGRAM', 'ICCM/IMPOW PROGRAM'].freeze
 
     def initialize(program:, date: Date.today, page: 1, per_page: DEFAULT_PER_PAGE)
       @program = program
-      @date = date
+      @date = date.to_date rescue Date.today
       @page = [page.to_i, 1].max
       @per_page = [[per_page.to_i, MAX_PER_PAGE].min, 1].max
     end
@@ -18,13 +21,9 @@ module ImpowService
     # Get paginated pending enrollments
     def fetch_pending_enrollments
       result = find_referred_patients_with_pagination
-      
-      formatted_patients = result[:patients].map do |referral_data|
-        format_referral_data(referral_data)
-      end
 
       {
-        data: formatted_patients,
+        data: result[:patients],
         pagination: {
           current_page: @page,
           per_page: @per_page,
@@ -37,159 +36,149 @@ module ImpowService
     private
 
     # Find referred patients with database-level pagination
-    # Returns the latest pending referral per patient (deduplicated)
+    # Returns only patients whose CURRENT state is "Referred To OS" — i.e. genuinely
+    # referred from a module (OPD, HIV, ITS, ICCM/IMPOW, etc.) and awaiting enrollment.
+    # Patients with no state, already admitted (Admitted In OTS/On SFS), or routed
+    # elsewhere (e.g. Referred To ITS, Cured, Died) are excluded.
     def find_referred_patients_with_pagination
-      # Get "Referred to OS" state ID scoped to the program
-      referred_state = ProgramWorkflowState.find_by_name_and_program(
-        name: 'Referred to OS',
-        program_id: @program.program_id
-      )
+      os_program_ids = impow_program_ids
 
-      return { patients: [], total_count: 0 } unless referred_state
-
-      # Get enrollment state IDs once, scoped to the program
-      enrollment_states = ['Admitted In OTS', 'On SFS']
-      enrollment_state_ids = enrollment_states.map do |state_name|
+      # "Referred To OS" state, resolved per program since its ID differs by program
+      referred_state_ids = os_program_ids.filter_map do |program_id|
         ProgramWorkflowState.find_by_name_and_program(
-          name: state_name,
-          program_id: @program.program_id
+          name: 'Referred To OS',
+          program_id: program_id
         )&.program_workflow_state_id
-      end.compact
+      end
+      return { patients: [], total_count: 0 } if referred_state_ids.empty?
 
-      return { patients: [], total_count: 0 } if enrollment_state_ids.empty?
-
-      # Calculate date range
       start_date = @date - REFERRAL_WINDOW_DAYS.days
 
-      # Build base query conditions
-      base_conditions = <<~SQL
-        WHERE ps_ref.state = #{referred_state.program_workflow_state_id}
-          AND ps_ref.start_date >= '#{start_date.strftime('%Y-%m-%d')}'
-          AND ps_ref.start_date < '#{(@date + 1.day).strftime('%Y-%m-%d')}'
-          AND ps_ref.voided = 0
-          AND pp.voided = 0
-          AND NOT EXISTS (
-            SELECT 1 FROM patient_state ps_enroll
-            WHERE ps_enroll.patient_program_id = pp.patient_program_id
-              AND ps_enroll.state IN (#{enrollment_state_ids.join(',')})
-              AND ps_enroll.start_date > ps_ref.start_date
-              AND ps_enroll.voided = 0
-          )
-      SQL
+      # Patient IDs CURRENTLY in the "Referred To OS" state.
+      # end_date IS NULL means the state is still open — once a patient is admitted,
+      # discharged, or routed elsewhere, this state is closed and they drop off the list.
+      pending_patient_ids = PatientState.joins(:patient_program)
+                                        .where(patient_program: { program_id: os_program_ids, voided: 0 })
+                                        .where(state: referred_state_ids, voided: 0, end_date: nil)
+                                        .where.not(patient_program: { patient_id: hiv_referrals_not_on_art }) # exclude HIV referrals never on ART
+                                        .pluck(:patient_id)
+      return { patients: [], total_count: 0 } if pending_patient_ids.empty?
 
-      # First, get the count of unique patients with pending referrals
-      count_sql = <<~SQL
-        SELECT COUNT(DISTINCT pp.patient_id) AS total_count
-        FROM patient_state ps_ref
-        INNER JOIN patient_program pp ON pp.patient_program_id = ps_ref.patient_program_id
-        #{base_conditions}
-      SQL
+      # Base query: Patient programs enrolled/created within the referral window.
+      # Both bounds are explicit: >= start_date prevents records older than REFERRAL_WINDOW_DAYS,
+      # and <= @date prevents future-dated rows from leaking into the result.
+      # Parentheses on the OR make grouping explicit when Rails combines with other clauses.
+      base_query = PatientProgram.where(program_id: os_program_ids, voided: 0, patient_id: pending_patient_ids)
+                                 .where(
+                                   '(date_enrolled >= ? AND date_enrolled <= ?) OR (date_created >= ? AND date_created <= ?)',
+                                   start_date, @date, start_date, @date
+                                 )
 
-      count_result = ActiveRecord::Base.connection.select_one(count_sql)
-      total_count = count_result['total_count'].to_i
-
+      total_count = base_query.select(:patient_id).distinct.count
       return { patients: [], total_count: 0 } if total_count.zero?
 
-      # Calculate pagination
       offset = (@page - 1) * @per_page
 
-      # Query for patients with the latest pending referral (one per patient)
-      # Join with patient details to avoid additional queries
-      sql = <<~SQL
-        SELECT 
-          latest_ref.patient_id,
-          latest_ref.referral_date,
-          latest_ref.referring_program_id,
-          pn.given_name,
-          pn.family_name,
-          per.gender,
-          per.birthdate,
-          pi.identifier AS national_id,
-          prog.name AS program_name
-        FROM (
-          SELECT 
-            pp.patient_id,
-            MAX(ps_ref.start_date) AS referral_date,
-            MAX(pp.program_id) AS referring_program_id
-          FROM patient_state ps_ref
-          INNER JOIN patient_program pp ON pp.patient_program_id = ps_ref.patient_program_id
-          #{base_conditions}
-          GROUP BY pp.patient_id
-        ) latest_ref
-        INNER JOIN patient p ON p.patient_id = latest_ref.patient_id
-          AND p.voided = 0
-        INNER JOIN person per ON per.person_id = p.patient_id
-        LEFT JOIN person_name pn ON pn.person_id = p.patient_id
-          AND pn.voided = 0
-          AND pn.person_name_id = (
-            SELECT MAX(pn2.person_name_id)
-            FROM person_name pn2
-            WHERE pn2.person_id = p.patient_id
-              AND pn2.voided = 0
-          )
-        LEFT JOIN patient_identifier pi ON pi.patient_id = p.patient_id
-          AND pi.voided = 0
-          AND pi.identifier_type = (
-            SELECT patient_identifier_type_id
-            FROM patient_identifier_type
-            WHERE name = 'National id'
-            LIMIT 1
-          )
-          AND pi.patient_identifier_id = (
-            SELECT MAX(pi2.patient_identifier_id)
-            FROM patient_identifier pi2
-            WHERE pi2.patient_id = p.patient_id
-              AND pi2.voided = 0
-              AND pi2.identifier_type = pi.identifier_type
-          )
-        LEFT JOIN program prog ON prog.program_id = latest_ref.referring_program_id
-        ORDER BY latest_ref.referral_date DESC, latest_ref.patient_id ASC
-        LIMIT #{@per_page} OFFSET #{offset}
+      # Derived-table query: group by patient_id to get the latest patient_program per patient,
+      # then apply ORDER, LIMIT, and OFFSET entirely in the database.
+      # This avoids loading the full cohort into Ruby memory and avoids MySQL's
+      # restriction on LIMIT inside an IN subquery.
+      paginated_sql = <<~SQL
+        SELECT pp.*
+        FROM patient_program pp
+        INNER JOIN (
+          SELECT patient_id, MAX(patient_program_id) AS latest_pp_id
+          FROM patient_program
+          WHERE program_id IN (#{os_program_ids.join(',')})
+            AND voided = 0
+            AND patient_id IN (#{pending_patient_ids.join(',')})
+            AND (
+              (date_enrolled >= #{ActiveRecord::Base.connection.quote(start_date)} AND date_enrolled <= #{ActiveRecord::Base.connection.quote(@date)})
+              OR
+              (date_created >= #{ActiveRecord::Base.connection.quote(start_date)} AND date_created <= #{ActiveRecord::Base.connection.quote(@date)})
+            )
+          GROUP BY patient_id
+          ORDER BY MAX(COALESCE(date_enrolled, date_created)) DESC,
+                   MAX(patient_program_id) DESC
+          LIMIT #{@per_page} OFFSET #{offset}
+        ) cohort ON cohort.latest_pp_id = pp.patient_program_id
+        ORDER BY COALESCE(pp.date_enrolled, pp.date_created) DESC,
+                 pp.patient_program_id DESC
       SQL
 
-      results = ActiveRecord::Base.connection.select_all(sql)
-      
-      patients = results.map do |row|
+      pending_pps = PatientProgram.find_by_sql(paginated_sql)
+
+      # Eager-load patient associations to avoid N+1 queries per row
+      ActiveRecord::Associations::Preloader.new(
+        records: pending_pps,
+        associations: { patient: { person: :names, patient_identifiers: [] } }
+      ).call
+
+      national_id_type_ids = PatientIdentifierType.where(name: ['National id', 'Old national id']).pluck(:patient_identifier_type_id)
+
+      patients = pending_pps.map do |pp_rec|
+        # Use association instead of Patient.find to prevent extra queries and RecordNotFound exceptions
+        pat = pp_rec.patient
+        next unless pat && pat.person
+
+        person = pat.person
+        name_obj = person.names.reject { |n| n.voided == 1 || n.voided == true }.first
+        full_name = name_obj ? "#{name_obj.given_name} #{name_obj.family_name}".strip : 'N/A'
+
+        identifiers = pat.patient_identifiers.reject { |i| i.voided == 1 || i.voided == true }
+        # Strictly look up National ID; return 'N/A' if missing instead of falling back to arbitrary identifier types
+        nat_id = identifiers.find { |i| national_id_type_ids.include?(i.identifier_type) }&.identifier || 'N/A'
+
+        # Find referring program (most recent non-OS enrollment; returns 'Unknown' if patient has no other program)
+        other_program = PatientProgram.where(patient_id: pat.id, voided: 0)
+                                      .where.not(program_id: os_program_ids)
+                                      .order(date_enrolled: :desc, date_created: :desc)
+                                      .first
+        ref_program_name = other_program&.program&.name
+        ref_label = ref_program_name ? ref_program_name.sub(/\s+PROGRAM$/i, '') : 'Unknown'
+
         {
-          patient_id: row['patient_id'],
-          referral_date: row['referral_date'],
-          referring_program_id: row['referring_program_id'],
-          given_name: row['given_name'],
-          family_name: row['family_name'],
-          gender: row['gender'],
-          birthdate: row['birthdate'],
-          national_id: row['national_id'],
-          program_name: row['program_name']
+          patientId: nat_id,
+          name: full_name,
+          genderAge: format_gender_age_from_data(person.gender, person.birthdate, pat.id),
+          referredFrom: ref_label,
+          referralDate: format_referral_date(pp_rec.date_enrolled || pp_rec.date_created),
+          patient_id: pat.id
         }
-      end
+      end.compact
 
       { patients: patients, total_count: total_count }
     end
 
-    def format_referral_data(referral_data)
-      # Patient details already loaded from query - no additional queries needed
-      {
-        patientId: referral_data[:national_id] || 'N/A',
-        name: format_patient_name_from_data(referral_data[:given_name], referral_data[:family_name]),
-        genderAge: format_gender_age_from_data(referral_data[:gender], referral_data[:birthdate], referral_data[:patient_id]),
-        referredFrom: referral_data[:program_name] || 'Unknown',
-        referralDate: format_referral_date(referral_data[:referral_date]),
-        patient_id: referral_data[:patient_id]
-      }
-    rescue StandardError => e
-      Rails.logger.error("Error formatting referral data for patient #{referral_data[:patient_id]}: #{e.message}")
-      raise # Re-raise to expose formatting errors instead of silently skipping patients
+    # HIV-referred patient IDs never on ART; excluded via subquery.
+    def hiv_referrals_not_on_art
+      hiv_program_id = Program.find_by(name: 'HIV PROGRAM')&.program_id
+      return PatientProgram.none.select(:patient_id) unless hiv_program_id
+
+      on_art_state_id = ProgramWorkflowState.find_by_name_and_program(name: 'On antiretrovirals', program_id: hiv_program_id)&.program_workflow_state_id
+      return PatientProgram.none.select(:patient_id) unless on_art_state_id
+
+      on_art_patient_ids = PatientState.joins(:patient_program)
+                                       .where(patient_program: { program_id: hiv_program_id, voided: 0 })
+                                       .where(state: on_art_state_id, voided: 0)
+                                       .select(:patient_id)
+
+      PatientProgram.where(program_id: hiv_program_id, voided: 0).where.not(patient_id: on_art_patient_ids).select(:patient_id)
     end
 
-    def format_patient_name_from_data(given_name, family_name)
-      name = "#{given_name} #{family_name}".strip
-      name.empty? ? 'N/A' : name
+    # Resolve IMPOW-related program IDs by name and memoize for this instance.
+    # Raises if none are found so misconfigured environments fail loudly.
+    def impow_program_ids
+      @impow_program_ids ||= begin
+        ids = Program.where(name: OS_PROGRAM_NAMES).pluck(:program_id)
+        raise "No IMPOW programs found for names: #{OS_PROGRAM_NAMES.join(', ')}" if ids.empty?
+        ids
+      end
     end
 
     def format_gender_age_from_data(gender, birthdate, patient_id)
       return "#{gender} / N/A" unless birthdate
 
-      # Calculate age directly from birthdate without loading Patient model
       age_in_days = (@date - birthdate.to_date).to_i
       age_in_months = (age_in_days / 30.4375).to_i
       age_in_years = age_in_months / 12
@@ -208,7 +197,7 @@ module ImpowService
       return 'Unknown' unless date
 
       days_ago = (@date - date.to_date).to_i
-      
+
       case days_ago
       when 0
         "Today, #{date.strftime('%I:%M %p')}"
