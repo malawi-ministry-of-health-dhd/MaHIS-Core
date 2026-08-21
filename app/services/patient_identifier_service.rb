@@ -24,12 +24,16 @@ module PatientIdentifierService
     end
 
     def create(params)
-      validate_identifier(params)
-      existing_identifier = existing_identifier_for_patient(params)
-      return existing_identifier if existing_identifier.present?
+      PatientIdentifier.transaction do
+        validate_identifier(params)
+        existing_identifier = existing_identifier_for_patient(params)
+        next existing_identifier if existing_identifier.present?
 
-      void_existing_identifier(params)
-      create_new_identifier(params)
+        void_existing_identifier(params)
+        identifier = create_new_identifier(params)
+        advance_art_number_sequence(params, identifier)
+        identifier
+      end
     end
 
     def swap_active_number(primary_patient_id:, secondary_patient_id:, identifier:)
@@ -113,6 +117,15 @@ module PatientIdentifierService
       identifier[:location_id] = location_id
       identifier.save!
       identifier
+    end
+
+    def advance_art_number_sequence(params, identifier)
+      return unless params[:identifier_type].to_i == PatientIdentifierType.find_by!(name: 'ARV Number').id
+
+      match = identifier.identifier.to_s.match(/\A([^-]+)-ARV-(\d+)\z/)
+      return unless match
+
+      ArtNumberSequence.advance_if_next(identifier.location_id, match[1], match[2].to_i)
     end
 
     def validate_identifier_assignment(identifier)

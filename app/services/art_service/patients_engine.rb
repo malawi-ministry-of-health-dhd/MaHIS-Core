@@ -162,27 +162,13 @@ module ArtService
       end
     end
 
-    # Returns the number after the latest assigned ARV identifier sequence.
+    # Returns the next ART number candidate. The sequence advances only after
+    # the identifier is successfully created.
     #
     # @param _date [Date] retained for compatibility with the public API
     # @return [Integer] the next available ARV identifier
     def next_available_id_in_current_quarter(_date)
-      latest_identifier = PatientIdentifier.unscoped
-                                           .where(identifier_type: arv_identifier_type, location_id: current_location_id)
-                                           .where('identifier REGEXP ?', arv_identifier_pattern_for_sql)
-                                           .order(date_created: :desc)
-                                           .pick(:identifier)
-
-      latest_sequence = extract_arv_sequence(latest_identifier, arv_identifier_pattern(current_arv_code))
-      next_sequence = latest_sequence ? latest_sequence + 1 : 1
-      identifier_scope = PatientIdentifier.unscoped.where(
-        identifier_type: arv_identifier_type,
-        location_id: current_location_id
-      )
-
-      next_sequence += 1 while identifier_scope.exists?(identifier: "#{current_arv_code}-ARV-#{next_sequence}")
-
-      next_sequence
+      ArtNumberSequence.next_available(current_location_id, current_arv_code)
     end
 
     def highest_arv_sequence(start_date = nil, end_date = nil)
@@ -256,7 +242,7 @@ module ArtService
     end
 
     def arv_identifier_pattern(prefix)
-      /\A#{Regexp.escape(prefix)}-ARV- *(\d+)/
+      /\A#{Regexp.escape(prefix)}-ARV- *(\d+)\z/
     end
 
     def arv_identifier_pattern_for_sql
