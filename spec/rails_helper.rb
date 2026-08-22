@@ -79,6 +79,8 @@ RSpec.configure do |config|
     'void_unsyncable_patients_task_spec.rb',
     'void_drug_orders_spec.rb',
     'void_patient_spec.rb',
+    'patient_unvoid_spec.rb',
+    'voided_patients_spec.rb',
     'save_patient_record_service_spec.rb',
     'vaccine_manager_spec.rb',
     'labour_stats_queries_spec.rb'

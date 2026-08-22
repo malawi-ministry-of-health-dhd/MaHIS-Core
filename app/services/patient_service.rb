@@ -6,6 +6,17 @@ class PatientService
 
   CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
   DDE_LOCATION_ID = CONFIG['DDE_LOCATION_ID'] || ""
+
+  # DdeMergingService voids the secondary patient with this prefix. Those voids
+  # are undone by DdeRollbackService, never by #unvoid_patient: a merge voids
+  # each row separately with its own reason and timestamp, so there is no single
+  # batch to restore, and resurrecting the patient row alone would put a
+  # merged-away duplicate back into search with none of its data.
+  MERGE_VOID_REASON_PREFIX = 'Merged into patient #'
+
+  PAGE_LIMIT = 25
+  MAX_PAGE_LIMIT = 200
+
   def create_patient(program, person, malawi_national_id = nil, npid = nil, location_id: nil)
     ActiveRecord::Base.transaction do
       patient = Patient.create(patient_id: person.id)
@@ -37,6 +48,11 @@ class PatientService
 
   ##
   # Voids all patient records across all programs patient exists
+  #
+  # Records a PatientVoidBatch first and stamps its marker on the void_reason of
+  # every row this void touches, so #unvoid_patient can restore exactly these
+  # rows. Rows already voided are skipped by VoidableRecord's default scope, so a
+  # record retracted for its own clinical reason keeps its own reason.
   def void_patient(patient, reason, daemonize: true)
     reason = reason&.strip
     raise InvalidParameterError, 'Please provide a void reason' if reason.blank?
@@ -46,29 +62,108 @@ class PatientService
       return nil
     end
 
-    void_params = { voided: true, date_voided: Date.today, voided_by: User.current.user_id, void_reason: reason }
+    batch = nil
 
     Patient.transaction do
       Rails.logger.info("Voiding all records for patient ##{patient.patient_id}")
 
-      # Void main patient trunk
-      [Observation, Order, Encounter, PatientState, PatientProgram, PatientIdentifier, Patient].each do |model|
-        if model == Observation then model.where(person_id: patient.patient_id)
-        elsif model == PatientState then model.joins(:patient_program).merge(PatientProgram.where(patient:))
-        elsif model == Patient then model.where(patient_id: patient.patient_id)
-        else
-          model.where(patient:)
-        end.update_all(void_params)
+      batch = PatientVoidBatch.create!(patient_id: patient.patient_id, reason:,
+                                       voided_by: User.current&.user_id, date_voided: Time.current)
+
+      void_params = { voided: true, date_voided: batch.date_voided, voided_by: batch.voided_by,
+                      void_reason: batch.tagged_reason }
+
+      row_counts = voidable_patient_models.each_with_object({}) do |model, counts|
+        counts[model.table_name.to_s] = patient_rows(model, patient.patient_id).where(voided: 0).update_all(void_params)
       end
 
-      # Void person details
-      [PersonName, PersonAddress, PersonAttribute, Person].map do |model|
-        model.where(person_id: patient.patient_id).update_all(void_params)
-      end
+      batch.update!(row_counts:)
 
-      program = PatientProgram.unscoped.find_by(patient:)&.program || Program.first
+      program = PatientProgram.unscoped.find_by(patient_id: patient.patient_id)&.program || Program.first
       dde_service(program).void_patient(patient.reload, reason) if DdeService.dde_enabled?
     end
+
+    batch
+  end
+
+  ##
+  # Reverses a #void_patient.
+  #
+  # Restores only what that void voided: the batch marker identifies those rows
+  # exactly, and a patient voided before batches were recorded falls back to the
+  # (date_voided, voided_by, void_reason) triple stamped on the patient row.
+  def unvoid_patient(patient_id, reason)
+    reason = reason&.strip
+    raise InvalidParameterError, 'Please provide a reason for restoring' if reason.blank?
+
+    patient = Patient.unscoped.find(patient_id)
+    raise InvalidParameterError, "Patient ##{patient_id} is not voided" unless patient.voided?
+
+    if patient.void_reason.to_s.start_with?(MERGE_VOID_REASON_PREFIX)
+      raise InvalidParameterError,
+            "Patient ##{patient_id} was voided by a merge. Undo the merge instead of restoring the patient."
+    end
+
+    batch = open_void_batch(patient_id)
+    match = restore_match_for(patient, batch)
+    row_counts = nil
+
+    Patient.transaction do
+      Rails.logger.info("Restoring all records for patient ##{patient_id}")
+
+      restore_params = { voided: 0, date_voided: nil, voided_by: nil, void_reason: nil }
+
+      row_counts = voidable_patient_models.each_with_object({}) do |model, counts|
+        counts[model.table_name.to_s] = patient_rows(model, patient_id)
+                                        .where.not(voided: 0).where(match).update_all(restore_params)
+      end
+
+      batch&.update!(restored_by: User.current&.user_id, restored_at: Time.current, restore_reason: reason)
+    end
+
+    # The void deleted the patient's CouchDB document, so it has to be rebuilt
+    # from MySQL for the patient to exist offline again. After the restore, so the
+    # builder reads live rows.
+    { patient_id:, row_counts:, void_batch_id: batch&.id,
+      couchdb_restored: rebuild_couchdb_document(patient_id) }
+  end
+
+  ##
+  # What #unvoid_patient would restore, per table, and how many rows it will
+  # leave voided because they were retracted on their own.
+  def void_restore_preview(patient_id)
+    patient = Patient.unscoped.find(patient_id)
+    batch = open_void_batch(patient_id)
+    match = restore_match_for(patient, batch)
+
+    restorable = {}
+    already_voided = 0
+
+    voidable_patient_models.each do |model|
+      voided_rows = patient_rows(model, patient_id).where.not(voided: 0)
+      matched = voided_rows.where(match).count
+      restorable[model.table_name.to_s] = matched
+      already_voided += voided_rows.count - matched
+    end
+
+    { patient_id:, void_batch_id: batch&.id, exact: batch.present?, restorable:,
+      already_voided_count: already_voided }
+  end
+
+  ##
+  # A page of voided patients for the restore screen, newest void first.
+  #
+  # Returns the total alongside the page: the screen has to be able to say how
+  # many voids it is not showing, otherwise a patient past the end of the page
+  # looks unrecoverable.
+  def voided_patients(search: nil, from: nil, to: nil, limit: PAGE_LIMIT, offset: 0)
+    scope = voided_patients_scope(search:, from:, to:)
+    limit = limit.to_i.clamp(1, MAX_PAGE_LIMIT)
+    offset = [offset.to_i, 0].max
+
+    patients = scope.order(date_voided: :desc, patient_id: :desc).limit(limit).offset(offset).to_a
+
+    { patients: decorate_voided_patients(patients), total: scope.count, limit:, offset: }
   end
 
   # Change patient's person id
@@ -708,6 +803,125 @@ class PatientService
   end
 
   private
+
+  # Every table the patient trunk spans. One list, shared by the void and the
+  # restore, so the two can never drift apart.
+  def voidable_patient_models
+    [Observation, Order, Encounter, PatientState, PatientProgram, PatientIdentifier, Patient,
+     PersonName, PersonAddress, PersonAttribute, Person]
+  end
+
+  # This patient's rows in `model`, unscoped: on the restore path every row is
+  # voided, and VoidableRecord's default scope would hide all of them.
+  #
+  # PatientState is reached through plucked patient_program ids rather than
+  # joins(:patient_program), because a join carries PatientProgram's default
+  # scope into the ON clause and matches nothing once the programs are voided.
+  def patient_rows(model, patient_id)
+    case model.name
+    when 'Observation', 'Person', 'PersonName', 'PersonAddress', 'PersonAttribute'
+      model.unscoped.where(person_id: patient_id)
+    when 'PatientState'
+      program_ids = PatientProgram.unscoped.where(patient_id:).pluck(:patient_program_id)
+      model.unscoped.where(patient_program_id: program_ids)
+    else
+      model.unscoped.where(patient_id:)
+    end
+  end
+
+  # The latest void of this patient that has not been restored yet.
+  def open_void_batch(patient_id)
+    PatientVoidBatch.where(patient_id:, restored_at: nil).order(:id).last
+  end
+
+  def restore_match_for(patient, batch)
+    return { void_reason: batch.tagged_reason } if batch
+
+    # Voided before batches were recorded. That void stamped one identical
+    # (date_voided, voided_by, void_reason) triple across all eleven tables, so
+    # the triple is the only handle on the rows it touched.
+    if patient.date_voided.blank?
+      raise InvalidParameterError, "Patient ##{patient.patient_id} has no void batch and no void date to match on"
+    end
+
+    { date_voided: patient.date_voided, voided_by: patient.voided_by, void_reason: patient.void_reason }
+  end
+
+  # Rebuilds the document from MySQL and writes it back, rather than letting
+  # CouchdbPatientService#get_single_patient lazily rebuild it: if the void's
+  # delete had failed and fallen back to writing a voided document, that path
+  # would find it and keep serving the stale one.
+  def rebuild_couchdb_document(patient_id)
+    record = BuildPatientRecordService.build_patient_record(patient_id)
+    return false if record.blank?
+
+    CouchdbPatientService.sync_patient_to_couchdb(record, patient_id)[:success] == true
+  rescue StandardError => e
+    Rails.logger.error("Failed to rebuild CouchDB document for restored patient ##{patient_id}: #{e.class}: #{e.message}")
+    false
+  end
+
+  def voided_patients_scope(search:, from:, to:)
+    scope = Patient.unscoped.where.not(voided: 0)
+                   .where('patient.void_reason IS NULL OR patient.void_reason NOT LIKE ?',
+                          "#{MERGE_VOID_REASON_PREFIX}%")
+    scope = scope.where('patient.date_voided >= ?', from.to_date.beginning_of_day) if from.present?
+    scope = scope.where('patient.date_voided <= ?', to.to_date.end_of_day) if to.present?
+    apply_voided_patient_search(scope, search)
+  end
+
+  # EXISTS rather than plucking matching ids, so LIMIT/OFFSET and the total apply
+  # to the whole result set instead of a truncated id list. Both subqueries ride
+  # existing indexes -- person_name(person_id, voided, date_created) and
+  # patient_identifier(patient_id, identifier_type, voided) -- and are restricted
+  # to voided rows, which is the only subset this screen can show anyway.
+  def apply_voided_patient_search(scope, search)
+    term = search.to_s.strip
+    return scope if term.blank?
+
+    scope.where(
+      'EXISTS (SELECT 1 FROM person_name pn WHERE pn.person_id = patient.patient_id AND pn.voided <> 0 ' \
+      'AND (pn.given_name LIKE :term OR pn.family_name LIKE :term)) ' \
+      'OR EXISTS (SELECT 1 FROM patient_identifier pi WHERE pi.patient_id = patient.patient_id ' \
+      'AND pi.voided <> 0 AND pi.identifier = :exact)',
+      term: "%#{term}%", exact: term
+    )
+  end
+
+  def decorate_voided_patients(patients)
+    patient_ids = patients.map(&:patient_id)
+    return [] if patient_ids.empty?
+
+    people = Person.unscoped.where(person_id: patient_ids).index_by(&:person_id)
+    names = PersonName.unscoped.where(person_id: patient_ids).order(:person_name_id).group_by(&:person_id)
+    npid_types = PatientIdentifierType.where(name: [Patient::NPID_NAME, Patient::LEGACY_NPID_NAME])
+    npids = PatientIdentifier.unscoped
+                             .where(patient_id: patient_ids, identifier_type: npid_types)
+                             .order(:patient_identifier_id)
+                             .group_by(&:patient_id)
+    voiders = User.unscoped.where(user_id: patients.filter_map(&:voided_by).uniq).index_by(&:user_id)
+    batches = PatientVoidBatch.where(patient_id: patient_ids, restored_at: nil).order(:id).index_by(&:patient_id)
+
+    patients.map do |patient|
+      person = people[patient.patient_id]
+      name = names[patient.patient_id]&.first
+      batch = batches[patient.patient_id]
+
+      {
+        patient_id: patient.patient_id,
+        name: [name&.given_name, name&.family_name].compact.join(' ').presence || 'Unknown',
+        gender: person&.gender,
+        birthdate: person&.birthdate,
+        npid: npids[patient.patient_id]&.first&.identifier,
+        date_voided: patient.date_voided,
+        voided_by_name: voiders[patient.voided_by]&.username,
+        # The marker is bookkeeping; the screen shows the reason a human typed.
+        void_reason: patient.void_reason.to_s.sub(PatientVoidBatch::MARKER_PATTERN, '').strip,
+        void_batch_id: batch&.id
+      }
+    end
+  end
+
 
   # Fetch a batch of patients based on the offset and limit
   def fetch_patients_batch(offset:, limit:, location_id:)
