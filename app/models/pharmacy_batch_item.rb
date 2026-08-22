@@ -5,12 +5,19 @@ class PharmacyBatchItem < VoidableRecord
 
   belongs_to :batch, class_name: 'PharmacyBatch', foreign_key: 'pharmacy_batch_id'
   belongs_to :drug
+  belongs_to :program, foreign_key: :program_id, primary_key: :program_id, optional: true
 
   has_many :transactions, class_name: 'Pharmacy', inverse_of: :item
+
+  before_save :sync_batch_context
 
   validates_each :delivered_quantity, :current_quantity do |record, attr, value|
     record.errors.add(attr, "Quantity can't be less than 0") if value.negative?
   end
+
+  # Scopes for filtering
+  scope :for_program, ->(program_id) { where(program_id: program_id) if program_id.present? }
+  scope :for_location, ->(location_id) { where(location_id: location_id) if location_id.present? }
 
   def as_json(options = {})
     super(options.merge(methods: %i[drug_name drug_legacy_name creator_info batch_number]))
@@ -41,5 +48,13 @@ class PharmacyBatchItem < VoidableRecord
   rescue NoMethodError
     "Unknown Drug"
   end
-  
+
+  private
+
+  def sync_batch_context
+    if batch.present?
+      self.program_id ||= batch.program_id
+      self.location_id ||= batch.location_id
+    end
+  end
 end

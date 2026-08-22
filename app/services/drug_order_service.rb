@@ -16,6 +16,13 @@ module DrugOrderService
   # and dropped from the queue. This bounds the scan so the queue loads fast
   # instead of scanning every undispensed order ever recorded at the location.
   DISPENSATION_QUEUE_WINDOW_DAYS = 7
+
+  # Written to orders.fulfiller_status when a pharmacist marks a drug order as out
+  # of stock. OpenMRS leaves fulfiller_status as an unconstrained varchar, so this
+  # constant is the only definition of the value - never inline the literal.
+  # The client never sees this string: it is projected to the boolean out_of_stock
+  # field by fetch_all_patient_drug_orders below.
+  OUT_OF_STOCK_STATUS = 'OUT_OF_STOCK'
   FREQUENCY_DAILY_DOSES = {
     'OD' => 1,
     'BD' => 2,
@@ -124,6 +131,7 @@ module DrugOrderService
           t.units AS units,
           t.equivalent_daily_dose AS equivalent_daily_dose,
           e.program_id AS program_id,
+          o.fulfiller_status AS fulfiller_status,
           EXISTS (
             SELECT 1
             FROM obs dispensation_obs
@@ -160,7 +168,11 @@ module DrugOrderService
           units: m['units'],
           equivalent_daily_dose: m['equivalent_daily_dose'],
           program_id: m['program_id'],
-          dispensed: m['dispensed'].to_i == 1
+          dispensed: m['dispensed'].to_i == 1,
+          # Surfacing the stock-out here is what makes the flag survive a record
+          # rebuild: the client stamps out_of_stock locally, but every rebuild of
+          # MedicationOrder.saved comes from this fixed field list.
+          out_of_stock: m['fulfiller_status'] == OUT_OF_STOCK_STATUS
         }
       end
     rescue StandardError => e
@@ -443,6 +455,12 @@ module DrugOrderService
         SQL
         binds << dispensed_concept_ids
       end
+
+      # A stock-out is a completed pharmacy action, so the order leaves the queue
+      # even though nothing was dispensed. Mirrored offline by
+      # isPendingMedicationOrder in patient_record_search_fields.
+      where_clauses << '(o.fulfiller_status IS NULL OR o.fulfiller_status <> ?)'
+      binds << OUT_OF_STOCK_STATUS
 
       if location_id.present?
         where_clauses << 'e.location_id = ?'
