@@ -75,6 +75,13 @@ class Location < RetirableRecord
 
   DEPARTMENT_ATTRIBUTE_TYPE_NAME = 'Department'
 
+  # Departments are global, but a facility only runs some of them. A facility
+  # records the ones it has switched off as 'Disabled Department' attributes on
+  # its own location row (value is the department's location_id) -- absence means
+  # enabled, so a facility that has never touched the screen keeps every
+  # department.
+  DISABLED_DEPARTMENT_ATTRIBUTE_TYPE_NAME = 'Disabled Department'
+
   # Id of the "Department" location attribute type (seeded once, id is stable).
   # Memoized per-process; re-queries while absent so it self-heals after seeding.
   def self.department_attribute_type_id
