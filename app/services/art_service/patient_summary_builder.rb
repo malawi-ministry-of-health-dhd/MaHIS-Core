@@ -66,7 +66,7 @@ module ArtService
     AGREES_TO_FOLLOWUP_CONCEPT             = 'Agrees to followup'
     REASON_FOR_ART_ELIGIBILITY_CONCEPT     = 'Reason for ART eligibility'
     WHO_STAGE_CRITERIA_CONCEPT             = 'Who stages criteria present'
-    INIT_BREASTFEEDING_CONCEPT             = 'Is patient breast feeding'
+    INIT_BREASTFEEDING_CONCEPT             = 'Is patient breast feeding?'
 
     # Dispensing / adherence concepts (for missing visit fields)
     AMOUNT_DISPENSED_CONCEPT = 'Amount dispensed'
@@ -166,10 +166,16 @@ module ArtService
       @viral_load_results, @viral_load_by_date = load_viral_load_results
     end
 
+    # Keyed by the requested name, not ConceptName.name as stored (MySQL's
+    # default collation matches names case-insensitively, but the Ruby hash
+    # lookups elsewhere in this class are case-sensitive against the constants
+    # above — keying by the DB's casing silently broke any constant whose case
+    # didn't match, e.g. TB_STATUS_CONCEPT vs the stored "TB status").
     def fetch_concept_ids(names)
-      ConceptName.where(name: names)
-                 .pluck(:name, :concept_id)
-                 .each_with_object({}) { |(name, id), h| h[name] ||= id }
+      Array(names).each_with_object({}) do |name, map|
+        id = ConceptName.where(name: name).limit(1).pick(:concept_id)
+        map[name] = id if id
+      end
     end
 
     def load_all_obs
@@ -675,7 +681,10 @@ module ArtService
         'patient_present'           => truthy_value_in?(obs_on_date, PATIENT_PRESENT_CONCEPT),
         'guardian_present'          => guardian_present_on?(obs_on_date),
         'pregnant'                  => truthy_value_in?(obs_on_date, PREGNANT_CONCEPT),
-        'breastfeeding'             => truthy_value_in?(obs_on_date, BREASTFEEDING_CONCEPT),
+        # Two separate concepts record "is breastfeeding" depending on which
+        # form captured it (staging vs. reception); either can be present.
+        'breastfeeding'             => truthy_value_in?(obs_on_date, BREASTFEEDING_CONCEPT) ||
+                                       truthy_value_in?(obs_on_date, INIT_BREASTFEEDING_CONCEPT),
         'side_effects'              => obs_value_on(obs_on_date, SIDE_EFFECTS_CONCEPT),
         'other_drugs'               => other_drugs.join(', ').presence,
         'has_reception'             => encounter_done_on?(date_str, HIV_RECEPTION_ENCOUNTER),

@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require 'set'
-
 module ArtService
   # Patients sub service.
   #
@@ -106,14 +104,14 @@ module ArtService
     end
 
     def current_arv_code
-      @current_arv_code ||= global_property("site_prefix")&.property_value
-      raise "Global property `site_prefix` not set" unless @current_arv_code
+      @current_arv_code ||= global_property('site_prefix')&.property_value
+      raise 'Global property `site_prefix` not set' unless @current_arv_code
 
       @current_arv_code
     end
 
     def arv_identifier_type
-      @arv_identifier_type ||= PatientIdentifierType.find_by_name("ARV Number")
+      @arv_identifier_type ||= PatientIdentifierType.find_by_name('ARV Number')
     end
 
     # Returns the start and end dates of the quarter for the given date.
@@ -151,10 +149,9 @@ module ArtService
       PatientIdentifier.where(identifier_type: arv_identifier_type).order(date_created: :desc).pick(:identifier)
     end
 
-    # Returns the next available ARV identifier for the given date,
-    # which is the lowest number not yet assigned in the current quarter.
+    # Returns the number after the latest assigned ARV identifier sequence.
     #
-    # @param date [Date] date to generate the identifier for
+    # @param _date [Date] retained for compatibility with the public API
     # @return [Integer] the next available ARV identifier
     def next_available_id_in_current_quarter(date)
       prefix = current_arv_code
@@ -189,14 +186,14 @@ module ArtService
     # @return [String] the next available ARV identifier, including the site prefix
     def find_next_available_arv_number(date)
       next_available_number = next_available_id_in_current_quarter(date)
-      
+
       "#{current_arv_code} #{next_available_number}"
     end
 
     # function to check if an arv number already exists
     def arv_number_already_exists(arv_number)
       identifier_type = PatientIdentifierType.find_by_name('ARV Number')
-      PatientIdentifier.all.where(
+      PatientIdentifier.where(
         identifier: arv_number,
         identifier_type: identifier_type.id
       ).exists?
@@ -233,6 +230,10 @@ module ArtService
     end
 
     private
+
+    def arv_identifier_pattern_for_sql
+      "^#{Regexp.escape(current_arv_code)}-ARV- *[0-9]+$"
+    end
 
     def extract_arv_sequence(identifier, pattern)
       pattern.match(identifier.to_s)&.[](1)&.to_i
@@ -280,15 +281,12 @@ module ArtService
       ).last
 
       unless hiv_clinic_registration.blank?
-        hiv_clinic_registration.observations.map do |obs|
-          concept_name = obs.concept.concept_names.first.name
+        obs = hiv_clinic_registration.observations.find do |o|
+          o.concept.concept_names.first.name == 'Date ART last taken' && o.value_datetime.present?
+        end
 
-          next unless concept_name == 'Date ART last taken'
-
-          last_art_drugs_date_taken = obs&.value_datetime&.to_date
-
-          next unless last_art_drugs_date_taken
-
+        if obs
+          last_art_drugs_date_taken = obs.value_datetime.to_date
           days = ActiveRecord::Base.connection.select_value <<-SQL
                 SELECT timestampdiff(
                   day, '#{last_art_drugs_date_taken}', '#{session_date.to_date}'
