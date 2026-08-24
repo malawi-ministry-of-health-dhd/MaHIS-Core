@@ -7,6 +7,10 @@ require 'securerandom'
 module Api
   module V1
     class LocationsController < ApplicationController
+      # Raised for an unrecognised ward_sex, so create and update can both turn
+      # it into a 422 rather than a 500.
+      class InvalidWardSexError < StandardError; end
+
       FACILITY_LEVEL_ATTRIBUTE = 'Facility Level'
       FACILITY_TYPE_ATTRIBUTE = 'Facility Type'
       ALLOWED_FACILITY_LEVELS = %w[Primary Secondary Tertiary].freeze
@@ -218,7 +222,8 @@ module Api
         params.require(:tag)
         params.require(:name)
         location_params = params.permit(:name, :description, :address1, :address2, :district,
-                                        :parent_id, :tag, :city_village, :county_district, :department_id)
+                                        :parent_id, :tag, :city_village, :county_district, :department_id,
+                                        :ward_sex)
 
         is_department = location_params[:tag].to_s.strip.casecmp('Department').zero?
         is_ward = location_params[:tag].to_s.strip.casecmp('Ward').zero?
@@ -267,8 +272,12 @@ module Api
           )
 
           # A ward belongs to a facility (its parent) and is classified by a
-          # global department, stored as a location attribute.
-          assign_ward_department(location, location_params[:department_id]) if is_ward
+          # global department, stored as a location attribute. Whether it is a
+          # male or female ward is recorded the same way.
+          if is_ward
+            assign_ward_department(location, location_params[:department_id])
+            assign_ward_sex(location, location_params[:ward_sex])
+          end
 
           # Reload to include associations
           location.reload
@@ -280,6 +289,8 @@ module Api
         end
       rescue ActionController::ParameterMissing => e
         render json: { error: e.message }, status: :bad_request
+      rescue InvalidWardSexError => e
+        render json: { error: e.message }, status: :unprocessable_entity
       end
 
       # PUT   /locations/:id
@@ -305,7 +316,7 @@ module Api
           end
         end
 
-        update_params = params.permit(:name, :description, :parent_id, :department_id)
+        update_params = params.permit(:name, :description, :parent_id, :department_id, :ward_sex)
 
         if update_params.key?(:name) && update_params[:name].to_s.strip.blank?
           return render json: { error: 'name cannot be blank' }, status: :unprocessable_entity
@@ -324,10 +335,11 @@ module Api
 
         location.update!(attrs)
 
-        # A ward's department is a location attribute, not a column, so it is
-        # re-pointed separately.
-        if update_params.key?(:department_id) && location_tagged?(location, 'Ward')
-          repoint_ward_department(location, update_params[:department_id])
+        # A ward's department and its male/female marking are location
+        # attributes, not columns, so they are set separately.
+        if location_tagged?(location, 'Ward')
+          repoint_ward_department(location, update_params[:department_id]) if update_params.key?(:department_id)
+          assign_ward_sex(location, update_params[:ward_sex]) if update_params.key?(:ward_sex)
         end
 
         location.reload
@@ -336,6 +348,8 @@ module Api
             only: %i[location_attribute_id attribute_type_id value_reference]
           }
         }
+      rescue InvalidWardSexError => e
+        render json: { error: e.message }, status: :unprocessable_entity
       rescue ActiveRecord::RecordInvalid => e
         render json: { error: e.record.errors.full_messages.join(', ') }, status: :unprocessable_entity
       end
@@ -522,6 +536,76 @@ module Api
           creator: User.current&.user_id,
           date_created: Time.now,
           voided: false
+        )
+      end
+
+      # Marks a ward male or female. A blank value voids the marking, so a ward
+      # can go back to having none. Reuses the single live attribute rather than
+      # stacking rows, so Location#ward_sex never has to choose between two.
+      def assign_ward_sex(location, value)
+        ward_sex = Location.normalize_ward_sex(value)
+        if value.present? && ward_sex.nil?
+          raise InvalidWardSexError, "ward_sex must be one of: #{Location::WARD_SEXES.join(', ')}"
+        end
+
+        attribute_type = find_or_create_ward_sex_attribute_type
+        return unless attribute_type
+
+        now = Time.now
+        user_id = User.current&.user_id
+        live = LocationAttribute.where(
+          location_id: location.location_id,
+          attribute_type_id: attribute_type.location_attribute_type_id
+        ).where(voided: [nil, false, 0]).order(location_attribute_id: :desc).to_a
+
+        current = live.shift
+        # Anything beyond the newest is stale; voiding it keeps the reader
+        # deterministic.
+        live.each do |stale|
+          stale.update!(voided: true, voided_by: user_id, date_voided: now, void_reason: 'Superseded ward sex attribute')
+        end
+
+        if ward_sex.nil?
+          current&.update!(voided: true, voided_by: user_id, date_voided: now, void_reason: 'Ward sex cleared')
+          return
+        end
+
+        if current
+          return if current.value_reference.to_s == ward_sex
+
+          current.update!(value_reference: ward_sex, changed_by: user_id, date_changed: now)
+        else
+          LocationAttribute.create!(
+            location_id: location.location_id,
+            attribute_type_id: attribute_type.location_attribute_type_id,
+            value_reference: ward_sex,
+            uuid: SecureRandom.uuid,
+            creator: user_id,
+            date_created: now,
+            voided: false
+          )
+        end
+      end
+
+      # Reuses the live type -- which on a seeded site is the one that came from
+      # MaHIS-Metadata -- and only creates one where none exists yet. Explicitly
+      # ignores retired rows so a superseded local copy is never picked up again.
+      def find_or_create_ward_sex_attribute_type
+        existing = LocationAttributeType
+                   .where(name: Location::WARD_SEX_ATTRIBUTE_TYPE_NAME, retired: [nil, false, 0])
+                   .order(:location_attribute_type_id)
+                   .first
+        return existing if existing
+
+        LocationAttributeType.create!(
+          name: Location::WARD_SEX_ATTRIBUTE_TYPE_NAME,
+          min_occurs: 0,
+          max_occurs: 1,
+          datatype: 'org.openmrs.customdatatype.datatype.FreeTextDatatype',
+          description: 'Whether a ward admits Male or Female patients',
+          creator: User.current&.user_id,
+          date_created: Time.now,
+          retired: false
         )
       end
 
