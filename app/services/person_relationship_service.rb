@@ -24,9 +24,7 @@ class PersonRelationshipService
   end
 
   def find_guardians
-    Relationship.joins(:type).where 'person_a = ? AND b_is_to_a = ?',
-                                    @person.person_id,
-                                    'Guardian'
+    Relationship.where person_a: @person.person_id
   end
 
   def create_relationship(person, relationship_type)
