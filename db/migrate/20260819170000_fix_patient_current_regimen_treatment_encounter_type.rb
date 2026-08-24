@@ -16,11 +16,6 @@ class FixPatientCurrentRegimenTreatmentEncounterType < ActiveRecord::Migration[8
   SQL
 
   def up
-    treatment_encounter_type_id = select_value(TREATMENT_ENCOUNTER_TYPE_LOOKUP_SQL)
-    if treatment_encounter_type_id.blank?
-      raise ActiveRecord::IrreversibleMigration, 'No active TREATMENT encounter_type found'
-    end
-
     execute('DROP FUNCTION IF EXISTS patient_current_regimen')
     execute(<<~SQL)
       CREATE FUNCTION `patient_current_regimen`(`my_patient_id` INT, `my_date` DATE) RETURNS varchar(10) CHARSET utf8mb3 COLLATE utf8mb3_unicode_ci
