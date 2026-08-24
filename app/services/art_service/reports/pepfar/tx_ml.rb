@@ -87,7 +87,7 @@ module ArtService
             FROM #{temp_earliest_start_date} e
             #{dsd_query(dsd: @dsd, model: 'e') if @dsd}
             INNER JOIN #{temp_patient_outcomes} o ON e.patient_id = o.patient_id AND o.pepfar_cum_outcome IN ('Defaulted', 'Patient died', 'Treatment stopped', 'Patient transferred out')
-            INNER JOIN patient_program pp ON pp.patient_id = e.patient_id 
+            INNER JOIN patient_program pp ON pp.patient_id = e.patient_id
               AND pp.program_id = #{program('HIV PROGRAM').id}
               AND pp.location_id = #{User.current.location_id}
               AND pp.voided = 0
@@ -113,7 +113,7 @@ module ArtService
             FROM #{temp_earliest_start_date} e
             #{dsd_query(dsd: @dsd, model: 'e') if @dsd}
             INNER JOIN #{temp_patient_outcomes} o ON e.patient_id = o.patient_id AND o.pepfar_cum_outcome IN ('Defaulted', 'Patient died', 'Treatment stopped', 'Patient transferred out')
-            INNER JOIN patient_program pp ON pp.patient_id = e.patient_id 
+            INNER JOIN patient_program pp ON pp.patient_id = e.patient_id
               AND pp.program_id = #{program('HIV PROGRAM').id}
               AND pp.location_id = #{User.current.location_id}
               AND pp.voided = 0
