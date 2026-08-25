@@ -132,6 +132,32 @@ module DrugOrderService
           t.equivalent_daily_dose AS equivalent_daily_dose,
           e.program_id AS program_id,
           o.fulfiller_status AS fulfiller_status,
+          -- Who prescribed the drug, so a printout produced by the dispensing
+          -- pharmacist still credits the prescriber. orders.orderer is stamped at
+          -- prescription time; the treatment encounter's provider covers rows
+          -- recorded before orderer was set, and the username is a last resort so
+          -- something still prints when the provider has no person name. The client
+          -- shortens this to "P.Kayange". Correlated selects (not joins) keep a
+          -- person with several names or user accounts from multiplying order rows.
+          COALESCE(
+            NULLIF((
+              SELECT CONCAT_WS(' ', NULLIF(pn.given_name, ''), NULLIF(pn.family_name, ''))
+              FROM person_name pn
+              WHERE pn.person_id = (SELECT ou.person_id FROM users ou WHERE ou.user_id = o.orderer LIMIT 1)
+                AND pn.voided = 0
+              ORDER BY pn.preferred DESC, pn.date_created ASC
+              LIMIT 1
+            ), ''),
+            NULLIF((
+              SELECT CONCAT_WS(' ', NULLIF(pn.given_name, ''), NULLIF(pn.family_name, ''))
+              FROM person_name pn
+              WHERE pn.person_id = e.provider_id
+                AND pn.voided = 0
+              ORDER BY pn.preferred DESC, pn.date_created ASC
+              LIMIT 1
+            ), ''),
+            NULLIF((SELECT ou.username FROM users ou WHERE ou.user_id = o.orderer LIMIT 1), '')
+          ) AS prescriber,
           EXISTS (
             SELECT 1
             FROM obs dispensation_obs
@@ -168,6 +194,7 @@ module DrugOrderService
           units: m['units'],
           equivalent_daily_dose: m['equivalent_daily_dose'],
           program_id: m['program_id'],
+          prescriber: m['prescriber'],
           dispensed: m['dispensed'].to_i == 1,
           # Surfacing the stock-out here is what makes the flag survive a record
           # rebuild: the client stamps out_of_stock locally, but every rebuild of

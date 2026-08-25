@@ -42,6 +42,7 @@ module Api
                                     requesting_clinician:)
 
         broadcast_hts_dashboard_changed
+        broadcast_lab_order_created(encounter)
         render json: order, status: :created
       end
 
@@ -142,6 +143,29 @@ module Api
 
       def patient
         Patient.find(params[:patient_id])
+      end
+
+      # Wakes the lab-results queue on other devices. An online lab order is created
+      # here rather than through save_patient_record, so it raises no
+      # patient_record_saved event of its own. Scoped to the encounter's location,
+      # which is what LabResultsQueueService filters the queue on.
+      def broadcast_lab_order_created(encounter)
+        location_id = encounter&.location_id || User.current&.location_id
+        return if location_id.blank?
+
+        ActionCable.server.broadcast(
+          "client_details_channel_#{location_id}",
+          {
+            event: 'lab_order_created',
+            data: {
+              location_id: location_id.to_s,
+              patient_id: encounter&.patient_id,
+              timestamp: Time.current.iso8601
+            }
+          }
+        )
+      rescue StandardError => e
+        Rails.logger.error("Failed to broadcast lab_order_created: #{e.message}")
       end
     end
   end

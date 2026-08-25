@@ -50,6 +50,20 @@ RSpec.describe DrugOrderService do
       expect(service.fetch_all_patient_drug_orders(123).first).to include(instructions:)
     end
 
+    it 'includes the prescriber so a label printed while dispensing credits them' do
+      connection = ActiveRecord::Base.connection
+
+      allow(service).to receive(:repair_missing_drug_order_rows)
+      allow(service).to receive(:dispensation_concept_ids).and_return([])
+      allow(connection).to receive(:quote).with(123).and_return('123')
+      expect(connection).to receive(:select_all) do |sql|
+        expect(sql).to include('AS prescriber')
+        [{ 'order_id' => 456, 'prescriber' => 'clinician', 'dispensed' => 0 }]
+      end
+
+      expect(service.fetch_all_patient_drug_orders(123).first).to include(prescriber: 'clinician')
+    end
+
     it 'does not repair MySQL rows when repair_missing is false' do
       connection = ActiveRecord::Base.connection
 
