@@ -10,8 +10,9 @@ class RebuildPatientLabDataJob < ApplicationJob
 
   queue_as :patient_records
 
-  # Retry with exponential backoff on failures
-  retry_on StandardError, wait: :exponentially_longer, attempts: 5
+  # Retry with exponential backoff on failures (2^x seconds: 1s, 4s, 9s, 16s, 25s)
+
+  sidekiq_options retry: 5
 
   def perform(patient_id, trigger:, metadata: {})
     Rails.logger.info("RebuildPatientLabDataJob: Starting rebuild for patient #{patient_id} - Trigger: #{trigger}")
@@ -29,7 +30,7 @@ class RebuildPatientLabDataJob < ApplicationJob
       end
 
       document_id = patient_document_id(patient_id)
-      update_couchdb_lab_orders(document_id, lab_orders_data)
+      update_couchdb_lab_orders(document_id, lab_orders_data, patient_id)
       Rails.logger.info("RebuildPatientLabDataJob: Updated labOrders in CouchDB for patient #{patient_id}")
 
       duration = (Time.current - start_time).round(3)
@@ -50,17 +51,17 @@ class RebuildPatientLabDataJob < ApplicationJob
   private
 
   def patient_document_id(patient_id)
-    patient = Patient.includes(:patient_identifiers).find_by(patient_id: patient_id)
+    patient = Patient.includes(:person).find_by(patient_id: patient_id)
     raise "Patient not found for labOrders rebuild: #{patient_id}" unless patient
+    raise "Person not found for patient #{patient_id}" unless patient.person
 
-    identifiers_by_type = BuildPatientRecordService.patient_identifiers_by_type(patient)
-    document_id = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 3, patient_id)
-    raise "Patient record ID missing for labOrders rebuild: #{patient_id}" if document_id.blank?
+    document_id = patient.person.uuid
+    raise "Person UUID missing for patient #{patient_id}" if document_id.blank?
 
     document_id
   end
 
-  def update_couchdb_lab_orders(document_id, lab_orders_data)
+  def update_couchdb_lab_orders(document_id, lab_orders_data, patient_id)
     ensure_db_exists(PATIENTS_DB)
 
     doc_url = couchdb_url(PATIENTS_DB, URI.encode_www_form_component(document_id.to_s))
@@ -97,7 +98,24 @@ class RebuildPatientLabDataJob < ApplicationJob
       retry
     end
   rescue RestClient::NotFound
-    raise "Patient CouchDB document #{document_id} not found; cannot update labOrders only"
+    rebuild_couchdb_patient_document(patient_id, document_id)
+  end
+
+  def rebuild_couchdb_patient_document(patient_id, document_id)
+    Rails.logger.warn(
+      "RebuildPatientLabDataJob: Patient CouchDB document #{document_id} not found; " \
+      "rebuilding full patient document for patient #{patient_id}"
+    )
+
+    patient_record = BuildPatientRecordService.build_patient_record(patient_id)
+    raise "Unable to rebuild full patient CouchDB document for patient #{patient_id}" if patient_record.blank?
+
+    rebuilt_document_id = PatientRecordIdentityService.document_id(record: patient_record)
+    if rebuilt_document_id.to_s != document_id.to_s
+      raise "Rebuilt patient #{patient_id} generated CouchDB document #{rebuilt_document_id}; expected #{document_id}"
+    end
+
+    sync_to_couchdb(patient_record.as_json, PATIENTS_DB, document_id)
   end
 
   def track_rebuild_event(patient_id, trigger, _metadata, duration)

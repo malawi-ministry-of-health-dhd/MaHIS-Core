@@ -213,6 +213,49 @@ class CouchdbPatientService
 
     private
 
+    MAX_ART_SUMMARY_REFRESH_ATTEMPTS = 3
+
+    def refresh_art_summary(record, local_patient)
+      return record unless record.is_a?(Hash) && local_patient
+
+      art_summary = record['art_summary']
+      return record unless art_summary.is_a?(Hash)
+
+      fresh_art_summary = ArtService::PatientSummaryBuilder.new(local_patient.patient_id).build.as_json
+      replace_art_summary(local_patient.patient_id, fresh_art_summary) || record
+    rescue StandardError => e
+      Rails.logger.warn("Could not refresh ART summary for patient #{local_patient&.patient_id}: #{e.class}: #{e.message}")
+      record
+    end
+
+    # Re-fetches the CouchDB document immediately before writing so the merge
+    # is based on the latest revision rather than the (possibly stale) body
+    # fetched before the MySQL rebuild ran, and retries on revision conflicts.
+    def replace_art_summary(patient_id, fresh_art_summary)
+      document_id = PatientRecordIdentityService.document_id(patient: Patient.unscoped.find_by(patient_id:)) || patient_id.to_s
+
+      MAX_ART_SUMMARY_REFRESH_ATTEMPTS.times do
+        latest_doc = JSON.parse(RestClient.get(couchdb_url(PATIENTS_DB,
+                                                           URI.encode_www_form_component(document_id))).body)
+        art_summary = latest_doc['art_summary']
+        return latest_doc unless art_summary.is_a?(Hash)
+        return latest_doc if art_summary == fresh_art_summary
+
+        latest_doc['art_summary'] = fresh_art_summary
+
+        begin
+          save_patient_record(latest_doc, patient_id)
+          return latest_doc
+        rescue RestClient::Conflict
+          next # document changed between our fetch and save; retry with a fresh fetch
+        end
+      end
+
+      nil
+    rescue RestClient::NotFound
+      nil
+    end
+
     def design_doc_count(db_name)
       response = RestClient.get(couchdb_url(db_name, '_design_docs'))
       JSON.parse(response.body)['rows'].length
