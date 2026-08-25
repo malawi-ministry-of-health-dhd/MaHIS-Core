@@ -124,9 +124,7 @@ module ArtService
       encounters = @todays_encounters.select { |encounter| encounter.encounter_type == type.encounter_type_id }
       return encounters.any? unless type.name == TREATMENT
 
-      encounters.any? do |encounter|
-        encounter.orders.any? { |order| !order.voided? && order.quantity.to_f.positive? }
-      end
+      encounters.any? { |encounter| encounter.orders.any? { |order| positive_drug_order?(order) } }
     end
 
     def patient_not_on_fast_track?
@@ -158,7 +156,7 @@ module ArtService
       treatment_type_id = encounter_type(TREATMENT)&.encounter_type_id
       @todays_encounters.any? do |encounter|
         encounter.encounter_type == treatment_type_id &&
-          encounter.orders.any? { |order| !order.voided? && order.quantity.to_f.positive? }
+          encounter.orders.any? { |order| positive_drug_order?(order) }
       end
     end
 
@@ -274,6 +272,10 @@ module ArtService
       @observations.select { |observation| @arv_ids.include?(observation.value_drug) }
     end
 
+    def positive_drug_order?(order)
+      !order.voided? && order.drug_order&.quantity.to_f.positive?
+    end
+
     def valid_state?(state)
       return false if encounter_exists?(encounter_type(state)) || !art_activity_enabled?(state)
 
@@ -293,10 +295,10 @@ module ArtService
       return {} if @patient_visit_dates.blank?
 
       visits_by_patient = @patient_visit_dates.group_by(&:first)
-      patients_by_id = Patient.where(patient_id: visits_by_patient.keys).includes(:person).index_by(&:patient_id)
       encounter_types = EncounterType.where(name: workflow_states).index_by { |type| type.name.upcase }
       encounters_by_patient_date = load_encounters(visits_by_patient.keys)
-      arv_ids = Drug.arv_drugs.pluck(:drug_id)
+      activities_property = UserProperty.find_by(user_id: User.current.user_id, property: 'Activities')
+      activities = OptimizedWorkflowEngine.activities(activities_property&.property_value)
       concept_names = [
         'AHD Symptom', 'Yes', 'No', 'Fast', 'Fast track visit',
         'Medication orders', 'Refer to ART clinician', 'Patient present',
@@ -304,14 +306,19 @@ module ArtService
         'Prescribe drugs', 'Weight', 'Height (cm)'
       ]
       concepts = ConceptName.where(name: concept_names).index_by { |concept| concept.name.downcase }
+      candidate_visits = find_structural_candidates(visits_by_patient, encounters_by_patient_date,
+                                                     encounter_types, activities, concepts)
+      return {} if candidate_visits.blank?
+
+      candidate_patient_ids = candidate_visits.map(&:first).uniq
+      patients_by_id = Patient.where(patient_id: candidate_patient_ids).includes(:person).index_by(&:patient_id)
+      arv_ids = Drug.arv_drugs.pluck(:drug_id)
       concept_ids = concepts.values.compact.map(&:concept_id)
-      observations_by_patient = load_observations(visits_by_patient.keys, concept_ids:, arv_ids:)
-      patient_states_by_patient = load_patient_states(visits_by_patient.keys)
-      registered_patient_ids = load_patient_ids_with_encounter(encounter_types.fetch('HIV CLINIC REGISTRATION', nil))
-      staged_patient_ids = load_patient_ids_with_encounter(encounter_types.fetch('HIV STAGING', nil), before: @patient_visit_dates.map { |_id, date| date.to_date }.max + 1.day)
+      observations_by_patient = load_observations(candidate_patient_ids, concept_ids:, arv_ids:)
+      patient_states_by_patient = load_patient_states(candidate_patient_ids)
+      registered_patient_ids = load_patient_ids_with_encounter(encounter_types.fetch('HIV CLINIC REGISTRATION', nil), candidate_patient_ids)
+      staged_patient_ids = load_patient_ids_with_encounter(encounter_types.fetch('HIV STAGING', nil), candidate_patient_ids, before: @patient_visit_dates.map { |_id, date| date.to_date }.max + 1.day)
       clinician_ids = User.joins(:roles).where(role: { role: 'Clinician' }).pluck(:user_id)
-      activities_property = UserProperty.find_by(user_id: User.current.user_id, property: 'Activities')
-      activities = OptimizedWorkflowEngine.activities(activities_property&.property_value)
       global_properties = load_global_properties
       fast_track_enabled = global_properties['enable.fast.track']&.property_value.to_s.casecmp?('true') == true
       htn_enabled = global_properties['activate.htn.enhancement']&.property_value.to_s.casecmp?('true') == true
@@ -321,7 +328,7 @@ module ArtService
       incomplete_dates = Hash.new { |dates, patient_id| dates[patient_id] = [] }
 
       ActiveRecord::Base.connection.cache do
-        visits_by_patient.each do |patient_id, visits|
+        candidate_visits.group_by(&:first).each do |patient_id, visits|
           patient = patients_by_id[patient_id]
           next if patient.blank?
 
@@ -371,9 +378,47 @@ module ArtService
                .where(patient_id: patient_ids,
                       program_id: @program.program_id,
                       encounter_datetime: start_time..end_time)
-               .includes(:orders)
+               .includes(orders: :drug_order)
                .to_a
                .group_by { |encounter| [encounter.patient_id, encounter.encounter_datetime.to_date] }
+    end
+
+    def find_structural_candidates(visits_by_patient, encounters_by_patient_date, encounter_types, activities, concepts)
+      vitals_ids = [concepts['weight']&.concept_id, concepts['height (cm)']&.concept_id].compact
+      vitals_by_patient_date = load_vitals_observations(visits_by_patient.keys, vitals_ids)
+      required_states = workflow_states - [WorkflowEngine::VITALS,
+                   WorkflowEngine::HIV_CLINIC_CONSULTATION_CLINICIAN]
+
+      visits_by_patient.flat_map do |patient_id, visits|
+        visits.select do |_id, visit_date|
+          date = visit_date.to_date
+          encounters = encounters_by_patient_date[[patient_id, date]] || []
+          missing_state = required_states.any? do |state|
+            next false unless activities.include?(state)
+
+            type = encounter_types[state]
+            next true unless type
+
+            matching = encounters.select { |encounter| encounter.encounter_type == type.encounter_type_id }
+            state != WorkflowEngine::TREATMENT || matching.any? do |encounter|
+              encounter.orders.any? { |order| positive_drug_order?(order) }
+            end
+          end
+          missing_vitals = activities.include?(WorkflowEngine::VITALS) &&
+                           Array(vitals_by_patient_date[[patient_id, date]]).uniq.size < vitals_ids.size
+          missing_state || missing_vitals
+        end
+      end
+    end
+
+    def load_vitals_observations(patient_ids, concept_ids)
+      return {} if concept_ids.empty?
+
+      Observation.where(person_id: patient_ids, concept_id: concept_ids)
+                 .where('obs_datetime <= ?', TimeUtils.day_bounds(@patient_visit_dates.map { |_id, date| date.to_date }.max).last)
+                 .pluck(:person_id, :obs_datetime, :concept_id)
+                 .group_by { |person_id, datetime, _concept_id| [person_id, datetime.to_date] }
+                 .transform_values { |rows| rows.map(&:last) }
     end
 
     def load_observations(patient_ids, concept_ids:, arv_ids:)
@@ -396,14 +441,18 @@ module ArtService
                   .group_by { |state| state.patient_program.patient_id }
     end
 
-    def load_patient_ids_with_encounter(encounter_type, before: nil)
+    def load_patient_ids_with_encounter(encounter_type, patient_ids, before: nil)
       return [] unless encounter_type
 
-      scope = Encounter.unscoped.where(patient_id: @patient_visit_dates.map(&:first).uniq,
+      scope = Encounter.unscoped.where(patient_id: patient_ids,
                                        program_id: @program.program_id,
                                        encounter_type: encounter_type.encounter_type_id)
       scope = scope.where('encounter_datetime < ?', before) if before
       scope.distinct.pluck(:patient_id)
+    end
+
+    def positive_drug_order?(order)
+      !order.voided? && order.drug_order&.quantity.to_f.positive?
     end
 
     def load_global_properties
