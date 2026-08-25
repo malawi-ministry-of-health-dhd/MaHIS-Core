@@ -1,6 +1,8 @@
 # rubocop:disable Metrics/MethodLength, Metrics/ClassLength, Style/Documentation, Metrics/AbcSize, Metrics/BlockLength, Security/Eval
 # frozen_string_literal: true
 
+require_relative 'incomplete_visits_evaluator'
+
 module ArtService
   class DataCleaningTool
     include CommonSqlQueryUtils
@@ -660,34 +662,10 @@ module ArtService
 
       return {} if patient_visit_dates.blank?
 
-      # Group by patient first so demographics/patient records are only ever fetched once each,
-      # regardless of how many visit dates a patient has.
-      visit_dates_by_patient_id = patient_visit_dates.group_by(&:first)
-      patient_ids = visit_dates_by_patient_id.keys
-
-      patients_by_id = Patient.where(patient_id: patient_ids).index_by(&:patient_id)
-      incomplete_dates_by_patient_id = {}
-
-      # WorkflowEngine re-resolves concepts/program via plain (uncached) queries on every
-      # instantiation. Wrapping the batch in the AR query cache lets identical lookups made
-      # across the many WorkflowEngine instances below be served from memory instead of the DB,
-      # with no changes required to WorkflowEngine itself.
-      ActiveRecord::Base.connection.cache do
-        visit_dates_by_patient_id.each do |patient_id, visits|
-          patient = patients_by_id[patient_id]
-          next if patient.blank?
-
-          visits.each do |_patient_id, visit_date|
-            date = visit_date.to_date
-            workflow_engine = ArtService::WorkflowEngine.new(patient:, date:, program:)
-            complete = workflow_engine.next_encounter.blank? || false
-
-            next if complete
-
-            (incomplete_dates_by_patient_id[patient_id] ||= []) << date
-          end
-        end
-      end
+      incomplete_dates_by_patient_id = IncompleteVisitsEvaluator.new(
+        program:,
+        patient_visit_dates:
+      ).call
 
       return {} if incomplete_dates_by_patient_id.blank?
 
