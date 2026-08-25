@@ -7,6 +7,10 @@ require 'securerandom'
 module Api
   module V1
     class LocationsController < ApplicationController
+      # Raised for an unrecognised ward_sex, so create and update can both turn
+      # it into a 422 rather than a 500.
+      class InvalidWardSexError < StandardError; end
+
       FACILITY_LEVEL_ATTRIBUTE = 'Facility Level'
       FACILITY_TYPE_ATTRIBUTE = 'Facility Type'
       ALLOWED_FACILITY_LEVELS = %w[Primary Secondary Tertiary].freeze
@@ -167,12 +171,59 @@ module Api
         render json: { error: e.record.errors.full_messages.join(', ') }, status: :unprocessable_entity
       end
 
+      # GET   /locations/:id/departments
+      # PUT   /locations/:id/departments
+      # PATCH /locations/:id/departments
+      #
+      # :id is the FACILITY, not the department: departments are global, so the
+      # only thing that varies per site is whether each one is switched on there.
+      # GET lists every department with its status for that facility; PUT/PATCH
+      # takes { department_id, enabled } and flips one.
+      def departments
+        facility = Location.find_by(location_id: params[:id])
+        return render json: { error: 'Location not found' }, status: :not_found unless facility
+
+        if request.get?
+          disabled = disabled_department_ids(facility.location_id)
+          return render json: department_locations.map { |department|
+            {
+              location_id: department.location_id,
+              name: department.name,
+              enabled: disabled.exclude?(department.location_id.to_s)
+            }
+          }
+        end
+
+        unless authorized_for_location?(facility.location_id)
+          return render json: { error: 'Location is out of your authorized scope' }, status: :forbidden
+        end
+
+        department = department_locations.find_by(location_id: params[:department_id])
+        return render json: { error: 'Department not found' }, status: :not_found unless department
+
+        enabled = ActiveModel::Type::Boolean.new.cast(params[:enabled])
+        return render json: { error: 'enabled is required' }, status: :unprocessable_entity if enabled.nil?
+
+        set_department_enabled(facility.location_id, department.location_id, enabled)
+
+        render json: {
+          location_id: facility.location_id,
+          department_id: department.location_id,
+          name: department.name,
+          enabled: enabled,
+          message: "Department #{enabled ? 'enabled' : 'disabled'} for this facility"
+        }, status: :ok
+      rescue ActiveRecord::RecordInvalid => e
+        render json: { error: e.record.errors.full_messages.join(', ') }, status: :unprocessable_entity
+      end
+
       def create
         # Require and permit parameters
         params.require(:tag)
         params.require(:name)
         location_params = params.permit(:name, :description, :address1, :address2, :district,
-                                        :parent_id, :tag, :city_village, :county_district, :department_id)
+                                        :parent_id, :tag, :city_village, :county_district, :department_id,
+                                        :ward_sex)
 
         is_department = location_params[:tag].to_s.strip.casecmp('Department').zero?
         is_ward = location_params[:tag].to_s.strip.casecmp('Ward').zero?
@@ -221,8 +272,12 @@ module Api
           )
 
           # A ward belongs to a facility (its parent) and is classified by a
-          # global department, stored as a location attribute.
-          assign_ward_department(location, location_params[:department_id]) if is_ward
+          # global department, stored as a location attribute. Whether it is a
+          # male or female ward is recorded the same way.
+          if is_ward
+            assign_ward_department(location, location_params[:department_id])
+            assign_ward_sex(location, location_params[:ward_sex])
+          end
 
           # Reload to include associations
           location.reload
@@ -234,6 +289,69 @@ module Api
         end
       rescue ActionController::ParameterMissing => e
         render json: { error: e.message }, status: :bad_request
+      rescue InvalidWardSexError => e
+        render json: { error: e.message }, status: :unprocessable_entity
+      end
+
+      # PUT   /locations/:id
+      # PATCH /locations/:id
+      #
+      # Renames a facility unit and re-files it: a ward can move to a different
+      # department, a section to a different ward. Only the fields that were sent
+      # are touched, so a rename never disturbs the topology.
+      def update
+        location = Location.find_by(location_id: params[:id])
+        return render json: { error: 'Location not found' }, status: :not_found unless location
+
+        # Departments are global, so editing one edits it for every site --
+        # gated the same way creating one is.
+        if location_tagged?(location, 'Department')
+          unless User.current&.global_superuser?
+            return render json: { error: 'Only a global superuser can edit departments' }, status: :forbidden
+          end
+        else
+          facility_id = owning_facility_id(location)
+          unless facility_id.present? && authorized_for_location?(facility_id)
+            return render json: { error: 'Location is out of your authorized scope' }, status: :forbidden
+          end
+        end
+
+        update_params = params.permit(:name, :description, :parent_id, :department_id, :ward_sex)
+
+        if update_params.key?(:name) && update_params[:name].to_s.strip.blank?
+          return render json: { error: 'name cannot be blank' }, status: :unprocessable_entity
+        end
+
+        attrs = { changed_by: User.current&.user_id, date_changed: Time.now }
+        attrs[:name] = update_params[:name].to_s.strip if update_params.key?(:name)
+        attrs[:description] = update_params[:description] if update_params.key?(:description)
+
+        if update_params[:parent_id].present?
+          parent_location = Location.find_by(location_id: update_params[:parent_id])
+          return render json: { error: 'Parent location not found' }, status: :bad_request unless parent_location
+
+          attrs[:parent_location] = parent_location.location_id
+        end
+
+        location.update!(attrs)
+
+        # A ward's department and its male/female marking are location
+        # attributes, not columns, so they are set separately.
+        if location_tagged?(location, 'Ward')
+          repoint_ward_department(location, update_params[:department_id]) if update_params.key?(:department_id)
+          assign_ward_sex(location, update_params[:ward_sex]) if update_params.key?(:ward_sex)
+        end
+
+        location.reload
+        render json: location, include: {
+          location_attributes: {
+            only: %i[location_attribute_id attribute_type_id value_reference]
+          }
+        }
+      rescue InvalidWardSexError => e
+        render json: { error: e.message }, status: :unprocessable_entity
+      rescue ActiveRecord::RecordInvalid => e
+        render json: { error: e.record.errors.full_messages.join(', ') }, status: :unprocessable_entity
       end
 
       # GET /locations/districts
@@ -268,6 +386,138 @@ module Api
 
       private
 
+      def location_tagged?(location, tag_name)
+        tag_id = LocationTag.where('LOWER(TRIM(name)) = ?', tag_name.to_s.downcase).pick(:location_tag_id)
+        return false if tag_id.blank?
+
+        LocationTagMap.exists?(location_id: location.location_id, location_tag_id: tag_id)
+      end
+
+      # The facility a unit belongs to, so a ward and a section reach the same
+      # authorization check: a ward's parent IS the facility, a section's parent
+      # is a ward. Legacy wards parented to a department fall back to walking one
+      # more level up.
+      def owning_facility_id(location)
+        return location.parent_location if location_tagged?(location, 'Ward')
+
+        parent = Location.find_by(location_id: location.parent_location)
+        return location.parent_location if parent.nil?
+
+        parent.parent_location.presence || parent.location_id
+      end
+
+      # Points a ward at a different department. Reuses the existing marker so a
+      # ward never ends up with two live department attributes.
+      def repoint_ward_department(location, department_id)
+        return if department_id.blank?
+
+        attribute_type = find_or_create_department_attribute_type
+        return unless attribute_type
+
+        markers = LocationAttribute.where(
+          location_id: location.location_id,
+          attribute_type_id: attribute_type.location_attribute_type_id
+        ).where(voided: [nil, false, 0]).order(location_attribute_id: :desc).to_a
+
+        current = markers.shift
+        now = Time.now
+        user_id = User.current&.user_id
+
+        # Anything beyond the newest marker is stale data from before this action
+        # existed; voiding it here stops Location#department_id picking at random.
+        markers.each do |stale|
+          stale.update!(voided: true, voided_by: user_id, date_voided: now, void_reason: 'Superseded department attribute')
+        end
+
+        if current
+          return if current.value_reference.to_s == department_id.to_s
+
+          current.update!(value_reference: department_id.to_s, changed_by: user_id, date_changed: now)
+        else
+          assign_ward_department(location, department_id)
+        end
+      end
+
+      # Every department, matching what GET /locations?tag=Department returns so
+      # the admin screen and the rest of the app agree on the set.
+      def department_locations
+        tag = LocationTag.where('LOWER(TRIM(name)) = ?', 'department').first
+        return Location.none unless tag
+
+        Location.where(retired: false)
+                .joins(:tag_maps)
+                .merge(LocationTagMap.where(location_tag_id: tag.location_tag_id))
+                .order(:name)
+      end
+
+      # The department location_ids this facility has switched off. Stored as
+      # attributes on the facility rather than on the department, because a
+      # department row is shared by every site.
+      def disabled_department_ids(facility_id)
+        attribute_type_id = LocationAttributeType
+                            .where(name: Location::DISABLED_DEPARTMENT_ATTRIBUTE_TYPE_NAME)
+                            .pick(:location_attribute_type_id)
+        return [] if attribute_type_id.blank?
+
+        LocationAttribute.where(location_id: facility_id, attribute_type_id: attribute_type_id)
+                         .where(voided: [nil, false, 0])
+                         .pluck(:value_reference)
+                         .map(&:to_s)
+      end
+
+      # Enabling voids the facility's "disabled" marker; disabling adds one (or
+      # revives the previous one, so repeated toggling does not grow the table).
+      def set_department_enabled(facility_id, department_id, enabled)
+        attribute_type = find_or_create_disabled_department_attribute_type
+        return unless attribute_type
+
+        markers = LocationAttribute.where(
+          location_id: facility_id,
+          attribute_type_id: attribute_type.location_attribute_type_id,
+          value_reference: department_id.to_s
+        )
+        active = markers.where(voided: [nil, false, 0])
+        now = Time.now
+        user_id = User.current&.user_id
+
+        if enabled
+          active.each do |marker|
+            marker.update!(voided: true, voided_by: user_id, date_voided: now,
+                           void_reason: 'Department enabled for this facility')
+          end
+          return
+        end
+
+        return if active.exists?
+
+        revivable = markers.order(location_attribute_id: :desc).first
+        if revivable
+          revivable.update!(voided: false, voided_by: nil, date_voided: nil, void_reason: nil,
+                            changed_by: user_id, date_changed: now)
+        else
+          LocationAttribute.create!(
+            location_id: facility_id,
+            attribute_type_id: attribute_type.location_attribute_type_id,
+            value_reference: department_id.to_s,
+            uuid: SecureRandom.uuid,
+            creator: user_id,
+            date_created: now,
+            voided: false
+          )
+        end
+      end
+
+      def find_or_create_disabled_department_attribute_type
+        LocationAttributeType.find_or_create_by(name: Location::DISABLED_DEPARTMENT_ATTRIBUTE_TYPE_NAME) do |attribute_type|
+          attribute_type.min_occurs = 0
+          attribute_type.datatype = 'org.openmrs.customdatatype.datatype.FreeTextDatatype'
+          attribute_type.description = 'A department this facility has switched off (value is the department location_id)'
+          attribute_type.creator = User.current&.user_id
+          attribute_type.date_created = Time.now
+          attribute_type.retired = false
+        end
+      end
+
       # Persist which global department a ward belongs to as a location
       # attribute (value_reference = department location_id). No-op only when no
       # department was supplied; the attribute type is created on demand so this
@@ -286,6 +536,76 @@ module Api
           creator: User.current&.user_id,
           date_created: Time.now,
           voided: false
+        )
+      end
+
+      # Marks a ward male or female. A blank value voids the marking, so a ward
+      # can go back to having none. Reuses the single live attribute rather than
+      # stacking rows, so Location#ward_sex never has to choose between two.
+      def assign_ward_sex(location, value)
+        ward_sex = Location.normalize_ward_sex(value)
+        if value.present? && ward_sex.nil?
+          raise InvalidWardSexError, "ward_sex must be one of: #{Location::WARD_SEXES.join(', ')}"
+        end
+
+        attribute_type = find_or_create_ward_sex_attribute_type
+        return unless attribute_type
+
+        now = Time.now
+        user_id = User.current&.user_id
+        live = LocationAttribute.where(
+          location_id: location.location_id,
+          attribute_type_id: attribute_type.location_attribute_type_id
+        ).where(voided: [nil, false, 0]).order(location_attribute_id: :desc).to_a
+
+        current = live.shift
+        # Anything beyond the newest is stale; voiding it keeps the reader
+        # deterministic.
+        live.each do |stale|
+          stale.update!(voided: true, voided_by: user_id, date_voided: now, void_reason: 'Superseded ward sex attribute')
+        end
+
+        if ward_sex.nil?
+          current&.update!(voided: true, voided_by: user_id, date_voided: now, void_reason: 'Ward sex cleared')
+          return
+        end
+
+        if current
+          return if current.value_reference.to_s == ward_sex
+
+          current.update!(value_reference: ward_sex, changed_by: user_id, date_changed: now)
+        else
+          LocationAttribute.create!(
+            location_id: location.location_id,
+            attribute_type_id: attribute_type.location_attribute_type_id,
+            value_reference: ward_sex,
+            uuid: SecureRandom.uuid,
+            creator: user_id,
+            date_created: now,
+            voided: false
+          )
+        end
+      end
+
+      # Reuses the live type -- which on a seeded site is the one that came from
+      # MaHIS-Metadata -- and only creates one where none exists yet. Explicitly
+      # ignores retired rows so a superseded local copy is never picked up again.
+      def find_or_create_ward_sex_attribute_type
+        existing = LocationAttributeType
+                   .where(name: Location::WARD_SEX_ATTRIBUTE_TYPE_NAME, retired: [nil, false, 0])
+                   .order(:location_attribute_type_id)
+                   .first
+        return existing if existing
+
+        LocationAttributeType.create!(
+          name: Location::WARD_SEX_ATTRIBUTE_TYPE_NAME,
+          min_occurs: 0,
+          max_occurs: 1,
+          datatype: 'org.openmrs.customdatatype.datatype.FreeTextDatatype',
+          description: 'Whether a ward admits Male or Female patients',
+          creator: User.current&.user_id,
+          date_created: Time.now,
+          retired: false
         )
       end
 
