@@ -60,7 +60,8 @@ class SavePatientRecordService
     # VoidableRecord's default_scope excludes voided rows. Finalize from the
     # already-known record instead of running it through the live-patient
     # rebuild path.
-    if operation_results[:void_patient]&.success?
+  
+    if operation_results[:void_patient]&.changed?
       return finalize_voided_patient_record(patient_id, record, operation_results, overall_sync_status)
     end
 
@@ -77,6 +78,7 @@ class SavePatientRecordService
         patient_record["_id"] = document_id
         sync_to_couchdb(patient_record, "patients_records", document_id)
         retire_legacy_npid_documents(patient_record)
+        enqueue_art_summary_couchdb_true_up(patient_id, patient_record)
       rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH => e
         Rails.logger.warn("CouchDB connection error during patient record sync for #{patient_record["ID"]}: #{e.class}: #{e.message}")
       rescue StandardError => e
@@ -244,6 +246,7 @@ class SavePatientRecordService
       void_encounters:        PatientRecordService::VoidEncounters.new,
       merge_patients_manager: PatientRecordService::MergePatientManager.new,
       void_drug_orders:       PatientRecordService::VoidDrugOrders.new,
+      out_of_stock_orders:    PatientRecordService::OutOfStockDrugOrders.new,
       void_patient:           PatientRecordService::VoidPatient.new
     }
   end
@@ -271,6 +274,7 @@ class SavePatientRecordService
       create_ncd_identifier:  run_if(ncd_identifier_pending?(record)) { managers[:identity_manager].create_ncd_identifier(patient_id, record) },
       save_dispensation_data: run_if(dispensations_pending?(record)) { managers[:medication_order_saver].save_dispensation_data(patient_id, record) },
       void_drug_orders:       run_if(drug_order_voids_pending?(record)) { managers[:void_drug_orders].void_drug_orders(patient_id, record) },
+      mark_out_of_stock:      run_if(out_of_stock_pending?(record)) { managers[:out_of_stock_orders].mark_out_of_stock(patient_id, record) },
       save_all_observations:  run_if(observations_pending?(record)) { managers[:observation_saver].save_all_observations(patient_id, record) },
       void_encounters:        run_if(encounter_voids_pending?(record)) { managers[:void_encounters].void_encounters(record) },
       void_patient:           run_if(patient_void_pending?(record)) { managers[:void_patient].void_patient(patient_id, record) }
@@ -365,7 +369,7 @@ class SavePatientRecordService
         patient_data[:MedicationOrder]       = BuildPatientRecordService.build_medication_data(patient_id)
         allowed_encounter_types << get_encounter_id('TREATMENT')
 
-      when :save_medication_order, :save_dispensation_data, :void_drug_orders
+      when :save_medication_order, :save_dispensation_data, :void_drug_orders, :mark_out_of_stock
         patient_data[:MedicationOrder] = BuildPatientRecordService.build_medication_data(patient_id)
         allowed_encounter_types << get_encounter_id('TREATMENT')
 
@@ -757,6 +761,23 @@ class SavePatientRecordService
     Rails.logger.warn("Failed to enqueue labOrders CouchDB true-up for patient #{patient_id}: #{e.class}: #{e.message}")
   end
 
+  # Only ART patients carry an art_summary doc section; skip the job entirely
+  # for everyone else. A brand-new ART patient's first save can carry an empty
+  # {} (not yet populated client-side), so check the section exists rather
+  # than requiring it to be non-empty. Delayed so it runs after this request's
+  # own CouchDB sync above has landed, avoiding a write race against it.
+  def enqueue_art_summary_couchdb_true_up(patient_id, patient_record)
+    return unless record_value(patient_record, :art_summary).is_a?(Hash)
+
+    RebuildArtSummaryJob.set(wait: 30.seconds).perform_later(
+      patient_id,
+      trigger: 'save_patient_record_art_summary_true_up',
+      metadata: {}
+    )
+  rescue StandardError => e
+    Rails.logger.warn("Failed to enqueue art_summary CouchDB true-up for patient #{patient_id}: #{e.class}: #{e.message}")
+  end
+
   def ensure_primary_identifier_persisted!(patient_id, patient_record)
     identifier = patient_record.with_indifferent_access[:ID].to_s.strip
     assignment_status = patient_record.with_indifferent_access[:identifierAssignmentStatus].to_s
@@ -793,6 +814,8 @@ class SavePatientRecordService
     record.delete('art_dispensation_pending')
     record.delete(:voidedDrugOders)
     record.delete('voidedDrugOders')
+    record.delete(:outOfStockDrugOrders)
+    record.delete('outOfStockDrugOrders')
     record
   end
 
@@ -946,6 +969,11 @@ class SavePatientRecordService
   def drug_order_voids_pending?(record)
     voided_drug_orders = record_value(record, :voidedDrugOders) || {}
     Array.wrap(record_value(voided_drug_orders, :unsaved)).any?
+  end
+
+  def out_of_stock_pending?(record)
+    out_of_stock_orders = record_value(record, :outOfStockDrugOrders) || {}
+    Array.wrap(record_value(out_of_stock_orders, :unsaved)).any?
   end
 
   def observations_pending?(record)

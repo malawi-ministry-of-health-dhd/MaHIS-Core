@@ -7,17 +7,17 @@ module Api
         # GET /pharmacy/items[?drug_id=]
         def index
           permitted_params = params.permit(:drug_id, :current_quantity, :start_date, :end_date, :batch_number,
-                                           :drug_name, :display_details)
+                                           :drug_name, :display_details, :program_id, :location_id)
 
-          permitted_params = permitted_params.merge(location_id: User.current.location_id) if user_program.present?
-
-          items = service.find_batch_items(permitted_params)
+          filters = permitted_params.merge(filter_context)
+          items = service.find_batch_items(filters)
           render json: paginate(items)
         end
 
 
         def show
-          filters = show_params.merge(location_id: User.current.location_id) if user_program.present?
+          permitted_params = show_params
+          filters = permitted_params.merge(filter_context)
           items = service.find_batch_items(filters)
           render json: paginate(items)
         end
@@ -96,13 +96,16 @@ module Api
 
         private
 
-        def user_program
-          User.current.programs.detect { |x| x['name'] == 'IMMUNIZATION PROGRAM' }
+        def filter_context
+          {
+            program_id: params[:program_id],
+            location_id: params[:location_id] || User.current.location_id
+          }
         end
 
         def show_params
           params.require(%i[id show_depleted show_expired])
-          params.permit(%i[id show_depleted show_expired])
+          params.permit(%i[id show_depleted show_expired program_id location_id])
           { drug_id: params[:id], show_depleted: params[:show_depleted], show_expired: params[:show_expired] }
         end
 

@@ -8,7 +8,10 @@ module Api
 
         # GET /pharmacy_stock_verifications
         def index
-          @pharmacy_stock_verifications = PharmacyStockVerification.all
+          filters = filter_context
+          @pharmacy_stock_verifications = PharmacyStockVerification
+                                           .for_program(filters[:program_id])
+                                           .for_location(filters[:location_id])
 
           render json: @pharmacy_stock_verifications
         end
@@ -20,7 +23,8 @@ module Api
 
         # POST /pharmacy_stock_verifications
         def create
-          @pharmacy_stock_verification = PharmacyStockVerification.new(pharmacy_stock_verification_params)
+          verification_params = pharmacy_stock_verification_params.merge(filter_context)
+          @pharmacy_stock_verification = PharmacyStockVerification.new(verification_params)
 
           if @pharmacy_stock_verification.save
             render json: @pharmacy_stock_verification, status: :created, location: @pharmacy_stock_verification
@@ -45,6 +49,12 @@ module Api
 
         private
 
+        def filter_context
+          {
+            program_id: params[:program_id]
+          }
+        end
+
         # Use callbacks to share common setup or constraints between actions.
         def set_pharmacy_stock_verification
           @pharmacy_stock_verification = PharmacyStockVerification.find(params[:id])
@@ -53,7 +63,8 @@ module Api
         # Only allow a trusted parameter "white list" through.
         def pharmacy_stock_verification_params
           params.require(:pharmacy_stock_verification).permit(:reason, :verification_date, :creator, :date_created,
-                                                              :changed_by, :date_changed, :voided, :voided_by, :void_reason, :date_voided)
+                                                              :changed_by, :date_changed, :voided, :voided_by, :void_reason, :date_voided,
+                                                              :program_id, :location_id)
         end
       end
     end

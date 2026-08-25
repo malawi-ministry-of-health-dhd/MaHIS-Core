@@ -206,8 +206,8 @@ module ArtService
       end
 
       def create_indexes
-        execute_query "CREATE INDEX #{idx_temp_initiated_on_art} ON temp_initiated_on_art(patient_id)"
-        execute_query "CREATE INDEX #{idx_temp_initiated_on_tpt} ON temp_initiated_on_tpt(patient_id)"
+        execute_query "CREATE INDEX #{idx_temp_initiated_on_art} ON #{temp_initiated_on_art}(patient_id)"
+        execute_query "CREATE INDEX #{idx_temp_initiated_on_tpt} ON #{temp_initiated_on_tpt}(patient_id)"
       rescue ActiveRecord::StatementInvalid => e
         # Index may already exist, which is fine
         raise e unless e.message.include?('Duplicate key name')

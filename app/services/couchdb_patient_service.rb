@@ -15,13 +15,11 @@ class CouchdbPatientService
     end
 
     def ensure_db_exists(db_name = PATIENTS_DB)
-      if couchdb_configured?
-        RestClient.put(couchdb_url(db_name), '')
-      end
+      RestClient.put(couchdb_url(db_name), '') if couchdb_configured?
       true
     rescue RestClient::PreconditionFailed
       true # Database already exists
-    rescue => e
+    rescue StandardError => e
       Rails.logger.error "CouchDB error: #{e.message}"
       false
     end
@@ -42,59 +40,57 @@ class CouchdbPatientService
       else
         raise ArgumentError, 'Missing patient identifier'
       end
-    rescue => e
+    rescue StandardError => e
       Rails.logger.error "Error getting patient record: #{e.message}"
       patient_ids.present? ? [] : nil
     end
 
     def get_latest_encounter_date_changed(db_name = 'patients_records')
       unless couchdb_configured?
-        Rails.logger.warn "CouchDB not configured. Cannot fetch latest encounter date."
+        Rails.logger.warn 'CouchDB not configured. Cannot fetch latest encounter date.'
         return nil
       end
 
       ensure_db_exists(db_name)
-      
+
       # Create the correct index
       create_encounter_date_index(db_name)
-      
+
       query = {
         selector: {
           encounter_date_changed: { "$exists": true, "$ne": nil }
         },
-        sort: [{ encounter_date_changed: "desc" }],
+        sort: [{ encounter_date_changed: 'desc' }],
         limit: 1,
-        use_index: "encounter_date_changed_simple",
-        fields: ["encounter_date_changed"]
+        use_index: 'encounter_date_changed_simple',
+        fields: ['encounter_date_changed']
       }
-      
+
       response = RestClient.post(
         couchdb_url(db_name, '_find'),
         query.to_json,
         { content_type: :json, accept: :json }
       )
-      
+
       result = JSON.parse(response.body)
-      
-      if result['docs'].any?
-        doc = result['docs'].first
-        return doc['encounter_date_changed']
-      else
-        return nil
-      end
+
+      return nil unless result['docs'].any?
+
+      doc = result['docs'].first
+      doc['encounter_date_changed']
     rescue RestClient::ExceptionWithResponse => e
       error_message = "Error querying latest encounter date: #{e.response&.body || e.message}"
       Rails.logger.error error_message
-      return nil
+      nil
     rescue StandardError => e
       error_message = "Unexpected error: #{e.message}"
       Rails.logger.error error_message
-      return nil
+      nil
     end
 
     def patient_record_count(db_name = PATIENTS_DB)
       unless couchdb_configured?
-        Rails.logger.warn "CouchDB not configured. Cannot fetch patient record count."
+        Rails.logger.warn 'CouchDB not configured. Cannot fetch patient record count.'
         return nil
       end
 
@@ -117,33 +113,33 @@ class CouchdbPatientService
       begin
         response = RestClient.get(couchdb_url(db_name, '_index'))
         indexes = JSON.parse(response.body)
-        
+
         # Look for an index with the correct field structure
-        existing_index = indexes['indexes'].find do |idx| 
+        existing_index = indexes['indexes'].find do |idx|
           idx['name'] == 'encounter_date_changed_simple' &&
-          idx['def'] && 
-          idx['def']['fields'] == ['encounter_date_changed']
+            idx['def'] &&
+            idx['def']['fields'] == ['encounter_date_changed']
         end
-        
+
         if existing_index
-          Rails.logger.info "Correct index encounter_date_changed_simple already exists"
+          Rails.logger.info 'Correct index encounter_date_changed_simple already exists'
           return
         end
-      rescue => e
+      rescue StandardError => e
         Rails.logger.warn "Could not check existing indexes: #{e.message}"
       end
 
       # Create index with ONLY the field name - no sort direction
       index_doc = {
         index: {
-          fields: ["encounter_date_changed"],  # JUST the field name
+          fields: ['encounter_date_changed'], # JUST the field name
           partial_filter_selector: {
             encounter_date_changed: { "$exists": true, "$ne": nil }
           }
         },
-        name: "encounter_date_changed_simple",
-        ddoc: "encounter_date_changed_simple",
-        type: "json"
+        name: 'encounter_date_changed_simple',
+        ddoc: 'encounter_date_changed_simple',
+        type: 'json'
       }
 
       response = RestClient.post(
@@ -151,19 +147,18 @@ class CouchdbPatientService
         index_doc.to_json,
         { content_type: :json, accept: :json }
       )
-      
+
       result = JSON.parse(response.body)
       Rails.logger.info "Index creation result: #{result['result']}"
-      
+
       # Wait for index to be built
       if result['result'] == 'created'
-        Rails.logger.info "New index encounter_date_changed_simple is ready."
-        sleep(1)  # Give CouchDB time to build the index
+        Rails.logger.info 'New index encounter_date_changed_simple is ready.'
+        sleep(1) # Give CouchDB time to build the index
       end
-      
     rescue RestClient::ExceptionWithResponse => e
       if e.response.code == 409
-        Rails.logger.info "Index already exists - continuing..."
+        Rails.logger.info 'Index already exists - continuing...'
       else
         Rails.logger.error "Error creating index: #{e.response&.body || e.message}"
       end
@@ -174,14 +169,14 @@ class CouchdbPatientService
     # Method to sync from external source to CouchDB
     def sync_patient_to_couchdb(patient_data, patient_id)
       unless couchdb_configured?
-        Rails.logger.warn "CouchDB not configured. Skipping sync."
+        Rails.logger.warn 'CouchDB not configured. Skipping sync.'
         return { success: false, error: 'CouchDB not configured' }
       end
 
       ensure_db_exists
       save_patient_record(patient_data, patient_id)
       { success: true }
-    rescue => e
+    rescue StandardError => e
       Rails.logger.error "Error syncing patient to CouchDB: #{e.message}"
       { success: false, error: e.message }
     end
@@ -189,15 +184,15 @@ class CouchdbPatientService
     # Utility method for bulk operations
     def bulk_update_patients(patient_records)
       unless couchdb_configured?
-        Rails.logger.warn "CouchDB not configured. Skipping bulk update."
+        Rails.logger.warn 'CouchDB not configured. Skipping bulk update.'
         return { success: false, error: 'CouchDB not configured' }
       end
 
       docs = patient_records.map do |record|
         record.merge({
-          'last_sync_at' => Time.current.iso8601,
-          'sync_status' => 'synced'
-        })
+                       'last_sync_at' => Time.current.iso8601,
+                       'sync_status' => 'synced'
+                     })
       end
 
       bulk_payload = { docs: docs }.to_json
@@ -207,14 +202,57 @@ class CouchdbPatientService
         bulk_payload,
         { content_type: :json, accept: :json }
       )
-      
+
       { success: true, response: JSON.parse(response.body) }
-    rescue => e
+    rescue StandardError => e
       Rails.logger.error "Error in bulk update: #{e.message}"
       { success: false, error: e.message }
     end
 
     private
+
+    MAX_ART_SUMMARY_REFRESH_ATTEMPTS = 3
+
+    def refresh_art_summary(record, local_patient)
+      return record unless record.is_a?(Hash) && local_patient
+
+      art_summary = record['art_summary']
+      return record unless art_summary.is_a?(Hash)
+
+      fresh_art_summary = ArtService::PatientSummaryBuilder.new(local_patient.patient_id).build.as_json
+      replace_art_summary(local_patient.patient_id, fresh_art_summary) || record
+    rescue StandardError => e
+      Rails.logger.warn("Could not refresh ART summary for patient #{local_patient&.patient_id}: #{e.class}: #{e.message}")
+      record
+    end
+
+    # Re-fetches the CouchDB document immediately before writing so the merge
+    # is based on the latest revision rather than the (possibly stale) body
+    # fetched before the MySQL rebuild ran, and retries on revision conflicts.
+    def replace_art_summary(patient_id, fresh_art_summary)
+      document_id = PatientRecordIdentityService.document_id(patient: Patient.unscoped.find_by(patient_id:)) || patient_id.to_s
+
+      MAX_ART_SUMMARY_REFRESH_ATTEMPTS.times do
+        latest_doc = JSON.parse(RestClient.get(couchdb_url(PATIENTS_DB,
+                                                           URI.encode_www_form_component(document_id))).body)
+        art_summary = latest_doc['art_summary']
+        return latest_doc unless art_summary.is_a?(Hash)
+        return latest_doc if art_summary == fresh_art_summary
+
+        latest_doc['art_summary'] = fresh_art_summary
+
+        begin
+          save_patient_record(latest_doc, patient_id)
+          return latest_doc
+        rescue RestClient::Conflict
+          next # document changed between our fetch and save; retry with a fresh fetch
+        end
+      end
+
+      nil
+    rescue RestClient::NotFound
+      nil
+    end
 
     def design_doc_count(db_name)
       response = RestClient.get(couchdb_url(db_name, '_design_docs'))
@@ -225,6 +263,7 @@ class CouchdbPatientService
 
     def get_multiple_patients(patient_ids)
       return false unless couchdb_configured?
+
       # Resolve numeric MySQL IDs to their permanent CouchDB record IDs. Values
       # that are already document IDs remain unchanged for compatibility.
       resolved = patient_ids.index_with do |value|
@@ -232,7 +271,7 @@ class CouchdbPatientService
         PatientRecordIdentityService.document_id(patient:) || value.to_s
       end
       keys_payload = { keys: resolved.values }.to_json
-      
+
       response = RestClient.post(
         "#{couchdb_url(PATIENTS_DB, '_all_docs')}?include_docs=true",
         keys_payload,
@@ -240,16 +279,16 @@ class CouchdbPatientService
       )
 
       result = JSON.parse(response.body)
-      
+
       # Extract documents, filter out missing ones
       records = result['rows']
-        .reject { |row| row['error'] == 'not_found' }
-        .map { |row| row['doc'] }
+                .reject { |row| row['error'] == 'not_found' }
+                .map { |row| row['doc'] }
 
       # Handle missing patients by creating them
       found_ids = records.map { |doc| doc['patientID'].to_s }
       missing_ids = patient_ids.reject { |value| found_ids.include?(value.to_s) }
-      
+
       missing_ids.each do |missing_id|
         new_record = build_patient_record(missing_id)
         records << new_record if new_record
@@ -263,10 +302,12 @@ class CouchdbPatientService
         local_patient = nil
 
         begin
-          local_patient = Patient.unscoped.includes(:person).find_by(patient_id: patient_id) if patient_id.to_s.match?(/\A\d+\z/)
+          if patient_id.to_s.match?(/\A\d+\z/)
+            local_patient = Patient.unscoped.includes(:person).find_by(patient_id: patient_id)
+          end
           document_id = PatientRecordIdentityService.document_id(patient: local_patient) || patient_id.to_s
           response = RestClient.get(couchdb_url(PATIENTS_DB, URI.encode_www_form_component(document_id)))
-          JSON.parse(response.body)
+          refresh_art_summary(JSON.parse(response.body), local_patient)
         rescue RestClient::NotFound
           # A numeric ID that resolves to a local patient is not a legacy DDE
           # identifier. On a newly registered patient, searching for it using
@@ -288,29 +329,27 @@ class CouchdbPatientService
     def build_patient_record(patient_id)
       # This would call your existing BuildPatientRecordService or create a new one
       record_data = BuildPatientRecordService.build_patient_record(patient_id)
-      
+
       # Save to CouchDB if successfully built
       if record_data
         save_patient_record(record_data, patient_id)
         record_data
-      else
-        nil
       end
-    rescue => e
+    rescue StandardError => e
       Rails.logger.error "Failed to build patient record for #{patient_id}: #{e.message}"
       nil
     end
 
-    def save_patient_record(record_data, patient_id)
+    def save_patient_record(record_data, _patient_id)
       return unless couchdb_configured?
 
       # Ensure the document has the required CouchDB fields
       document_id = PatientRecordIdentityService.document_id(record: record_data)
       doc_data = record_data.as_json.merge({
-        '_id' => document_id,
-        'last_sync_at' => Time.current.iso8601,
-        'sync_status' => 'synced'
-      })
+                                             '_id' => document_id,
+                                             'last_sync_at' => Time.current.iso8601,
+                                             'sync_status' => 'synced'
+                                           })
 
       # Check if document exists to get _rev
       begin
