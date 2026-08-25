@@ -211,6 +211,11 @@ Rails.application.routes.draw do
           get :facility_level
           put :facility_level
           patch :facility_level
+          # :id is the facility here -- departments are global, their on/off
+          # state is per-facility.
+          get :departments
+          put :departments
+          patch :departments
         end
 
         collection do
