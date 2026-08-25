@@ -1,14 +1,20 @@
 # frozen_string_literal: true
 
+require 'ostruct'
+
 module ArtService
   class VlReminder
     attr_reader :patient, :program, :date
 
     # preloaded: an optional ArtService::VlBatchLoader shared across many patients
     # (e.g. by a report) to avoid each instance re-querying the same lab order data.
-    def initialize(patient_id:, date: nil, preloaded: nil)
-      @program = Program.find_by_name('HIV PROGRAM')
-      @patient = Patient.find(patient_id)
+    def initialize(patient_id:, date: nil, preloaded: nil, patient_gender: nil)
+      if preloaded
+        @patient = OpenStruct.new(patient_id: patient_id.to_i, id: patient_id.to_i, gender: patient_gender.to_s)
+      else
+        @program = Program.find_by_name('HIV PROGRAM')
+        @patient = Patient.find(patient_id)
+      end
       @date = date&.to_date || Date.today
       @preloaded = preloaded
     end
@@ -133,6 +139,8 @@ module ArtService
       start_date = date - duration
       start_date = last_viral_load_date if last_viral_load_date && last_viral_load_date < start_date
 
+      return @preloaded.recent_regimen_switch(patient.patient_id, start_date, date) if @preloaded
+
       regimen_switch_concept = ConceptName.where(name: 'Reason antiretrovirals substitute or switch (first line only)')
                                           .select(:concept_id)
       Observation.where(concept: regimen_switch_concept, person_id: patient.patient_id, value_text: 'Treatment failure')
@@ -147,6 +155,11 @@ module ArtService
       # Repeatedly called per patient with the same default duration; memoize per duration
       @find_patient_recent_viral_load_skip ||= {}
       return @find_patient_recent_viral_load_skip[duration] if @find_patient_recent_viral_load_skip.key?(duration)
+
+      if @preloaded
+        return @find_patient_recent_viral_load_skip[duration] =
+          @preloaded.recent_viral_load_skip(patient.patient_id, date, duration)
+      end
 
       @find_patient_recent_viral_load_skip[duration] = Observation.where(
         concept: ConceptName.where(name: ['Delayed milestones', 'Tests ordered']).select(:concept_id),
@@ -211,9 +224,13 @@ module ArtService
     def patient_earliest_start_date
       return @patient_earliest_start_date if @patient_earliest_start_date
 
-      date_enrolled = patients_service.find_patient_date_enrolled(patient)
-      @patient_earliest_start_date = patients_service.find_patient_earliest_start_date(patient, date_enrolled)&.to_date
-      @patient_earliest_start_date ||= PatientProgram.find_by(patient:, program: @program)&.date_enrolled
+      if @preloaded
+        @patient_earliest_start_date = @preloaded.earliest_start_date(patient.patient_id)
+      else
+        date_enrolled = patients_service.find_patient_date_enrolled(patient)
+        @patient_earliest_start_date = patients_service.find_patient_earliest_start_date(patient, date_enrolled)&.to_date
+        @patient_earliest_start_date ||= PatientProgram.find_by(patient:, program: @program)&.date_enrolled
+      end
       Rails.logger.warn("Patient ##{patient.patient_id} is not on ART") unless @patient_earliest_start_date
 
       @patient_earliest_start_date || Date.today
@@ -255,6 +272,8 @@ module ArtService
     ##
     # Returns the last two unique regimen prescriptions for the current patient.
     def patient_last_two_regimen_prescriptions
+      return @preloaded.regimen_trail(patient.patient_id) if @preloaded
+
       arv_concepts = ConceptSet.find_members_by_name('Antiretroviral drugs').select(:concept_id)
 
       Order.joins(:order_type, :drug_order)
@@ -275,6 +294,8 @@ module ArtService
     #       you need to be 100% sure that there was a regimen switch on the
     #       specified date.
     def find_reason_for_regimen_switch(visit_date:)
+      return @preloaded.reason_for_regimen_switch(patient.patient_id, visit_date) if @preloaded
+
       regimen_switch_concept = ConceptName.where(name: 'Reason antiretrovirals substitute or switch (first line only)')
                                           .select(:concept_id)
       Observation.where(concept: regimen_switch_concept, person_id: patient.patient_id)
@@ -290,6 +311,8 @@ module ArtService
     end
 
     def formatted_username(user_id)
+      return @preloaded.formatted_username(user_id) if @preloaded
+
       user = User.unscoped.find(user_id)
       username = user.username
       name = PersonName.find_by_person_id(user.person_id) || PersonName.unscoped.find_by_person_id(user.person_id)
@@ -300,6 +323,8 @@ module ArtService
     end
 
     def patient_using_pead_regimen?
+      return @preloaded.pead_regimen?(patient.patient_id) if @preloaded
+
       regimen = ActiveRecord::Base.connection.select_one <<~SQL
         SELECT patient_current_regimen(#{patient.id}, DATE('#{date}')) regimen
       SQL
@@ -308,6 +333,7 @@ module ArtService
 
     def patient_pregnant?
       return false unless patient.gender.match(/f/i)
+      return @preloaded.pregnant?(patient.patient_id) if @preloaded
 
       result = ActiveRecord::Base.connection.select_one <<~SQL
         SELECT value_coded
@@ -329,6 +355,7 @@ module ArtService
 
     def patient_breast_feeding?
       return false unless patient.gender.match(/f/i)
+      return @preloaded.breast_feeding?(patient.patient_id) if @preloaded
 
       result = ActiveRecord::Base.connection.select_one <<~SQL
         SELECT value_coded

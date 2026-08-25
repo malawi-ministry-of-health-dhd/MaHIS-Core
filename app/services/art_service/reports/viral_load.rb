@@ -84,52 +84,70 @@ module ArtService
       def location_filter
         return '' unless @location_id
 
-        "AND encounter.location_id = #{ActiveRecord::Base.connection.quote(@location_id)}"
+        location_id = ActiveRecord::Base.connection.quote(@location_id)
+        "AND encounter.location_id = #{location_id} AND obs.location_id = #{location_id}"
       end
 
       def potential_get_clients
+        # Scope the state lookup to patients with appointments in the requested range.
         observations = ActiveRecord::Base.connection.select_all <<~SQL
-          SELECT obs.person_id,
-                 obs.value_datetime,
-                 date_antiretrovirals_started(obs.person_id, NULL) AS start_date,
+          WITH candidates AS (
+            SELECT obs.person_id,
+                   obs.value_datetime
+            FROM obs
+            INNER JOIN encounter
+              ON encounter.encounter_id = obs.encounter_id
+              AND encounter.program_id = #{program_id}
+              AND encounter_type = (
+                SELECT encounter_type_id
+                FROM encounter_type
+                WHERE encounter_type.name = 'Appointment'
+                  AND encounter_type.retired = 0
+                LIMIT 1
+              )
+              AND encounter.voided = 0
+              #{location_filter}
+            LEFT JOIN (#{current_occupation_query}) a ON a.person_id = obs.person_id
+            WHERE obs.concept_id = (
+                SELECT concept_id
+                FROM concept_name
+                WHERE concept_name.name = 'Appointment date'
+                  AND concept_name.voided = 0
+                LIMIT 1
+              ) #{%w[Military Civilian].include?(@occupation) ? 'AND' : ''} #{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}
+              AND obs.value_datetime >= DATE(#{start_date})
+              AND obs.value_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
+              AND obs.voided = 0
+            GROUP BY obs.person_id
+          )
+          SELECT candidates.person_id,
+                 candidates.value_datetime,
                  patient_identifier.identifier,
                  person_name.given_name,
                  person_name.family_name,
                  person.birthdate,
                  person.gender
-          FROM obs
-          INNER JOIN encounter
-            ON encounter.encounter_id = obs.encounter_id
-            AND encounter.program_id = #{program_id}
-            AND encounter_type = (
-              SELECT encounter_type_id
-              FROM encounter_type
-              WHERE encounter_type.name = 'Appointment'
-                AND encounter_type.retired = 0
-              LIMIT 1
-            )
-            AND encounter.voided = 0
-            #{location_filter}
+          FROM candidates
           LEFT JOIN person
-            ON person.person_id = obs.person_id
+            ON person.person_id = candidates.person_id
             AND person.voided = 0
           LEFT JOIN person_name
-            ON person_name.person_id = obs.person_id
+            ON person_name.person_id = candidates.person_id
             AND person_name.voided = 0
           LEFT JOIN patient_identifier
-            ON patient_identifier.patient_id = obs.person_id
+            ON patient_identifier.patient_id = candidates.person_id
             AND patient_identifier.identifier_type = #{patient_identifier_type_id}
             AND patient_identifier.voided = 0
           INNER JOIN patient_program
-            ON patient_program.program_id = encounter.program_id
-            AND patient_program.patient_id = encounter.patient_id
+            ON patient_program.program_id = #{program_id}
+            AND patient_program.patient_id = candidates.person_id
             AND patient_program.voided = 0
           #{dsd_query(dsd: @dsd, model: 'patient_program') if @dsd}
           INNER JOIN patient_state
             ON patient_state.patient_program_id = patient_program.patient_program_id
             AND patient_state.voided = 0
             AND patient_state.state NOT IN (#{closing_states})
-          /* Limit states above to most recent states for each patient */
+          /* Limit states above to most recent states for each patient, scoped to candidates only */
           INNER JOIN (
             SELECT patient_state.patient_program_id,
                    MAX(patient_state.start_date) AS start_date
@@ -138,32 +156,21 @@ module ArtService
               ON patient_program.program_id = #{program_id}
               AND patient_program.voided = 0
               AND patient_program.patient_program_id = patient_state.patient_program_id
+              AND patient_program.patient_id IN (SELECT person_id FROM candidates)
             WHERE patient_state.start_date < DATE(#{end_date}) + INTERVAL 1 DAY
               AND patient_state.voided = 0
             GROUP BY patient_state.patient_program_id
           ) AS patient_recent_state_dates
             ON patient_recent_state_dates.patient_program_id = patient_state.patient_program_id
             AND patient_recent_state_dates.start_date = patient_state.start_date
-          LEFT JOIN (#{current_occupation_query}) a ON a.person_id = obs.person_id
-          WHERE obs.concept_id = (
-              SELECT concept_id
-              FROM concept_name
-              WHERE concept_name.name = 'Appointment date'
-                AND concept_name.voided = 0
-              LIMIT 1
-            ) #{%w[Military Civilian].include?(@occupation) ? 'AND' : ''} #{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}
-            AND obs.value_datetime >= DATE(#{start_date})
-            AND obs.value_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
-            AND obs.voided = 0
-          GROUP BY obs.person_id
-          ORDER BY obs.value_datetime
+          GROUP BY candidates.person_id
+          ORDER BY candidates.value_datetime
         SQL
 
         observations.map do |ob|
           {
             patient_id: ob['person_id'].to_i,
             appointment_date: ob['value_datetime'],
-            start_date: ob['start_date'],
             given_name: ob['given_name'],
             family_name: ob['family_name'],
             birthdate: ob['birthdate'],
@@ -175,17 +182,13 @@ module ArtService
 
       # patient_id, appointment_date, patient_start_date)
       def get_vl_due_details(person)
-        patient_start_date = begin
-          person[:start_date].to_date
-        rescue StandardError
-          nil
-        end
+        patient_start_date = @batch_loader.earliest_start_date(person[:patient_id])
         return if patient_start_date.blank?
 
         # start_date = patient_start_date
         appointment_date = person[:appointment_date].to_date
         # months_on_art = date_diff(patient_start_date.to_date, @end_date.to_date)
-        vl_info = get_vl_due_info(person[:patient_id], appointment_date)
+        vl_info = get_vl_due_info(person[:patient_id], appointment_date, person[:gender])
         months_on_art = vl_info[:period_on_art]
 
         # if @possible_milestones.include?(months_on_art)
@@ -274,6 +277,7 @@ module ArtService
 
       def use_filing_number(patient_id, arv_number)
         return arv_number unless @use_filing_number
+        return @batch_loader.filing_number(patient_id) if @batch_loader
 
         identifier_types = PatientIdentifierType.where("name LIKE '%Filing number%'").map(&:patient_identifier_type_id)
         filing_numbers = PatientIdentifier.where('patient_id = ? AND identifier_type IN(?)',
@@ -281,8 +285,9 @@ module ArtService
         filing_numbers.blank? ? '' : filing_numbers.last.identifier
       end
 
-      def get_vl_due_info(patient_id, appointment_date)
-        vl_info = ArtService::VlReminder.new(patient_id:, date: appointment_date, preloaded: @batch_loader)
+      def get_vl_due_info(patient_id, appointment_date, patient_gender)
+        vl_info = ArtService::VlReminder.new(patient_id:, date: appointment_date, preloaded: @batch_loader,
+                                             patient_gender:)
         vl_info.vl_reminder_info
       end
     end

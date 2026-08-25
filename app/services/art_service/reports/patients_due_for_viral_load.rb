@@ -11,7 +11,14 @@ module ArtService
       end
 
       def find_report
-        patients_alive_and_on_treatment.select do |patient_id|
+        patient_ids = patients_alive_and_on_treatment
+        return [] if patient_ids.blank?
+
+        @batch_loader = ArtService::VlBatchLoader.new(patient_ids:,
+                                                      start_date: @start_date,
+                                                      end_date: @end_date)
+
+        patient_ids.select do |patient_id|
           patient_viral_load_due?(patient_id)
         end
       end
@@ -31,7 +38,7 @@ module ArtService
 
       def viral_load_reminder(patient_id)
         ArtService::VlReminder
-          .new(patient_id:, date: end_date)
+          .new(patient_id:, date: end_date, preloaded: @batch_loader)
           .vl_reminder_info
       end
     end
