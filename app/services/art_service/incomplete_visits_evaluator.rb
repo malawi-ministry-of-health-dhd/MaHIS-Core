@@ -2,14 +2,15 @@
 
 module ArtService
   class OptimizedHtnWorkflow < HtnWorkflow
+    def initialize(global_properties: {})
+      @global_properties = global_properties
+    end
+
     private
 
     def global_property(name, location_id = nil)
-      @global_properties ||= {}
       key = [name, location_id || User.current.location_id]
-      @global_properties.fetch(key) do
-        @global_properties[key] = super
-      end
+      @global_properties[key]
     end
   end
 
@@ -198,6 +199,11 @@ module ArtService
       end
     end
 
+    def patient_is_a_minor?
+      birthdate = @patient.person&.birthdate
+      birthdate.present? && ((@date - birthdate.to_date) / 365.25) < MINOR_AGE_LIMIT
+    end
+
     def patient_not_registered?
       !@registered_patient_ids.include?(@patient.patient_id)
     end
@@ -287,7 +293,7 @@ module ArtService
       return {} if @patient_visit_dates.blank?
 
       visits_by_patient = @patient_visit_dates.group_by(&:first)
-      patients_by_id = Patient.where(patient_id: visits_by_patient.keys).index_by(&:patient_id)
+      patients_by_id = Patient.where(patient_id: visits_by_patient.keys).includes(:person).index_by(&:patient_id)
       encounter_types = EncounterType.where(name: workflow_states).index_by { |type| type.name.upcase }
       encounters_by_patient_date = load_encounters(visits_by_patient.keys)
       arv_ids = Drug.arv_drugs.pluck(:drug_id)
@@ -306,9 +312,12 @@ module ArtService
       clinician_ids = User.joins(:roles).where(role: { role: 'Clinician' }).pluck(:user_id)
       activities_property = UserProperty.find_by(user_id: User.current.user_id, property: 'Activities')
       activities = OptimizedWorkflowEngine.activities(activities_property&.property_value)
-      fast_track_enabled = global_flag('enable.fast.track')
-      htn_enabled = global_flag('activate.htn.enhancement')
-      htn_workflow = OptimizedHtnWorkflow.new if htn_enabled
+      global_properties = load_global_properties
+      fast_track_enabled = global_properties['enable.fast.track']&.property_value.to_s.casecmp?('true') == true
+      htn_enabled = global_properties['activate.htn.enhancement']&.property_value.to_s.casecmp?('true') == true
+      htn_workflow = OptimizedHtnWorkflow.new(
+        global_properties: global_properties.transform_keys { |key| [key, User.current.location_id] }
+      ) if htn_enabled
       incomplete_dates = Hash.new { |dates, patient_id| dates[patient_id] = [] }
 
       ActiveRecord::Base.connection.cache do
@@ -397,9 +406,13 @@ module ArtService
       scope.distinct.pluck(:patient_id)
     end
 
-    def global_flag(property)
-      value = GlobalProperty.unscoped.find_by(property:, location_id: User.current.location_id)&.property_value
-      value.to_s.casecmp?('true') == true
+    def load_global_properties
+      GlobalProperty.unscoped
+                      .where(property: ['enable.fast.track', 'activate.htn.enhancement',
+                                        'htn.screening.age.threshold', 'htn.systolic.threshold',
+                                        'htn.diastolic.threshold'],
+                             location_id: User.current.location_id)
+                      .index_by(&:property)
     end
   end
 end
