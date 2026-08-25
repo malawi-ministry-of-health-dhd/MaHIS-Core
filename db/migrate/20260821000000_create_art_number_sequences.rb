@@ -5,7 +5,7 @@ class CreateArtNumberSequences < ActiveRecord::Migration[8.1]
     return if table_exists?(:art_number_sequence)
 
     create_table :art_number_sequence do |t|
-      t.bigint :location_id, null: false
+      t.integer :location_id, null: false
       t.string :site_prefix, null: false
       t.bigint :last_sequence, null: false, default: 0
       t.timestamps
