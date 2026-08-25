@@ -24,9 +24,14 @@ module ArtService
 
     def initialize(patient:, date:, program:, encounter_types: nil, encounters: nil, activities: nil,
                    observations: nil, patient_states: nil, arv_ids: nil, registered_patient_ids: nil,
-                   staged_patient_ids: nil, clinician_ids: nil, concepts: nil)
-      super(patient:, date:, program:)
-      @activities = activities if activities
+                   staged_patient_ids: nil, clinician_ids: nil, concepts: nil,
+                   fast_track_enabled: nil, htn_enabled: nil)
+      @patient = patient
+      @program = program
+      @date = date
+      @activities = activities || load_user_activities
+      @fast_track_enabled = fast_track_enabled
+      @htn_enabled = htn_enabled
       @encounter_types = encounter_types || EncounterType.where(name: workflow_states).index_by { |type| type.name.upcase }
       @todays_encounters = encounters || Encounter.unscoped
                                              .where(patient_id: patient.patient_id,
@@ -75,6 +80,18 @@ module ArtService
 
     def load_user_activities
       self.class.activities(user_property('Activities')&.property_value)
+    end
+
+    def fast_track_activated?
+      return @fast_track_enabled unless @fast_track_enabled.nil?
+
+      super
+    end
+
+    def htn_transform(encounter_type)
+      return encounter_type unless @htn_enabled
+
+      htn_workflow.next_htn_encounter(@patient, encounter_type, @date)
     end
 
     def workflow_states
@@ -205,6 +222,10 @@ module ArtService
       clinician_ids = User.joins(:roles).where(role: { role: 'Clinician' }).pluck(:user_id)
       activities_property = UserProperty.find_by(user_id: User.current.user_id, property: 'Activities')
       activities = OptimizedWorkflowEngine.activities(activities_property&.property_value)
+      fast_track_enabled = GlobalProperty.unscoped.find_by(property: 'enable.fast.track',
+                        location_id: User.current.location_id)&.property_value&.casecmp?('true')
+      htn_enabled = GlobalProperty.unscoped.find_by(property: 'activate.htn.enhancement',
+                        location_id: User.current.location_id)&.property_value&.casecmp?('true')
       incomplete_dates = Hash.new { |dates, patient_id| dates[patient_id] = [] }
 
       ActiveRecord::Base.connection.cache do
@@ -227,7 +248,9 @@ module ArtService
               registered_patient_ids:,
               staged_patient_ids:,
               clinician_ids:,
-              concepts:
+              concepts:,
+              fast_track_enabled:,
+              htn_enabled:
             )
             next if engine.next_encounter.blank?
 
