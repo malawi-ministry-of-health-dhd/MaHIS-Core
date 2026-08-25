@@ -182,7 +182,7 @@ module ArtService
         return false unless encounter
         # Reload encounter to ensure we have latest data after void operations
         encounter.reload
-        return encounter.orders.unscoped.where(voided: 0).where('quantity > 0').exists?
+        return encounter.orders.unscoped.joins(:drug_order).where(voided: 0).where('drug_order.quantity > 0').exists?
       end
 
       Encounter.unscoped.where(type:, patient: @patient, program: @program)\
@@ -294,7 +294,7 @@ module ArtService
       return false if encounter.nil?
 
       # Check for non-voided orders with positive quantity
-      encounter.orders.where(voided: 0).where('quantity > 0').exists?
+      encounter.orders.joins(:drug_order).where(voided: 0).where('drug_order.quantity > 0').exists?
     end
 
     # Check if patient received A.R.T.s on previous visit
