@@ -48,18 +48,20 @@ require 'digest'
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 QUARTER        = ENV.fetch('QUARTER', 'Q4 2025')
-BASELINE_URL   = ENV.fetch('BASELINE_URL', 'http://localhost:3001')
+BASELINE_URL   = ENV.fetch('BASELINE_URL', 'http://localhost:3002')
 BASELINE_USER  = ENV.fetch('BASELINE_USER', 'admin')
 BASELINE_PASS  = ENV.fetch('BASELINE_PASS', 'test@1234')
 BASELINE_FILE  = ENV['BASELINE_FILE']
 SAVE_BASELINE  = ENV['SAVE_BASELINE']
 MAHIS_URL      = ENV.fetch('MAHIS_URL', 'http://localhost:3000')
-MAHIS_USER     = ENV.fetch('MAHIS_USER', 'admin_1217')
+MAHIS_USER     = ENV.fetch('MAHIS_USER', 'admin')
 MAHIS_PASS     = ENV.fetch('MAHIS_PASS', 'Test@123')
 BASELINE_CLIENT         = ENV.fetch('BASELINE_CLIENT', 'POC')
-BASELINE_CLIENT_VERSION = ENV.fetch('BASELINE_CLIENT_VERSION', 'v2026.Q2.R0')
+BASELINE_CLIENT_VERSION = ENV.fetch('BASELINE_CLIENT_VERSION', 'v2026.Q2.R1')
 MAHIS_CLIENT            = ENV.fetch('MAHIS_CLIENT', 'mahis')
 MAHIS_CLIENT_VERSION    = ENV.fetch('MAHIS_CLIENT_VERSION', '0.0.0')
+BASELINE_PROGRAM_ID     = ENV.fetch('BASELINE_PROGRAM_ID', '1')
+MAHIS_PROGRAM_ID        = ENV.fetch('MAHIS_PROGRAM_ID', '1')
 TOLERANCE             = ENV.fetch('TOLERANCE', '0').to_i
 OUTPUT_FORMAT         = ENV.fetch('OUTPUT_FORMAT', 'text').downcase
 REGENERATE            = ENV.fetch('REGENERATE', 'false').casecmp?('true')
@@ -143,10 +145,10 @@ rescue StandardError => e
 end
 
 # ─── Cohort fetcher ───────────────────────────────────────────────────────────
-def fetch_cohort(base_url, token, quarter, label:, client:, client_version:, regenerate: false, username: nil,
+def fetch_cohort(base_url, token, quarter, label:, client:, client_version:, program_id: '1', regenerate: false, username: nil,
                  password: nil)
   encoded_quarter = URI.encode_www_form_component(quarter)
-  base_cohort_url = "#{base_url}/api/v1/programs/1/reports/cohort?name=#{encoded_quarter}"
+  base_cohort_url = "#{base_url}/api/v1/programs/#{program_id}/reports/cohort?name=#{encoded_quarter}"
   # Only send regenerate=true on the FIRST request to avoid queuing multiple jobs
   first_request_url = regenerate ? "#{base_cohort_url}&regenerate=true" : base_cohort_url
   poll_url          = base_cohort_url
@@ -232,9 +234,10 @@ end
 
 # ─── Extract indicator map {name => value} from a Report JSON ─────────────────
 def extract_indicators(report_json)
-  return {} unless report_json.is_a?(Hash)
+  report = normalize_report_payload(report_json)
+  return {} unless report.is_a?(Hash)
 
-  values_array = report_json['values'] || []
+  values_array = report['values'] || []
   values_array.each_with_object({}) do |v, map|
     next unless v.is_a?(Hash) && v['name']
 
@@ -243,6 +246,28 @@ def extract_indicators(report_json)
     numeric_value = parse_indicator_value(raw)
     map[v['name']] = { value: numeric_value, raw: raw, label: v['indicator_name'] || v['description'] || v['name'] }
   end
+end
+
+def normalize_report_payload(payload)
+  return payload if payload.is_a?(Hash) && payload['values'].is_a?(Array)
+
+  if payload.is_a?(Hash)
+    report = payload['report']
+    return report if report.is_a?(Hash) && report['values'].is_a?(Array)
+
+    %w[data results reports items].each do |key|
+      collection = payload[key]
+      next unless collection.is_a?(Array)
+
+      candidate = collection.find { |item| item.is_a?(Hash) && item['values'].is_a?(Array) }
+      return candidate if candidate
+    end
+  elsif payload.is_a?(Array)
+    candidate = payload.find { |item| item.is_a?(Hash) && item['values'].is_a?(Array) }
+    return candidate if candidate
+  end
+
+  nil
 end
 
 def parse_indicator_value(raw)
@@ -424,6 +449,8 @@ puts
 puts "Quarter   : #{bold(QUARTER)}"
 puts "Regenerate MaHIS    : #{REGENERATE}"
 puts "Regenerate Baseline : #{REGENERATE_BASELINE}"
+puts "Baseline Program ID : #{BASELINE_PROGRAM_ID}"
+puts "MaHIS Program ID    : #{MAHIS_PROGRAM_ID}"
 puts
 
 # ── Step 1: Get baseline cohort ───────────────────────────────────────────────
@@ -454,6 +481,7 @@ else
   if bl_token
     bl_report = fetch_cohort(BASELINE_URL, bl_token, QUARTER, label: 'BHT-EMR-API', regenerate: REGENERATE_BASELINE,
                                                               client: BASELINE_CLIENT, client_version: BASELINE_CLIENT_VERSION,
+                                                              program_id: BASELINE_PROGRAM_ID,
                                                               username: BASELINE_USER, password: BASELINE_PASS)
     if bl_report
       baseline_indicators = extract_indicators(bl_report)
@@ -492,6 +520,7 @@ mh_token ||= reset_password_and_retry(MAHIS_URL, MAHIS_USER, MAHIS_PASS, label: 
 if mh_token
   mh_report = fetch_cohort(MAHIS_URL, mh_token, QUARTER, label: 'mahis_backend', regenerate: REGENERATE,
                                                          client: MAHIS_CLIENT, client_version: MAHIS_CLIENT_VERSION,
+                                                         program_id: MAHIS_PROGRAM_ID,
                                                          username: MAHIS_USER, password: MAHIS_PASS)
   if mh_report
     mahis_indicators = extract_indicators(mh_report)

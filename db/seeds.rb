@@ -1065,6 +1065,43 @@ def ensure_arv_drug_view!
   puts 'Ensured arv_drug view exists.'
 end
 
+# ever_registered_obs previously hardcoded concept_id 7937 / value_coded 1065, which are
+# BHT-EMR-API-specific concept numbers that map to unrelated concepts in this database's
+# dictionary. Resolve both by name instead so the view is correct regardless of how the
+# concept dictionary is numbered (db/mahis_skeleton.sql.gz still ships a copy of this view;
+# this ensures it self-heals even if the skeleton is ever imported before this runs).
+def ensure_ever_registered_obs_view!
+  conn = ActiveRecord::Base.connection
+  required_tables = %w[obs concept_name]
+  missing_tables = required_tables.reject { |table_name| conn.table_exists?(table_name) }
+
+  unless missing_tables.empty?
+    puts "Skipping ever_registered_obs view creation: missing tables #{missing_tables.join(', ')}."
+    return
+  end
+
+  conn.execute <<~SQL
+    CREATE OR REPLACE
+    SQL SECURITY INVOKER
+    VIEW ever_registered_obs AS
+    SELECT obs.*
+    FROM obs
+    WHERE obs.voided = 0
+      AND obs.concept_id = (
+        SELECT concept_id FROM concept_name
+        WHERE name = 'Ever registered at ART clinic' AND voided = 0
+        LIMIT 1
+      )
+      AND obs.value_coded = (
+        SELECT concept_id FROM concept_name
+        WHERE name = 'Yes' AND voided = 0
+        LIMIT 1
+      );
+  SQL
+
+  puts 'Ensured ever_registered_obs view exists with name-resolved concept IDs.'
+end
+
 def concept_word_parts(phrase, locale)
   return [] if phrase.blank?
 
@@ -1606,6 +1643,7 @@ rescue StandardError => e
 end
 
 ensure_arv_drug_view!
+ensure_ever_registered_obs_view!
 ensure_facility_level_data!
 rebuild_concept_word_index!
 ensure_bootstrap_users!
