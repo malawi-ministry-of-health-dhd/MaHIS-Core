@@ -54,7 +54,9 @@ Rails.application.routes.draw do
       resources :dispensations, only: %i[index create destroy]
       get '/check_username', to: 'users#check_username_exist'
       post '/auth/passkeys/register', to: 'passkeys#register'
-      post '/auth/passkeys/authenticate', to: 'passkeys#authenticate'
+      post '/auth/passkeys/authenticate', to: 'passkeys#verify'
+      get '/users/:user_id/passkeys', to: 'passkeys#index'
+      delete '/users/:user_id/passkeys', to: 'passkeys#reset'
       resources :users do
         post '/activate', to: 'users#activate'
         post '/deactivate', to: 'users#deactivate'
@@ -68,6 +70,7 @@ Rails.application.routes.draw do
       resources :hts_reports, only: %i[index]
       get '/hts_stats' => 'hts_reports#daily_stats'
       get '/hts_stats_patients' => 'hts_reports#daily_stats_patients'
+      get '/iccm_stats' => 'iccm_reports#daily_stats'
       get '/valid_provider_id', to: 'people#valid_provider_id'
       get '/next_hts_linkage_ids_batch', to: 'people#next_hts_linkage_ids_batch'
 
@@ -116,7 +119,12 @@ Rails.application.routes.draw do
       # Patients
       get '/get_patient_record' => 'patients#get_patient_record'
       get '/get_patient_list' => 'patients#get_patient_list'
+      # Must precede `resources :patients`, otherwise /patients/voided is routed
+      # to patients#show with id = 'voided'.
+      get '/patients/voided' => 'patients#voided'
       resources :patients do
+        get '/void_restore_preview' => 'patients#void_restore_preview'
+        post '/unvoid' => 'patients#unvoid'
         get '/labels/national_health_id' => 'patients#print_national_health_id_label'
         get '/labels/filing_number' => 'patients#print_filing_number'
         get 'labels/print_tb_number', to: 'patients#print_tb_number'
@@ -182,6 +190,17 @@ Rails.application.routes.draw do
       get '/fhir/patient/*id', to: 'fhir#patient'
       post '/fhir/observations/mark_imported', to: 'fhir#mark_imported_observations'
 
+      #NRU
+      get '/nru/dashboard', to: 'nru#dashboard'
+
+      # IMPOW
+      get '/impow/expected_patients', to: 'impow#expected_patients'
+      get '/impow/pending_enrollments', to: 'impow#pending_enrollments'
+      get '/impow/metrics', to: 'impow#metrics'
+      get '/impow/batch_anthropometry/patients', to: 'impow#batch_anthropometry_patients'
+      get '/impow/batch_medical_assessment/patients', to: 'impow#batch_medical_assessment_patients'
+      get '/impow/batch_dispensation/patients', to: 'impow#batch_dispensation_patients'
+
       # Locations
       resources :locations do
         get('/label', to: redirect do |params, _request|
@@ -192,6 +211,11 @@ Rails.application.routes.draw do
           get :facility_level
           put :facility_level
           patch :facility_level
+          # :id is the facility here -- departments are global, their on/off
+          # state is per-facility.
+          get :departments
+          put :departments
+          patch :departments
         end
 
         collection do

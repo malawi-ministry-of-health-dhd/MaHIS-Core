@@ -4,7 +4,7 @@ require 'rails_helper'
 
 RSpec.describe UserService do
   let(:programs) do
-    records = Program.limit(2).to_a
+    records = Program.where.not(program_id: 0).limit(2).to_a
     while records.length < 2
       records << create(:program, name: "Spec Program #{SecureRandom.hex(4)}")
     end

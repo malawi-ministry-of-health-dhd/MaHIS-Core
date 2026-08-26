@@ -23,19 +23,26 @@ module Api
 
       def token
         config = mium_config
+        # MIUM usually runs on this same host, so the server-to-server login uses
+        # token_url (e.g. http://127.0.0.1:4000/api) when configured. Going back out
+        # through the public hostname makes the server depend on its own front door
+        # and DNS, which is what made this time out in production.
+        login_base_url = config[:token_url].presence || config[:url]
 
         response.headers['Cache-Control'] = 'no-store'
-        unless config[:url].present? && config[:username].present? && config[:password].present?
+        unless login_base_url.present? && config[:username].present? && config[:password].present?
           return render json: { errors: ['MIUM is not configured'] }, status: :service_unavailable
         end
 
         login_response = RestClient::Request.execute(
           method: :post,
-          url: build_mium_url(config[:url], 'auth/login'),
+          url: build_mium_url(login_base_url, 'auth/login'),
           payload: { username: config[:username], password: config[:password] }.to_json,
           headers: { content_type: :json, accept: :json },
-          open_timeout: 6,
-          read_timeout: 10
+          # Split so the whole login attempt cannot exceed 5 seconds: the client
+          # waits on this call during sign-in, so it must fail fast.
+          open_timeout: 2,
+          read_timeout: 3
         )
 
         login_payload = JSON.parse(login_response.body)
@@ -53,13 +60,17 @@ module Api
         # See note above: surface bad MIUM service credentials as a gateway error,
         # never 401, so the MaHIS client does not clear the EMR session.
         render json: { errors: ['MIUM service credentials are invalid'] }, status: :bad_gateway
+      # Must precede the ExceptionWithResponse rescue below: rest-client's timeouts
+      # subclass RequestTimeout (an HTTP 408 class), so a later clause never runs and
+      # a connect timeout used to report as a bare class name with no response code.
+      rescue SocketError, Errno::ECONNREFUSED, RestClient::Exceptions::OpenTimeout,
+             RestClient::Exceptions::ReadTimeout => e
+        render json: { errors: ["MIUM is unreachable: #{e.message}"] }, status: :bad_gateway
       rescue RestClient::ExceptionWithResponse => e
         render json: { errors: ["MIUM login failed: #{e.response&.code || e.class}"] },
                status: :bad_gateway
       rescue JSON::ParserError
         render json: { errors: ['MIUM returned an invalid login response'] }, status: :bad_gateway
-      rescue SocketError, Errno::ECONNREFUSED, RestClient::Exceptions::OpenTimeout, RestClient::Exceptions::ReadTimeout => e
-        render json: { errors: ["MIUM is unreachable: #{e.message}"] }, status: :bad_gateway
       end
 
       private
@@ -70,6 +81,9 @@ module Api
 
         {
           url: ENV['MIUM_URL'].presence || config['MIUM_URL'].presence || nested['url'].presence,
+          # Optional internal address used only by #token. Falls back to :url when
+          # unset, so existing deployments keep working unchanged.
+          token_url: ENV['MIUM_TOKEN_URL'].presence || config['MIUM_TOKEN_URL'].presence || nested['token_url'].presence,
           username: ENV['MIUM_USERNAME'].presence || config['MIUM_USERNAME'].presence || nested['username'].presence,
           password: ENV['MIUM_PASSWORD'].presence || config['MIUM_PASSWORD'].presence || nested['password'].presence
         }

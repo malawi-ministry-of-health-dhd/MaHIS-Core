@@ -1,63 +1,80 @@
 name: RSpec Tests
 
 on:
-  push:
-    branches: [ '*' ]
   pull_request:
-    branches: [ '*' ]
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RAILS_ENV: test
+      DATABASE_URL: mysql2://root:test@127.0.0.1:3306/openmrs_test
+      GITHUB_METADATA_URL: https://raw.githubusercontent.com/malawi-ministry-of-health-dhd/MaHIS-Metadata/7f99c4f6e034c17f0a2a9def73463424e05d23ae/metadata.sql
 
     services:
       mysql:
-        image: mysql:8.0
+        image: mysql:8.0.46@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
         env:
           MYSQL_ROOT_PASSWORD: test
           MYSQL_DATABASE: openmrs_test
         ports:
           - 3306:3306
         options: >-
-          --health-cmd="mysqladmin ping"
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -ptest"
           --health-interval=10s
           --health-timeout=5s
-          --health-retries=3
+          --health-retries=10
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
-    - name: Set up Ruby
-      uses: ruby/setup-ruby@v1
-      with:
-        ruby-version: '3.2.0'
-        bundler-cache: true
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libmysqlclient-dev
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libmysqlclient-dev
+      - name: Prepare CI dependency lock
+        run: cp Gemfile.ci.lock Gemfile.lock
 
-    - name: Setup config files
-      run: |
-        cp config/database.yml.example config/database.yml
-        cp config/application.yml.example config/application.yml
-        cp config/secrets.yml.example config/secrets.yml 2>/dev/null || echo "secrets.yml not needed"
-        # Update database.yml with correct credentials for CI
-        sed -i 's/port: 3308/port: 3306/g' config/database.yml
-        sed -i 's/username: your_scoped_username/username: root/g' config/database.yml
-        sed -i 's/password: your_secret_password/password: test/g' config/database.yml
+      - name: Set up Ruby and install gems
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
+        with:
+          bundler: 2.6.8
+          # This runs bundle install and caches the installed gems.
+          bundler-cache: true
 
-    - name: Setup database
-      env:
-        RAILS_ENV: test
-      run: |
-        bundle exec rails db:create
-        bundle exec rails db:migrate
-        bundle exec rails db:seed
+      - name: Verify CI dependency lock
+        run: git diff --no-index --exit-code Gemfile.ci.lock Gemfile.lock
 
-    - name: Run RSpec tests
-      env:
-        RAILS_ENV: test
-      run: bundle exec rspec
+      - name: Set up config files
+        run: |
+          cp config/database.yml.example config/database.yml
+          cp config/application.yml.example config/application.yml
+          cp config/secrets.yml.example config/secrets.yml
+
+      - name: Create database
+        run: bundle exec rails db:create
+
+      - name: Run database migrations
+        run: bundle exec rails db:migrate
+
+      - name: Seed database
+        run: bundle exec rails db:seed
+
+      - name: Run RSpec tests
+        run: bundle exec rspec

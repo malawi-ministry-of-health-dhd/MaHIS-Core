@@ -173,7 +173,19 @@ module ArtService
       # of the actual vitals.
       return false if type.name == VITALS
 
-      Encounter.where(type:, patient: @patient, program: @program)\
+      # For TREATMENT encounters, check if they have valid non-voided orders
+      if type.name == TREATMENT
+        encounter = Encounter.unscoped.where(type:, patient: @patient, program: @program)\
+                            .where('encounter_datetime BETWEEN ? AND ?', *TimeUtils.day_bounds(@date))\
+                            .order(encounter_datetime: :desc)\
+                            .first
+        return false unless encounter
+        # Reload encounter to ensure we have latest data after void operations
+        encounter.reload
+        return encounter.orders.unscoped.where(voided: 0).where('quantity > 0').exists?
+      end
+
+      Encounter.unscoped.where(type:, patient: @patient, program: @program)\
                .where('encounter_datetime BETWEEN ? AND ?', *TimeUtils.day_bounds(@date))\
                .exists?
     end
@@ -279,7 +291,10 @@ module ArtService
         *TimeUtils.day_bounds(@date)
       ).order(encounter_datetime: :desc).first
 
-      !encounter.nil? && encounter.orders.exists?
+      return false if encounter.nil?
+
+      # Check for non-voided orders with positive quantity
+      encounter.orders.where(voided: 0).where('quantity > 0').exists?
     end
 
     # Check if patient received A.R.T.s on previous visit
@@ -346,16 +361,13 @@ module ArtService
                                        patient_id: @patient.patient_id,
                                        program_id: @program.program_id)
                               .where('encounter_datetime BETWEEN ? AND ?', *TimeUtils.day_bounds(@date)).last
-                                       
 
       return false unless prescription
 
-      complete = false
+      drug_orders = prescription.orders.includes(:drug_order).filter_map(&:drug_order)
+      return false if drug_orders.empty?
 
-      prescription.orders.each do |order|
-        complete = order.drug_order.amount_needed <= 0
-        break unless complete
-      end
+      complete = drug_orders.all? { |drug_order| drug_order.amount_needed <= 0 }
 
       # TODO: Implement this regimen thingy below...
       # if complete

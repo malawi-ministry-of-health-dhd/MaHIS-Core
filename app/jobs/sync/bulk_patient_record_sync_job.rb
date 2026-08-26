@@ -13,18 +13,10 @@ module Sync
       patient_records = []
       failed_ids = []
       missing_patient_ids = []
-      missing_primary_identifier_ids = []
       missing_document_id_ids = []
 
       existing_patient_ids = Patient.where(patient_id: patient_ids).pluck(:patient_id).to_h { |id| [id, true] }
-      identifier_rows = PatientIdentifier.where(patient_id: patient_ids).pluck(:patient_id, :identifier_type, :identifier)
-      patient_ids_with_primary_identifier = {}
-      identifier_rows.each do |pid, identifier_type, identifier|
-        next unless identifier_type == 3
-        next if identifier.blank?
-
-        patient_ids_with_primary_identifier[pid] = true
-      end
+      assignment_states = PatientRecordIdentityService.assignment_states(patient_ids)
       
       patient_ids.each do |patient_id|
         begin
@@ -34,19 +26,16 @@ module Sync
             next
           end
 
-          unless patient_ids_with_primary_identifier[patient_id]
-            missing_primary_identifier_ids << patient_id
-            failed_ids << patient_id
-            next
-          end
-          
-          patient_record = BuildPatientRecordService.build_patient_record(patient_id)
+          patient_record = BuildPatientRecordService.build_patient_record(
+            patient_id,
+            dde_assignment: assignment_states[patient_id.to_i]
+          )
           unless patient_record
             failed_ids << patient_id
             next
           end
 
-          doc_id = patient_record[:ID] || patient_record.dig(:record, :ID)
+          doc_id = PatientRecordIdentityService.document_id(record: patient_record)
           
           if doc_id.present?
             patient_records << patient_record
@@ -68,6 +57,7 @@ module Sync
       if patient_records.any?
         bulk_result = bulk_sync_patients_to_couchdb(patient_records)
         bulk_errors = bulk_result[:errors]
+        retire_legacy_npid_documents(patient_records) if bulk_errors.empty?
 
         duration = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_time
         records_per_sec = duration.positive? ? (patient_records.count / duration).round(2) : patient_records.count
@@ -80,26 +70,21 @@ module Sync
         Sidekiq.logger.warn("Failed to sync #{failed_ids.count} patients: #{failed_ids.first(10).join(', ')}#{failed_ids.count > 10 ? '...' : ''}")
       end
 
-      log_skip_reasons(missing_patient_ids, missing_primary_identifier_ids, missing_document_id_ids)
+      log_skip_reasons(missing_patient_ids, missing_document_id_ids)
 
       return if failed_ids.empty? && bulk_errors.empty?
 
-      # Do not let Sidekiq consider a partially written batch successful. Raising
-      # preserves the job for retries/dead-set inspection instead of silently
-      # losing a migrated patient document.
+      # Every patient should have a durable person UUID. A missing document ID
+      # is therefore a retryable data-integrity failure, not an NPID omission.
       raise "Patient CouchDB bulk sync incomplete: failed_patients=#{failed_ids.size}, " \
             "couchdb_errors=#{bulk_errors.size}"
     end
     
     private
 
-    def log_skip_reasons(missing_patient_ids, missing_primary_identifier_ids, missing_document_id_ids)
+    def log_skip_reasons(missing_patient_ids, missing_document_id_ids)
       if missing_patient_ids.any?
         Sidekiq.logger.warn("Skipped #{missing_patient_ids.count} patients not found locally: #{missing_patient_ids.first(10).join(', ')}#{missing_patient_ids.count > 10 ? '...' : ''}")
-      end
-
-      if missing_primary_identifier_ids.any?
-        Sidekiq.logger.warn("Skipped #{missing_primary_identifier_ids.count} patients without identifier_type 3: #{missing_primary_identifier_ids.first(10).join(', ')}#{missing_primary_identifier_ids.count > 10 ? '...' : ''}")
       end
 
       if missing_document_id_ids.any?
@@ -149,7 +134,33 @@ module Sync
     end
     
     def generate_document_id(patient_record)
-      patient_record[:ID] || patient_record.dig(:record, :ID)
+      PatientRecordIdentityService.document_id(record: patient_record)
+    end
+
+    def retire_legacy_npid_documents(patient_records)
+      patient_records.each do |record|
+        patient_id = (record[:patientID] || record['patientID']).to_i
+        document_id = generate_document_id(record)
+        candidates = [
+          record[:ID], record['ID'], record[:legacyDdeID], record['legacyDdeID'],
+          *Array.wrap(record[:legacyDdeIDs]), *Array.wrap(record['legacyDdeIDs']),
+          ("patient:#{document_id}" if document_id.present?)
+        ]
+                     .map { |value| value.to_s.strip }.reject(&:blank?).uniq
+
+        candidates.each do |candidate|
+          next if candidate == document_id
+
+          legacy_doc = fetch_couchdb_doc('patients_records', candidate)
+          next unless legacy_doc
+          next unless (legacy_doc['patientID'] || legacy_doc['patient_id']).to_i == patient_id
+
+          delete_from_couchdb('patients_records', candidate)
+          Sidekiq.logger.info("Retired legacy NPID-keyed CouchDB document #{candidate} for patient #{patient_id}")
+        end
+      rescue StandardError => e
+        Sidekiq.logger.warn("Could not retire legacy CouchDB document for patient #{patient_id}: #{e.class}: #{e.message}")
+      end
     end
   end
 end

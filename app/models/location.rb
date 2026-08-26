@@ -23,7 +23,7 @@ class Location < RetirableRecord
   def as_json(options = {})
       # Define the default inclusion for parent and district method
       default_includes = { parent: {} }
-      default_methods = %i[district department_id]
+      default_methods = %i[district department_id ward_sex]
       
       # Start with the standard serialization
       attributes_data = super(options.merge(
@@ -74,6 +74,52 @@ class Location < RetirableRecord
   end
 
   DEPARTMENT_ATTRIBUTE_TYPE_NAME = 'Department'
+
+  # Departments are global, but a facility only runs some of them. A facility
+  # records the ones it has switched off as 'Disabled Department' attributes on
+  # its own location row (value is the department's location_id) -- absence means
+  # enabled, so a facility that has never touched the screen keeps every
+  # department.
+  DISABLED_DEPARTMENT_ATTRIBUTE_TYPE_NAME = 'Disabled Department'
+
+  # Whether a ward admits male or female patients. Stored the same way as the
+  # ward's department -- a location attribute on the ward -- so it travels with
+  # the location and needs no table of its own.
+  WARD_SEX_ATTRIBUTE_TYPE_NAME = 'Ward Sex'
+  WARD_SEXES = %w[Male Female].freeze
+
+  # Skips retired types and orders deterministically. The type now exists in
+  # MaHIS-Metadata, so a site that had already created its own copy locally can
+  # briefly carry two: db:seed inserts the source's row and retires the local
+  # one, and picking the retired id would silently stop every ward_sex read.
+  def self.ward_sex_attribute_type_id
+    @ward_sex_attribute_type_id ||= LocationAttributeType
+                                    .where(name: WARD_SEX_ATTRIBUTE_TYPE_NAME, retired: [nil, false, 0])
+                                    .order(:location_attribute_type_id)
+                                    .pick(:location_attribute_type_id)
+  end
+
+  # Accepts whatever casing the caller sent; nil for anything that is not a
+  # recognised value, including blank (which callers read as "clear it").
+  def self.normalize_ward_sex(value)
+    WARD_SEXES.find { |sex| sex.casecmp(value.to_s.strip).zero? }
+  end
+
+  # 'Male' or 'Female' when the ward has been marked as such, otherwise nil.
+  # Resolved only when location_attributes are already eager loaded, so
+  # serializing locations elsewhere never triggers an N+1 -- same rule as
+  # #department_id.
+  def ward_sex
+    return nil unless association(:location_attributes).loaded?
+
+    type_id = self.class.ward_sex_attribute_type_id
+    return nil unless type_id
+
+    attribute = location_attributes.find do |location_attribute|
+      location_attribute.attribute_type_id == type_id && [nil, false, 0].include?(location_attribute.voided)
+    end
+    attribute&.value_reference
+  end
 
   # Id of the "Department" location attribute type (seeded once, id is stable).
   # Memoized per-process; re-queries while absent so it self-heals after seeding.

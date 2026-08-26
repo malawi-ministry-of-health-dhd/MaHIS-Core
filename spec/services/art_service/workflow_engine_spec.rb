@@ -205,6 +205,40 @@ describe ArtService::WorkflowEngine do
     end
   end
 
+  describe '#dispensing_complete?' do
+    let(:treatment_type) { EncounterType.find_by_name!('TREATMENT') }
+
+    it 'ignores non-drug orders when completed drug orders are present' do
+      treatment = create(:encounter, type: treatment_type, patient:, program_id: HIV_PROGRAM_ID)
+      drug_order = instance_double(DrugOrder, amount_needed: 0)
+      completed_order = instance_double(Order, drug_order:)
+      non_drug_order = instance_double(Order, drug_order: nil)
+      orders = instance_double(ActiveRecord::Associations::CollectionProxy)
+
+      allow(Encounter).to receive(:where).and_return(
+        instance_double(ActiveRecord::Relation, where: instance_double(ActiveRecord::Relation, last: treatment))
+      )
+      allow(treatment).to receive(:orders).and_return(orders)
+      allow(orders).to receive(:includes).with(:drug_order).and_return([completed_order, non_drug_order])
+
+      expect(engine.send(:dispensing_complete?)).to be(true)
+    end
+
+    it 'is incomplete when a prescription contains no drug orders' do
+      treatment = create(:encounter, type: treatment_type, patient:, program_id: HIV_PROGRAM_ID)
+      non_drug_order = instance_double(Order, drug_order: nil)
+      orders = instance_double(ActiveRecord::Associations::CollectionProxy)
+
+      allow(Encounter).to receive(:where).and_return(
+        instance_double(ActiveRecord::Relation, where: instance_double(ActiveRecord::Relation, last: treatment))
+      )
+      allow(treatment).to receive(:orders).and_return(orders)
+      allow(orders).to receive(:includes).with(:drug_order).and_return([non_drug_order])
+
+      expect(engine.send(:dispensing_complete?)).to be(false)
+    end
+  end
+
   # Helper methods
   def enroll_patient(patient)
     create :patient_program, patient:,

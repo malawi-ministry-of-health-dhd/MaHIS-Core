@@ -16,6 +16,13 @@ module DrugOrderService
   # and dropped from the queue. This bounds the scan so the queue loads fast
   # instead of scanning every undispensed order ever recorded at the location.
   DISPENSATION_QUEUE_WINDOW_DAYS = 7
+
+  # Written to orders.fulfiller_status when a pharmacist marks a drug order as out
+  # of stock. OpenMRS leaves fulfiller_status as an unconstrained varchar, so this
+  # constant is the only definition of the value - never inline the literal.
+  # The client never sees this string: it is projected to the boolean out_of_stock
+  # field by fetch_all_patient_drug_orders below.
+  OUT_OF_STOCK_STATUS = 'OUT_OF_STOCK'
   FREQUENCY_DAILY_DOSES = {
     'OD' => 1,
     'BD' => 2,
@@ -90,8 +97,8 @@ module DrugOrderService
       }
     end
 
-    def fetch_all_patient_drug_orders(patient_id)
-      repair_missing_drug_order_rows(patient_id:)
+    def fetch_all_patient_drug_orders(patient_id, repair_missing: true)
+      repair_missing_drug_order_rows(patient_id:) if repair_missing
 
       # Quote patient ID for SQL safety
       quoted_patient_id = ActiveRecord::Base.connection.quote(patient_id)
@@ -124,6 +131,7 @@ module DrugOrderService
           t.units AS units,
           t.equivalent_daily_dose AS equivalent_daily_dose,
           e.program_id AS program_id,
+          o.fulfiller_status AS fulfiller_status,
           EXISTS (
             SELECT 1
             FROM obs dispensation_obs
@@ -160,7 +168,11 @@ module DrugOrderService
           units: m['units'],
           equivalent_daily_dose: m['equivalent_daily_dose'],
           program_id: m['program_id'],
-          dispensed: m['dispensed'].to_i == 1
+          dispensed: m['dispensed'].to_i == 1,
+          # Surfacing the stock-out here is what makes the flag survive a record
+          # rebuild: the client stamps out_of_stock locally, but every rebuild of
+          # MedicationOrder.saved comes from this fixed field list.
+          out_of_stock: m['fulfiller_status'] == OUT_OF_STOCK_STATUS
         }
       end
     rescue StandardError => e
@@ -401,10 +413,16 @@ module DrugOrderService
     end
 
     def dispensation_concept_ids
-      ConceptName.where(voided: 0)
-                 .where('UPPER(name) = ?', 'AMOUNT DISPENSED')
-                 .distinct
-                 .pluck(:concept_id)
+      @dispensation_concept_ids ||= ConceptName
+                                    .where(voided: 0, name: 'Amount dispensed')
+                                    .distinct
+                                    .pluck(:concept_id)
+    end
+
+    # HIV/ART drug orders are dispensed through the ART clinic workflow, not the
+    # general pharmacist queue, so the queue excludes orders on this program.
+    def hiv_program_id
+      @hiv_program_id ||= Program.find_by_name('HIV PROGRAM')&.program_id
     end
 
     def pending_dispensation_patients_sql(cutoff, location_id)
@@ -438,9 +456,23 @@ module DrugOrderService
         binds << dispensed_concept_ids
       end
 
+      # A stock-out is a completed pharmacy action, so the order leaves the queue
+      # even though nothing was dispensed. Mirrored offline by
+      # isPendingMedicationOrder in patient_record_search_fields.
+      where_clauses << '(o.fulfiller_status IS NULL OR o.fulfiller_status <> ?)'
+      binds << OUT_OF_STOCK_STATUS
+
       if location_id.present?
         where_clauses << 'e.location_id = ?'
         binds << location_id
+      end
+
+      # Drop HIV/ART orders from the cross-program queue. Because membership here
+      # is per-encounter, a patient on ART who also has a non-HIV order still
+      # shows (for the non-HIV order); a patient with only HIV orders disappears.
+      if (hiv_id = hiv_program_id)
+        where_clauses << '(e.program_id IS NULL OR e.program_id <> ?)'
+        binds << hiv_id
       end
 
       sanitize_sql_array([
@@ -583,7 +615,7 @@ module DrugOrderService
     end
 
     def raise_model_error(model, prefix)
-      errors = model.errors.map { |k, v| "#{k}: #{v}" }.join(', ')
+      errors = model.errors.full_messages.join(', ')
       raise InvalidParameterError, "#{prefix}: #{errors}"
     end
   end

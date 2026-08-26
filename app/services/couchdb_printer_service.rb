@@ -4,8 +4,11 @@ require 'yaml'
 require Rails.root.join('lib', 'couchdb_url').to_s
 
 class CouchdbPrinterService
-  CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
-  COUCHDB_URL = CONFIG['COUCHDB_URL']
+  CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')), aliases: true)
+  # Prefer the environment-scoped value: config/initializers/load_application_yml.rb
+  # promotes keys from application.yml[Rails.env] (e.g. the `production:` block) into ENV,
+  # so a per-environment COUCHDB_URL lands in ENV. Fall back to the top-level key for local dev.
+  COUCHDB_URL = ENV['COUCHDB_URL'].presence || CONFIG['COUCHDB_URL']
   PRINTERS_DB = 'printer_configurations'
 
   class << self
@@ -76,6 +79,7 @@ class CouchdbPrinterService
         'port' => printer_data[:port],
         'location_id' => printer_data[:location_id],
         'printer_name' => printer_data[:printer_name],
+        'printer_type' => printer_data[:printer_type].presence || 'small_label',
         'created_at' => Time.current.iso8601,
         'updated_at' => Time.current.iso8601
       }
@@ -113,6 +117,7 @@ class CouchdbPrinterService
           'port' => printer_data[:port] || existing_data['port'],
           'location_id' => printer_data[:location_id] || existing_data['location_id'],
           'printer_name' => printer_data[:printer_name] || existing_data['printer_name'],
+          'printer_type' => printer_data[:printer_type].presence || existing_data['printer_type'].presence || 'small_label',
           'updated_at' => Time.current.iso8601
         })
 

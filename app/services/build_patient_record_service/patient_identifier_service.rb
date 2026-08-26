@@ -40,10 +40,23 @@ module BuildPatientRecordService
         )
       end
 
-      matching.max_by { |row| row.date_created || Time.at(0) }.identifier.to_s
+      matching.max_by do |row|
+        [row.date_created || Time.at(0), row.patient_identifier_id.to_i]
+      end.identifier.to_s
     rescue StandardError => e
       Rails.logger.error("Error getting patient identifier for type #{identifier_type_id}: #{e.message}")
       ''
+    end
+
+    def patient_identifier_values_from_map(identifiers_by_type, identifier_type_id)
+      Array(identifiers_by_type[identifier_type_id.to_i])
+        .sort_by { |row| [row.date_created || Time.at(0), row.patient_identifier_id.to_i] }
+        .map { |row| row.identifier.to_s.strip }
+        .reject(&:blank?)
+        .uniq { |identifier| identifier.upcase }
+    rescue StandardError => e
+      Rails.logger.error("Error getting patient identifiers for type #{identifier_type_id}: #{e.message}")
+      []
     end
 
   end

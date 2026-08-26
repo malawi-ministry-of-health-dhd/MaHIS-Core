@@ -164,6 +164,22 @@ module Api
         render status: :no_content
       end
 
+      # Voided patients are excluded by Patient's default scope, so every action
+      # below looks them up unscoped through the service rather than #patient.
+      def voided
+        render json: service.voided_patients(search: params[:search], from: params[:from], to: params[:to],
+                                             limit: params[:limit] || PatientService::PAGE_LIMIT,
+                                             offset: params[:offset])
+      end
+
+      def void_restore_preview
+        render json: service.void_restore_preview(params[:patient_id])
+      end
+
+      def unvoid
+        render json: service.unvoid_patient(params[:patient_id], params.require(:reason))
+      end
+
       def print_national_health_id_label
         patient = Patient.find(params[:patient_id])
         qr_code = if params[:qr_code]
@@ -552,7 +568,8 @@ module Api
             location_id: location_id.to_s,
             patient_id: record[:patientID] || record[:patient_id],
             identifier: record[:ID] || record[:identifier],
-            timestamp: Time.current.iso8601
+            timestamp: Time.current.iso8601,
+            reason: params[:change_reason].presence
           }
         }
 

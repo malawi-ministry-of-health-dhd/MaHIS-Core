@@ -15,6 +15,7 @@ RSpec.describe VisitService do
   after do
     if @patient
       Stage.where(patient_id: @patient.patient_id).delete_all
+      Encounter.where(patient_id: @patient.patient_id).delete_all
       Visit.where(patient_id: @patient.patient_id).delete_all
       PatientIdentifier.where(patient_id: @patient.patient_id).delete_all
       Patient.where(patient_id: @patient.patient_id).delete_all
@@ -53,6 +54,41 @@ RSpec.describe VisitService do
 
     expect(hts_visit.reload.date_stopped).to be_present
     expect(opd_visit.reload.date_stopped).to be_nil
+  end
+
+  it "uses the authenticated user's location when creating a visit" do
+    stale_patient_location_id = @location_id.to_i + 1
+
+    data = described_class.new.create_visit(
+      patient_id: @patient.patient_id,
+      identifier: @identifier,
+      visit_type_id: visit_type.visit_type_id,
+      date_started: Time.current,
+      provider_id: @user_id,
+      program_id: OPD_PROGRAM_ID,
+      location_id: stale_patient_location_id
+    )
+
+    expect(Visit.find(data['visit_id']).location_id).to eq(@location_id.to_i)
+    expect(data[:location_id]).to eq(@location_id.to_s)
+  end
+
+  it "uses the authenticated user's location when creating a stage" do
+    visit = create_open_visit(OPD_PROGRAM_ID)
+    stale_patient_location_id = @location_id.to_i + 1
+
+    data = StagesService.new.create_stage(
+      patient_id: @patient.patient_id,
+      identifier: @identifier,
+      stage: 'VITALS',
+      program_id: OPD_PROGRAM_ID,
+      location_id: stale_patient_location_id,
+      arrival_time: Time.current
+    )
+
+    expect(Stage.find(data[:id]).location_id).to eq(@location_id.to_i)
+    expect(data[:location_id]).to eq(@location_id.to_s)
+    expect(data[:visit_id]).to eq(visit.visit_id)
   end
 
   private

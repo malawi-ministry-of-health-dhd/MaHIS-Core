@@ -67,4 +67,73 @@ RSpec.describe CouchdbChangesListener do
       hash_including('labOrders' => rebuilt_lab_orders)
     )
   end
+
+  it 'skips the processed-marker update when the processor already deleted the document (e.g. a patient void)' do
+    class CouchdbChangesListenerSpecDeletingProcessor
+      def create_patient_record(_doc)
+        { 'ID' => 'P123', 'patientID' => 77, 'deleted_from_couchdb' => true }
+      end
+    end
+
+    deleting_listener = described_class.new(
+      db_name: 'patients_records',
+      processor_service: CouchdbChangesListenerSpecDeletingProcessor.new,
+      processor_method: :create_patient_record,
+      couchdb_url: 'http://couchdb.example'
+    )
+    allow(deleting_listener).to receive(:listener_location_for)
+    allow(deleting_listener).to receive(:update_couchdb_with_retry)
+
+    result = deleting_listener.send(:process_document, {
+      '_id' => 'P123',
+      '_rev' => '1-original',
+      'ID' => 'P123',
+      'patientID' => 77,
+      'processed_by_listener' => false
+    })
+
+    expect(result).to be true
+    expect(deleting_listener).not_to have_received(:update_couchdb_with_retry)
+  end
+
+  it 'folds a legacy NPID-keyed document into an existing UUID-keyed document' do
+    uuid = '4f489184-3ff1-49e0-b642-7fdbba21c818'
+    canonical = {
+      '_id' => uuid,
+      '_rev' => '4-canonical',
+      'patientID' => 77,
+      'visits' => { '2026-08-01' => ['OPD'] }
+    }
+    legacy = {
+      '_id' => 'OLD-NPID',
+      '_rev' => '2-legacy',
+      'patientID' => 77,
+      'ID' => 'NEW-NPID',
+      'processed_by_listener' => true
+    }
+
+    allow(listener).to receive(:fetch_current_document).with(uuid).and_return(canonical)
+    allow(listener).to receive(:update_couchdb_document_direct).and_return(true)
+    allow(listener).to receive(:delete_couchdb_document_direct).and_return(true)
+
+    result = listener.send(:rename_couchdb_document, 'OLD-NPID', uuid, legacy)
+
+    expect(result).to be true
+    expect(listener).to have_received(:update_couchdb_document_direct).with(
+      uuid,
+      hash_including('_rev' => '4-canonical', 'ID' => 'NEW-NPID', 'visits' => { '2026-08-01' => ['OPD'] })
+    )
+    expect(listener).to have_received(:delete_couchdb_document_direct).with('OLD-NPID', '2-legacy')
+  end
+
+  it 'derives the raw canonical UUID from patientID for an old NPID-keyed document' do
+    patient = create(:patient)
+
+    canonical_id = listener.send(:canonical_doc_id, {
+      '_id' => 'OLD-NPID',
+      'patientID' => patient.patient_id
+    })
+
+    expect(canonical_id).to eq(patient.person.uuid)
+  end
 end

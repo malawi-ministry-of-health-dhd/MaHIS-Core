@@ -11,7 +11,11 @@ module Api
       skip_before_action :authenticate, only: %i[login confirm_supervision reset_password]
 
       def index
-        filters = params.permit(:role, :search_string, :include_deactivated, :location_id, location_ids: []).to_hash.transform_keys(&:to_sym)
+        # `roles` is the multi-select counterpart to `role`, mirroring how
+        # `location_ids` complements `location_id`. It has to be permitted as an
+        # array explicitly, otherwise strong params drops it.
+        filters = params.permit(:role, :search_string, :include_deactivated, :location_id,
+                                location_ids: [], roles: []).to_hash.transform_keys(&:to_sym)
         query = service.find_users(**filters) 
 
         render json: {
@@ -81,9 +85,11 @@ module Api
         target_user = find_user(params[:id])
         return unless validate_sensitive_user_update(target_user, sensitive_update_fields(update_params))
 
-        if update_params[:location_id] && !validate_location(update_params[:location_id])
-          return
-        end
+        # The client resends the user's existing location on every save, so only a real
+        # change needs authorising; find_user already gated access to the target user.
+        location_changed = update_params[:location_id].present? &&
+                           update_params[:location_id].to_i != target_user.location_id.to_i
+        return if location_changed && !validate_location(update_params[:location_id])
 
         user = UserService.update_user target_user, update_params
 
@@ -122,21 +128,7 @@ module Api
           end
 
           if extra_security_login_enabled?(user)
-            if PasskeyAuthenticationService.required_for?(user)
-              passkey_challenge = PasskeyAuthenticationService.authentication_options(user)
-              render json: {
-                passkey_authentication_required: true,
-                passkey_session: passkey_challenge[:session_token],
-                public_key: passkey_challenge[:options]
-              }, status: :accepted
-            else
-              passkey_challenge = PasskeyAuthenticationService.registration_options(user)
-              render json: {
-                passkey_registration_required: true,
-                passkey_session: passkey_challenge[:session_token],
-                public_key: passkey_challenge[:options]
-              }, status: :accepted
-            end
+            render json: passkey_challenge_response(user), status: :accepted
           else
             render json: LoginResponseService.build(user, UserService.new_authentication_token(user)), status: :ok
           end
@@ -179,21 +171,7 @@ module Api
         end
 
         if extra_security_login_enabled?(user)
-          if PasskeyAuthenticationService.required_for?(user)
-            passkey_challenge = PasskeyAuthenticationService.authentication_options(user)
-            return render json: {
-              passkey_authentication_required: true,
-              passkey_session: passkey_challenge[:session_token],
-              public_key: passkey_challenge[:options]
-            }, status: :accepted
-          end
-
-          passkey_challenge = PasskeyAuthenticationService.registration_options(user)
-          return render json: {
-            passkey_registration_required: true,
-            passkey_session: passkey_challenge[:session_token],
-            public_key: passkey_challenge[:options]
-          }, status: :accepted
+          return render json: passkey_challenge_response(user), status: :accepted
         end
 
         response = LoginResponseService.build(
@@ -327,6 +305,27 @@ module Api
         property&.property_value&.downcase == 'true'
       end
 
+      # Passkeys are per-platform, so the challenge depends on which platform is
+      # logging in: `platform` says where the request came from and `enroll_device`
+      # is set by a client whose authenticator holds no passkey yet.
+      def passkey_challenge_response(user)
+        platform = PasskeyAuthenticationService.normalize_platform(params[:platform])
+        enroll = ActiveModel::Type::Boolean.new.cast(params[:enroll_device]) || false
+
+        case PasskeyAuthenticationService.next_step_for(user, platform:, enroll_requested: enroll)
+        when :register
+          challenge = PasskeyAuthenticationService.registration_options(user, platform:)
+          { passkey_registration_required: true,
+            passkey_session: challenge[:session_token],
+            public_key: challenge[:options] }
+        else
+          challenge = PasskeyAuthenticationService.authentication_options(user, platform:)
+          { passkey_authentication_required: true,
+            passkey_session: challenge[:session_token],
+            public_key: challenge[:options] }
+        end
+      end
+
       def validate_roles(roles)
         if roles && !roles.respond_to?(:each)
           render json: ['`roles` must be an array'], status: :bad_request
@@ -336,26 +335,17 @@ module Api
         true
       end
 
-      # Only a Global Superuser may grant these roles
-      GLOBAL_ONLY_ROLES = ['Global Superuser', 'District Superuser'].freeze
+      # Only a Global Superuser may grant these roles. Kept as an alias of the
+      # canonical list on User so existing references keep working.
+      GLOBAL_ONLY_ROLES = User::GLOBAL_ONLY_ROLE_NAMES
 
+      # The rank rule itself lives on User#may_assign_role?, so the role lists the
+      # API hands out and the roles it accepts on write cannot drift apart.
       def validate_role_permissions(roles)
         return true if roles.blank?
-        return true if User.current.global_superuser?
-
-        current_rank = User.current.superuser_rank
 
         roles.each do |role|
-          role_rank = User::SUPERUSER_ROLE_RANK[role.to_s.strip.downcase]
-          next if role_rank.nil? # ordinary (non-superuser) role — anyone may assign it
-
-          # Global Superuser / District Superuser may only ever be granted by a Global Superuser.
-          forbidden = GLOBAL_ONLY_ROLES.any? { |gr| gr.casecmp(role.to_s).zero? }
-          # Any other superuser role may only be granted by someone of equal or higher rank,
-          # so a user can never grant a role that outranks their own.
-          forbidden ||= current_rank < role_rank
-
-          next unless forbidden
+          next if User.current.may_assign_role?(role)
 
           render json: { errors: ["You are not authorised to assign the '#{role}' role"] }, status: :forbidden
           return false

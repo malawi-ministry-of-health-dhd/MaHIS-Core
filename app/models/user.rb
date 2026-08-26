@@ -23,6 +23,10 @@ class User < RetirableRecord
     'global superuser' => 4
   }.freeze
 
+  # Roles only a Global Superuser may ever grant, whatever the rank comparison
+  # would otherwise allow.
+  GLOBAL_ONLY_ROLE_NAMES = ['Global Superuser', 'District Superuser'].freeze
+
   audited except: %i[date_changed authentication_token token_expiry_time]
 
   belongs_to :person, foreign_key: :person_id
@@ -85,11 +89,35 @@ class User < RetirableRecord
 
     @managed_location_ids ||= begin
       ids = [location_id.to_i]
-      if district_superuser?
-        ids += Location.where(parent_location: location_id).pluck(:location_id).map(&:to_i)
-      end
+      ids += district_location_ids if district_superuser?
       ids.compact.uniq
     end
+  end
+
+  # Every location in the same district as this user's own facility. A District
+  # Superuser manages users across their whole district, so the scope must be the
+  # district's facilities — the children of their *own* facility are wards/villages,
+  # which is why scoping on `parent_location: location_id` alone locked them to a
+  # single facility. Matches how the facility picker lists a district's facilities
+  # (GET /locations?district=<county_district>).
+  def district_location_ids
+    own_location = Location.unscoped.find_by(location_id:)
+    return [] if own_location.nil?
+
+    conditions = ['parent_location = :own_id']
+    values = { own_id: own_location.location_id }
+
+    if own_location.parent_location.present?
+      conditions << '(location_id = :district_id OR parent_location = :district_id)'
+      values[:district_id] = own_location.parent_location
+    end
+
+    if own_location.county_district.present?
+      conditions << 'county_district = :district_name'
+      values[:district_name] = own_location.county_district
+    end
+
+    Location.where(conditions.join(' OR '), values).pluck(:location_id).map(&:to_i)
   end
 
   def as_json(options = {})
@@ -142,6 +170,34 @@ class User < RetirableRecord
     role_names.reduce(0) do |highest_rank, role_name|
       rank = SUPERUSER_ROLE_RANK[role_name.to_s.strip.downcase] || 0
       [highest_rank, rank].max
+    end
+  end
+
+  # Whether this user may grant the given role. Extracted from
+  # UsersController#validate_role_permissions so the rule lives beside the rank
+  # table it depends on, and anything needing to present a role list (the user
+  # management role filter, for one) applies the same test the write path does.
+  def may_assign_role?(role_name)
+    return true if global_superuser?
+
+    role_rank = SUPERUSER_ROLE_RANK[role_name.to_s.strip.downcase]
+    return true if role_rank.nil? # ordinary (non-superuser) role — anyone may assign it
+
+    # Global Superuser / District Superuser may only ever be granted by a Global Superuser.
+    return false if GLOBAL_ONLY_ROLE_NAMES.any? { |name| name.casecmp(role_name.to_s).zero? }
+
+    # No one may grant a role that outranks their own.
+    superuser_rank >= role_rank
+  end
+
+  # Roles this user may grant, plus any they already hold. Holding a role they
+  # cannot grant is normal -- a District Superuser cannot assign that role but
+  # should still be able to filter for peers who have it.
+  def selectable_role_names(role_names)
+    held = (loaded_role_names || roles.map(&:role)).map { |name| name.to_s.strip.downcase }
+
+    role_names.select do |role_name|
+      may_assign_role?(role_name) || held.include?(role_name.to_s.strip.downcase)
     end
   end
 

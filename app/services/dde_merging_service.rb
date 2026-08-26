@@ -47,12 +47,16 @@ class DdeMergingService
   # Merges @{param secondary_patient} into @{param primary_patient}.
   # rubocop:disable Metrics/MethodLength
   # rubocop:disable Metrics/AbcSize
-  def merge_local_patients(primary_patient_ids, secondary_patient_ids, merge_type)
+  def merge_local_patients(primary_patient_ids, secondary_patient_ids, merge_type, identifier_strategy: :legacy,
+                           suppress_dde_footprints: false)
+    previous_footprint_suppression = Encounter.suppress_dde_footprint_push
+    Encounter.suppress_dde_footprint_push = true if suppress_dde_footprints
+
     ActiveRecord::Base.transaction do
       primary_patient = Patient.find(primary_patient_ids['patient_id'])
       secondary_patient = Patient.find(secondary_patient_ids['patient_id'])
       merge_name(primary_patient, secondary_patient)
-      merge_identifiers(primary_patient, secondary_patient)
+      merge_identifiers(primary_patient, secondary_patient, strategy: identifier_strategy)
       merge_attributes(primary_patient, secondary_patient)
       merge_address(primary_patient, secondary_patient)
       @obs_map = {}
@@ -69,6 +73,8 @@ class DdeMergingService
 
       primary_patient
     end
+  ensure
+    Encounter.suppress_dde_footprint_push = previous_footprint_suppression
   end
   # rubocop:enable Metrics/AbcSize
   # rubocop:enable Metrics/MethodLength
@@ -176,15 +182,19 @@ class DdeMergingService
   end
 
   def create_local_patient_identifier(patient, value, type_name)
-    user = User.where(user_id:patient.creator).first
-    
-    identifier = PatientIdentifier.create(identifier: value,
-                                          type: patient_identifier_type(type_name),
-                                          location_id: user["location_id"],
-                                          patient:)
-    return patient.reload && identifier if identifier.errors.empty?
+    creator = User.unscoped.find_by(user_id: patient.creator)
+    location_id = creator&.location_id.presence ||
+                  PatientIdentifier.unscoped.where(patient_id: patient.id).where.not(location_id: [nil, 0])
+                                   .order(date_created: :desc, patient_identifier_id: :desc).pick(:location_id) ||
+                  Location.current&.location_id || User.current&.location_id
+    raise "Could not resolve a location for patient #{patient.id} DDE identifier" if location_id.blank?
 
-    raise "Could not save DDE identifier: #{type_name} due to #{identifier.errors.as_json}"
+    identifier = PatientIdentifier.create!(identifier: value,
+                                           type: patient_identifier_type(type_name),
+                                           location_id:,
+                                           patient:)
+    patient.reload
+    identifier
   end
 
   # Patch primary_patient missing name data using secondary_patient
@@ -221,13 +231,15 @@ class DdeMergingService
     secondary_name.void("Merged into patient ##{primary_patient.patient_id}:0")
   end
 
-  NATIONAL_ID_TYPE = PatientIdentifierType.find_by_name!('National ID')
-  ARV_NUMBER_TYPE = PatientIdentifierType.find_by_name!('ARV Number')
-  LEGACY_ARV_NUMBER_TYPE = PatientIdentifierType.find_by_name!('Legacy ARV Number')
-  OLD_NATIONAL_ID_TYPE = PatientIdentifierType.find_by_name!('Old Identification Number')
-
   # Bless primary_patient with identifiers available only to the secondary patient
-  def merge_identifiers(primary_patient, secondary_patient)
+  def merge_identifiers(primary_patient, secondary_patient, strategy: :legacy)
+    return merge_identifiers_without_legacy(primary_patient, secondary_patient) if strategy == :keep_primary
+
+    national_id_type = patient_identifier_type('National ID')
+    arv_number_type = patient_identifier_type('ARV Number')
+    legacy_arv_number_type = patient_identifier_type('Legacy ARV Number')
+    old_national_id_type = patient_identifier_type('Old Identification Number')
+
     secondary_patient.patient_identifiers.each do |identifier|
       next if patient_has_identifier(primary_patient, identifier.identifier_type, identifier.identifier)
 
@@ -235,12 +247,12 @@ class DdeMergingService
         patient_id: primary_patient.patient_id,
         location_id: identifier.location_id,
         identifier: identifier.identifier,
-        identifier_type: if identifier.identifier_type == NATIONAL_ID_TYPE.id
+        identifier_type: if identifier.identifier_type == national_id_type.id
                            # Can't have two National Patient IDs, the secondary ones are treated as old identifiers
-                           OLD_NATIONAL_ID_TYPE.id
-                         elsif identifier.identifier_type == ARV_NUMBER_TYPE.id
+                           old_national_id_type.id
+                         elsif identifier.identifier_type == arv_number_type.id
                            # Can't have two ARV numbers, the secondary ones are treated as legacy ARV numbers
-                           LEGACY_ARV_NUMBER_TYPE.id
+                           legacy_arv_number_type.id
                          else
                            identifier.identifier_type
                          end
@@ -251,6 +263,29 @@ class DdeMergingService
       Rails.logger.info "Patient ##{primary_patient.patient_id} has new identifier  on ##{new_id}"
       identifier.update(void_reason: "Merged into patient ##{primary_patient.patient_id}: #{new_id}", voided: 1,
                         date_voided: Time.now, voided_by: User.current.id)
+    end
+  end
+
+  # Exact-duplicate cleanup keeps at most one current value per identifier type.
+  # A secondary value is copied with its original type only when the primary has
+  # no value of that type; conflicting values are discarded with the secondary
+  # instead of being converted to legacy identifiers.
+  def merge_identifiers_without_legacy(primary_patient, secondary_patient)
+    secondary_patient.patient_identifiers.order(:date_created, :patient_identifier_id).each do |identifier|
+      primary_has_type = primary_patient.patient_identifiers
+                                        .where(identifier_type: identifier.identifier_type)
+                                        .exists?
+
+      unless primary_has_type
+        PatientIdentifier.create!(
+          patient_id: primary_patient.patient_id,
+          location_id: identifier.location_id,
+          identifier: identifier.identifier,
+          identifier_type: identifier.identifier_type
+        )
+      end
+
+      identifier.void("Merged into patient ##{primary_patient.patient_id}; redundant identifier discarded")
     end
   end
 
@@ -267,9 +302,13 @@ class DdeMergingService
         person_attribute_type_id: attribute.person_attribute_type_id
       ).exists?
 
-      new_attribute = PersonAttribute.create(person_id: primary_patient.patient_id,
-                                             person_attribute_type_id: attribute.person_attribute_type_id,
-                                             value: attribute.value)
+      attributes = {
+        person_id: primary_patient.patient_id,
+        person_attribute_type_id: attribute.person_attribute_type_id,
+        value: attribute.value
+      }
+      attributes[:location_id] = attribute[:location_id] if attribute.has_attribute?(:location_id)
+      new_attribute = PersonAttribute.create(attributes)
       raise "Could not merge patient attribute: #{new_attribute.errors.as_json}" unless new_attribute.errors.empty?
 
       attribute.void("Merged into patient ##{primary_patient.patient_id}:#{new_attribute.id}")
@@ -350,8 +389,11 @@ class DdeMergingService
     drug_order_hash.delete('order_id')
 
     drug_order_hash['order_id'] = primary_order.id
-    drug_order = DrugOrder.create!(drug_order_hash)
-    raise "Could not merge patient drug orders: #{drug_order.errors.as_json}" unless drug_order.errors.empty?
+    # The source database contains historical drug orders created before
+    # equivalent_daily_dose became mandatory. Copy the already-persisted data
+    # as-is; database foreign keys still validate the new order relationship.
+    drug_order = DrugOrder.new(drug_order_hash)
+    drug_order.save!(validate: false)
   end
 
   # strip off secondary_patient all program enrollments and blesses primary patient
@@ -431,18 +473,7 @@ class DdeMergingService
     Rails.logger.debug("Merging patient observations: #{primary_patient} <= #{secondary_patient}")
 
     Observation.where(person_id: secondary_patient.id).each do |obs|
-      check = Observation.find_by(
-        "person_id = :person_id AND concept_id = :concept_id
-        AND DATE(obs_datetime) = DATE(:obs_datetime)
-        #{"AND value_drug = '#{obs.value_drug}'" unless obs.value_drug.blank?}
-        #{"AND value_text = '#{obs.value_text}'" unless obs.value_text.blank?}
-        #{'AND value_coded IS NOT NULL' unless obs.value_coded.blank?}
-        #{'AND obs_group_id IS NOT NULL' unless obs.obs_group_id.blank?}
-        #{'AND order_id IS NOT NULL' unless obs.order_id.blank?}",
-        person_id: primary_patient.id,
-        concept_id: obs.concept_id,
-        obs_datetime: obs.obs_datetime.strftime('%Y-%m-%d')
-      )
+      check = matching_observation(primary_patient.id, obs)
       if check.blank?
         primary_obs = process_obervation_merging(obs, primary_patient, encounter_map, secondary_patient)
         @obs_map[obs.id] = primary_obs.id if primary_obs
@@ -454,6 +485,19 @@ class DdeMergingService
     end
 
     update_observations_group_id @obs_map
+  end
+
+  def matching_observation(primary_patient_id, observation)
+    scope = Observation.where(
+      person_id: primary_patient_id,
+      concept_id: observation.concept_id
+    ).where('DATE(obs_datetime) = DATE(?)', observation.obs_datetime.to_date)
+    scope = scope.where(value_drug: observation.value_drug) if observation.value_drug.present?
+    scope = scope.where(value_text: observation.value_text) if observation.value_text.present?
+    scope = scope.where.not(value_coded: nil) if observation.value_coded.present?
+    scope = scope.where.not(obs_group_id: nil) if observation.obs_group_id.present?
+    scope = scope.where.not(order_id: nil) if observation.order_id.present?
+    scope.first
   end
 
   # method to check whether to add observations
@@ -535,13 +579,27 @@ class DdeMergingService
     primary_encounter_hash.delete('creator')
     primary_encounter_hash.delete('encounter_id')
     primary_encounter_hash['patient_id'] = primary_patient.id
-    primary_encounter = Encounter.create(primary_encounter_hash)
-    unless primary_encounter.errors.empty?
-      raise "Could not merge patient encounters: #{primary_encounter.errors.as_json}"
-    end
+    primary_encounter = Encounter.new(primary_encounter_hash)
+    persist_copied_encounter!(primary_encounter, encounter.provider_id)
 
     common_encounter_void(encounter, primary_patient, primary_encounter.id)
     primary_encounter.id
+  end
+
+  def persist_copied_encounter!(encounter, provider_id)
+    return encounter if encounter.save
+
+    provider_is_only_error = encounter.errors.attribute_names.uniq == [:provider]
+    provider_exists = Person.unscoped.where(person_id: provider_id).exists?
+    unless provider_is_only_error && provider_exists
+      raise "Could not merge patient encounters: #{encounter.errors.as_json}"
+    end
+
+    # Historical encounters may reference a provider person who was later
+    # voided during a staff merge. The FK is still valid, but belongs_to hides
+    # that person through Person's active-only scope. Preserve the encounter.
+    encounter.save!(validate: false)
+    encounter
   end
 
   def create_new_encounter_raw(encounter, primary_patient)

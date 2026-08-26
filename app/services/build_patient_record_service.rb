@@ -13,13 +13,13 @@ module BuildPatientRecordService
     include BuildPatientRecordService::VisitService
 
     # Main entry point for building patient records
-    def build_patient_record(patient_id)
+    def build_patient_record(patient_id, dde_assignment: nil)
       validate_patient_id(patient_id)
       
       patient = find_patient(patient_id)
       return handle_patient_not_found(patient_id) unless patient
 
-      build_complete_record(patient)
+      build_complete_record(patient, dde_assignment:)
     rescue StandardError => e
       handle_error(e, patient_id)
     end
@@ -43,13 +43,14 @@ module BuildPatientRecordService
       nil
     end
 
-    def build_complete_record(patient)
+    def build_complete_record(patient, dde_assignment: nil)
       person = patient.person
       latest_encounter = find_latest_encounter(patient.patient_id)
       identifiers_by_type = patient_identifiers_by_type(patient)
+      dde_assignment ||= PatientRecordIdentityService.assignment_state(patient.patient_id)
       
       record = {
-        **build_basic_info(patient, latest_encounter, identifiers_by_type),
+        **build_basic_info(patient, latest_encounter, identifiers_by_type, dde_assignment:),
         **build_personal_data(person, patient),
         **build_clinical_data(patient.patient_id),
         **build_administrative_data(patient),
@@ -66,15 +67,28 @@ module BuildPatientRecordService
                .first
     end
 
-    def build_basic_info(patient, latest_encounter, identifiers_by_type = nil)
+    def build_basic_info(patient, latest_encounter, identifiers_by_type = nil, dde_assignment: nil)
       identifiers_by_type ||= patient_identifiers_by_type(patient)
+      dde_assignment ||= PatientRecordIdentityService.assignment_state(patient.patient_id)
+      primary_identifier = dde_assignment[:current_identifier].presence ||
+                           patient_identifier_from_map(identifiers_by_type, 3, patient.patient_id)
+      legacy_identifiers = patient_identifier_values_from_map(identifiers_by_type, 2)
+      legacy_identifiers << primary_identifier if dde_assignment[:pending] && primary_identifier.present?
+      legacy_identifiers = legacy_identifiers.uniq { |identifier| identifier.to_s.strip.upcase }
+      current_identifier = dde_assignment[:pending] ? '' : primary_identifier
 
       {
+        _id: PatientRecordIdentityService.document_id(patient:),
         patientID: patient.patient_id,
-        ID: patient_identifier_from_map(identifiers_by_type, 3, patient.patient_id),
+        ID: current_identifier,
+        legacyDdeID: legacy_identifiers.last.to_s,
+        legacyDdeIDs: legacy_identifiers,
+        identifierAssignmentStatus: dde_assignment[:pending] ? 'pending' : 'assigned',
+        duplicateIdentifierOwnerCount: dde_assignment[:duplicate_owner_count].to_i,
         nationalID: patient_identifier_from_map(identifiers_by_type, 28, patient.patient_id),
         NcdID: patient_identifier_from_map(identifiers_by_type, 31, patient.patient_id),
         ichisID: patient_identifier_from_map(identifiers_by_type, 10, patient.patient_id),
+        arvNumber: patient_identifier_from_map(identifiers_by_type, 4, patient.patient_id),
         TEI: extract_tei(patient, identifiers_by_type),
         program_id: '',
         provider_id: '',
@@ -236,7 +250,11 @@ module BuildPatientRecordService
 
     def build_dispensations_data(patient)
       {
-        saved: patient_service.find_program_drug_orders_awaiting_dispensation(patient, Date.today).as_json,
+        saved: patient_service.find_program_drug_orders_awaiting_dispensation(
+          patient,
+          Date.today,
+          repair_missing: false
+        ).as_json,
         unsaved: []
       }
     end

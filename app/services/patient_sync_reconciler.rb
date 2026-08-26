@@ -5,24 +5,10 @@ require 'json'
 require 'set'
 
 # Closes the gap between MySQL patients and CouchDB patient documents after a
-# bulk sync fan-out. The fan-out (Sync::BatchPatientSyncJob -> many
-# Sync::BulkPatientRecordSyncJob) can leave permanent holes:
-#   * batches that exhausted their Sidekiq retries land in the dead set and are
-#     never retried, so their patients never reach CouchDB;
-#   * two patients that share the same primary identifier (identifier_type 3)
-#     map to the same CouchDB `_id` and overwrite each other, so the achievable
-#     document count is the number of DISTINCT primary identifiers, not the
-#     number of patients.
-#
-# This service performs one reconciliation pass: it walks every eligible patient
-# in keyset batches, asks CouchDB which `_id`s already exist, and re-enqueues the
-# ones that are missing. It also emits a report that explains the count gap
-# (collisions + patients without a primary identifier) so "CouchDB count <
-# Patient count" can be understood rather than chased forever.
-#
-# It never changes the document `_id` scheme (the offline client looks patients
-# up by their primary identifier), so duplicate-identifier collisions are
-# reported, not silently "fixed".
+# bulk sync fan-out. Patient documents are keyed by the permanent Person UUID,
+# never by the mutable DDE NPID. Duplicate or temporarily missing NPIDs therefore
+# do not make a patient ineligible and cannot make two patients overwrite one
+# another in CouchDB.
 class PatientSyncReconciler
   PRIMARY_IDENTIFIER_TYPE = 3
   DEFAULT_DB_NAME = 'patients_records'
@@ -34,12 +20,24 @@ class PatientSyncReconciler
 
   Result = Struct.new(
     :total_patients, :eligible, :distinct_ids, :collisions, :no_identifier,
-    :couch_count, :present, :missing_reenqueued, :errored,
+    :couch_count, :present, :missing, :missing_reenqueued, :errored,
     keyword_init: true
   )
 
-  def self.reconcile!(logger: Rails.logger, db_name: DEFAULT_DB_NAME)
-    new(logger: logger, db_name: db_name).reconcile!
+  def self.reconcile!(logger: Rails.logger, db_name: DEFAULT_DB_NAME, enqueue_missing: true)
+    new(logger: logger, db_name: db_name).reconcile!(enqueue_missing: enqueue_missing)
+  end
+
+  def self.eligible_patient_scope
+    Patient.joins(:person).where.not(person: { uuid: [nil, ''] })
+  end
+
+  def self.eligible_patient_ids
+    eligible_patient_scope.select('patient.patient_id')
+  end
+
+  def self.syncable_patient_count
+    eligible_patient_scope.count
   end
 
   def initialize(logger: Rails.logger, db_name: DEFAULT_DB_NAME)
@@ -47,43 +45,54 @@ class PatientSyncReconciler
     @db_name = db_name
   end
 
-  def reconcile!
+  def reconcile!(enqueue_missing: true)
     unless CouchdbPatientService.couchdb_configured?
       @logger.warn('PatientSyncReconciler: CouchDB not configured; skipping reconciliation')
-      return Result.new(missing_reenqueued: 0, errored: false)
+      return Result.new(missing: 0, missing_reenqueued: 0, errored: false)
     end
 
     report = build_report
     log_report(report)
 
-    missing = reenqueue_missing
-    report.missing_reenqueued = missing
-    @logger.info("PatientSyncReconciler: re-enqueued #{missing} missing patient(s) this pass")
+    missing, present, reenqueued = reenqueue_missing(enqueue: enqueue_missing)
+    report.present = present
+    report.missing = missing
+    report.missing_reenqueued = enqueue_missing ? reenqueued : 0
+
+    SyncProgress.ensure(@db_name, report.eligible)
+    SyncProgress.set(@db_name, present)
+
+    if enqueue_missing
+      @logger.info("PatientSyncReconciler: re-enqueued #{reenqueued} of #{missing} missing patient(s) this pass")
+    else
+      @logger.info("PatientSyncReconciler: final audit found #{missing} missing patient document(s)")
+    end
     report
   rescue RestClient::Exception, SocketError, Errno::ECONNREFUSED => e
     @logger.warn("PatientSyncReconciler: CouchDB error during reconciliation: #{e.class}: #{e.message}")
-    Result.new(missing_reenqueued: 0, errored: true)
+    Result.new(missing: 0, missing_reenqueued: 0, errored: true)
   rescue StandardError => e
     @logger.error("PatientSyncReconciler: unexpected error: #{e.class}: #{e.message}")
-    Result.new(missing_reenqueued: 0, errored: true)
+    Result.new(missing: 0, missing_reenqueued: 0, errored: true)
   end
 
   private
 
   def build_report
     total_patients = Patient.count
-    eligible = eligible_identifier_scope.distinct.count('patient_identifier.patient_id')
-    distinct_ids = eligible_identifier_scope.distinct.count('patient_identifier.identifier')
+    eligible = self.class.syncable_patient_count
+    distinct_ids = distinct_primary_identifier_count
     couch_count = CouchdbPatientService.patient_record_count(@db_name)
 
     Result.new(
       total_patients: total_patients,
       eligible: eligible,
       distinct_ids: distinct_ids,
-      collisions: eligible - distinct_ids,
+      collisions: duplicate_primary_identifier_owner_count,
       no_identifier: total_patients - eligible,
       couch_count: couch_count,
       present: 0,
+      missing: 0,
       missing_reenqueued: 0,
       errored: false
     )
@@ -93,66 +102,72 @@ class PatientSyncReconciler
     @logger.info(
       'PatientSyncReconciler report: ' \
       "MySQL patients=#{report.total_patients}; " \
-      "with primary identifier=#{report.eligible}; " \
-      "without primary identifier (never synced)=#{report.no_identifier}; " \
+      "with permanent record UUID=#{report.eligible}; " \
+      "without permanent record UUID (cannot sync)=#{report.no_identifier}; " \
       "distinct primary identifiers=#{report.distinct_ids}; " \
-      "duplicate-identifier collisions (overwrite each other, unsyncable)=#{report.collisions}; " \
-      "achievable CouchDB docs=~#{report.distinct_ids}; " \
+      "patients sharing a primary identifier=#{report.collisions}; " \
+      "achievable CouchDB docs=#{report.eligible}; " \
       "current CouchDB docs=#{report.couch_count.nil? ? 'unknown' : report.couch_count}"
     )
 
-    if report.collisions.positive? || report.no_identifier.positive?
+    if report.no_identifier.positive?
       @logger.warn(
-        'PatientSyncReconciler: CouchDB can never equal Patient.count with the ' \
-        "current `_id` scheme: #{report.no_identifier} patient(s) have no primary " \
-        "identifier and #{report.collisions} patient(s) share a primary identifier " \
-        'with another patient. Clean these in MySQL to close the gap.'
+        "PatientSyncReconciler: #{report.no_identifier} patient(s) have no permanent Person UUID and cannot be synced."
       )
     end
+    return unless report.collisions.positive?
+
+    @logger.info(
+      "PatientSyncReconciler: #{report.collisions} patient(s) share a DDE NPID; " \
+      'their UUID-keyed documents remain independent and will request assignment when opened.'
+    )
   end
 
-  # Re-enqueue every eligible patient whose CouchDB document is missing. Keyset
-  # over patient_identifier_id so every identifier row is visited exactly once
-  # (a patient may legitimately have more than one non-voided primary identifier).
-  def reenqueue_missing
-    last_row_id = 0
+  # Re-enqueue every UUID-addressable patient whose CouchDB document is missing.
+  # Keyset over patient_id so every patient is visited exactly once.
+  def reenqueue_missing(enqueue: true)
+    last_patient_id = 0
     missing_total = 0
+    reenqueued_total = 0
+    present_total = 0
     bulk_args = []
     pending = []
 
     loop do
-      rows = eligible_identifier_scope
-             .where('patient_identifier.patient_identifier_id > ?', last_row_id)
-             .order('patient_identifier.patient_identifier_id')
+      rows = self.class.eligible_patient_scope
+             .where('patient.patient_id > ?', last_patient_id)
+             .order('patient.patient_id')
              .limit(SCAN_BATCH)
-             .pluck('patient_identifier.patient_identifier_id', 'patient_identifier.patient_id', 'patient_identifier.identifier')
+             .pluck('patient.patient_id', 'person.uuid')
       break if rows.empty?
 
-      last_row_id = rows.last.first
-
-      present = couch_present_ids(rows.map { |row| row[2] }.uniq)
-      missing_patient_ids = rows.reject { |row| present.include?(row[2]) }
-                                .map { |row| row[1] }
-                                .uniq
+      last_patient_id = rows.last.first
+      document_ids = rows.map { |_patient_id, uuid| uuid.to_s }
+      present = couch_present_ids(document_ids)
+      present_total += present.size
+      missing_patient_ids = rows.reject do |_patient_id, uuid|
+        present.include?(uuid.to_s)
+      end.map(&:first)
 
       missing_patient_ids.each do |patient_id|
+        missing_total += 1
         pending << patient_id
         next if pending.size < ENQUEUE_SLICE
 
         bulk_args << [pending, { 'location_id' => nil }]
-        missing_total += pending.size
+        reenqueued_total += pending.size
         pending = []
-        flush(bulk_args) if bulk_args.size >= PUSH_BULK_SIZE
+        flush(bulk_args) if enqueue && bulk_args.size >= PUSH_BULK_SIZE
       end
     end
 
     if pending.any?
       bulk_args << [pending, { 'location_id' => nil }]
-      missing_total += pending.size
+      reenqueued_total += pending.size
     end
-    flush(bulk_args) if bulk_args.any?
+    flush(bulk_args) if enqueue && bulk_args.any?
 
-    missing_total
+    [missing_total, present_total, reenqueued_total]
   end
 
   def flush(bulk_args)
@@ -180,11 +195,16 @@ class PatientSyncReconciler
     present
   end
 
-  # Non-voided primary identifiers that belong to a non-voided patient. The
-  # patient join mirrors the bulk job, which only builds non-voided patients
-  # (Patient's default scope) — without it a voided patient that still has a live
-  # identifier would be re-enqueued every round and never reach a clean pass.
-  def eligible_identifier_scope
+  def distinct_primary_identifier_count
+    primary_identifier_scope.distinct.count(:identifier)
+  end
+
+  def duplicate_primary_identifier_owner_count
+    grouped = primary_identifier_scope.group(:identifier).having('COUNT(DISTINCT patient_identifier.patient_id) > 1')
+    grouped.count.values.sum { |count| count - 1 }
+  end
+
+  def primary_identifier_scope
     PatientIdentifier
       .where(identifier_type: PRIMARY_IDENTIFIER_TYPE, voided: 0)
       .where.not(identifier: [nil, ''])

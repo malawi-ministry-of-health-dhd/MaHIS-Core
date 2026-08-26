@@ -29,6 +29,7 @@ class SavePatientRecordService
     identity_data = managers[:identity_manager].save_person_information(record)
     patient_id    = identity_data[:patient_id]
     return "Patient ID not found" unless patient_id
+    return "Patient ID not found" unless Patient.exists?(patient_id: patient_id)
 
     unless managers[:identity_manager].validate_ids(ids.national_id, ids.birth_id, ids.ichis_id)
       return "ID Validation Failed"
@@ -54,29 +55,41 @@ class SavePatientRecordService
       raise
     end
 
+    # Voiding the patient row makes every default-scoped Patient lookup below
+    # (find_patient, primary-identifier check, etc.) come back empty, since
+    # VoidableRecord's default_scope excludes voided rows. Finalize from the
+    # already-known record instead of running it through the live-patient
+    # rebuild path.
+  
+    if operation_results[:void_patient]&.changed?
+      return finalize_voided_patient_record(patient_id, record, operation_results, overall_sync_status)
+    end
+
+    history_base = resolve_history_base(patient_id, record)
     patient_record = build_and_save_patient_record(patient_id, record, operation_results, overall_sync_status,
-                                                   created_lab_orders: managers[:lab_data_manager].created_lab_orders)
+                                                   created_lab_orders: managers[:lab_data_manager].created_lab_orders,
+                                                   couch_base: history_base)
     ensure_primary_identifier_persisted!(patient_id, patient_record)
     enqueue_post_save_side_effects(patient_id, record, operation_results)
 
     if couchdb_configured?
-      patient_record["_id"] = patient_record["ID"]
-      # This REST call has already written the record to SQL, so the CouchDB
-      # changes listener would only re-run the identical processing on the doc it
-      # writes here. Stamp it processed so the listener skips it — one fewer writer
-      # per online save, which narrows the window for an offline edit to conflict.
-      # Only when fully synced; partial failures stay unstamped so the listener
-      # still reprocesses/retries them as before. (On the listener's own path this
-      # sync_to_couchdb is a no-op via skip_couchdb_sync, so this only affects REST.)
-      mark_online_record_listener_processed!(patient_record) if overall_sync_status == 'synced'
-      sync_to_couchdb(patient_record, "patients_records", "#{patient_record["ID"]}")
-      # Refresh the NCD read model synchronously so the live (REST) save path
-      # reflects NCD number assignment/updates immediately. The CouchDB changes
-      # listener only maintains this index for listener-processed docs, so a
-      # patient just given a number would otherwise linger in "Pending NCD".
-      refresh_ncd_patient_index(patient_record)
+      begin
+        document_id = PatientRecordIdentityService.document_id(record: patient_record)
+        patient_record["_id"] = document_id
+        sync_to_couchdb(patient_record, "patients_records", document_id)
+        retire_legacy_npid_documents(patient_record)
+        enqueue_art_summary_couchdb_true_up(patient_id, patient_record)
+      rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH => e
+        Rails.logger.warn("CouchDB connection error during patient record sync for #{patient_record["ID"]}: #{e.class}: #{e.message}")
+      rescue StandardError => e
+        Rails.logger.error("CouchDB sync failed for patient #{patient_record["ID"]}: #{e.class}: #{e.message}")
+      end
     end
-    enqueue_dde_id_top_up(patient_record, record) if should_top_up_dde_ids && couchdb_configured?
+    assignment_succeeded = operation_results[:assign_dde_identifier].nil? ||
+                           operation_results[:assign_dde_identifier].success?
+    if should_top_up_dde_ids && assignment_succeeded && couchdb_configured?
+      enqueue_dde_id_top_up(patient_record, record)
+    end
 
     patient_record
   end
@@ -92,6 +105,30 @@ class SavePatientRecordService
     NcdService::NcdPatientIndex.upsert_records([patient_record])
   rescue StandardError => e
     Rails.logger.error("[NCD] Failed to refresh NCD patient index for #{patient_record['ID']}: #{e.message}")
+  end
+
+  def retire_legacy_npid_documents(patient_record)
+    patient_id = record_value(patient_record, :patientID).to_i
+    document_id = PatientRecordIdentityService.document_id(record: patient_record)
+    candidates = [
+      record_value(patient_record, :ID),
+      record_value(patient_record, :legacyDdeID),
+      *Array.wrap(record_value(patient_record, :legacyDdeIDs)),
+      ("patient:#{document_id}" if document_id.present?)
+    ].map { |value| value.to_s.strip }.reject(&:blank?).uniq
+
+    candidates.each do |candidate|
+      next if candidate == document_id
+
+      legacy_doc = fetch_couchdb_doc('patients_records', candidate)
+      next unless legacy_doc
+      next unless (legacy_doc['patientID'] || legacy_doc['patient_id']).to_i == patient_id
+
+      delete_from_couchdb('patients_records', candidate)
+      Rails.logger.info("Retired legacy NPID-keyed CouchDB document #{candidate} for patient #{patient_id}")
+    end
+  rescue StandardError => e
+    Rails.logger.warn("Could not retire legacy CouchDB document for patient #{patient_id}: #{e.class}: #{e.message}")
   end
 
   # Mark an online (REST) patient record as already listener-processed so the
@@ -208,14 +245,21 @@ class SavePatientRecordService
       observation_saver:      PatientRecordService::ObservationSaver.new,
       void_encounters:        PatientRecordService::VoidEncounters.new,
       merge_patients_manager: PatientRecordService::MergePatientManager.new,
-      void_drug_orders:       PatientRecordService::VoidDrugOrders.new
+      void_drug_orders:       PatientRecordService::VoidDrugOrders.new,
+      out_of_stock_orders:    PatientRecordService::OutOfStockDrugOrders.new,
+      void_patient:           PatientRecordService::VoidPatient.new
     }
   end
-
 
   def execute_patient_operations(patient_id, record, managers)
     {
       update_person_info:     run_if(person_information_edit?(record)) { managers[:identity_manager].update_person_information(patient_id, record) },
+      assign_dde_identifier:  run_if(dde_identifier_assignment_pending?(record)) {
+        managers[:identity_manager].assign_dde_identifier(patient_id, record)
+      },
+      void_legacy_dde_ids:    run_if(legacy_dde_identifier_void_pending?(record)) {
+        managers[:identity_manager].void_legacy_dde_identifiers(patient_id, record)
+      },
       merge_patients:         run_if(merge_requested?(record)) { managers[:merge_patients_manager].merge_patients(patient_id, record) },
       manage_guardian:        run_if(guardian_work_pending?(record)) { managers[:guardian_manager].manage_guardian(patient_id, record) },
       create_relationship:    run_if(relationships_pending?(record)) { managers[:guardian_manager].create_relationship(record) },
@@ -230,21 +274,34 @@ class SavePatientRecordService
       create_ncd_identifier:  run_if(ncd_identifier_pending?(record)) { managers[:identity_manager].create_ncd_identifier(patient_id, record) },
       save_dispensation_data: run_if(dispensations_pending?(record)) { managers[:medication_order_saver].save_dispensation_data(patient_id, record) },
       void_drug_orders:       run_if(drug_order_voids_pending?(record)) { managers[:void_drug_orders].void_drug_orders(patient_id, record) },
+      mark_out_of_stock:      run_if(out_of_stock_pending?(record)) { managers[:out_of_stock_orders].mark_out_of_stock(patient_id, record) },
       save_all_observations:  run_if(observations_pending?(record)) { managers[:observation_saver].save_all_observations(patient_id, record) },
-      void_encounters:        run_if(encounter_voids_pending?(record)) { managers[:void_encounters].void_encounters(record) }
+      void_encounters:        run_if(encounter_voids_pending?(record)) { managers[:void_encounters].void_encounters(record) },
+      void_patient:           run_if(patient_void_pending?(record)) { managers[:void_patient].void_patient(patient_id, record) }
     }
   end
 
-  def build_and_save_patient_record(patient_id, patient_data, operation_results, overall_sync_status, created_lab_orders: [])
+  def build_and_save_patient_record(patient_id, patient_data, operation_results, overall_sync_status, created_lab_orders: [], couch_base: nil)
+    restore_trimmed_history!(patient_data, couch_base)
     patient          = BuildPatientRecordService.find_patient(patient_id)
     person           = patient&.person
     latest_encounter = BuildPatientRecordService.find_latest_encounter(patient_id)
     changed_operation_results = changed_operations(operation_results)
     identifiers_by_type = BuildPatientRecordService.patient_identifiers_by_type(patient)
+    dde_assignment = PatientRecordIdentityService.assignment_state(patient_id)
+    primary_identifier = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 3, patient_id)
+    legacy_dde_ids = BuildPatientRecordService.patient_identifier_values_from_map(identifiers_by_type, 2)
+    legacy_dde_ids << primary_identifier if dde_assignment[:pending] && primary_identifier.present?
+    legacy_dde_ids = legacy_dde_ids.uniq { |identifier| identifier.to_s.strip.upcase }
 
+    PatientRecordIdentityService.apply!(patient_data, patient:)
     patient_data[:encounter_datetime]    = latest_encounter&.encounter_datetime
     patient_data[:location_id]           = latest_encounter.location_id if latest_encounter&.location_id.present?
-    patient_data[:ID]                    = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 3, patient_id)
+    patient_data[:ID]                    = dde_assignment[:pending] ? '' : primary_identifier
+    patient_data[:legacyDdeID]           = legacy_dde_ids.last.to_s
+    patient_data[:legacyDdeIDs]          = legacy_dde_ids
+    patient_data[:identifierAssignmentStatus] = dde_assignment[:pending] ? 'pending' : 'assigned'
+    patient_data[:duplicateIdentifierOwnerCount] = dde_assignment[:duplicate_owner_count].to_i
     patient_data[:nationalID]            = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 28, patient_id)
     patient_data[:patientID]             = patient_id
     patient_data[:NcdID]                 = BuildPatientRecordService.patient_identifier_from_map(identifiers_by_type, 31, patient_id)
@@ -271,6 +328,12 @@ class SavePatientRecordService
         name    = person&.names&.first
         address = person&.addresses&.first
         patient_data[:personInformation] = BuildPatientRecordService.build(person, name, address, patient)
+
+      when :assign_dde_identifier
+        patient_data[:assignDdeIdentifier] = nil
+
+      when :void_legacy_dde_ids
+        patient_data[:voidLegacyDdeIdentifiers] = []
 
       when :manage_guardian, :create_relationship
         patient_data[:guardianInformation] = BuildPatientRecordService.build_guardian_data(patient_id)
@@ -306,7 +369,7 @@ class SavePatientRecordService
         patient_data[:MedicationOrder]       = BuildPatientRecordService.build_medication_data(patient_id)
         allowed_encounter_types << get_encounter_id('TREATMENT')
 
-      when :save_medication_order, :save_dispensation_data, :void_drug_orders
+      when :save_medication_order, :save_dispensation_data, :void_drug_orders, :mark_out_of_stock
         patient_data[:MedicationOrder] = BuildPatientRecordService.build_medication_data(patient_id)
         allowed_encounter_types << get_encounter_id('TREATMENT')
 
@@ -348,6 +411,254 @@ class SavePatientRecordService
     clear_processed_pending_fields!(patient_data)
     PatientRecordSearchFields.normalize!(patient_data)
     patient_data.as_json
+  end
+
+  # The authoritative full record used to re-attach the read-only history the
+  # lean online payload omits. Prefers the current CouchDB doc (a single fast
+  # fetch); falls back to a MySQL rebuild only when the doc is absent (e.g. a
+  # brand-new patient, where the rebuild is cheap). Returns nil on the
+  # listener/offline ingest path (skip_couchdb_sync? — the record already
+  # carries the full doc) or when CouchDB is not configured, in which case
+  # restore_trimmed_history! is a no-op and the client payload is used as-is.
+  def resolve_history_base(patient_id, record)
+    return nil unless couchdb_configured? && !skip_couchdb_sync?
+
+    document_id = PatientRecordIdentityService.document_id(record: record)
+    base = document_id.present? ? fetch_couchdb_doc('patients_records', document_id) : nil
+    legacy_doc_id = record_value(record, :ID).to_s
+    base ||= fetch_couchdb_doc('patients_records', legacy_doc_id) if legacy_doc_id.present?
+    base ||= (patient_id ? BuildPatientRecordService.build_patient_record(patient_id) : nil)
+    base
+  rescue StandardError => e
+    Rails.logger.warn("[SavePatientRecord] could not resolve history base for #{record_value(record, :ID)}: #{e.class}: #{e.message}")
+    nil
+  end
+
+  # Builds the response/CouchDB doc for a patient that was just voided. Reuses
+  # the last-known-good CouchDB doc (or the incoming record, when no doc is
+  # configured/available) rather than rebuilding from MySQL, since the patient
+  # row and its dependents are voided by this point.
+  #
+  # We don't want to keep voided patients' documents in CouchDB at all, so the
+  # doc is deleted outright rather than upserted with a `voided` flag. Deletion
+  # replicates like any other change, so every device eventually drops its copy
+  # too. If the delete itself fails (e.g. a transient CouchDB outage), we fall
+  # back to upserting with `voided: true` so the doc is at least excluded from
+  # search (see NOT_VOIDED_SELECTOR on the client) instead of staying fully
+  # visible with no signal at all.
+  def finalize_voided_patient_record(patient_id, record, operation_results, overall_sync_status)
+    base = resolve_history_base(patient_id, record) || record
+    patient_record = base.as_json.with_indifferent_access
+
+    patient_record['patientID']    = patient_id
+    patient_record['sync_status']  = overall_sync_status
+    patient_record['void_patient'] = nil
+    patient_record['voided']       = true
+    patient_record['operation_errors'] = operation_results
+      .reject           { |_k, r| r.errors.empty? }
+      .transform_values  { |r| r.errors }
+      .as_json
+
+    if couchdb_configured?
+      document_id = PatientRecordIdentityService.document_id(record: patient_record) ||
+                    PatientRecordIdentityService.document_id(patient: Patient.unscoped.includes(:person).find_by(patient_id:)) ||
+                    record_value(patient_record, :ID).to_s.presence
+      patient_record['_id'] = document_id
+
+      begin
+        delete_from_couchdb('patients_records', document_id)
+        # Tells the CouchDB changes listener the document is gone on purpose,
+        # so it skips trying to fetch and re-mark a now-nonexistent doc.
+        patient_record['deleted_from_couchdb'] = true
+      rescue Errno::ECONNREFUSED, Errno::EHOSTUNREACH => e
+        Rails.logger.warn("CouchDB connection error while deleting voided patient #{patient_record['ID']}: #{e.class}: #{e.message}")
+        sync_voided_patient_fallback(patient_record)
+      rescue StandardError => e
+        Rails.logger.error("CouchDB delete failed for voided patient #{patient_record['ID']}: #{e.class}: #{e.message}")
+        sync_voided_patient_fallback(patient_record)
+      end
+    end
+
+    patient_record.as_json
+  end
+
+  def sync_voided_patient_fallback(patient_record)
+    sync_to_couchdb(patient_record, 'patients_records', patient_record['_id'].to_s)
+  rescue StandardError => e
+    Rails.logger.error("CouchDB fallback sync failed for voided patient #{patient_record['ID']}: #{e.class}: #{e.message}")
+  end
+
+  # Re-attach read-only history the online client stripped from its payload, so
+  # the saved CouchDB doc and the response still carry the full record while the
+  # request stays small. No-op when no base is supplied (listener/offline ingest
+  # already carries the full doc) or when the client already sent the section
+  # (full/legacy payloads). Sections the client did send — this visit's writes —
+  # are left untouched, and the existing per-operation rebuild logic still
+  # refreshes changed sections from MySQL over the top.
+  def restore_trimmed_history!(patient_data, couch_base)
+    return patient_data if couch_base.blank?
+
+    restore_observation_history!(patient_data, couch_base)
+    restore_lab_order_history!(patient_data, couch_base)
+    restore_medication_order_history!(patient_data, couch_base)
+    restore_active_programs_history!(patient_data, couch_base)
+    restore_guardian_history!(patient_data, couch_base)
+    restore_vaccine_obs_history!(patient_data, couch_base)
+
+    # Whole read-only sections the client may omit and the backend does not
+    # unconditionally rebuild: art_summary (never), visits (only conditionally),
+    # personInformation (only on edit). Restore from the base when the client
+    # omitted them. Preserve empty values ([]/{}) too, so a section the base
+    # defined never comes back absent. (patient_identifiers is always rebuilt
+    # below, so it needs no restore.)
+    %i[art_summary visits personInformation].each do |key|
+      next if record_value(patient_data, key).present?
+
+      base_value = record_value(couch_base, key)
+      patient_data[key] = base_value unless base_value.nil?
+    end
+
+    patient_data
+  end
+
+  # Merge the base's observation encounters (keyed by encounter_type) underneath
+  # the client's. The client's encounters win on a type collision, and
+  # rebuild_all_observations later refreshes the changed types from MySQL, so no
+  # history is lost — untouched historical encounter types simply carry through.
+  def restore_observation_history!(patient_data, couch_base)
+    base_obs = Array(record_value(couch_base, :observations))
+    return if base_obs.empty?
+
+    merged_by_type = {}
+    base_obs.each do |group|
+      type = record_value(group, :encounter_type)
+      merged_by_type[type] = group if type.present?
+    end
+
+    typeless_client_groups = []
+    Array(record_value(patient_data, :observations)).each do |group|
+      type = record_value(group, :encounter_type)
+      if type.present?
+        merged_by_type[type] = group
+      else
+        typeless_client_groups << group
+      end
+    end
+
+    patient_data[:observations] = merged_by_type.values + typeless_client_groups
+  end
+
+  # Restore labOrders.saved (historical orders) from the base when the client
+  # omitted it. Lab writes (unsaved/results/voided) the client did send still
+  # trigger the full labOrders rebuild from MySQL in build_and_save_patient_record.
+  def restore_lab_order_history!(patient_data, couch_base)
+    base_lab = record_value(couch_base, :labOrders)
+    return if base_lab.blank?
+
+    client_lab = record_value(patient_data, :labOrders)
+    if client_lab.blank?
+      patient_data[:labOrders] = base_lab
+      return
+    end
+
+    return if record_value(client_lab, :saved).present?
+
+    base_saved = record_value(base_lab, :saved)
+    # Restore even an empty [] so labOrders.saved never comes back absent
+    # (the frontend maps over it).
+    assign_subkey(client_lab, :saved, base_saved) unless base_saved.nil?
+  end
+
+  # Restore MedicationOrder.saved (order history) from the base, keeping any
+  # saved order the client sent that carries a dispensation (dispensations_pending?
+  # / save_dispensation_data read saved[].dispensation). Client entries win on an
+  # order_id collision. When a medication/dispensation/void op runs, build_and_save
+  # rebuilds MedicationOrder fully from MySQL over this, so it is only load-bearing
+  # for the no-med-activity carry-through case.
+  def restore_medication_order_history!(patient_data, couch_base)
+    base_med   = record_value(couch_base, :MedicationOrder)
+    base_saved = Array(record_value(base_med, :saved))
+    return if base_saved.empty?
+
+    client_med = record_value(patient_data, :MedicationOrder)
+    if client_med.blank?
+      patient_data[:MedicationOrder] = base_med
+      return
+    end
+
+    client_saved = Array(record_value(client_med, :saved))
+    client_ids   = client_saved.map { |order| record_value(order, :order_id) }.compact
+    merged_saved = base_saved.reject { |order| client_ids.include?(record_value(order, :order_id)) } + client_saved
+
+    assign_subkey(client_med, :saved, merged_saved)
+  end
+
+  # Restore saved-program history from the base. The client sends only new
+  # enrollments (status "unsaved"); union the base's programs underneath, keyed
+  # by patient_program_id so nothing duplicates. When enrollment changes,
+  # build_and_save refetches activePrograms fully from MySQL over this.
+  def restore_active_programs_history!(patient_data, couch_base)
+    base_programs = Array(record_value(couch_base, :activePrograms))
+    return if base_programs.empty?
+
+    client_programs = Array(record_value(patient_data, :activePrograms))
+    client_ids      = client_programs.map { |program| record_value(program, :patient_program_id) }.compact
+    merged = base_programs.reject { |program| client_ids.include?(record_value(program, :patient_program_id)) } + client_programs
+
+    patient_data[:activePrograms] = merged
+  end
+
+  # Restore guardianInformation.saved (guardian history) from the base when the
+  # client omitted it. manage_guardian only reads .unsaved, which the client
+  # still sends; a guardian op still rebuilds the section fully from MySQL.
+  def restore_guardian_history!(patient_data, couch_base)
+    base_guardian = record_value(couch_base, :guardianInformation)
+    return if base_guardian.blank?
+
+    client_guardian = record_value(patient_data, :guardianInformation)
+    if client_guardian.blank?
+      patient_data[:guardianInformation] = base_guardian
+      return
+    end
+
+    return if record_value(client_guardian, :saved).present?
+
+    base_saved = record_value(base_guardian, :saved)
+    assign_subkey(client_guardian, :saved, base_saved) unless base_saved.nil?
+  end
+
+  # Restore vaccineAdministration.obs (vaccine obs history) from the base when
+  # the client omitted it. The client keeps obs whenever there is a vaccine
+  # write (save_vaccines reads it), so this only fills the no-vaccine-write case.
+  def restore_vaccine_obs_history!(patient_data, couch_base)
+    base_vaccine = record_value(couch_base, :vaccineAdministration)
+    return if base_vaccine.blank?
+
+    client_vaccine = record_value(patient_data, :vaccineAdministration)
+    if client_vaccine.blank?
+      patient_data[:vaccineAdministration] = base_vaccine
+      return
+    end
+
+    return if record_value(client_vaccine, :obs).present?
+
+    base_obs = record_value(base_vaccine, :obs)
+    assign_subkey(client_vaccine, :obs, base_obs) unless base_obs.nil?
+  end
+
+  # Set a sub-key on a hash that may use either symbol or string keys, matching
+  # whichever form the container already uses (JSON-sourced hashes use strings).
+  def assign_subkey(container, key, value)
+    return unless container.respond_to?(:[]=)
+
+    keys       = container.respond_to?(:keys) ? container.keys : []
+    has_symbol = keys.any? { |k| k.is_a?(Symbol) }
+    has_string = keys.any? { |k| k.is_a?(String) }
+    # Default to a string key (JSON/CouchDB convention) unless the container is
+    # clearly symbol-keyed; only match symbol when there are symbol keys and no
+    # string keys. (ActionController::Parameters is indifferent either way.)
+    use_string = has_string || !has_symbol
+    container[use_string ? key.to_s : key] = value
   end
 
   def get_encounter_id(encounter_type)
@@ -392,16 +703,20 @@ class SavePatientRecordService
     allowed_encounter_types = allowed_encounter_types.compact.uniq
     return if allowed_encounter_types.empty?
 
+    refreshed_type_keys = allowed_encounter_types.map(&:to_s)
     original_observations_map = Array(record_value(patient_data, :observations))
                                   .each_with_object({}) do |obs, hash|
                                     encounter_type = record_value(obs, :encounter_type)
-                                    hash[encounter_type] = obs if encounter_type.present?
+                                    next if encounter_type.blank?
+                                    next if refreshed_type_keys.include?(encounter_type.to_s)
+
+                                    hash[encounter_type.to_s] = obs
                                   end
 
     new_observations = BuildPatientRecordService.build_all_observations(patient_id, allowed_encounter_types)
 
     updated_observations_hash = original_observations_map.merge(
-      new_observations.index_by { |obs| record_value(obs, :encounter_type) }
+      new_observations.index_by { |obs| record_value(obs, :encounter_type).to_s }
     )
 
     patient_data[:observations] = updated_observations_hash.values.as_json
@@ -446,8 +761,28 @@ class SavePatientRecordService
     Rails.logger.warn("Failed to enqueue labOrders CouchDB true-up for patient #{patient_id}: #{e.class}: #{e.message}")
   end
 
+  # Only ART patients carry an art_summary doc section; skip the job entirely
+  # for everyone else. A brand-new ART patient's first save can carry an empty
+  # {} (not yet populated client-side), so check the section exists rather
+  # than requiring it to be non-empty. Delayed so it runs after this request's
+  # own CouchDB sync above has landed, avoiding a write race against it.
+  def enqueue_art_summary_couchdb_true_up(patient_id, patient_record)
+    return unless record_value(patient_record, :art_summary).is_a?(Hash)
+
+    RebuildArtSummaryJob.set(wait: 30.seconds).perform_later(
+      patient_id,
+      trigger: 'save_patient_record_art_summary_true_up',
+      metadata: {}
+    )
+  rescue StandardError => e
+    Rails.logger.warn("Failed to enqueue art_summary CouchDB true-up for patient #{patient_id}: #{e.class}: #{e.message}")
+  end
+
   def ensure_primary_identifier_persisted!(patient_id, patient_record)
     identifier = patient_record.with_indifferent_access[:ID].to_s.strip
+    assignment_status = patient_record.with_indifferent_access[:identifierAssignmentStatus].to_s
+    return if identifier.blank? && assignment_status == 'pending'
+
     raise "Primary identifier missing for patient #{patient_id}" if identifier.blank?
 
     saved_identifier = PatientIdentifier.unscoped.find_by(
@@ -479,6 +814,8 @@ class SavePatientRecordService
     record.delete('art_dispensation_pending')
     record.delete(:voidedDrugOders)
     record.delete('voidedDrugOders')
+    record.delete(:outOfStockDrugOrders)
+    record.delete('outOfStockDrugOrders')
     record
   end
 
@@ -498,8 +835,9 @@ class SavePatientRecordService
   end
 
   def should_top_up_dde_ids_after_save?(record)
-    record_value(record, :saveStatusPersonInformation).to_s == 'pending' &&
-      record_value(record, :ID).to_s.strip.present?
+    new_registration = record_value(record, :saveStatusPersonInformation).to_s == 'pending'
+    deferred_assignment = dde_identifier_assignment_pending?(record)
+    (new_registration || deferred_assignment) && record_value(record, :ID).to_s.strip.present?
   end
 
   def enqueue_dde_id_top_up(patient_record, source_record)
@@ -552,6 +890,15 @@ class SavePatientRecordService
 
   def person_information_edit?(record)
     record_value(record, :personInformation).present? && record_value(record, :saveStatusPersonInformation) == 'edit'
+  end
+
+  def legacy_dde_identifier_void_pending?(record)
+    Array.wrap(record_value(record, :voidLegacyDdeIdentifiers)).any? { |identifier| identifier.to_s.strip.present? }
+  end
+
+  def dde_identifier_assignment_pending?(record)
+    request = record_value(record, :assignDdeIdentifier) || {}
+    record_value(request, :npid).to_s.strip.present?
   end
 
   def merge_requested?(record)
@@ -624,6 +971,11 @@ class SavePatientRecordService
     Array.wrap(record_value(voided_drug_orders, :unsaved)).any?
   end
 
+  def out_of_stock_pending?(record)
+    out_of_stock_orders = record_value(record, :outOfStockDrugOrders) || {}
+    Array.wrap(record_value(out_of_stock_orders, :unsaved)).any?
+  end
+
   def observations_pending?(record)
     Array.wrap(record_value(record, :observations)).any? do |item|
       item.present? && record_value(item, :status) == 'unsaved' && record_value(item, :obs).present?
@@ -632,5 +984,9 @@ class SavePatientRecordService
 
   def encounter_voids_pending?(record)
     Array.wrap(record_value(record, :void_encounters)).any?
+  end
+
+  def patient_void_pending?(record)
+    record_value(record_value(record, :void_patient) || {}, :reason).to_s.strip.present?
   end
 end

@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 class StagesService
+  MAX_STAGE_LOCATION_DEPTH = 5
+
   def create_stage(stage_params)
     patient_id = resolve_patient_id(stage_params)
     raise InvalidParameterError, 'Patient not found' if patient_id.blank?
@@ -24,7 +26,7 @@ class StagesService
 
   def create_or_update_stage(patient_id, active_visit, stage_params)
 
-    location_id = stage_params[:location_id] || User.current.location_id
+    location_id = resolve_stage_location(stage_params[:location_id])
     stage_name = normalize_stage(stage_params[:stage])
 
     # Keep one stage record per active visit and update it as patient moves.
@@ -187,6 +189,43 @@ class StagesService
     stage_data
   end
 
+  # The authenticated user's assigned facility is authoritative for queue
+  # placement. Patient records can carry the facility where they were
+  # registered, and older clients may submit that stale location_id.
+  #
+  # Sub-locations of the user's own facility are the exception: IPD queues are
+  # per ward, so a submitted ward (or one of its sections) is kept as-is —
+  # otherwise the ward chosen at admission is lost and the ward-scoped
+  # pre-admission list can never match the stage. Anything outside the user's
+  # facility still falls back to the facility.
+  def resolve_stage_location(submitted_location_id)
+    facility_id = User.current&.location_id
+    return submitted_location_id if facility_id.blank?
+    return facility_id if submitted_location_id.blank? || same_location?(submitted_location_id, facility_id)
+
+    within_facility?(submitted_location_id, facility_id) ? submitted_location_id : facility_id
+  end
+
+  def same_location?(left, right)
+    left.to_s.strip == right.to_s.strip
+  end
+
+  # Walks parent_location upwards looking for the facility. Wards are parented
+  # to their facility and sections to their ward, so the chain is short; the
+  # bound just stops a malformed cycle from looping forever.
+  def within_facility?(location_id, facility_id)
+    location = Location.find_by(location_id: location_id)
+
+    MAX_STAGE_LOCATION_DEPTH.times do
+      break if location.nil? || location.parent_location.blank?
+      return true if same_location?(location.parent_location, facility_id)
+
+      location = location.parent
+    end
+
+    false
+  end
+
   def resolve_patient_id(params)
     return params[:patient_id] if params[:patient_id].present?
     return nil if params[:identifier].blank?
@@ -252,11 +291,10 @@ class StagesService
   end
 
   def encounter_creator_name(encounter, patient)
-    if encounter&.creator
-      User.find_by(user_id: encounter.creator)&.name
-    else
-      User.find_by(user_id: patient.creator)&.name
-    end
+    creator_id = encounter&.creator || patient&.creator
+    return nil if creator_id.blank?
+
+    User.find_by(user_id: creator_id)&.name
   end
 
   def broadcast_stage_update(event_name, data)

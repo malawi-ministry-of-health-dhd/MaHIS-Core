@@ -4,6 +4,7 @@ class DdeService
   require_relative './dde_service/matcher'
 
   class DdeError < StandardError; end
+  class MissingRemotePatientError < DdeError; end
 
   CONFIG = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))
   DDE_LOCATION_ID = CONFIG['DDE_LOCATION_ID'] || ""
@@ -275,12 +276,18 @@ class DdeService
     patient = patient_id.blank? ? nil : Patient.find(patient_id)
 
     # We have a doc_id thus we can re-assign npid in DDE
-    # Check if person if available in DDE if not add person using doc_id
+    # Check whether the permanent person UUID is available in this DDE proxy.
+    # A blank 200 and a 404 both mean the proxy does not currently know it;
+    # identifier cleanup must defer instead of creating a second person.
     response, status = dde_client.post('search_by_doc_id', doc_id:)
+    if response.blank? && [200, 404].include?(status.to_i)
+      raise MissingRemotePatientError, "DDE document #{doc_id} was not found"
+    end
+
     if !response.blank? && status.to_i == 200
-      response, status = dde_client.post('reassign_npid', doc_id:)
-    elsif response.blank? && status.to_i == 200
-      return push_local_patient_to_dde(Patient.find(patient_ids['patient_id']))
+      response, status = dde_client.post('reassign_npid', doc_id:, location_id: current_footprint_location_id)
+    else
+      raise DdeError, "Failed to find DDE document #{doc_id}: DDE Response => #{status} - #{response}"
     end
 
     unless status == 200 && !response.empty?
@@ -312,6 +319,27 @@ class DdeService
     end
   end
 
+  # Used by identifier recovery when a previous DDE request succeeded remotely
+  # but its local transaction rolled back. The caller still verifies that the
+  # returned remote record is an unlinked exact demographic match.
+  def find_remote_demographic_matches(patient)
+    name = patient.person&.names&.first
+    return [] unless name
+
+    find_remote_patients_by_name_and_gender(name.given_name, name.family_name, patient.person.gender&.first)
+  end
+
+  # Identifier cleanup must establish which local owner of a shared document
+  # is the real DDE person before detaching anyone. Keep the HTTP lookup inside
+  # this service while exposing the result to that recovery workflow.
+  def find_remote_matches_by_doc_id(doc_id)
+    find_remote_patients_by_doc_id(doc_id)
+  end
+
+  def link_local_patient_to_remote(patient, remote_patient)
+    merging_service.link_local_to_remote_patient(patient, remote_patient)
+  end
+
   ##
   # Converts a dde_patient object into an object that can be passed to the person_service
   # to create or update a person.
@@ -336,10 +364,47 @@ class DdeService
     )
   end
 
+  # Maps a MaHIS (centralised) location_id back to the original EMR location_id
+  # known to DDE. Resolution: location's 'Facility Code' attribute ->
+  # db/locations_x_facilities.csv (facility_code -> original location_id).
+  # Returns nil when no mapping exists (e.g. single-site setups where the IDs
+  # already match).
+  def self.legacy_dde_location_id(mahis_location_id)
+    facility_code_type = LocationAttributeType.find_by(name: 'Facility Code')
+    return nil unless facility_code_type
+
+    facility_code = LocationAttribute.find_by(location_id: mahis_location_id,
+                                              attribute_type_id: facility_code_type.location_attribute_type_id)
+                                     &.value_reference
+    return nil if facility_code.blank?
+
+    facility_code_to_legacy_location_id[facility_code]
+  end
+
+  # facility_code => original EMR location_id, loaded once from
+  # db/locations_x_facilities.csv.
+  def self.facility_code_to_legacy_location_id
+    @facility_code_to_legacy_location_id ||= begin
+      csv_path = Rails.root.join('db', 'locations_x_facilities.csv')
+      if File.exist?(csv_path)
+        require 'csv'
+        CSV.foreach(csv_path, headers: true).each_with_object({}) do |row, map|
+          map[row['facility_code']] = row['location_id'].to_i
+        end
+      else
+        LOGGER.warn("#{csv_path} not found: DDE location ids will not be mapped to legacy EMR ids")
+        {}
+      end
+    end
+  end
+
   private
 
   def current_footprint_location_id
-    Location.current_health_center&.location_id
+    mahis_location_id = Location.current_health_center&.location_id
+    return nil unless mahis_location_id
+
+    self.class.legacy_dde_location_id(mahis_location_id) || mahis_location_id
   end
 
   def find_remote_patients_by_npid(npid)
@@ -554,12 +619,29 @@ class DdeService
   end
 
   # Converts an openmrs patient structure to a DDE person structure
-  def openmrs_to_dde_patient(patient, npid)
+  def openmrs_to_dde_patient(patient, npid = nil)
     LOGGER.debug "Converting OpenMRS person to dde_patient: #{patient}"
     person = patient.person
+    person_name = person&.names&.first
+    person_address = person&.addresses&.first
+    required_demographics = {
+      given_name: person_name&.given_name,
+      family_name: person_name&.family_name,
+      gender: person&.gender,
+      birthdate: person&.birthdate,
+      home_district: person_address&.address2,
+      home_village: person_address&.neighborhood_cell,
+      home_traditional_authority: person_address&.county_district
+    }
+    missing_demographics = required_demographics.select { |_field, value| value.blank? }.keys
+    if missing_demographics.any?
+      error = UnprocessableEntityError.new(
+        "Patient #{patient.id} is missing required DDE demographics: #{missing_demographics.join(', ')}"
+      )
+      error.add_entity(patient)
+      raise error
+    end
 
-    person_name = person.names[0]
-    person_address = person.addresses[0]
     person_attributes = filter_person_attributes(person.person_attributes)
 
     dde_patient = HashWithIndifferentAccess.new(
@@ -569,6 +651,7 @@ class DdeService
       npid:,
       birthdate: person.birthdate,
       birthdate_estimated: person.birthdate_estimated, # Convert to bool?
+      location_id: current_footprint_location_id,
       attributes: {
         current_district: person_address&.state_province,
         current_traditional_authority: person_address&.township_division,
