@@ -19,6 +19,10 @@ require 'action_cable/engine'
 # you've limited to :test, :development, or :production.
 Bundler.require(*Rails.groups)
 
+# Referenced directly below in `config.middleware.insert_before`, before the
+# Zeitwerk autoloader for app/middleware is active.
+require_relative '../app/middleware/gzip_request_body'
+
 module BHTEmrApi
   class Application < Rails::Application
     # Initialize configuration defaults for originally generated Rails version.
@@ -63,6 +67,10 @@ module BHTEmrApi
 
     # This also configures session_options for use below
     config.session_store :cookie_store, key: '_interslice_session'
+
+    # Decompress gzip-encoded request bodies (see MAHIS `compress: true` POSTs)
+    # before anything downstream tries to read/parse the body.
+    config.middleware.insert_before 0, GzipRequestBody
 
     # Required for all session management (regardless of session_store)
     config.middleware.use ActionDispatch::Cookies

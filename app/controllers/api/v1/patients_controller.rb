@@ -105,6 +105,9 @@ module Api
 
         broadcast_patient_record_saved(patient_record)
         render json: patient_record
+      rescue ActionDispatch::Http::Parameters::ParseError => e
+        Rails.logger.error "Parameter parsing error: #{e.message}"
+        render json: { error: 'Invalid JSON format in request body', details: e.message }, status: :bad_request
       end
 
       def search_by_npid
