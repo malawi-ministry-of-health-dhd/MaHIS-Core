@@ -57,8 +57,9 @@ module ArtService
     end
 
     def next_appointment_date
-      exec_drug_order_adjustments(@patient, @ref_date) if optimise_appointment?(@patient,
-                                                                                @ref_date)
+      if optimise_appointment?(@patient, @ref_date)
+        exec_drug_order_adjustments(@patient, @ref_date)
+      end
       _drug_id, date = earliest_appointment_date(@patient, @ref_date)
       return nil unless date
 
@@ -334,11 +335,14 @@ module ArtService
     def amounts_brought_to_clinic(patient, session_date)
       @amounts_brought_to_clinic = Hash.new(0)
 
+      number_of_tablets_concept_id = ConceptName.find_by_name('Number of tablets brought to clinic').concept_id
+      amount_of_drug_concept_id = ConceptName.find_by_name('AMOUNT OF DRUG BROUGHT TO CLINIC').concept_id
+
       amounts_brought_to_clinic = ActiveRecord::Base.connection.select_all <<-SQL
       SELECT obs.*, drug_order.* FROM obs INNER JOIN drug_order ON obs.order_id = drug_order.order_id
       INNER JOIN encounter e ON e.encounter_id = obs.encounter_id AND e.voided = 0
       AND e.encounter_type = #{EncounterType.find_by_name('ART ADHERENCE').id}
-      WHERE obs.concept_id = #{ConceptName.find_by_name('AMOUNT OF DRUG BROUGHT TO CLINIC').concept_id}
+      WHERE obs.concept_id IN (#{number_of_tablets_concept_id}, #{amount_of_drug_concept_id})
       AND obs.obs_datetime >= '#{session_date.to_date.strftime('%Y-%m-%d 00:00:00')}'
       AND obs.obs_datetime <= '#{session_date.to_date.strftime('%Y-%m-%d 23:59:59')}'
       AND person_id = #{patient.id} AND obs.voided = 0 AND value_numeric IS NOT NULL;

@@ -14,7 +14,8 @@ module Api
 
         def filter_context
           {
-          program_id: params[:program_id],
+            program_id: params[:program_id]
+          }
         end
 
         def stock_management_service

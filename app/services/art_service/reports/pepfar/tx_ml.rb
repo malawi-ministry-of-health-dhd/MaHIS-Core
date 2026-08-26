@@ -36,9 +36,9 @@ module ArtService
             patient_id = pat['patient_id'].to_i
             outcome = pat['outcome']
             gender = begin
-              pat['gender'].first.upcase
+              pat['gender'].first.upcase.to_sym
             rescue StandardError
-              'Unknown'
+              :Unknown
             end
             age_group = pat['age_group']
 
@@ -84,15 +84,15 @@ module ArtService
               TIMESTAMPDIFF(MONTH, DATE(e.earliest_start_date), DATE(o.pepfar_outcome_date)) months,
               disaggregated_age_group(e.birthdate, DATE('#{end_date}')) age_group,
               o.pepfar_cum_outcome outcome
-            FROM temp_earliest_start_date e
+            FROM #{temp_earliest_start_date} e
             #{dsd_query(dsd: @dsd, model: 'e') if @dsd}
-            INNER JOIN temp_patient_outcomes o ON e.patient_id = o.patient_id AND o.pepfar_cum_outcome IN ('Defaulted', 'Patient died', 'Treatment stopped', 'Patient transferred out')
-            INNER JOIN patient_program pp ON pp.patient_id = e.patient_id 
+            INNER JOIN #{temp_patient_outcomes} o ON e.patient_id = o.patient_id AND o.pepfar_cum_outcome IN ('Defaulted', 'Patient died', 'Treatment stopped', 'Patient transferred out')
+            INNER JOIN patient_program pp ON pp.patient_id = e.patient_id
               AND pp.program_id = #{program('HIV PROGRAM').id}
               AND pp.location_id = #{User.current.location_id}
               AND pp.voided = 0
             LEFT JOIN (#{current_occupation_query}) a ON a.person_id = e.patient_id
-            WHERE e.patient_id IN (SELECT patient_id FROM temp_patient_outcomes_start WHERE pepfar_cum_outcome = 'On antiretrovirals')
+            WHERE e.patient_id IN (SELECT patient_id FROM #{temp_patient_outcomes(start: true)} WHERE pepfar_cum_outcome = 'On antiretrovirals')
             AND DATE(e.earliest_start_date) < '#{start_date.to_date}'
             GROUP BY e.patient_id
           SQL
@@ -110,10 +110,10 @@ module ArtService
               TIMESTAMPDIFF(MONTH, DATE(e.earliest_start_date), DATE(o.pepfar_outcome_date)) months,
               disaggregated_age_group(e.birthdate, DATE('#{end_date}')) age_group,
               o.pepfar_cum_outcome outcome
-            FROM temp_earliest_start_date e
+            FROM #{temp_earliest_start_date} e
             #{dsd_query(dsd: @dsd, model: 'e') if @dsd}
-            INNER JOIN temp_patient_outcomes o ON e.patient_id = o.patient_id AND o.pepfar_cum_outcome IN ('Defaulted', 'Patient died', 'Treatment stopped', 'Patient transferred out')
-            INNER JOIN patient_program pp ON pp.patient_id = e.patient_id 
+            INNER JOIN #{temp_patient_outcomes} o ON e.patient_id = o.patient_id AND o.pepfar_cum_outcome IN ('Defaulted', 'Patient died', 'Treatment stopped', 'Patient transferred out')
+            INNER JOIN patient_program pp ON pp.patient_id = e.patient_id
               AND pp.program_id = #{program('HIV PROGRAM').id}
               AND pp.location_id = #{User.current.location_id}
               AND pp.voided = 0

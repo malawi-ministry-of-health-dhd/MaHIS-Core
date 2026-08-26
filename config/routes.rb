@@ -119,7 +119,12 @@ Rails.application.routes.draw do
       # Patients
       get '/get_patient_record' => 'patients#get_patient_record'
       get '/get_patient_list' => 'patients#get_patient_list'
+      # Must precede `resources :patients`, otherwise /patients/voided is routed
+      # to patients#show with id = 'voided'.
+      get '/patients/voided' => 'patients#voided'
       resources :patients do
+        get '/void_restore_preview' => 'patients#void_restore_preview'
+        post '/unvoid' => 'patients#unvoid'
         get '/labels/national_health_id' => 'patients#print_national_health_id_label'
         get '/labels/filing_number' => 'patients#print_filing_number'
         get 'labels/print_tb_number', to: 'patients#print_tb_number'
@@ -206,6 +211,11 @@ Rails.application.routes.draw do
           get :facility_level
           put :facility_level
           patch :facility_level
+          # :id is the facility here -- departments are global, their on/off
+          # state is per-facility.
+          get :departments
+          put :departments
+          patch :departments
         end
 
         collection do
