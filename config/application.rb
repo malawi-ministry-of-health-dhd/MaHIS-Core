@@ -19,9 +19,7 @@ require 'action_cable/engine'
 # you've limited to :test, :development, or :production.
 Bundler.require(*Rails.groups)
 
-# Referenced directly below in `config.middleware.insert_before`, before the
-# Zeitwerk autoloader for app/middleware is active.
-require_relative '../app/middleware/gzip_request_body'
+require_relative '../lib/inflate_request_body'
 
 module BHTEmrApi
   class Application < Rails::Application
@@ -31,6 +29,7 @@ module BHTEmrApi
     config.autoload_paths << Rails.root.join('app/channels')
     config.eager_load_paths << Rails.root.join('app/channels')
     config.active_record.yaml_column_permitted_classes = [Date, Time]
+    config.active_record.schema_format = :sql
     # Settings in config/environments/* take precedence over those specified here.
     # Application configuration can go into files in config/initializers
     # -- all .rb files in that directory are automatically loaded after loading
@@ -68,9 +67,15 @@ module BHTEmrApi
     # This also configures session_options for use below
     config.session_store :cookie_store, key: '_interslice_session'
 
-    # Decompress gzip-encoded request bodies (see MAHIS `compress: true` POSTs)
-    # before anything downstream tries to read/parse the body.
-    config.middleware.insert_before 0, GzipRequestBody
+    # Inflate gzip-compressed request bodies (e.g. POST /save_patient_record)
+    # before Rails parses params. Runs at the front of the stack.
+    config.middleware.insert_before 0, InflateRequestBody
+
+    # Gzip responses (e.g. the full record returned by get/save_patient_record)
+    # when the client sends Accept-Encoding: gzip. The browser decompresses
+    # transparently, so no frontend change is needed. Done in-app because we
+    # do not control the nginx `gzip on` directive.
+    config.middleware.use Rack::Deflater
 
     # Required for all session management (regardless of session_store)
     config.middleware.use ActionDispatch::Cookies
