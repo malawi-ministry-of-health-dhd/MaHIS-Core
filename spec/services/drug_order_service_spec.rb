@@ -34,6 +34,28 @@ RSpec.describe DrugOrderService do
     end
   end
 
+  describe :orderer_for do
+    it 'credits the user who wrote the order, not the user syncing it' do
+      prescriber = User.where.not(user_id: User.current.user_id).first
+      skip 'needs a second user account in the test database' unless prescriber
+
+      expect(service.send(:orderer_for, { provider_id: prescriber.user_id })).to eq(prescriber.user_id)
+      expect(service.send(:orderer_for, { provider_id: prescriber.user_id })).not_to eq(User.current.user_id)
+    end
+
+    it 'accepts the provider under a string key, as an offline payload sends it' do
+      expect(service.send(:orderer_for, { 'provider_id' => User.current.user_id })).to eq(User.current.user_id)
+    end
+
+    it 'falls back to the authenticated user when the item names no provider' do
+      expect(service.send(:orderer_for, {})).to eq(User.current.user_id)
+    end
+
+    it 'falls back to the authenticated user when the provider is unknown' do
+      expect(service.send(:orderer_for, { provider_id: 999_999_999 })).to eq(User.current.user_id)
+    end
+  end
+
   describe :fetch_all_patient_drug_orders do
     it 'includes the saved order instructions in the built drug order object' do
       instructions = 'HCTZ 25mg | AM:2 | N:1 | PM:1 | Dur:2 | Qty:8'

@@ -26,6 +26,16 @@ module EncounterCreation
       encounter.encounter_id
     end
 
+    # An offline record is written by several users in turn - vitals by one, a
+    # prescription by the next - so each item carries the provider who wrote it. Prefer
+    # that over the record's provider_id, which only remembers whoever saved last.
+    def encounter_context(record, item)
+      provider_id = record_value(item, :provider_id)
+      return record if provider_id.blank?
+
+      record.merge(provider_id: provider_id)
+    end
+
     def save_obs(encounter_id:, observations:, location_id: nil)
       encounter = Encounter.find(encounter_id)
 

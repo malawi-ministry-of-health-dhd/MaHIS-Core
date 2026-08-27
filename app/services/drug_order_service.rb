@@ -572,6 +572,16 @@ module DrugOrderService
       [query_cond.join(' AND ')] + query_params
     end
 
+    # Who prescribed the drug. The item carries the user who wrote it, which offline is
+    # not the user who happens to sync it; an unknown or missing id falls back to the
+    # authenticated user so the column is never left dangling.
+    def orderer_for(create_params)
+      provider_id = create_params[:provider_id] || create_params['provider_id']
+      return User.current.user_id if provider_id.blank?
+
+      User.where(user_id: provider_id).pick(:user_id) || User.current.user_id
+    end
+
     def create_order(encounter:, create_params:, order_type:)
       start_date = TimeUtils.retro_timestamp(create_params[:start_date].to_date)
       drug_runout_date = TimeUtils.retro_timestamp(create_params[:auto_expire_date].to_date)
@@ -581,7 +591,7 @@ module DrugOrderService
         concept_id: Drug.find(create_params[:drug_inventory_id]).concept_id,
         encounter_id: encounter.encounter_id,
         patient_id: encounter.patient_id,
-        orderer: User.current.user_id,
+        orderer: orderer_for(create_params),
         start_date:,
         auto_expire_date: drug_runout_date,
         obs_id: create_params[:obs_id],
