@@ -184,6 +184,28 @@ module Api
         render json: response, status: :ok
       end
 
+      # Clears a user's failed-login back-off. Locks expire on their own, so this
+      # is only a convenience for an admin who does not want to wait it out.
+      def unlock_login
+        target_user = find_user(params[:user_id] || params[:id])
+        return unless validate_sensitive_user_update(target_user, %i[login_lock])
+
+        LoginThrottleService.unlock!(target_user.username)
+
+        render json: { message: ['Login lock cleared'], locked: false }, status: :ok
+      end
+
+      # Whether a user is currently backed off, and for how long.
+      def login_lock_status
+        target_user = find_user(params[:user_id] || params[:id])
+        # remote_address: nil - report on the account, not on whichever address
+        # the administrator happens to be asking from.
+        retry_after = LoginThrottleService.retry_after(target_user.username, remote_address: nil)
+
+        render json: { user_id: target_user.user_id, locked: !retry_after.nil?, retry_after: },
+               status: :ok
+      end
+
       def check_first_time_login
         user_id = params[:user_id] || User.current.user_id
         
