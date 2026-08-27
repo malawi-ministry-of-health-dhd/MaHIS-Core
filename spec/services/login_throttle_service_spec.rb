@@ -54,6 +54,10 @@ RSpec.describe LoginThrottleService do
     def exists?(key)
       @values.key?(key)
     end
+
+    def all_keys
+      (@values.keys + @sets.keys).uniq
+    end
   end
 
   let(:redis) { FakeRedis.new }
@@ -438,6 +442,36 @@ RSpec.describe LoginThrottleService do
         expect(described_class.retry_after('busy-user', remote_address: public_address))
           .to eq(described_class::IP_BLOCK_DURATION.to_i)
       end
+    end
+  end
+
+  describe 'self-cleaning' do
+    # Nothing sweeps this state, so every key the service writes has to carry
+    # its own expiry. A new key added without one would leak forever.
+    it 'gives every key it writes a positive expiry' do
+      stub_const("#{described_class}::IP_FAILURE_THRESHOLD", 3)
+      stub_const("#{described_class}::SWEEP_THRESHOLD", 2)
+
+      # Exercise every write path: back-off, lock, address counter, address
+      # block, sweep set and sweep alert.
+      described_class::LOCK_THRESHOLD.times { described_class.record_failure(username, remote_address: '41.87.10.20') }
+      4.times { |i| described_class.record_failure("other_#{i}", remote_address: '41.87.10.20') }
+
+      keys = redis.all_keys
+      expect(keys).to include(
+        a_string_matching(/fails:/), a_string_matching(/wait:/),
+        a_string_matching(/ip:fails:/), a_string_matching(/ip:block:/),
+        a_string_matching(/ip:users:/), a_string_matching(/ip:alert:/)
+      )
+
+      unexpiring = keys.reject { |key| redis.ttl(key).to_i.positive? }
+      expect(unexpiring).to be_empty
+    end
+
+    it 'namespaces everything under one prefix, so operators can inspect and drop it' do
+      described_class.record_failure(username, remote_address: '41.87.10.20')
+
+      expect(redis.all_keys).to all(start_with(described_class::KEY_PREFIX))
     end
   end
 
