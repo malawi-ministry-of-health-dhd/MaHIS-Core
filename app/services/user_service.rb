@@ -278,8 +278,18 @@ module UserService
   end
 
   def self.authenticate_credentials(username, password)
+    # Raises TooManyRequestsError before any password comparison when this
+    # username is inside a back-off or lock window.
+    LoginThrottleService.check!(username)
+
     user = User.unscoped.with_authentication_preloads.find_by(username:)
-    return nil unless user
+    unless user
+      # Count unknown usernames too, otherwise the throttle reveals which
+      # accounts exist, and spend the same time hashing as a real check would.
+      LoginThrottleService.equalize_timing(password)
+      LoginThrottleService.record_failure(username)
+      return nil
+    end
 
     begin
       Location.current = user.location if user.location_id.present?
@@ -291,10 +301,15 @@ module UserService
     unless user&.active? && \
            (bart_authenticate(user, password) || \
            new_arch_authenticate(user, password))
+      LoginThrottleService.record_failure(username, user:)
       return nil
     end
 
+    LoginThrottleService.record_success(username)
     user
+  rescue TooManyRequestsError
+    # Expected control flow, not an error to log with a backtrace.
+    raise
   rescue StandardError => e
     Rails.logger.error "Error logging in: #{e}"
     Rails.logger.error e.backtrace.join("\n")

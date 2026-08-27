@@ -65,6 +65,8 @@ Rails.application.routes.draw do
         put '/update_user_villages', to: 'users#update_user_villages'
         get '/check_first_time_login', to: 'users#check_first_time_login'
         post '/clear_last_login_time', to: 'users#clear_last_login_time'
+        post '/unlock_login', to: 'users#unlock_login'
+        get '/login_lock_status', to: 'users#login_lock_status'
       end
 
       resources :hts_reports, only: %i[index]
