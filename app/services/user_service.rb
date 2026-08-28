@@ -310,6 +310,25 @@ module UserService
     raise e
   end
 
+  ##
+  # Sets a new password outside the normal update path - used by the security
+  # question reset, where there is no session and no current password to check.
+  # Mirrors what update_user does, and refreshes last_password_updated so the
+  # 90-day expiry restarts rather than firing again immediately.
+  def self.reset_password_for(user, password)
+    ActiveRecord::Base.transaction do
+      user.password = hash_password(password, user.salt)
+      user.save!
+
+      property = UserProperty.find_or_initialize_by(user_id: user.user_id, property: 'last_password_updated')
+      property.user = user
+      property.property_value = Time.current.iso8601
+      property.save!
+    end
+
+    user
+  end
+
   def self.reset_password(code:)
     secret_key =  YAML.safe_load(File.read('config/application.yml'))['password_reset']['secret_key']
 
