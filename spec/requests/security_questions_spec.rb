@@ -137,12 +137,32 @@ RSpec.describe 'security question endpoints', type: :request do
       expect(JSON.parse(response.body)['token']).to be_present
     end
 
-    it 'refuses wrong answers' do
+    it 'issues a token when two of the three are right' do
       wrong = answers.dup
       wrong[0] = { question_id: 'birth_village', answer: 'Somewhere else' }
       verify(wrong)
 
+      expect(response).to have_http_status(:ok)
+      expect(JSON.parse(response.body)['token']).to be_present
+    end
+
+    it 'refuses when only one is right' do
+      wrong = answers.dup
+      wrong[0] = { question_id: 'birth_village', answer: 'Somewhere else' }
+      wrong[1] = { question_id: 'home_district', answer: 'Elsewhere' }
+      verify(wrong)
+
       expect(response).to have_http_status(:unauthorized)
+    end
+
+    it 'never tells the caller how many answers were right' do
+      wrong = answers.dup
+      wrong[0] = { question_id: 'birth_village', answer: 'Somewhere else' }
+      wrong[1] = { question_id: 'home_district', answer: 'Elsewhere' }
+      verify(wrong)
+
+      expect(response.body).not_to match(/\d\s*(of|correct)/i)
+      expect(JSON.parse(response.body).keys).to eq(['errors'])
     end
 
     it 'sets the new password, which then works for login' do
@@ -193,8 +213,11 @@ RSpec.describe 'security question endpoints', type: :request do
     end
 
     it 'throttles repeated wrong answers' do
+      # Two wrong, so the attempt actually fails - one wrong answer is now
+      # forgiven and would never reach the throttle.
       wrong = answers.dup
       wrong[0] = { question_id: 'birth_village', answer: 'wrong' }
+      wrong[1] = { question_id: 'home_district', answer: 'also wrong' }
 
       5.times { verify(wrong) }
 

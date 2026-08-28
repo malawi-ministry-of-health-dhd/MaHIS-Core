@@ -127,15 +127,40 @@ RSpec.describe SecurityQuestionService do
       expect(described_class.verify(user, entries.reverse)).to be(true)
     end
 
-    it 'rejects when one answer is wrong' do
+    it 'accepts two right out of three, so one half-remembered answer is survivable' do
       wrong = entries.dup
+      wrong[1] = { question_id: 'home_district', answer: 'Lilongwe' }
+
+      expect(described_class.verify(user, wrong)).to be(true)
+      expect(described_class.correct_answers(user, wrong)).to eq(2)
+    end
+
+    it 'rejects when only one is right' do
+      wrong = entries.dup
+      wrong[0] = { question_id: 'birth_village', answer: 'Somewhere' }
       wrong[1] = { question_id: 'home_district', answer: 'Lilongwe' }
 
       expect(described_class.verify(user, wrong)).to be(false)
     end
 
-    it 'rejects when only some questions are answered' do
+    it 'rejects when none is right' do
+      wrong = entries.map { |entry| { question_id: entry[:question_id], answer: 'nope' } }
+
+      expect(described_class.verify(user, wrong)).to be(false)
+    end
+
+    it 'still demands all three be attempted, so the two easy ones cannot be cherry-picked' do
       expect(described_class.verify(user, entries.take(2))).to be(false)
+      expect(described_class.correct_answers(user, entries.take(2))).to eq(0)
+    end
+
+    it 'does not count a blank answer as correct' do
+      blanked = entries.dup
+      blanked[0] = { question_id: 'birth_village', answer: '' }
+      blanked[1] = { question_id: 'home_district', answer: 'Lilongwe' }
+
+      # Only mother_maiden_name is right, and a blank cannot make up the second.
+      expect(described_class.verify(user, blanked)).to be(false)
     end
 
     it 'rejects a user who has set no questions' do
@@ -143,6 +168,10 @@ RSpec.describe SecurityQuestionService do
                            person: create(:person), creator: User.first.user_id)
 
       expect(described_class.verify(other, entries)).to be(false)
+    end
+
+    it 'accepts all three right' do
+      expect(described_class.correct_answers(user, entries)).to eq(3)
     end
 
     it 'is not fooled by answering a question the user did not choose' do

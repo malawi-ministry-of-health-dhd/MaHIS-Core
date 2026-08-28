@@ -20,6 +20,11 @@ module SecurityQuestionService
   PROTECTED_PROPERTIES = [ANSWERS_PROPERTY, RESET_PROPERTY].freeze
 
   REQUIRED_ANSWERS = 3
+  # How many of the three must match to prove identity. Two is a deliberate
+  # allowance for a half-remembered answer; it also means an attacker needs only
+  # two of the three, which is why the reset endpoints stay throttled per
+  # username and the token they yield can do nothing but set a password.
+  MINIMUM_CORRECT_ANSWERS = 2
   MINIMUM_ANSWER_LENGTH = 2
   RESET_TOKEN_VALIDITY = 10.minutes
 
@@ -90,20 +95,30 @@ module SecurityQuestionService
     end
 
     ##
-    # True only when every stored question is answered correctly. Comparison is
-    # over the hashes, so a wrong answer never reveals how close it was.
+    # True when at least MINIMUM_CORRECT_ANSWERS of the stored questions are
+    # answered correctly. All three must still be submitted - a caller cannot
+    # improve their odds by answering only the two they are sure of.
+    #
+    # Comparison is over the hashes, and the count is never reported back, so a
+    # failed attempt reveals neither which answers were right nor how close it
+    # came.
     def verify(user, entries)
+      correct_answers(user, entries) >= MINIMUM_CORRECT_ANSWERS
+    end
+
+    ##
+    # How many stored questions the supplied answers match. Zero unless the user
+    # has a full set and every one of them was attempted.
+    def correct_answers(user, entries)
       stored = stored_answers(user)
-      return false unless stored.size == REQUIRED_ANSWERS
+      return 0 unless stored.size == REQUIRED_ANSWERS
 
       supplied = normalize_entries(entries).index_by { |entry| entry[:question_id] }
-      return false unless supplied.size == REQUIRED_ANSWERS
+      return 0 unless stored.all? { |entry| supplied.key?(entry['question_id']) }
 
-      stored.all? do |entry|
-        answer = supplied[entry['question_id']]&.fetch(:answer, nil)
-        next false if answer.blank?
-
-        secure_equals?(entry['answer'], hash_answer(user, answer))
+      stored.count do |entry|
+        answer = supplied[entry['question_id']][:answer]
+        answer.present? && secure_equals?(entry['answer'], hash_answer(user, answer))
       end
     end
 

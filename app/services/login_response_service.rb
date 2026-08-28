@@ -4,6 +4,10 @@ module LoginResponseService
   LOGIN_PROPERTY_NAMES = %w[last_login_time last_password_updated].freeze
   FACILITY_LEVEL_ATTRIBUTE_NAMES = ['Facility Level', 'Facility Type'].freeze
   SUPERVISION_SESSION_PROPERTY = 'current_supervision_session'
+  # How long a password stands before the user is made to change it. The one
+  # authoritative copy: users_controller used to carry a second 90-day literal.
+  PASSWORD_VALIDITY_PERIOD = 90.days
+  PASSWORD_UPDATED_PROPERTY = 'last_password_updated'
   SUPERVISION_REQUIREMENTS = {
     'Student Nurse' => {
       supervision_type: 'nurse',
@@ -145,6 +149,14 @@ module LoginResponseService
       nil
     end
 
+    def password_expired?(value)
+      return false if value.blank?
+
+      Time.current >= Time.parse(value.to_s) + PASSWORD_VALIDITY_PERIOD
+    rescue ArgumentError, TypeError
+      false
+    end
+
     def first_time_login?(user)
       first_time_login_property?(login_properties(user.user_id)['last_login_time'])
     end
@@ -226,11 +238,9 @@ module LoginResponseService
     def password_needs_update_property?(property)
       return false if property.nil? || property.property_value.blank?
 
-      last_updated = Time.parse(property.property_value)
-      Time.current >= last_updated + 90.days
-    rescue ArgumentError
-      false
+      password_expired?(property.property_value)
     end
+
 
     def mark_last_login!(user, property = nil)
       property ||= UserProperty.new(property: 'last_login_time', user_id: user.user_id)
