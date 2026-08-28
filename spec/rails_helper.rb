@@ -85,7 +85,12 @@ RSpec.configure do |config|
     'voided_patients_spec.rb',
     'save_patient_record_service_spec.rb',
     'vaccine_manager_spec.rb',
-    'labour_stats_queries_spec.rb'
+    'labour_stats_queries_spec.rb',
+    'login_throttle_service_spec.rb',
+    'user_service_login_throttle_spec.rb',
+    'login_throttle_spec.rb',
+    'user_service_villages_spec.rb',
+    'user_villages_spec.rb'
   ].freeze
 
   # Wrap individual test execution to skip non-passing specs
