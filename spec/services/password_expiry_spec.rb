@@ -69,6 +69,50 @@ RSpec.describe 'password expiry' do
     end
   end
 
+  # The behaviour the whole policy hangs off: a brand-new user is made to set
+  # their own password before they can use the system. It is driven by
+  # last_login_time being absent, NOT by the password date - so starting the
+  # expiry clock at creation must not quietly switch it off.
+  describe 'a brand-new user on their very first login' do
+    let!(:fresh) do
+      UserService.create_user(
+        username: "expiry_first_#{SecureRandom.hex(4)}", password: 'secret123',
+        given_name: 'Grace', family_name: 'Phiri', roles: [], programs: [],
+        location_id: actor.location_id, villages: [], phone: nil
+      )
+    end
+
+    after do
+      UserProperty.where(user_id: fresh.user_id).delete_all
+      fresh.destroy
+    end
+
+    it 'is still asked to change the password, even though the password date is now set' do
+      response = LoginResponseService.build(fresh, nil, mark_login: false)
+
+      expect(response[:first_time_login]).to be(true)
+      expect(response[:password_needs_update]).to be(false)
+    end
+
+    it 'counts as a forced change for the login endpoint' do
+      response = LoginResponseService.build(fresh, nil, mark_login: false)
+
+      expect(response[:first_time_login] || response[:password_needs_update]).to be(true)
+    end
+
+    it 'stops being a first-time login once the login is marked' do
+      LoginResponseService.build(fresh, 'a-token')
+
+      expect(LoginResponseService.first_time_login?(fresh)).to be(false)
+    end
+
+    it 'is not held back by supervision while the password change is pending' do
+      response = LoginResponseService.build(fresh, 'a-token', mark_login: false)
+
+      expect(response[:supervision_required]).to be_nil
+    end
+  end
+
   describe 'expiring and refreshing' do
     it 'expire_password! puts the user past the window' do
       UserService.expire_password!(user)
