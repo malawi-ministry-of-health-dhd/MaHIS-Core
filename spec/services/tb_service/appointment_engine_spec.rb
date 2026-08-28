@@ -5,8 +5,52 @@ require 'rails_helper'
 RSpec.describe TbService::AppointmentEngine do
   subject { TbService::AppointmentEngine }
   let(:patient) { create :patient }
-  let(:program) { Program.find_by_name('TB Program') }
+  let(:program) { Program.find_by_name('TB Program') || create(:program, name: 'TB Program') }
   let(:epoch) { Date.today }
+
+  before(:each) do
+    Program.find_or_create_by!(name: 'TB Program') do |program|
+      program.description = 'TB Program'
+      program.creator = 1
+      program.date_created = Time.now
+      program.retired = 0
+      program.uuid = SecureRandom.uuid
+    end
+
+    EncounterType.find_or_create_by!(name: 'TREATMENT')
+    EncounterType.find_or_create_by!(name: 'APPOINTMENT')
+
+    tb_drugs_concept = ConceptName.find_by(name: 'TUBERCULOSIS DRUGS')&.concept ||
+                       Concept.create!(datatype_id: 4, class_id: 10, is_set: 0,
+                                       creator: 1, date_created: Time.now, retired: 0,
+                                       uuid: SecureRandom.uuid).tap do |concept|
+                         ConceptName.create!(concept:, name: 'TUBERCULOSIS DRUGS',
+                                             locale: 'en', creator: 1,
+                                             date_created: Time.now, voided: 0,
+                                             uuid: SecureRandom.uuid)
+                       end
+
+    next if Drug.where(concept_id: ConceptSet.where(concept_set: tb_drugs_concept).select(:concept_id)).exists?
+
+    tb_drug_concept = Concept.create!(datatype_id: 4, class_id: 10, is_set: 0,
+                                      creator: 1, date_created: Time.now, retired: 0,
+                                      uuid: SecureRandom.uuid).tap do |concept|
+                        ConceptName.create!(concept:, name: 'Rifabutin (300mg)',
+                                            locale: 'en', creator: 1,
+                                            date_created: Time.now, voided: 0,
+                                            uuid: SecureRandom.uuid)
+                      end
+
+    ConceptSet.create!(set: tb_drugs_concept, concept: tb_drug_concept,
+                       creator: 1, date_created: Time.now, uuid: SecureRandom.uuid)
+
+    Drug.create!(concept: tb_drug_concept, name: 'Rifabutin (300mg)',
+                 form: Concept.first || Concept.create!(datatype_id: 4, class_id: 10, is_set: 0,
+                                                        creator: 1, date_created: Time.now, retired: 0,
+                                                        uuid: SecureRandom.uuid),
+                 date_created: Time.now, creator: 1, retired: 0,
+                 uuid: SecureRandom.uuid)
+  end
 
   describe :next_appointment do
     it 'does not suggest appointments on clinic days' do

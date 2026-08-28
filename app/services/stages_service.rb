@@ -41,7 +41,8 @@ class StagesService
       )
     end
 
-    if Program.find_by_name("AETC Program").id == stage_params[:program_id]
+    aetc_program = Program.find_by_name("AETC Program")
+    if aetc_program && aetc_program.id == stage_params[:program_id]
       stage.visit_number = VisitService.next_daily_visit_number! 
     end
 

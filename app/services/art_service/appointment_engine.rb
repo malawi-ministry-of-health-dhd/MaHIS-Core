@@ -23,17 +23,19 @@ module ArtService
 
       filters = filters.to_hash.each_with_object({}) do |kv_pair, transformed_hash|
         key, value = kv_pair
+        key = 'person_id' if key == 'person'
         transformed_hash["obs.#{key}"] = value
       end
 
       appointments = Observation.joins(:concept)\
                                 .where(concept: concept('Appointment date'))
+      appointments = appointments.where(person: @patient.person) if @patient
       if date
         appointments = appointments.where('value_datetime BETWEEN ? AND ?',
                                           *TimeUtils.day_bounds(date))
       end
 
-      appointments = appointments.where(filters) unless appointments.empty?
+      appointments = appointments.where(filters) unless filters.empty?
       appointments.order(obs_datetime: :desc)
     end
 
@@ -46,6 +48,15 @@ module ArtService
 
       encounter = appointment_encounter patient, @ref_date
       appointment = make_appointment_date patient, date
+
+      # Save encounter first if it's a new record to ensure encounter_id exists
+      # before adding observations (avoids foreign key constraint violation)
+      if encounter.new_record?
+        unless encounter.save
+          LOGGER.error "Failed to create encounter\n\t#{encounter.errors}"
+          raise "Failed to create appointment, #{date}"
+        end
+      end
 
       encounter.observations << appointment
       unless encounter.save
@@ -84,7 +95,7 @@ module ArtService
 
       Encounter.new type: encounter_type('APPOINTMENT'),
                     patient:,
-                    encounter_datetime: Time.now,
+                    encounter_datetime: visit_date,
                     program: @program,
                     location_id: Location.current.location_id,
                     provider: User.current.person

@@ -218,7 +218,7 @@ module ArtTempTablesUtils
   def safe_create_index(sql)
     ActiveRecord::Base.connection.execute(sql)
   rescue ActiveRecord::StatementInvalid => e
-    raise unless e.message.include?('Duplicate key name')
+    raise unless e.message.include?('Duplicate key name') || e.message.include?("doesn't exist")
   end
 
   def shared_cohort_tables_populated?

@@ -40,6 +40,10 @@ module ArtService
       @program = program
     end
 
+    def program
+      @program
+    end
+
     def self.arv_drugs
       # TODO: Get rid of the arv_drugs method in Drug model
       Drug.arv_drugs
@@ -208,7 +212,9 @@ module ArtService
       drug = ingredient.drug
       regimen_category_lookup = MohRegimenLookup.find_by(drug_inventory_id: ingredient.drug_inventory_id)
       regimen_category = regimen_category_lookup ? regimen_category_lookup.regimen_name[-1] : nil
-      frequency_check = ingredient.course == '3HP' && ingredient.drug.concept.fullname != 'Pyridoxine'
+      # NOTE: Starter pack ingredients (MohRegimenIngredientStarterPack) do not
+      #       have a course, hence the `try`.
+      frequency_check = ingredient.try(:course) == '3HP' && ingredient.drug.concept.fullname != 'Pyridoxine'
       frequency = frequency_check ? 'Weekly (QW)' : 'Daily (QOD)'
       {
         drug_id: drug.drug_id,

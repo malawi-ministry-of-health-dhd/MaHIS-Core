@@ -35,6 +35,13 @@ module ArtService
       end
 
       # Override concept method with caching to avoid repeated database queries
+      def on_arvs_state_id
+        @on_arvs_state_id ||= ProgramWorkflowState.joins(program_workflow: :program)
+                                                 .where(program: { name: 'HIV PROGRAM' })
+                                                 .where(concept_id: concept('On antiretrovirals').concept_id)
+                                                 .first&.program_workflow_state_id
+      end
+
       def concept(name)
         return unless name.present?
 
@@ -77,6 +84,8 @@ module ArtService
             RETURN set_outcome;
           END
         SQL
+      rescue ActiveRecord::StatementInvalid => e
+        raise unless e.message.include?('already exists')
       end
 
       def init_temporary_tables(start_date, end_date, occupation, force_rebuild: false,
@@ -709,7 +718,7 @@ module ArtService
           WHERE patient_program.voided = 0
             AND outcome.voided = 0
             AND patient_program.program_id = 1
-            AND outcome.state = 7
+             AND outcome.state = #{on_arvs_state_id}
             AND outcome.start_date IS NOT NULL
             AND patient_program.location_id = #{Location.current.location_id}
             /*AND patient_program.patient_id NOT IN (
@@ -1021,43 +1030,51 @@ module ArtService
         presumed_hiv_concepts = ConceptName.where(name: ['PRESUMED SEVERE HIV',
                                                          'PRESUMED SEVERE HIV CRITERIA IN INFANTS']).pluck(:concept_id)
 
+        who_stage_4_concept_ids = who_stage_4_concepts.presence || [0]
+        who_stage_3_concept_ids = who_stage_3_concepts.presence || [0]
+        pregnant_concept_ids = pregnant_concepts.presence || [0]
+        breastfeeding_concept_ids = breastfeeding_concepts.presence || [0]
+        who_stage_2_concept_ids = who_stage_2_concepts.presence || [0]
+        pcr_concept_ids = pcr_concepts.presence || [0]
+        presumed_hiv_concept_ids = presumed_hiv_concepts.presence || [0]
+
         # Single batched query to get all eligibility reason counts
         results = ActiveRecord::Base.connection.select_one <<~SQL
           SELECT
             -- WHO Stage 4
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{who_stage_4_concepts.join(',') || 0}) THEN patient_id END) AS who_stage_four,
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{cum_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{who_stage_4_concepts.join(',') || 0}) THEN patient_id END) AS cum_who_stage_four,
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{quarter_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{who_stage_4_concepts.join(',') || 0}) THEN patient_id END) AS quarterly_who_stage_four,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{who_stage_4_concept_ids.join(',')}) THEN patient_id END) AS who_stage_four,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{cum_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{who_stage_4_concept_ids.join(',')}) THEN patient_id END) AS cum_who_stage_four,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{quarter_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{who_stage_4_concept_ids.join(',')}) THEN patient_id END) AS quarterly_who_stage_four,
           #{'  '}
             -- WHO Stage 3
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{who_stage_3_concepts.join(',') || 0}) THEN patient_id END) AS who_stage_three,
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{cum_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{who_stage_3_concepts.join(',') || 0}) THEN patient_id END) AS cum_who_stage_three,
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{quarter_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{who_stage_3_concepts.join(',') || 0}) THEN patient_id END) AS quarterly_who_stage_three,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{who_stage_3_concept_ids.join(',')}) THEN patient_id END) AS who_stage_three,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{cum_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{who_stage_3_concept_ids.join(',')}) THEN patient_id END) AS cum_who_stage_three,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{quarter_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{who_stage_3_concept_ids.join(',')}) THEN patient_id END) AS quarterly_who_stage_three,
           #{'  '}
             -- Pregnant women
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{pregnant_concepts.join(',') || 0}) THEN patient_id END) AS pregnant_women,
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{cum_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{pregnant_concepts.join(',') || 0}) THEN patient_id END) AS cum_pregnant_women,
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{quarter_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{pregnant_concepts.join(',') || 0}) THEN patient_id END) AS quarterly_pregnant_women,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{pregnant_concept_ids.join(',')}) THEN patient_id END) AS pregnant_women,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{cum_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{pregnant_concept_ids.join(',')}) THEN patient_id END) AS cum_pregnant_women,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{quarter_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{pregnant_concept_ids.join(',')}) THEN patient_id END) AS quarterly_pregnant_women,
           #{'  '}
             -- Breastfeeding mothers
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{breastfeeding_concepts.join(',') || 0}) THEN patient_id END) AS breastfeeding_mothers,
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{cum_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{breastfeeding_concepts.join(',') || 0}) THEN patient_id END) AS cum_breastfeeding_mothers,
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{quarter_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{breastfeeding_concepts.join(',') || 0}) THEN patient_id END) AS quarterly_breastfeeding_mothers,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{breastfeeding_concept_ids.join(',')}) THEN patient_id END) AS breastfeeding_mothers,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{cum_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{breastfeeding_concept_ids.join(',')}) THEN patient_id END) AS cum_breastfeeding_mothers,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{quarter_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{breastfeeding_concept_ids.join(',')}) THEN patient_id END) AS quarterly_breastfeeding_mothers,
           #{'  '}
             -- WHO Stage 2 (CD4 based)
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{who_stage_2_concepts.join(',') || 0}) THEN patient_id END) AS who_stage_two,
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{cum_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{who_stage_2_concepts.join(',') || 0}) THEN patient_id END) AS cum_who_stage_two,
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{quarter_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{who_stage_2_concepts.join(',') || 0}) THEN patient_id END) AS quarterly_who_stage_two,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{who_stage_2_concept_ids.join(',')}) THEN patient_id END) AS who_stage_two,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{cum_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{who_stage_2_concept_ids.join(',')}) THEN patient_id END) AS cum_who_stage_two,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{quarter_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{who_stage_2_concept_ids.join(',')}) THEN patient_id END) AS quarterly_who_stage_two,
           #{'  '}
             -- Confirmed HIV infection (PCR)
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{pcr_concepts.join(',') || 0}) THEN patient_id END) AS confirmed_hiv_infection_pcr,
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{cum_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{pcr_concepts.join(',') || 0}) THEN patient_id END) AS cum_confirmed_hiv_infection_pcr,
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{quarter_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{pcr_concepts.join(',') || 0}) THEN patient_id END) AS quarterly_confirmed_hiv_infection_pcr,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{pcr_concept_ids.join(',')}) THEN patient_id END) AS confirmed_hiv_infection_pcr,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{cum_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{pcr_concept_ids.join(',')}) THEN patient_id END) AS cum_confirmed_hiv_infection_pcr,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{quarter_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{pcr_concept_ids.join(',')}) THEN patient_id END) AS quarterly_confirmed_hiv_infection_pcr,
           #{'  '}
             -- Presumed severe HIV
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{presumed_hiv_concepts.join(',') || 0}) THEN patient_id END) AS presumed_severe_hiv,
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{cum_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{presumed_hiv_concepts.join(',') || 0}) THEN patient_id END) AS cum_presumed_severe_hiv,
-            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{quarter_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{presumed_hiv_concepts.join(',') || 0}) THEN patient_id END) AS quarterly_presumed_severe_hiv
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{presumed_hiv_concept_ids.join(',')}) THEN patient_id END) AS presumed_severe_hiv,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{cum_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{presumed_hiv_concept_ids.join(',')}) THEN patient_id END) AS cum_presumed_severe_hiv,
+            COUNT(DISTINCT CASE WHEN date_enrolled BETWEEN '#{quarter_start_date}' AND '#{end_date}' AND reason_for_starting_art IN (#{presumed_hiv_concept_ids.join(',')}) THEN patient_id END) AS quarterly_presumed_severe_hiv
           #{'  '}
           FROM #{temp_earliest_start_date}
         SQL
@@ -2043,7 +2060,7 @@ module ArtService
         ActiveRecord::Base.connection.execute "DROP TABLE IF EXISTS #{tmp_preg_max_dt}"
 
         ActiveRecord::Base.connection.execute <<~SQL
-          CREATE TABLE #{temp_obs_last_visit} (
+          CREATE TABLE IF NOT EXISTS #{temp_obs_last_visit} (
             patient_id  INT NOT NULL,
             concept_id  INT NOT NULL,
             value_coded INT,
@@ -2052,7 +2069,7 @@ module ArtService
         SQL
 
         ActiveRecord::Base.connection.execute <<~SQL
-          CREATE TABLE #{tmp_preg_max_dt} (
+          CREATE TABLE IF NOT EXISTS #{tmp_preg_max_dt} (
             patient_id INT NOT NULL,
             concept_id INT NOT NULL,
             max_dt     DATETIME NOT NULL,
