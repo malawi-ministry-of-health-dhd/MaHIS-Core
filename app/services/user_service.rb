@@ -125,7 +125,32 @@ module UserService
     # user programs
     replace_user_programs(user, programs)
 
+    # Start the 90-day clock. Without this the property is absent, and an absent
+    # property reads as "not expired" - so every user created here was exempt
+    # from the password policy for life, while users created by the importer
+    # (which does set it) were not.
+    touch_password_updated!(user)
+
     user
+  end
+
+  ##
+  # Records that the user's password is current, starting the expiry window.
+  def self.touch_password_updated!(user, at: Time.current)
+    property = UserProperty.find_or_initialize_by(
+      user_id: user.user_id,
+      property: LoginResponseService::PASSWORD_UPDATED_PROPERTY
+    )
+    property.user = user
+    property.property_value = at.iso8601
+    property.save!
+  end
+
+  ##
+  # Backdates the expiry window so the user must set a new password at their
+  # next login.
+  def self.expire_password!(user)
+    touch_password_updated!(user, at: (LoginResponseService::PASSWORD_VALIDITY_PERIOD + 1.day).ago)
   end
 
   def self.update_username(user, new_username)
@@ -310,6 +335,21 @@ module UserService
     raise e
   end
 
+  ##
+  # Sets a new password outside the normal update path - used by the security
+  # question reset, where there is no session and no current password to check.
+  # Mirrors what update_user does, and refreshes last_password_updated so the
+  # 90-day expiry restarts rather than firing again immediately.
+  def self.reset_password_for(user, password)
+    ActiveRecord::Base.transaction do
+      user.password = hash_password(password, user.salt)
+      user.save!
+      touch_password_updated!(user)
+    end
+
+    user
+  end
+
   def self.reset_password(code:)
     secret_key =  YAML.safe_load(File.read('config/application.yml'))['password_reset']['secret_key']
 
@@ -349,11 +389,11 @@ module UserService
     # Check if the user is active
     raise InvalidParameterError, 'User is not active' unless user.active?
 
-    # auto expire user password
-    UserProperty.where(
-      user_id: user.id,
-      property: 'last_password_reset'
-    ).update_all(property_value: 31.days.ago.to_date)
+    # Force a password change at the next login. This used to write
+    # `last_password_reset`, which nothing reads, with a date 31 days old - short
+    # of the 90-day window even if the name had been right. So a code-based reset
+    # never actually made anyone change their password.
+    expire_password!(user)
 
     # authenticate the user
     new_authentication_token(user)

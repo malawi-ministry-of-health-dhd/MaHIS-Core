@@ -5,6 +5,12 @@ module Api
     class UserPropertiesController < ApplicationController
       include ModelUtils
 
+      # Security-question answers and reset tokens live in user_property, but they
+      # are secrets: `show` will happily read another user's property when given
+      # user_id, and `search` returns every user's rows for a name pattern. They
+      # are reachable only through SecurityQuestionsController, never here.
+      before_action :reject_protected_property
+
       def search
         name, = params.require %i[property]
 
@@ -71,6 +77,14 @@ module Api
       end
 
       private
+
+      def reject_protected_property
+        name = params[:property].to_s.strip
+        return if name.blank?
+        return unless SecurityQuestionService::PROTECTED_PROPERTIES.any? { |protected_name| name.include?(protected_name) }
+
+        render json: { errors: ['This property is not accessible through this endpoint'] }, status: :forbidden
+      end
 
       def validate_cross_user_property_update(provider)
         return true if provider.to_i == User.current.user_id.to_i

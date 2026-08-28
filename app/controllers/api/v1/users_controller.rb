@@ -119,6 +119,18 @@ module Api
         else
           password_response = LoginResponseService.build(user, nil, mark_login: false)
           if password_change_required?(password_response)
+            # An EXPIRED password must still clear the second factor first.
+            # Handing out a token here skipped the passkey ceremony entirely, so
+            # a stolen password that happened to be past its 90 days bought full
+            # access to a user who had deliberately turned the extra layer on.
+            #
+            # First-time login is deliberately not gated the same way: that user
+            # has never signed in, so there is no passkey registered yet and the
+            # enrolment happens after they set their own password.
+            if password_response[:password_needs_update] && extra_security_login_enabled?(user)
+              return render json: passkey_challenge_response(user), status: :accepted
+            end
+
             return render json: LoginResponseService.build(user, UserService.new_authentication_token(user))
           end
 
@@ -463,35 +475,25 @@ module Api
       def update_last_password_property(user, password)
         return unless password.present?
 
-        property = UserProperty.find_or_initialize_by(
-          property: 'last_password_updated',
-          user_id: user.user_id
+        # touch_password_updated! binds the loaded object so the required
+        # belongs_to :user validation is satisfied from memory; passing only
+        # user_id would re-query User under its location/active scope and
+        # silently fail to save for a user managed from another facility
+        # (find_user unscopes location for superusers).
+        UserService.touch_password_updated!(user)
+      rescue StandardError => e
+        # The password itself has already changed, so this must not fail the
+        # request - but it cannot pass silently either: leaving the old date in
+        # place asks the user to change their password again at every login.
+        Rails.logger.error(
+          "Password changed for user #{user.user_id} but last_password_updated was not saved: #{e.class}: #{e.message}"
         )
-
-        # Bind the loaded object so the required belongs_to :user validation is
-        # satisfied from memory; passing only user_id would re-query User under
-        # its location/active scope and silently fail to save for a user managed
-        # from another facility (find_user unscopes location for superusers).
-        property.user = user
-        property.property_value = Time.current.to_s
-        property.save
       end
 
+      # Delegates to the single copy of the rule; this used to be a second
+      # 90-day literal that could drift from the one the login response uses.
       def password_needs_update?(user_id)
-        last_password_property = UserProperty.find_by(
-          property: 'last_password_updated',
-          user_id: user_id
-        )
-        
-        # Return false if no property exists or property_value is blank
-        return false if last_password_property.nil? || last_password_property.property_value.blank?
-        
-        # Parse the timestamp and check if 90 days have elapsed
-        last_updated = Time.parse(last_password_property.property_value)
-        Time.current >= last_updated + 90.days
-      rescue ArgumentError
-        # Return false if timestamp can't be parsed
-        false
+        LoginResponseService.password_needs_update?(user_id)
       end
 
       def facility_level_for_location(location_id)
