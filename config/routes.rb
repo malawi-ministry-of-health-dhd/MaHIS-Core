@@ -53,6 +53,9 @@ Rails.application.routes.draw do
       resources :appointments
       resources :dispensations, only: %i[index create destroy]
       get '/check_username', to: 'users#check_username_exist'
+      get '/security_questions', to: 'security_questions#index'
+      post '/security_questions', to: 'security_questions#create'
+      delete '/security_questions', to: 'security_questions#destroy'
       post '/auth/passkeys/register', to: 'passkeys#register'
       post '/auth/passkeys/authenticate', to: 'passkeys#verify'
       get '/users/:user_id/passkeys', to: 'passkeys#index'
@@ -469,6 +472,11 @@ Rails.application.routes.draw do
   post '/api/v1/auth/login' => 'api/v1/users#login'
   post '/api/v1/auth/confirm_supervision' => 'api/v1/users#confirm_supervision'
   post '/api/v1/auth/reset_password' => 'api/v1/users#reset_password'
+  # Security-question password reset. Unauthenticated by definition - a user who
+  # cannot log in is exactly who needs it - and throttled per username.
+  get '/api/v1/auth/security_questions' => 'api/v1/security_questions#public_questions'
+  post '/api/v1/auth/security_questions/verify' => 'api/v1/security_questions#verify'
+  post '/api/v1/auth/security_questions/reset_password' => 'api/v1/security_questions#reset_password'
   post '/api/v1/auth/verify_token' => 'api/v1/users#check_token_validity'
   get '/api/v1/fast_track_assessment' => 'api/v1/fast_track#assessment'
   post '/api/v1/cancel_fast_track' => 'api/v1/fast_track#cancel'
