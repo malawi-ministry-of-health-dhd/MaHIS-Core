@@ -15,6 +15,9 @@ module Helpers
     # to something more secure
     def self.http_login
       main_config = YAML.load_file('config/application.yml')['test_credentials']
+      # Login throttle state lives in Redis and outlives a spec run, so a run
+      # that once used bad credentials would 429 every later run.
+      LoginThrottleService.unlock!(main_config['username'])
       @http_login ||= UserService.login(main_config['username'], main_config['password'])[:token]
     end
   end
