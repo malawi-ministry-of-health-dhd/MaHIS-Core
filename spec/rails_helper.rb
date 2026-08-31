@@ -54,6 +54,7 @@ RSpec.configure do |config|
     'medication_order_saver_spec.rb',
     'push_dde_footprints_job_spec.rb',
     'drug_order_service_spec.rb',
+    'patient_summary_builder_spec.rb',
     'user_service_spec.rb',
     'hts_dashboard_channel_spec.rb',
     'stage_spec.rb',
@@ -65,6 +66,7 @@ RSpec.configure do |config|
     'couchdb_changes_listener_spec.rb',
     'batch_patient_sync_job_spec.rb',
     'bulk_patient_record_sync_job_spec.rb',
+    'rebuild_patient_lab_data_job_spec.rb',
     'base_sync_job_spec.rb',
     'clinical_data_deduplication_job_spec.rb',
     'hard_delete_unsyncable_patients_task_spec.rb',
@@ -82,7 +84,16 @@ RSpec.configure do |config|
     'patient_unvoid_spec.rb',
     'voided_patients_spec.rb',
     'save_patient_record_service_spec.rb',
-    'vaccine_manager_spec.rb'
+    'vaccine_manager_spec.rb',
+    'labour_stats_queries_spec.rb',
+    'login_throttle_service_spec.rb',
+    'user_service_login_throttle_spec.rb',
+    'login_throttle_spec.rb',
+    'user_service_villages_spec.rb',
+    'user_villages_spec.rb',
+    'security_question_service_spec.rb',
+    'security_questions_spec.rb',
+    'password_expiry_spec.rb'
   ].freeze
 
   # Wrap individual test execution to skip non-passing specs

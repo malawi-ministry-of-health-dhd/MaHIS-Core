@@ -11,7 +11,11 @@ module Api
       skip_before_action :authenticate, only: %i[login confirm_supervision reset_password]
 
       def index
-        filters = params.permit(:role, :search_string, :include_deactivated, :location_id, location_ids: []).to_hash.transform_keys(&:to_sym)
+        # `roles` is the multi-select counterpart to `role`, mirroring how
+        # `location_ids` complements `location_id`. It has to be permitted as an
+        # array explicitly, otherwise strong params drops it.
+        filters = params.permit(:role, :search_string, :include_deactivated, :location_id,
+                                location_ids: [], roles: []).to_hash.transform_keys(&:to_sym)
         query = service.find_users(**filters) 
 
         render json: {
@@ -115,6 +119,18 @@ module Api
         else
           password_response = LoginResponseService.build(user, nil, mark_login: false)
           if password_change_required?(password_response)
+            # An EXPIRED password must still clear the second factor first.
+            # Handing out a token here skipped the passkey ceremony entirely, so
+            # a stolen password that happened to be past its 90 days bought full
+            # access to a user who had deliberately turned the extra layer on.
+            #
+            # First-time login is deliberately not gated the same way: that user
+            # has never signed in, so there is no passkey registered yet and the
+            # enrolment happens after they set their own password.
+            if password_response[:password_needs_update] && extra_security_login_enabled?(user)
+              return render json: passkey_challenge_response(user), status: :accepted
+            end
+
             return render json: LoginResponseService.build(user, UserService.new_authentication_token(user))
           end
 
@@ -178,6 +194,28 @@ module Api
         response[:supervision_session] = supervision_session if supervision_session
 
         render json: response, status: :ok
+      end
+
+      # Clears a user's failed-login back-off. Locks expire on their own, so this
+      # is only a convenience for an admin who does not want to wait it out.
+      def unlock_login
+        target_user = find_user(params[:user_id] || params[:id])
+        return unless validate_sensitive_user_update(target_user, %i[login_lock])
+
+        LoginThrottleService.unlock!(target_user.username)
+
+        render json: { message: ['Login lock cleared'], locked: false }, status: :ok
+      end
+
+      # Whether a user is currently backed off, and for how long.
+      def login_lock_status
+        target_user = find_user(params[:user_id] || params[:id])
+        # remote_address: nil - report on the account, not on whichever address
+        # the administrator happens to be asking from.
+        retry_after = LoginThrottleService.retry_after(target_user.username, remote_address: nil)
+
+        render json: { user_id: target_user.user_id, locked: !retry_after.nil?, retry_after: },
+               status: :ok
       end
 
       def check_first_time_login
@@ -331,26 +369,17 @@ module Api
         true
       end
 
-      # Only a Global Superuser may grant these roles
-      GLOBAL_ONLY_ROLES = ['Global Superuser', 'District Superuser'].freeze
+      # Only a Global Superuser may grant these roles. Kept as an alias of the
+      # canonical list on User so existing references keep working.
+      GLOBAL_ONLY_ROLES = User::GLOBAL_ONLY_ROLE_NAMES
 
+      # The rank rule itself lives on User#may_assign_role?, so the role lists the
+      # API hands out and the roles it accepts on write cannot drift apart.
       def validate_role_permissions(roles)
         return true if roles.blank?
-        return true if User.current.global_superuser?
-
-        current_rank = User.current.superuser_rank
 
         roles.each do |role|
-          role_rank = User::SUPERUSER_ROLE_RANK[role.to_s.strip.downcase]
-          next if role_rank.nil? # ordinary (non-superuser) role — anyone may assign it
-
-          # Global Superuser / District Superuser may only ever be granted by a Global Superuser.
-          forbidden = GLOBAL_ONLY_ROLES.any? { |gr| gr.casecmp(role.to_s).zero? }
-          # Any other superuser role may only be granted by someone of equal or higher rank,
-          # so a user can never grant a role that outranks their own.
-          forbidden ||= current_rank < role_rank
-
-          next unless forbidden
+          next if User.current.may_assign_role?(role)
 
           render json: { errors: ["You are not authorised to assign the '#{role}' role"] }, status: :forbidden
           return false
@@ -446,35 +475,25 @@ module Api
       def update_last_password_property(user, password)
         return unless password.present?
 
-        property = UserProperty.find_or_initialize_by(
-          property: 'last_password_updated',
-          user_id: user.user_id
+        # touch_password_updated! binds the loaded object so the required
+        # belongs_to :user validation is satisfied from memory; passing only
+        # user_id would re-query User under its location/active scope and
+        # silently fail to save for a user managed from another facility
+        # (find_user unscopes location for superusers).
+        UserService.touch_password_updated!(user)
+      rescue StandardError => e
+        # The password itself has already changed, so this must not fail the
+        # request - but it cannot pass silently either: leaving the old date in
+        # place asks the user to change their password again at every login.
+        Rails.logger.error(
+          "Password changed for user #{user.user_id} but last_password_updated was not saved: #{e.class}: #{e.message}"
         )
-
-        # Bind the loaded object so the required belongs_to :user validation is
-        # satisfied from memory; passing only user_id would re-query User under
-        # its location/active scope and silently fail to save for a user managed
-        # from another facility (find_user unscopes location for superusers).
-        property.user = user
-        property.property_value = Time.current.to_s
-        property.save
       end
 
+      # Delegates to the single copy of the rule; this used to be a second
+      # 90-day literal that could drift from the one the login response uses.
       def password_needs_update?(user_id)
-        last_password_property = UserProperty.find_by(
-          property: 'last_password_updated',
-          user_id: user_id
-        )
-        
-        # Return false if no property exists or property_value is blank
-        return false if last_password_property.nil? || last_password_property.property_value.blank?
-        
-        # Parse the timestamp and check if 90 days have elapsed
-        last_updated = Time.parse(last_password_property.property_value)
-        Time.current >= last_updated + 90.days
-      rescue ArgumentError
-        # Return false if timestamp can't be parsed
-        false
+        LoginResponseService.password_needs_update?(user_id)
       end
 
       def facility_level_for_location(location_id)

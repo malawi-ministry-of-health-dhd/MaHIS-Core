@@ -24,6 +24,16 @@ jobs:
       GITHUB_METADATA_URL: https://raw.githubusercontent.com/malawi-ministry-of-health-dhd/MaHIS-Metadata/7f99c4f6e034c17f0a2a9def73463424e05d23ae/metadata.sql
 
     services:
+      redis:
+        image: redis:7.4-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
       mysql:
         image: mysql:8.0.46@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
         env:

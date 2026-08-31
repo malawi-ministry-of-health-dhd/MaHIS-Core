@@ -53,6 +53,9 @@ Rails.application.routes.draw do
       resources :appointments
       resources :dispensations, only: %i[index create destroy]
       get '/check_username', to: 'users#check_username_exist'
+      get '/security_questions', to: 'security_questions#index'
+      post '/security_questions', to: 'security_questions#create'
+      delete '/security_questions', to: 'security_questions#destroy'
       post '/auth/passkeys/register', to: 'passkeys#register'
       post '/auth/passkeys/authenticate', to: 'passkeys#verify'
       get '/users/:user_id/passkeys', to: 'passkeys#index'
@@ -65,11 +68,14 @@ Rails.application.routes.draw do
         put '/update_user_villages', to: 'users#update_user_villages'
         get '/check_first_time_login', to: 'users#check_first_time_login'
         post '/clear_last_login_time', to: 'users#clear_last_login_time'
+        post '/unlock_login', to: 'users#unlock_login'
+        get '/login_lock_status', to: 'users#login_lock_status'
       end
 
       resources :hts_reports, only: %i[index]
       get '/hts_stats' => 'hts_reports#daily_stats'
       get '/hts_stats_patients' => 'hts_reports#daily_stats_patients'
+      get '/iccm_stats' => 'iccm_reports#daily_stats'
       get '/valid_provider_id', to: 'people#valid_provider_id'
       get '/next_hts_linkage_ids_batch', to: 'people#next_hts_linkage_ids_batch'
 
@@ -197,6 +203,8 @@ Rails.application.routes.draw do
       get '/impow/pending_enrollments', to: 'impow#pending_enrollments'
       get '/impow/metrics', to: 'impow#metrics'
       get '/impow/batch_anthropometry/patients', to: 'impow#batch_anthropometry_patients'
+      get '/impow/batch_medical_assessment/patients', to: 'impow#batch_medical_assessment_patients'
+      get '/impow/batch_dispensation/patients', to: 'impow#batch_dispensation_patients'
 
       # Locations
       resources :locations do
@@ -208,6 +216,11 @@ Rails.application.routes.draw do
           get :facility_level
           put :facility_level
           patch :facility_level
+          # :id is the facility here -- departments are global, their on/off
+          # state is per-facility.
+          get :departments
+          put :departments
+          patch :departments
         end
 
         collection do
@@ -459,6 +472,11 @@ Rails.application.routes.draw do
   post '/api/v1/auth/login' => 'api/v1/users#login'
   post '/api/v1/auth/confirm_supervision' => 'api/v1/users#confirm_supervision'
   post '/api/v1/auth/reset_password' => 'api/v1/users#reset_password'
+  # Security-question password reset. Unauthenticated by definition - a user who
+  # cannot log in is exactly who needs it - and throttled per username.
+  get '/api/v1/auth/security_questions' => 'api/v1/security_questions#public_questions'
+  post '/api/v1/auth/security_questions/verify' => 'api/v1/security_questions#verify'
+  post '/api/v1/auth/security_questions/reset_password' => 'api/v1/security_questions#reset_password'
   post '/api/v1/auth/verify_token' => 'api/v1/users#check_token_validity'
   get '/api/v1/fast_track_assessment' => 'api/v1/fast_track#assessment'
   post '/api/v1/cancel_fast_track' => 'api/v1/fast_track#cancel'
