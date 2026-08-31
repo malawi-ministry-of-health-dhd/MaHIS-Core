@@ -3,7 +3,6 @@
 FactoryBot.define do
   factory :drug do
     association :concept
-    association :form, factory: :concept
 
     name { 'Foobar' }
     date_created { Time.now }

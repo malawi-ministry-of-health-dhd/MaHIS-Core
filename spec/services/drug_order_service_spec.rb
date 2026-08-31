@@ -7,11 +7,6 @@ RSpec.describe DrugOrderService do
   let(:provider_id) { default_provider.person_id }
   let(:service) { DrugOrderService }
 
-  before(:each) do
-    setup_cohort_test_data
-    EncounterType.find_or_create_by!(name: 'TREATMENT')
-  end
-
   describe :create_drug_orders do
     let(:treatment_encounter) { create :encounter_treatment, patient:, provider_id: }
     let(:archetypes) do
@@ -86,7 +81,7 @@ RSpec.describe DrugOrderService do
 
   describe :patients_awaiting_dispensation do
     let(:location_id) { Location.current&.location_id || 700 }
-    let(:drug) { Drug.first || create(:drug, name: 'Queue spec drug') }
+    let(:drug) { Drug.first || create(:drug, name: 'Queue spec drug', form: create(:concept)) }
 
     def create_drug_order_for_queue(patient:, start_date: Date.current, encounter_datetime: Time.current, quantity: 0)
       encounter = create(
@@ -177,7 +172,7 @@ RSpec.describe DrugOrderService do
     end
 
     it 'repairs drug concept orders that were saved without drug_order rows' do
-      exact_drug = create(:drug, concept: drug.concept, name: 'Queue spec drug 500mg')
+      exact_drug = create(:drug, concept: drug.concept, form: drug.form, name: 'Queue spec drug 500mg')
       order = create_orphan_medication_order(
         patient:,
         instructions: 'Queue spec drug 500mg: 2 tab(s) BD for 3 days'

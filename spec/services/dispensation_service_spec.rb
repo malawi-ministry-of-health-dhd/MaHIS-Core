@@ -5,10 +5,6 @@ require 'rails_helper'
 RSpec.describe DispensationService do
   let(:patient) { create :patient }
 
-  before(:each) do
-    setup_cohort_test_data
-  end
-
   describe :dispensations do
     it 'retrieves all dispensations for a given patient' do
       created = (1...10).collect do |i|
@@ -35,7 +31,7 @@ RSpec.describe DispensationService do
 
   describe :dispense_drug do
     it 'updates order quantity' do
-      program = Program.find_by_name('HIV PROGRAM') || create(:program, name: 'HIV PROGRAM')
+      program = create :program
       encounter = create(:encounter_treatment, patient:)
       drug = Drug.arv_drugs[0]
       order = create :order, encounter:, patient:,
@@ -45,7 +41,7 @@ RSpec.describe DispensationService do
 
       obs = DispensationService.dispense_drug(program, drug_order, 10)
 
-      expect(obs.concept_id).to eq(ConceptName.find_by_name('AMOUNT DISPENSED').concept_id)
+      expect(obs.concept_id).to eq(concept('AMOUNT DISPENSED').concept_id)
       expect(obs.order).to eq(order)
       expect(obs.order.drug_order.quantity).to eq(10)
     end

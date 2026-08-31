@@ -20,13 +20,13 @@ describe ArtService::Reports::CohortBuilder do
     # Ensure User.current remains set
     User.current ||= User.unscoped.first
     Location.current ||= Location.first
-    setup_cohort_test_data
   end
 
   # Concepts
   let(:arv_concept) { ConceptName.find_by_name!('Antiretroviral drugs').concept }
   let(:pregnant_concept) { ConceptName.find_by_name('Is patient pregnant?')&.concept }
   let(:reason_for_art_concept) { ConceptName.find_by_name('Reason for ART eligibility').concept }
+  let(:reason_for_art_answer_concept) { create(:concept) }
   let(:on_arvs_state) do
     ProgramWorkflowState.where(concept: ConceptName.find_by_name('On antiretrovirals').concept).first
   end
@@ -42,16 +42,12 @@ describe ArtService::Reports::CohortBuilder do
 
   before(:each) do
     # Clean database records from previous tests
-    ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS = 0')
     PatientState.unscoped.delete_all
     PatientProgram.unscoped.delete_all
     Observation.unscoped.delete_all
     DrugOrder.unscoped.delete_all
     Order.unscoped.delete_all
     Encounter.unscoped.delete_all
-    ActiveRecord::Base.connection.execute('DELETE FROM concept_proposal')
-    ActiveRecord::Base.connection.execute('DELETE FROM note')
-    ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS = 1')
 
     # Clean ALL temp tables that might exist from previous runs
     temp_tables = %w[
@@ -80,31 +76,14 @@ describe ArtService::Reports::CohortBuilder do
 
   # Helper method to create the required "Reason for ART eligibility" observation
   def create_reason_for_art_obs(patient:, encounter:, date:)
-    reason_concept = ConceptName.find_by_name('WHO stage 4 clinical conditions')&.concept
-    reason_concept ||= ConceptName.find_by_name('WHO stage 3 clinical conditions')&.concept
-    reason_concept ||= ConceptName.find_by_name('WHO stage 2 clinical conditions')&.concept
-    reason_concept ||= ConceptName.find_by_name('WHO stage 1 clinical conditions')&.concept
-    reason_concept ||= Concept.where(retired: 0).first
-
-    if reason_concept
-      Observation.create!(
-        person_id: patient.patient_id,
-        concept_id: reason_for_art_concept.concept_id,
-        value_coded: reason_concept.concept_id,
-        obs_datetime: date,
-        encounter: encounter,
-        location_id: location.location_id
-      )
-    else
-      Observation.create!(
-        person_id: patient.patient_id,
-        concept_id: reason_for_art_concept.concept_id,
-        value_text: 'Unknown',
-        obs_datetime: date,
-        encounter: encounter,
-        location_id: location.location_id
-      )
-    end
+    Observation.create!(
+      person_id: patient.patient_id,
+      concept_id: reason_for_art_concept.concept_id,
+      value_coded: reason_for_art_answer_concept.concept_id,
+      obs_datetime: date,
+      encounter: encounter,
+      location_id: location.location_id
+    )
   end
 
   describe '#build' do

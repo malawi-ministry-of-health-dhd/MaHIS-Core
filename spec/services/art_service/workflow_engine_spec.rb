@@ -6,48 +6,29 @@ ACTIVITIES = 'ART adherence, Drug Dispensations, HIV clinic consultations,
               HIV first visits, HIV reception visits, HIV staging visits,
               Manage Appointments, Prescriptions, Vitals'
 
-hiv_program_id = 1
+HIV_PROGRAM_ID = 1
 
 describe ArtService::WorkflowEngine do
   let(:epoch) { Time.now }
-  let(:art_program) { find_or_create_program('HIV Program') }
+  let(:art_program) { Program.find_by_name!('HIV Program') }
   let(:patient) { create :patient }
-  let(:hiv_program_id) { art_program.program_id }
   let(:engine) do
-    UserProperty.find_or_create_by(user: User.current, property: 'Activities') do |up|
-      up.property_value = ACTIVITIES
-    end
+    UserProperty.create(user: User.current, property: 'Activities', property_value: ACTIVITIES)
     ArtService::WorkflowEngine.new program: art_program,
                                    patient:,
                                    date: epoch
   end
 
   let(:no_activity_engine) do
-    UserProperty.find_by(user: User.current, property: 'Activities')&.delete
+    # Initialise an engine without any user activities
+    UserProperty.find_by(property: 'Activities')&.delete
 
     ArtService::WorkflowEngine.new program: art_program,
                                    patient:,
                                    date: epoch
   end
 
-  before(:each) do
-    setup_cohort_test_data
-    ensure_workflow_encounter_types
-    ensure_workflow_concepts
-    ensure_arv_drug
-  end
-
-  after(:each) do
-    ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS=0')
-    UserProperty.where(user: User.current, property: 'Activities').destroy_all
-    Observation.unscoped.delete_all
-    Order.unscoped.delete_all
-    DrugOrder.unscoped.delete_all
-    Encounter.unscoped.delete_all
-    PatientProgram.unscoped.delete_all
-    PatientState.unscoped.delete_all
-    ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS=1')
-  end
+  let(:constrained_engine) { raise :not_implemented }
 
   describe :next_encounter do
     it 'returns nil if no activity is enabled' do
@@ -122,7 +103,7 @@ describe ArtService::WorkflowEngine do
       create :encounter, encounter_type: EncounterType.find_by_name!('HIV Staging').encounter_type_id,
                          encounter_datetime: epoch - 100.days,
                          patient_id: patient.patient_id,
-                         program_id: hiv_program_id
+                         program_id: HIV_PROGRAM_ID
       encounter_type = engine.next_encounter
       expect(encounter_type.name.upcase).to eq('HIV CLINIC CONSULTATION')
     end
@@ -228,7 +209,7 @@ describe ArtService::WorkflowEngine do
     let(:treatment_type) { EncounterType.find_by_name!('TREATMENT') }
 
     it 'ignores non-drug orders when completed drug orders are present' do
-      treatment = create(:encounter, type: treatment_type, patient:, program_id: hiv_program_id)
+      treatment = create(:encounter, type: treatment_type, patient:, program_id: HIV_PROGRAM_ID)
       drug_order = instance_double(DrugOrder, amount_needed: 0)
       completed_order = instance_double(Order, drug_order:)
       non_drug_order = instance_double(Order, drug_order: nil)
@@ -244,7 +225,7 @@ describe ArtService::WorkflowEngine do
     end
 
     it 'is incomplete when a prescription contains no drug orders' do
-      treatment = create(:encounter, type: treatment_type, patient:, program_id: hiv_program_id)
+      treatment = create(:encounter, type: treatment_type, patient:, program_id: HIV_PROGRAM_ID)
       non_drug_order = instance_double(Order, drug_order: nil)
       orders = instance_double(ActiveRecord::Associations::CollectionProxy)
 
@@ -270,14 +251,14 @@ describe ArtService::WorkflowEngine do
     create(:encounter, type: EncounterType.find_by!(name: EncounterType::HIV_CLINIC_REGISTRATION),
                        patient:,
                        date_created: date,
-                       program_id: hiv_program_id)
+                       program_id: HIV_PROGRAM_ID)
   end
 
   def receive_patient(patient, guardian_only: false, on_fast_track: false)
     register_patient patient
     reception = create :encounter, type: EncounterType.find_by_name!('HIV RECEPTION'),
                                    patient:,
-                                   program_id: hiv_program_id
+                                   program_id: HIV_PROGRAM_ID
     if guardian_only
       create :observation, concept_id: ConceptName.find_by_name!('PATIENT PRESENT').concept_id,
                            encounter: reception,
@@ -310,7 +291,7 @@ describe ArtService::WorkflowEngine do
 
     encounter = create :encounter, type: EncounterType.find_by_name!('VITALS'),
                                    patient:,
-                                   program_id: hiv_program_id
+                                   program_id: HIV_PROGRAM_ID
 
     create :observation, encounter:,
                          person_id: encounter.patient_id,
@@ -327,28 +308,28 @@ describe ArtService::WorkflowEngine do
     record_vitals patient
     create :encounter, type: EncounterType.find_by_name!('HIV STAGING'),
                        patient:,
-                       program_id: hiv_program_id
+                       program_id: HIV_PROGRAM_ID
   end
 
   def record_hiv_clinic_consultation(patient)
     record_staging patient
     create :encounter, type: EncounterType.find_by_name!('HIV CLINIC CONSULTATION'),
                        patient:,
-                       program_id: hiv_program_id
+                       program_id: HIV_PROGRAM_ID
   end
 
   def record_art_adherence(patient)
     record_hiv_clinic_consultation patient
     create :encounter, type: EncounterType.find_by_name!('ART ADHERENCE'),
                        patient:,
-                       program_id: hiv_program_id
+                       program_id: HIV_PROGRAM_ID
   end
 
   def record_treatment(patient, assess_fast_track: false)
     record_art_adherence patient
     encounter = create :encounter, type: EncounterType.find_by_name!('TREATMENT'),
                                    patient:,
-                                   program_id: hiv_program_id
+                                   program_id: HIV_PROGRAM_ID
 
     arv = Drug.arv_drugs[0]
     order = create(:order, concept: arv.concept, patient:,
@@ -362,9 +343,8 @@ describe ArtService::WorkflowEngine do
 
   def setup_fast_track_assessment(encounter, patient, assess_fast_track)
     assess_fast_track_answer = if assess_fast_track
-                                 GlobalProperty.find_or_create_by(property: 'enable.fast.track', location_id: Location.current.location_id) do |gp|
-                                   gp.property_value = 'true'
-                                 end
+                                 create :global_property, property: 'enable.fast.track',
+                                                          property_value: 'true'
                                  ConceptName.find_by_name!('Yes').concept_id
                                else
                                  ConceptName.find_by_name!('No').concept_id
@@ -381,7 +361,7 @@ describe ArtService::WorkflowEngine do
 
     encounter = create :encounter, type: EncounterType.find_by_name!('FAST TRACK ASSESMENT'),
                                    patient:,
-                                   program_id: hiv_program_id
+                                   program_id: HIV_PROGRAM_ID
     create :observation, concept_id: ConceptName.find_by_name!('Adult 18 years +').concept_id,
                          person: patient.person,
                          encounter:
@@ -391,21 +371,21 @@ describe ArtService::WorkflowEngine do
     record_fast_track patient
     create :encounter, type: EncounterType.find_by_name!('DISPENSING'),
                        patient:,
-                       program_id: hiv_program_id
+                       program_id: HIV_PROGRAM_ID
   end
 
   def record_appointment(patient)
     record_dispensing patient
     create :encounter, type: EncounterType.find_by_name!('APPOINTMENT'),
                        patient:,
-                       program_id: hiv_program_id
+                       program_id: HIV_PROGRAM_ID
   end
 
   def prescribe_arv(patient, date = nil)
     date ||= Time.now
 
     create :observation, person: patient.person,
-                         encounter: create(:encounter_dispensing, patient:, program_id: hiv_program_id),
+                         encounter: create(:encounter_dispensing, patient:, program_id: HIV_PROGRAM_ID),
                          concept_id: ConceptName.find_by_name!('AMOUNT DISPENSED').concept_id,
                          value_drug: Drug.arv_drugs[0].drug_id,
                          obs_datetime: date
@@ -413,7 +393,7 @@ describe ArtService::WorkflowEngine do
 
   def record_patient_not_receiving_treatment(patient)
     create :observation, person: patient.person,
-                         encounter: create(:encounter_vitals, patient:, program_id: hiv_program_id),
+                         encounter: create(:encounter_vitals, patient:, program_id: HIV_PROGRAM_ID),
                          concept_id: ConceptName.find_by_name!('Prescribe drugs').concept_id,
                          value_coded: ConceptName.find_by_name!('No').concept_id
   end
@@ -424,7 +404,7 @@ describe ArtService::WorkflowEngine do
                           .merge(EncounterType.where(name: EncounterType::REGISTRATION))
                           .first
     registration ||= create(:encounter, patient:,
-                                        program_id: hiv_program_id,
+                                        program_id: HIV_PROGRAM_ID,
                                         encounter_datetime: date || Date.today,
                                         type: EncounterType.find_by!(name: EncounterType::REGISTRATION))
 
@@ -432,67 +412,5 @@ describe ArtService::WorkflowEngine do
                        encounter: registration,
                        concept_id: ConceptName.find_by!(name: Concept::PATIENT_TYPE).concept_id,
                        value_coded: ConceptName.find_by!(name: concept_name).concept_id)
-  end
-
-  def find_or_create_program(name)
-    Program.find_by_name(name) || Program.find_by_name('HIV PROGRAM') || create(:program, name: 'HIV PROGRAM', concept: find_or_create_concept('HIV PROGRAM'))
-  end
-
-  def find_or_create_encounter_type(name)
-    EncounterType.find_by_name(name) || create(:encounter_type, name:)
-  end
-
-  def find_or_create_concept(name)
-    ConceptName.find_by_name(name)&.concept || create(:concept).tap do |concept|
-      create(:concept_name, concept:, name:)
-    end
-  end
-
-  def ensure_workflow_encounter_types
-    find_or_create_encounter_type('HIV RECEPTION')
-    find_or_create_encounter_type('VITALS')
-    find_or_create_encounter_type('SYMPTOM SCREENING')
-    find_or_create_encounter_type('AHD SCREENING')
-    find_or_create_encounter_type('HIV STAGING')
-    find_or_create_encounter_type('HIV Staging')
-    find_or_create_encounter_type('HIV CLINIC CONSULTATION')
-    find_or_create_encounter_type('ART ADHERENCE')
-    find_or_create_encounter_type('TREATMENT')
-    find_or_create_encounter_type('FAST TRACK ASSESMENT')
-    find_or_create_encounter_type('DISPENSING')
-    find_or_create_encounter_type('APPOINTMENT')
-  end
-
-  def ensure_workflow_concepts
-    find_or_create_concept('Patient present')
-    find_or_create_concept('PATIENT PRESENT')
-    find_or_create_concept('External consultation')
-    find_or_create_concept('Guardian present')
-    find_or_create_concept('Weight')
-    find_or_create_concept('Height (cm)')
-    find_or_create_concept('Fast')
-    find_or_create_concept('Assess for fast track?')
-    find_or_create_concept('Adult 18 years +')
-    find_or_create_concept('AMOUNT DISPENSED')
-    find_or_create_concept('Prescribe drugs')
-    find_or_create_concept('Fast track visit')
-    find_or_create_concept('Refer to ART clinician')
-    find_or_create_concept('Medication orders')
-    find_or_create_concept('Continue with AHD')
-    find_or_create_concept('AHD Symptom')
-  end
-
-  def ensure_arv_drug
-    arv_concept = find_or_create_concept('Antiretroviral drugs')
-    dtg_concept = find_or_create_concept('Dolutegravir')
-    ConceptSet.find_or_create_by!(set: arv_concept, concept: dtg_concept) do |membership|
-      membership.creator = 1
-      membership.date_created = Time.now
-      membership.uuid = SecureRandom.uuid
-    end
-
-    return if Drug.where(concept: dtg_concept).exists?
-
-    create(:drug, concept: dtg_concept, name: 'Dolutegravir (50mg tablet)')
   end
 end

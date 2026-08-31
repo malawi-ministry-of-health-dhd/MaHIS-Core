@@ -8,57 +8,10 @@ RSpec.describe ArtService::AppointmentEngine do
   subject { ArtService::AppointmentEngine }
 
   let(:patient) { create :patient }
-  let(:program) { Program.find_by_name('HIV PROGRAM') || create(:program, name: 'HIV PROGRAM') }
+  let(:program) { Program.find_by_name('HIV Program') }
   let(:epoch) { Date.today }
   let(:person) { create :person }
   let(:appointment_service) { subject.new(retro_date: epoch, program:, patient:) }
-
-  def encounter_type(name)
-    EncounterType.find_by_name(name)
-  end
-
-  def concept(name)
-    ConceptName.find_by_name(name)&.concept
-  end
-
-  def find_or_create_concept(name)
-    ConceptName.find_by_name(name)&.concept || create(:concept).tap do |concept|
-      create(:concept_name, concept:, name:)
-    end
-  end
-
-  after(:each) do
-    ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS=0')
-    Observation.unscoped.delete_all
-    Order.unscoped.delete_all
-    DrugOrder.unscoped.delete_all
-    Encounter.unscoped.delete_all
-    PatientProgram.unscoped.delete_all
-    PatientState.unscoped.delete_all
-    ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS=1')
-  end
-
-  before(:each) do
-    setup_cohort_test_data
-    EncounterType.find_or_create_by!(name: 'TREATMENT')
-    EncounterType.find_or_create_by!(name: 'Treatment')
-    EncounterType.find_or_create_by!(name: 'APPOINTMENT')
-    EncounterType.find_or_create_by!(name: 'Appointment')
-    EncounterType.find_or_create_by!(name: 'VITALS')
-    EncounterType.find_or_create_by!(name: 'HIV CLINIC REGISTRATION')
-    EncounterType.find_or_create_by!(name: 'HIV STAGING')
-    EncounterType.find_or_create_by!(name: 'ART ADHERENCE')
-    EncounterType.find_or_create_by!(name: 'FAST TRACK ASSESMENT')
-    EncounterType.find_or_create_by!(name: 'DISPENSING')
-    EncounterType.find_or_create_by!(name: 'HIV RECEPTION')
-
-    find_or_create_concept('APPOINTMENT DATE')
-    find_or_create_concept('Appointment Date')
-    find_or_create_concept('Appointment reason')
-    find_or_create_concept('AMOUNT OF DRUG BROUGHT TO CLINIC')
-    find_or_create_concept('Has transfer letter')
-    find_or_create_concept('Optimize - including hanging pills')
-  end
 
   describe :next_appointment do
     it 'does not suggest appointments on clinic days' do
@@ -148,7 +101,7 @@ RSpec.describe ArtService::AppointmentEngine do
       created = (1..10).collect do |i|
         create(:obs_appointment, encounter:,
                                  value_datetime: epoch + i.days,
-                                 person: patient.person)
+                                 person:)
       end
 
       retrieved = appointment_service.appointments.collect(&:obs_id).sort
@@ -161,7 +114,7 @@ RSpec.describe ArtService::AppointmentEngine do
       created = (1..10).collect do |i|
         create(:obs_appointment, encounter:,
                                  value_datetime: epoch + i.days,
-                                 person: patient.person)
+                                 person:)
       end
 
       retrieved = appointment_service.appointments value_datetime: epoch + 2.days
@@ -174,13 +127,12 @@ RSpec.describe ArtService::AppointmentEngine do
 
       created = (1..10).collect do |i|
         create :obs_appointment, encounter:,
-                                 value_datetime: epoch + i.days,
-                                 person: patient.person
+                                 value_datetime: epoch + i.days
       end
 
       retrieved = appointment_service.appointments person: created[0].person
-      expect(retrieved.size).to be(10)
-      expect(retrieved.first.obs_id).to eq(created.last.obs_id)
+      expect(retrieved.size).to be(1)
+      expect(retrieved[0].obs_id).to eq(created[0].obs_id)
     end
 
     it 'retrieves all appointments for a given date and person' do
@@ -188,11 +140,11 @@ RSpec.describe ArtService::AppointmentEngine do
 
       created = (0..9).collect do |i|
         params = { encounter:, value_datetime: epoch + i.days }
-        params[:person] = patient.person if i.odd?
+        params[:person] = person if i.odd?
         create :obs_appointment, params
       end
 
-      # Odd numbered appointments in created belong to our `patient`
+      # Odd numbered appointments in created belong to our `person`
       retrieved = appointment_service.appointments person: created[1].person,
                                                    value_datetime: created[1].value_datetime.to_date
       expect(retrieved.size).to be(1)
@@ -236,7 +188,7 @@ RSpec.describe ArtService::AppointmentEngine do
 
     it 'creates appointment on bound retro date' do
       created = appointment_service.create_appointment patient, epoch + 10.days
-      retrieved = appointment_service.appointments
+      retrieved = Observation.where concept: concept('Appointment date')
 
       expect(retrieved.size).to be(1)
       expect(created.value_datetime).to be(created.value_datetime)

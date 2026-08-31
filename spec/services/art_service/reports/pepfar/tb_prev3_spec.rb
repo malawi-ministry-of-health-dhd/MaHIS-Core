@@ -2,27 +2,49 @@
 
 require 'rails_helper'
 
-RSpec.describe ArtService::Reports::Pepfar::TbPrev3, type: :service do
+RSpec.describe ArtService::Reports::Pepfar::TbPrev3 do
+  let(:drug_order) { create(:drug_order, drug: Drug.find(1216), order:, quantity: 12) }
   let(:start_date) { Date.today - 3.months }
   let(:end_date) { Date.today }
   let(:report) { ArtService::Reports::Pepfar::TbPrev3.new(start_date:, end_date:) }
 
-  let(:patient_hash) do
-    {
-      'patient_id' => 1,
-      'arv_number' => 'MPC-ARV-1',
-      'tpt_initiation_date' => Date.today - 1.month,
-      'art_start_date' => Date.today - 2.months,
-      'outcome' => 'Active',
-      'gender' => 'F',
-      'birthdate' => 17.years.ago.to_date,
-      'age_group' => '15-19 years',
-      'transfer_in' => 0,
-      'total_pills_taken' => 30,
-      'months_on_tpt' => 1,
-      'total_days_on_medication' => 30,
-      'drug_concepts' => '123,456'
-    }
+  # persist data
+  before(:all) do
+    @person = create(:person)
+    @patient = create(:patient, patient_id: @person.id)
+    @patient_program = create(:patient_program, patient_id: @patient.id, program: Program.find_by_name('HIV Program'))
+    @patient_state = create(:patient_state, patient_program: @patient_program, start_date: Date.today - 6.months)
+    # create an HIV CLINIC REGISTRATION encounter
+    @encounter = create(:encounter, patient: @patient, encounter_datetime: Date.today - 6.months,
+                                    program: Program.find_by_name('HIV Program'), type: EncounterType.find_by_name('HIV CLINIC REGISTRATION'))
+    # create an observation with concept Type of patient and the value_coded as New Patient
+    @observation = create(:observation, encounter: @encounter, concept: ConceptName.find_by_name('Type of patient').concept,
+                                        value_coded: ConceptName.find_by_name('New Patient').concept_id,
+                                        obs_datetime: Date.today - 6.months, person: @person)
+
+    @patient_identifier = create(:patient_identifier, patient_id: @patient.id, identifier_type: 4,
+                                                      identifier: 'MPC-ARV-1')
+    @patient_encounter = create(:encounter_treatment, patient_id: @patient.id,
+                                                      encounter_datetime: Date.today - 6.months, program_id: 1)
+    @obs_date_started = create(:observation, encounter: @patient_encounter,
+                                             concept: ConceptName.find_by_name('Date antiretrovirals started').concept,
+                                             value_datetime: Date.today - 6.months, obs_datetime: Date.today - 6.months,
+                                             person: @person)
+    @order = create(:order, patient: @patient, concept: (ConceptName.find_by_name 'Isoniazid/Rifapentine').concept,
+                            encounter: @patient_encounter, start_date: Date.today - 6.months, auto_expire_date: Date.today - 5.months, order_type: OrderType.find_by_name('Drug order'))
+    @drug_order = create(:drug_order, drug: Drug.find(1216), order: @order, quantity: 12)
+
+    # dispense ARV drugs
+    @arv_order = create(:order, patient: @patient, concept: (ConceptName.find_by_name 'TDF/3TC/DTG').concept,
+                                encounter: @patient_encounter, start_date: Date.today - 6.months, auto_expire_date: Date.today - 5.months, order_type: OrderType.find_by_name('Drug order'))
+    @arv_drug_order = create(:drug_order,
+                             drug: (Drug.find_by_concept_id (ConceptName.find_by_name 'TDF/3TC/DTG').concept_id), order: @arv_order, quantity: 30)
+  end
+
+  let(:response) { report.find_report }
+  # delete data after all tests are done to avoid cluttering the database
+  after(:all) do
+    @patient.void('Testing')
   end
 
   describe :new do
@@ -39,58 +61,44 @@ RSpec.describe ArtService::Reports::Pepfar::TbPrev3, type: :service do
 
   describe :find_report do
     it 'returns a report' do
-      allow(report).to receive(:patients_on_tpt).and_return([patient_hash])
+      # print all the patients
       expect(report.find_report).to be_a(Hash)
     end
   end
 
   describe :find_report do
     it 'the response should have 15-19 years group' do
-      allow(report).to receive(:patients_on_tpt).and_return([patient_hash])
-      expect(report.find_report).to have_key('15-19 years')
+      expect(response).to have_key('15-19 years')
     end
   end
 
   describe :find_report do
     it 'the response should have a hash for 15-19 years group' do
-      allow(report).to receive(:patients_on_tpt).and_return([patient_hash])
-      expect(report.find_report['15-19 years']).to be_a(Hash)
+      expect(response['15-19 years']).to be_a(Hash)
     end
   end
 
   describe :find_report do
     it 'should have a key a key female in the 15-19 years group' do
-      allow(report).to receive(:patients_on_tpt).and_return([patient_hash])
-      expect(report.find_report['15-19 years']).to have_key('F')
+      expect(response['15-19 years']).to have_key('F')
     end
   end
 
   describe :find_report do
     it 'should have started_new_on_art under the female key in the 15-19 years group' do
-      allow(report).to receive(:patients_on_tpt).and_return([patient_hash])
-      expect(report.find_report['15-19 years']['F']['3HP']).to have_key(:started_new_on_art)
+      expect(response['15-19 years']['F']['3HP']).to have_key(:started_new_on_art)
     end
   end
 
   describe :find_report do
     it 'should have the patient id under the started_new_on_art key in the 15-19 years group' do
-      allow(report).to receive(:patients_on_tpt).and_return([patient_hash])
-      result = report.find_report
-      expect(result['15-19 years']['F']['3HP'][:started_new_on_art]).to include(hash_including('patient_id' => 1))
+      expect(response['15-19 years']['F']['3HP'][:started_new_on_art][0]['patient_id']).to eq(@patient.id)
     end
   end
 
   describe :patient_tpt_status do
     it 'returns a patient tpt status' do
-      allow(report).to receive(:individual_tpt_report).and_return(
-        'tpt_initiation_date' => Date.today - 1.month,
-        'total_pills_taken' => 30,
-        'months_on_tpt' => 1,
-        'total_days_on_medication' => 30,
-        'drug_concepts' => '123,456',
-        'transfer_in' => 0
-      )
-      expect(report.patient_tpt_status(1)).to be_a(Hash)
+      expect(report.patient_tpt_status(@patient.id)).to be_a(Hash)
     end
   end
 end

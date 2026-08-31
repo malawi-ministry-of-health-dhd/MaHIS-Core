@@ -7,11 +7,6 @@ require_relative '../../../app/services/nlims'
 
 describe TbService::RegimenEngine do
   include DrugOrderService
-  include ModelUtils
-
-  def encounter_type(name)
-    EncounterType.find_by_name(name) || create(:encounter_type, name:)
-  end
 
   let(:date) { Time.now }
   let(:program) { Program.find_by_name 'TB PROGRAM' }
