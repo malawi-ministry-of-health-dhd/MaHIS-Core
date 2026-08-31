@@ -37,10 +37,6 @@ class ApplicationController < ActionController::API
     # audited v5.8 calls .try!(:call) on whatever is stored here, so it must
     # be a Proc — storing the User object directly raises NoMethodError.
     Audited.store[:current_user] = -> { User.current }
-    # Also read by LoginThrottleService when auditing failed logins, which has no
-    # access to the request. NOTE: this is only the real client address if the
-    # reverse proxy sets X-Forwarded-For.
-    Audited.store[:current_remote_address] = request.remote_ip
   end
 
   def authenticate

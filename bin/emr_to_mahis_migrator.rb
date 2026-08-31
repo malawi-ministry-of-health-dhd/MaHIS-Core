@@ -2567,23 +2567,6 @@ def update_group_obs_ids(source_db, _foreign_keys = {})
   puts "✓ obs_group_id update complete (#{updated} records now have obs_group_id set)"
 end
 
-def initialize_art_number_sequence_from_cohort
-  site_prefix = GlobalProperty.unscoped.find_by(
-    property: 'site_prefix',
-    location_id: SITE_ID
-  )&.property_value
-  return if site_prefix.blank?
-
-    baseline_sequence = ArtNumberSequence.cohort_baseline(SITE_ID, site_prefix)
-
-  counter = ArtNumberSequence.find_or_initialize_by(location_id: SITE_ID)
-  counter.site_prefix = site_prefix
-  counter.last_sequence = [counter.last_sequence.to_i, baseline_sequence].max
-  counter.save!
-  puts "✓ ART number sequence initialized for #{site_prefix}: #{counter.last_sequence} " \
-      "(#{baseline_sequence} exact-valid active identifiers)"
-end
-
 # This runs only after every migration group and post-processing step has finished,
 # so a worker always builds the complete migrated patient document.
 def enqueue_migrated_patient_couchdb_sync
@@ -3144,8 +3127,6 @@ if __FILE__ == $0
   backfill_orders_obs_ids(source_db)
 
   update_group_obs_ids(source_db)
-
-  initialize_art_number_sequence_from_cohort
 
   # Report data quality issues
   report_data_quality_issues

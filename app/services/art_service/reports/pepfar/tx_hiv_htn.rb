@@ -121,8 +121,8 @@ module ArtService
               IF (ms.maternal_status IS NOT NULL,
                 ms.maternal_status,
                 IF (tesd.gender = 'M', 'Male', 'FNP')) AS maternal_status
-            FROM #{temp_earliest_start_date} tesd
-            INNER JOIN #{temp_patient_outcomes} tpo
+            FROM temp_earliest_start_date tesd
+            INNER JOIN temp_patient_outcomes tpo
               ON tpo.patient_id = tesd.patient_id
               AND tpo.pepfar_cum_outcome = 'On antiretrovirals'
             INNER JOIN patient_program pp ON pp.patient_id = tesd.patient_id
@@ -175,7 +175,7 @@ module ArtService
                 AND o.value_numeric < #{DIASTOLIC_THRESHOLD}))
             ) controlled ON controlled.patient_id = diagnosed.patient_id
               AND diagnosed.patient_id IS NOT NULL
-            LEFT JOIN #{temp_maternal_status} ms ON ms.patient_id = tesd.patient_id
+            LEFT JOIN temp_maternal_status ms ON ms.patient_id = tesd.patient_id
             GROUP BY tesd.patient_id
           SQL
         end

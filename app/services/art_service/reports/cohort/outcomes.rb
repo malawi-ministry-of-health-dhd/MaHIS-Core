@@ -83,6 +83,8 @@ module ArtService
         end
 
         def load_max_drug_orders(start: false)
+          return if arv_drug.blank?
+
           ActiveRecord::Base.connection.execute <<~SQL
             INSERT INTO #{temp_max_drug_orders(start: start)}
             SELECT o.patient_id, MAX(o.start_date) AS start_date, NUll
@@ -99,6 +101,8 @@ module ArtService
         end
 
         def update_max_drug_orders(start: false)
+          return if arv_drug.blank?
+
           ActiveRecord::Base.connection.execute <<~SQL
             INSERT INTO #{temp_max_drug_orders(start: start)}
             SELECT o.patient_id, MAX(o.start_date) AS start_date, MIN(o.start_date) AS min_order_date
@@ -170,6 +174,8 @@ module ArtService
         end
 
         def load_patient_current_medication(start: false)
+          return if arv_drug.blank?
+
           ActiveRecord::Base.connection.execute <<~SQL
             INSERT INTO #{temp_current_medication(start: start)}
             SELECT mdo.patient_id, d.concept_id, do.drug_inventory_id drug_id,

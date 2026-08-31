@@ -196,7 +196,7 @@ module ArtService
         # rubocop:enable Metrics/MethodLength
 
         def build_report(report)
-          refresh_outcomes_table if rebuild || !outcome_tables_exist?
+          refresh_outcomes_table if rebuild
           load_tx_curr_into_report(report, create_patients_alive_and_on_art_query)
           clients = process_due_people
           clients.each do |patient|
@@ -213,22 +213,10 @@ module ArtService
         def create_patients_alive_and_on_art_query
           ActiveRecord::Base.connection.select_all <<~SQL
             SELECT tpo.patient_id, LEFT(tesd.gender, 1) AS gender, disaggregated_age_group(tesd.birthdate, DATE('#{end_date.to_date}')) age_group
-            FROM #{temp_patient_outcomes} tpo
-            INNER JOIN #{temp_earliest_start_date} tesd ON tesd.patient_id = tpo.patient_id
+            FROM temp_patient_outcomes tpo
+            INNER JOIN temp_earliest_start_date tesd ON tesd.patient_id = tpo.patient_id
             WHERE tpo.pepfar_cum_outcome = 'On antiretrovirals'
           SQL
-        end
-
-        def outcome_tables_exist?
-          table_names = [temp_patient_outcomes, temp_earliest_start_date]
-          placeholders = table_names.map { |table_name| ActiveRecord::Base.connection.quote(table_name) }.join(', ')
-          count = ActiveRecord::Base.connection.select_value <<~SQL
-            SELECT COUNT(*)
-            FROM information_schema.tables
-            WHERE table_schema = DATABASE()
-              AND table_name IN (#{placeholders})
-          SQL
-          count.to_i == table_names.length
         end
 
         def load_tx_curr_into_report(report, patients)

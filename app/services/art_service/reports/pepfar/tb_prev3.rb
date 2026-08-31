@@ -44,6 +44,10 @@ module ArtService
           individual_tpt_report(patient_id)
         end
 
+        def patient_tpt_status(patient_id)
+          individual_tpt_report(patient_id)
+        end
+
         private
 
         def init_report
@@ -95,7 +99,28 @@ module ArtService
           tpt_initiation_date = patient['tpt_initiation_date']&.to_date
           art_start_date = patient['art_start_date']&.to_date
 
+          return false unless tpt_initiation_date && art_start_date
+
           (tpt_initiation_date >= art_start_date) && (tpt_initiation_date < art_start_date + 180.days)
+        end
+
+        def patient_completed_tpt?(patient, course)
+          return false unless patient['months_on_tpt']
+
+          case course
+          when '6H'
+            patient['months_on_tpt'].to_i >= 6
+          when '3HP'
+            patient['months_on_tpt'].to_i >= 3
+          else
+            false
+          end
+        end
+
+        def patient_on_3hp?(patient)
+          return false unless patient['drug_concepts']
+
+          patient['drug_concepts'].to_s.split(',').size > 1
         end
 
         def patients_on_tpt
@@ -140,7 +165,7 @@ module ArtService
                 FROM person
                 INNER JOIN patient_program
                   ON patient_program.patient_id = person.person_id
-                  AND patient_program.program_id IN (SELECT program_id FROM program WHERE name = 'HIV Program')
+                  AND patient_program.program_id IN (SELECT program_id FROM program WHERE UPPER(name) = 'HIV PROGRAM')
                   AND patient_program.voided = 0
                   AND patient_program.location_id = #{@location_id}
                 INNER JOIN patient_state
@@ -150,7 +175,7 @@ module ArtService
                   AND patient_state.voided = 0
                 INNER JOIN encounter AS denominator_encounter
                   ON denominator_encounter.patient_id = patient_program.patient_id
-                  AND denominator_encounter.program_id IN (SELECT program_id FROM program WHERE name = 'HIV Program')
+                  AND denominator_encounter.program_id IN (SELECT program_id FROM program WHERE UPPER(name) = 'HIV PROGRAM')
                   AND denominator_encounter.encounter_type IN (SELECT encounter_type_id FROM encounter_type WHERE name = 'Treatment')
                   AND denominator_encounter.encounter_datetime >= DATE(#{start_date}) - INTERVAL 6 MONTH
                   AND denominator_encounter.encounter_datetime <= DATE(#{start_date})
@@ -160,7 +185,7 @@ module ArtService
              #{dsd_query(dsd: @dsd, model: 'denominator_patient') if @dsd}
             INNER JOIN encounter AS prescription_encounter
               ON prescription_encounter.patient_id = denominator_patient.patient_id
-              AND prescription_encounter.program_id IN (SELECT program_id FROM program WHERE name = 'HIV Program')
+              AND prescription_encounter.program_id IN (SELECT program_id FROM program WHERE UPPER(name) = 'HIV PROGRAM')
               AND prescription_encounter.encounter_type IN (SELECT encounter_type_id FROM encounter_type WHERE name = 'Treatment')
               AND prescription_encounter.encounter_datetime >= DATE(#{start_date}) - INTERVAL 6 MONTH
               AND prescription_encounter.encounter_datetime <= DATE(#{end_date})
@@ -182,7 +207,7 @@ module ArtService
               /* External consultations */
               SELECT DISTINCT registration_encounter.patient_id
               FROM patient_program pp
-              INNER JOIN program p ON p.program_id = pp.program_id AND p.name = 'HIV Program' AND p.retired = 0
+              INNER JOIN program p ON p.program_id = pp.program_id AND UPPER(p.name) = 'HIV PROGRAM' AND p.retired = 0
               AND pp.voided = 0
               AND pp.location_id = #{@location_id}
               INNER JOIN encounter AS registration_encounter
@@ -198,7 +223,7 @@ module ArtService
                   AND encounter_type.name = 'Registration'
                 INNER JOIN program
                   ON program.program_id = encounter.program_id
-                  AND program.name = 'HIV Program'
+                  AND UPPER(program.name) = 'HIV PROGRAM'
                 WHERE encounter.encounter_datetime < DATE(#{end_date}) AND encounter.voided = 0
                 GROUP BY encounter.patient_id
               ) AS max_registration_encounter
@@ -409,6 +434,10 @@ module ArtService
 
         def isoniazid_rifapentine_drug
           @isoniazid_rifapentine_drug ||= Drug.find_by!(concept_id: isoniazid_rifapentine_concept.concept_id)
+        end
+
+        def isoniazid_rifapentine_concept
+          @isoniazid_rifapentine_concept ||= ConceptName.find_by_name('Isoniazid/Rifapentine')&.concept
         end
       end
     end

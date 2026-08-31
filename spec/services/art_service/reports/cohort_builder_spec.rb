@@ -26,6 +26,7 @@ describe ArtService::Reports::CohortBuilder do
   let(:arv_concept) { ConceptName.find_by_name!('Antiretroviral drugs').concept }
   let(:pregnant_concept) { ConceptName.find_by_name('Is patient pregnant?')&.concept }
   let(:reason_for_art_concept) { ConceptName.find_by_name('Reason for ART eligibility').concept }
+  let(:reason_for_art_answer_concept) { create(:concept) }
   let(:on_arvs_state) do
     ProgramWorkflowState.where(concept: ConceptName.find_by_name('On antiretrovirals').concept).first
   end
@@ -78,7 +79,7 @@ describe ArtService::Reports::CohortBuilder do
     Observation.create!(
       person_id: patient.patient_id,
       concept_id: reason_for_art_concept.concept_id,
-      value_coded: 19_477, # Valid reason concept ID
+      value_coded: reason_for_art_answer_concept.concept_id,
       obs_datetime: date,
       encounter: encounter,
       location_id: location.location_id

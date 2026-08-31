@@ -66,12 +66,5 @@ module ExceptionHandler
       render json: { errors: ["Failed to communicate with DDE: #{e.message}"] },
              status: :bad_gateway
     end
-
-    # Declared last so it wins over the ApplicationError handler above (rescues
-    # are matched LIFO).
-    rescue_from TooManyRequestsError do |e|
-      response.headers['Retry-After'] = e.retry_after.to_s if e.retry_after
-      render json: { errors: [e.message], retry_after: e.retry_after }, status: :too_many_requests
-    end
   end
 end

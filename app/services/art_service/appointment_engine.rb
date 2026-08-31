@@ -23,17 +23,19 @@ module ArtService
 
       filters = filters.to_hash.each_with_object({}) do |kv_pair, transformed_hash|
         key, value = kv_pair
+        key = 'person_id' if key == 'person'
         transformed_hash["obs.#{key}"] = value
       end
 
       appointments = Observation.joins(:concept)\
                                 .where(concept: concept('Appointment date'))
+      appointments = appointments.where(person: @patient.person) if @patient
       if date
         appointments = appointments.where('value_datetime BETWEEN ? AND ?',
                                           *TimeUtils.day_bounds(date))
       end
 
-      appointments = appointments.where(filters) unless appointments.empty?
+      appointments = appointments.where(filters) unless filters.empty?
       appointments.order(obs_datetime: :desc)
     end
 
@@ -47,6 +49,15 @@ module ArtService
       encounter = appointment_encounter patient, @ref_date
       appointment = make_appointment_date patient, date
 
+      # Save encounter first if it's a new record to ensure encounter_id exists
+      # before adding observations (avoids foreign key constraint violation)
+      if encounter.new_record?
+        unless encounter.save
+          LOGGER.error "Failed to create encounter\n\t#{encounter.errors}"
+          raise "Failed to create appointment, #{date}"
+        end
+      end
+
       encounter.observations << appointment
       unless encounter.save
         LOGGER.error "Failed to create appointment\n\t#{encounter.errors}"
@@ -57,9 +68,8 @@ module ArtService
     end
 
     def next_appointment_date
-      if optimise_appointment?(@patient, @ref_date)
-        exec_drug_order_adjustments(@patient, @ref_date)
-      end
+      exec_drug_order_adjustments(@patient, @ref_date) if optimise_appointment?(@patient,
+                                                                                @ref_date)
       _drug_id, date = earliest_appointment_date(@patient, @ref_date)
       return nil unless date
 
@@ -85,7 +95,7 @@ module ArtService
 
       Encounter.new type: encounter_type('APPOINTMENT'),
                     patient:,
-                    encounter_datetime: Time.now,
+                    encounter_datetime: visit_date,
                     program: @program,
                     location_id: Location.current.location_id,
                     provider: User.current.person
@@ -335,14 +345,11 @@ module ArtService
     def amounts_brought_to_clinic(patient, session_date)
       @amounts_brought_to_clinic = Hash.new(0)
 
-      number_of_tablets_concept_id = ConceptName.find_by_name('Number of tablets brought to clinic').concept_id
-      amount_of_drug_concept_id = ConceptName.find_by_name('AMOUNT OF DRUG BROUGHT TO CLINIC').concept_id
-
       amounts_brought_to_clinic = ActiveRecord::Base.connection.select_all <<-SQL
       SELECT obs.*, drug_order.* FROM obs INNER JOIN drug_order ON obs.order_id = drug_order.order_id
       INNER JOIN encounter e ON e.encounter_id = obs.encounter_id AND e.voided = 0
       AND e.encounter_type = #{EncounterType.find_by_name('ART ADHERENCE').id}
-      WHERE obs.concept_id IN (#{number_of_tablets_concept_id}, #{amount_of_drug_concept_id})
+      WHERE obs.concept_id = #{ConceptName.find_by_name('AMOUNT OF DRUG BROUGHT TO CLINIC').concept_id}
       AND obs.obs_datetime >= '#{session_date.to_date.strftime('%Y-%m-%d 00:00:00')}'
       AND obs.obs_datetime <= '#{session_date.to_date.strftime('%Y-%m-%d 23:59:59')}'
       AND person_id = #{patient.id} AND obs.voided = 0 AND value_numeric IS NOT NULL;

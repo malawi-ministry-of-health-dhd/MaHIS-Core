@@ -58,14 +58,18 @@ module CommonSqlQueryUtils
 
   def current_occupation_query
     occupation_id = PersonAttributeType.find_by_name('Occupation')&.id
-    <<~SQL
-      SELECT a.person_id, a.value
-      FROM person_attribute a
-      LEFT OUTER JOIN person_attribute b
-      ON a.person_attribute_id = b.person_attribute_id
-      AND a.date_created < b.date_created
-      AND b.voided = 0
-      WHERE b.person_attribute_id IS NULL AND a.person_attribute_type_id = #{occupation_id} AND a.voided = 0
-    SQL
+    if occupation_id
+      <<~SQL
+        SELECT a.person_id, a.value
+        FROM person_attribute a
+        LEFT OUTER JOIN person_attribute b
+        ON a.person_attribute_id = b.person_attribute_id
+        AND a.date_created < b.date_created
+        AND b.voided = 0
+        WHERE b.person_attribute_id IS NULL AND a.person_attribute_type_id = #{occupation_id} AND a.voided = 0
+      SQL
+    else
+      'SELECT 1 AS person_id, NULL AS value WHERE 0'
+    end
   end
 end

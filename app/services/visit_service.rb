@@ -91,14 +91,16 @@ class VisitService
       end
       
       # Create encounter first
-      id = EncounterType.find_by_name("visit")
-      create_encounter(patient_id, id.encounter_type_id,
-        {
-          program_id: visit_params[:program_id],
-          location_id: visit.location_id,
-          encounter_datetime: visit_params[:date_started],
-          provider_id: visit_params[:provider_id]
-        })
+      visit_encounter_type = EncounterType.find_by_name("visit")
+      if visit_encounter_type
+        create_encounter(patient_id, visit_encounter_type.encounter_type_id,
+          {
+            program_id: visit_params[:program_id],
+            location_id: visit.location_id,
+            encounter_datetime: visit_params[:date_started],
+            provider_id: visit_params[:provider_id]
+          })
+      end
 
       visit_data
     else
