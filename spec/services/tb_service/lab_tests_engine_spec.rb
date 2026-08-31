@@ -3,6 +3,12 @@
 require 'rails_helper'
 
 describe TbService::LabTestsEngine do
+  include ModelUtils
+
+  def encounter_type(name)
+    EncounterType.find_by_name(name) || create(:encounter_type, name:)
+  end
+
   let(:date) { Time.now }
   let(:program) { Program.find_by_name 'TB PROGRAM' }
   let(:engine) do
@@ -24,7 +30,7 @@ describe TbService::LabTestsEngine do
   end
   let(:encounter) do
     Encounter.create(patient:,
-                     encounter_type: EncounterType.find_by_name('TB_INITIAL').encounter_type_id,
+                     encounter_type: encounter_type('TB_INITIAL').encounter_type_id,
                      program_id: program.program_id, encounter_datetime: date,
                      date_created: Time.now, creator: 1, provider_id: 1, location_id: 700)
   end

@@ -5,6 +5,29 @@ require_relative '../../../app/services/drug_order_service'
 
 describe TbService::WorkflowEngine do
   include DrugOrderService
+  include ModelUtils
+
+  def encounter_type(name)
+    EncounterType.find_by_name(name) || create(:encounter_type, name:)
+  end
+
+  before do
+    {
+      'Referral' => 'Referral',
+      'Laboratory examinations' => 'Laboratory examinations',
+      'Ultrasound' => 'Ultrasound',
+      'TB status' => 'TB status',
+      'Negative' => 'Negative',
+      'Positive' => 'Positive'
+    }.each do |name, _|
+      ConceptName.find_by(name:) || Concept.create!(datatype_id: 4, class_id: 10, is_set: 0,
+                                                     creator: 1, date_created: Time.now, retired: 0,
+                                                     uuid: SecureRandom.uuid).tap do |concept|
+        ConceptName.create!(concept:, name:, locale: 'en', creator: 1,
+                            date_created: Time.now, voided: 0, uuid: SecureRandom.uuid)
+      end
+    end
+  end
 
   let(:epoch) { Time.now }
   let(:tb_program) { program 'TB PROGRAM' } # look into this
@@ -45,9 +68,9 @@ describe TbService::WorkflowEngine do
       enroll_patient patient
       tb_initial_encounter(patient, Time.now - 2.hour)
       lab_orders_encounter(patient, Time.now - 2.hour)
-      tb_status(patient, lab_result_encounter(patient, Time.now + 1.hour), 'Positive')
-      tb_reception(patient, Time.now + 1.hour)
-      tb_registration(patient, Time.now + 1.hour)
+      tb_status(patient, lab_result_encounter(patient, Time.now - 1.hour), 'Positive')
+      tb_reception(patient, Time.now - 1.hour)
+      tb_registration(patient, Time.now - 1.hour)
       encounter_type = engine.next_encounter
       expect(encounter_type.name.upcase).to eq('VITALS')
     end
@@ -56,9 +79,9 @@ describe TbService::WorkflowEngine do
       enroll_patient patient
       tb_initial_encounter(patient, Time.now - 2.hour)
       lab_orders_encounter(patient, Time.now - 2.hour)
-      tb_status(patient, lab_result_encounter(patient, Time.now + 1.hour), 'Positive')
-      tb_reception(patient, Time.now + 1.hour)
-      tb_registration(patient, Time.now + 1.hour)
+      tb_status(patient, lab_result_encounter(patient, Time.now - 1.hour), 'Positive')
+      tb_reception(patient, Time.now - 1.hour)
+      tb_registration(patient, Time.now - 1.hour)
       adherence(patient, Time.now)
       record_vitals(patient, Time.now)
       treatment_encounter(patient, Time.now)
@@ -91,7 +114,7 @@ describe TbService::WorkflowEngine do
       lab_orders_encounter(patient, Time.now - 2.hour)
       tb_status(patient, lab_result_encounter(patient, Time.now), 'Positive')
       tb_reception(patient, Time.now)
-      tb_registration(patient, Time.now + 1.hour)
+      tb_registration(patient, Time.now - 1.hour)
       record_vitals(patient, Time.now)
       encounter_type = engine.next_encounter
       expect(encounter_type.name.upcase).to eq('TB TREATMENT')
