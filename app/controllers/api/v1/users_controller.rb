@@ -56,7 +56,8 @@ module Api
 
         user = UserService.create_user(
           username:, password:, given_name:,
-          family_name:, roles:, programs:, location_id:, villages:, phone:, gender:
+          family_name:, roles:, programs:, location_id:, villages:, phone:, gender:,
+          account_duration_days: params[:account_duration_days]
         )
 
         if user.errors.empty?
@@ -70,7 +71,7 @@ module Api
 
       def update
         update_params = params.permit :password, :given_name, :family_name, :must_append_roles, :location_id, :phone,
-                                      roles: [], programs: []
+                                      :account_duration_days, roles: [], programs: []
 
         # Force programs through since permit can silently drop integer arrays
         update_params[:programs] = UserService.normalize_program_ids(params[:programs]) if params.key?(:programs)

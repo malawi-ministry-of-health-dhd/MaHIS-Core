@@ -67,6 +67,12 @@ module ExceptionHandler
              status: :bad_gateway
     end
 
+    # 403 rather than 401: the credentials were correct, it is the account period
+    # that has ended, and the client must show that instead of "wrong password".
+    rescue_from AccountExpiredError do |e|
+      render json: { errors: [e.message], account_expired: true, expired_on: e.expired_on }, status: :forbidden
+    end
+
     # Declared last so it wins over the ApplicationError handler above (rescues
     # are matched LIFO).
     rescue_from TooManyRequestsError do |e|
