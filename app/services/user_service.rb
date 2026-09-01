@@ -18,6 +18,14 @@ module UserService
   LOGGER = Logger.new $stdout
   HSA_ROLES = ["HSA", "Health Surveillance"]
 
+  # Default rotation length for a supervised (student or intern) account.
+  DEFAULT_ACCOUNT_DURATION_DAYS = 90
+  # The account's last valid day, held in user_property alongside the other
+  # per-user login state (last_login_time, last_password_updated) rather than as a
+  # column on users. Stored as an ISO date string, which is what lets the sweep
+  # below compare it directly in SQL.
+  ACCOUNT_EXPIRY_PROPERTY = 'account_expires_on'
+
   ALPHABET = ('a'..'z').to_a + ('0'..'9').to_a + ['/']
   CHAR_TO_INT = ALPHABET.each_with_index.to_h
   INT_TO_CHAR = CHAR_TO_INT.invert
@@ -86,7 +94,8 @@ module UserService
     [query, count]
   end
 
-  def self.create_user(username:, password:, given_name:, family_name:, roles:, programs:, location_id:, villages:, phone:, gender: nil)
+  def self.create_user(username:, password:, given_name:, family_name:, roles:, programs:, location_id:, villages:, phone:, gender: nil,
+                       account_duration_days: nil)
 
     person = person_service.create_person(
       birthdate: nil, birthdate_estimated: false, gender:
@@ -131,7 +140,63 @@ module UserService
     # (which does set it) were not.
     touch_password_updated!(user)
 
+    apply_account_period!(user, account_duration_days)
+
     user
+  end
+
+  ##
+  # Sets (or clears) a supervised user's account period.
+  #
+  # Only supervised users - students and interns - carry one; for anybody else
+  # the column is cleared, so that changing a trainee to a permanent role in the
+  # same edit does not leave a stale expiry behind that would later lock them out.
+  # Supervised users always end up with a period: an omitted or unusable duration
+  # falls back to the default rather than leaving the account open-ended.
+  #
+  # An existing period is only ever moved when a duration is explicitly supplied
+  # - that is the "extend" action. Otherwise editing an unrelated field on a
+  # trainee (a phone number, a program) would silently restart their clock and
+  # the account would never actually expire.
+  def self.apply_account_period!(user, duration_days)
+    # Roles were just written through UserRole, so any set cached on this
+    # instance is stale and would misclassify the user.
+    user.association(:roles).reload
+
+    unless user.supervised_trainee?
+      clear_account_period!(user)
+      return
+    end
+
+    explicit_duration = duration_days.to_s.strip.present?
+    return if !explicit_duration && user.account_expires_on.present?
+
+    days = normalize_account_duration_days(duration_days)
+    set_account_expiry!(user, Date.current + days)
+  end
+
+  ##
+  # Writes the account's last valid day. Always ISO-formatted: the nightly sweep
+  # compares the stored strings in SQL, which only holds for a fixed format.
+  def self.set_account_expiry!(user, expires_on)
+    property = UserProperty.find_or_initialize_by(user_id: user.user_id, property: ACCOUNT_EXPIRY_PROPERTY)
+    property.user = user
+    property.property_value = expires_on.to_date.iso8601
+    property.save!
+    user.association(:properties).reload if user.association(:properties).loaded?
+    expires_on
+  end
+
+  def self.clear_account_period!(user)
+    UserProperty.where(user_id: user.user_id, property: ACCOUNT_EXPIRY_PROPERTY).delete_all
+    user.association(:properties).reload if user.association(:properties).loaded?
+  end
+
+  def self.normalize_account_duration_days(duration_days)
+    days = duration_days.to_s.strip.to_i
+    return DEFAULT_ACCOUNT_DURATION_DAYS unless days.positive?
+
+    days
   end
 
   ##
@@ -246,6 +311,13 @@ module UserService
 
     person_service.update_person_attributes(user.person, cell_phone_number: params[:phone]) if params.key?(:phone)
 
+    # Re-evaluated whenever roles change, so promoting a trainee to a permanent
+    # role clears the expiry and moving somebody into a trainee role starts one,
+    # without the caller having to remember either.
+    if params.key?(:roles) || params.key?(:account_duration_days)
+      apply_account_period!(user, params[:account_duration_days])
+    end
+
     user
   end
 
@@ -296,6 +368,59 @@ module UserService
     raise e
   end
 
+  ##
+  # Closes an account whose period has ended, at the moment of login.
+  #
+  # The deactivation is written rather than merely reported, so the account shows
+  # as deactivated in User Management instead of silently failing to log in, and
+  # so every other check in the system (User's default_scope, active?) agrees. Any
+  # token already issued is cleared too - otherwise a session opened before the
+  # expiry date would keep working past it.
+  def self.enforce_account_period!(user)
+    return unless user&.account_expired?
+
+    expired_on = user.account_expires_on
+
+    if user.active?
+      user.deactivated_on = Time.now
+      user.authentication_token = nil
+      user.token_expiry_time = nil
+      user.save(validate: false)
+      Rails.logger.info("[AccountExpiry] Deactivated #{user.username} at login; period ended #{expired_on}")
+    end
+
+    raise AccountExpiredError.new(expired_on:)
+  end
+
+  ##
+  # Deactivates every account whose period has already ended. Used by the nightly
+  # sweep; the login path enforces the same rule for the account in front of it.
+  #
+  # Returns the number of accounts closed.
+  def self.deactivate_expired_accounts!(as_of = Date.current)
+    # Joined and compared in SQL rather than loaded and filtered in Ruby: this runs
+    # over every user in the database. ISO dates compare correctly as strings,
+    # which is why set_account_expiry! always writes that format.
+    expired = User.unscoped
+                  .where(deactivated_on: nil)
+                  .joins(<<~SQL.squish)
+                    INNER JOIN user_property account_period
+                            ON account_period.user_id = users.user_id
+                           AND account_period.property = #{ActiveRecord::Base.connection.quote(ACCOUNT_EXPIRY_PROPERTY)}
+                  SQL
+                  .where('account_period.property_value < ?', as_of.to_date.iso8601)
+
+    expired.find_each.count do |user|
+      user.update_columns(
+        deactivated_on: Time.now,
+        authentication_token: nil,
+        token_expiry_time: nil
+      )
+      Rails.logger.info("[AccountExpiry] Swept #{user.username}; period ended #{user.account_expires_on}")
+      true
+    end
+  end
+
   def self.authenticate_credentials(username, password)
     # Raises TooManyRequestsError before any password comparison when this
     # username is inside a back-off or lock window.
@@ -317,16 +442,32 @@ module UserService
       # Fallback to some global property or skip? 
       # For now, we skip setting it if not found to avoid crash
     end
-    unless user&.active? && \
-           (bart_authenticate(user, password) || \
-           new_arch_authenticate(user, password))
+    # The password is checked before the account state so that an expired
+    # trainee still gets told why on every attempt, not just the first one that
+    # tripped the expiry. Both helpers are pure hash comparisons with no side
+    # effects, and a deactivated user still records a throttle failure below, so
+    # nothing else about the flow changes.
+    password_valid = bart_authenticate(user, password) || new_arch_authenticate(user, password)
+
+    unless password_valid
+      LoginThrottleService.record_failure(username, user:)
+      return nil
+    end
+
+    # Only now that the password is confirmed correct may we say anything about
+    # the state of the account - saying it earlier would tell an unauthenticated
+    # caller which usernames are real. enforce_account_period! deactivates an
+    # expired account and raises, so the login stops here.
+    enforce_account_period!(user)
+
+    unless user.active?
       LoginThrottleService.record_failure(username, user:)
       return nil
     end
 
     LoginThrottleService.record_success(username)
     user
-  rescue TooManyRequestsError
+  rescue TooManyRequestsError, AccountExpiredError
     # Expected control flow, not an error to log with a backtrace.
     raise
   rescue StandardError => e

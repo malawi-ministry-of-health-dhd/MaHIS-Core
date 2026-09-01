@@ -127,8 +127,19 @@ class DiagnosisService
                 )
                 .distinct
 
+    # Also match the concept's other names, so a clinical synonym seeded against
+    # an existing ICD-11 concept is findable ("Community Acquired Pneumonia" ->
+    # CA40.Z "Pneumonia, organism unspecified"). The row itself stays anchored on
+    # the locale-preferred name above, so the list still displays and stores the
+    # official ICD-11 title rather than the synonym.
     diagnoses.where(
-      'concept_name.name LIKE :term OR concept_map.concept_code LIKE :term',
+      'concept_name.name LIKE :term OR concept_map.concept_code LIKE :term
+       OR EXISTS (
+            SELECT 1 FROM concept_name synonym
+            WHERE synonym.concept_id = concept_name.concept_id
+              AND synonym.voided = 0
+              AND synonym.name LIKE :term
+          )',
       term: term
     ).order(Arel.sql(ranked_name_or_code_order(q)))
   end
