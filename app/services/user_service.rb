@@ -18,6 +18,14 @@ module UserService
   LOGGER = Logger.new $stdout
   HSA_ROLES = ["HSA", "Health Surveillance"]
 
+  # Default rotation length for a supervised (student or intern) account.
+  DEFAULT_ACCOUNT_DURATION_DAYS = 90
+  # The account's last valid day, held in user_property alongside the other
+  # per-user login state (last_login_time, last_password_updated) rather than as a
+  # column on users. Stored as an ISO date string, which is what lets the sweep
+  # below compare it directly in SQL.
+  ACCOUNT_EXPIRY_PROPERTY = 'account_expires_on'
+
   ALPHABET = ('a'..'z').to_a + ('0'..'9').to_a + ['/']
   CHAR_TO_INT = ALPHABET.each_with_index.to_h
   INT_TO_CHAR = CHAR_TO_INT.invert
@@ -86,7 +94,8 @@ module UserService
     [query, count]
   end
 
-  def self.create_user(username:, password:, given_name:, family_name:, roles:, programs:, location_id:, villages:, phone:, gender: nil)
+  def self.create_user(username:, password:, given_name:, family_name:, roles:, programs:, location_id:, villages:, phone:, gender: nil,
+                       account_duration_days: nil)
 
     person = person_service.create_person(
       birthdate: nil, birthdate_estimated: false, gender:
@@ -113,32 +122,100 @@ module UserService
       location_id:
     )
 
-    Array(roles).each do |rolename|
-      role = Role.find_by(role: rolename)
-      next if role.blank?
+    assigned_roles = Array(roles).filter_map { |rolename| Role.find_by(role: rolename) }
+    assigned_roles.each { |role| UserRole.create(role:, user:) }
 
-      UserRole.create(role:, user:)
-
-      # For users with HSA roles villages will have to be assigned to them 
-      if HSA_ROLES.include?(role.role)
-        # Create UserVillage records for each village.
-        # Pass the loaded `user` object (not user_id): UserVillage belongs_to
-        # :user is required and would otherwise re-query User under its
-        # location scope, silently failing for a user at another facility.
-        Array(villages).each do |village_id|
-          UserVillage.create(
-            user:,
-            village_id: village_id,
-            creator: User.current.id
-          )
-        end
-      end 
-
+    # Villages are assigned once, outside the role loop: a user holding two HSA
+    # roles (e.g. 'HSA' and 'Health Surveillance') previously got a duplicate
+    # row for every village, and there is no unique index to stop it.
+    if assigned_roles.any? { |role| HSA_ROLES.include?(role.role) }
+      update_user_villages(user, villages)
     end
     # user programs
     replace_user_programs(user, programs)
 
+    # Start the 90-day clock. Without this the property is absent, and an absent
+    # property reads as "not expired" - so every user created here was exempt
+    # from the password policy for life, while users created by the importer
+    # (which does set it) were not.
+    touch_password_updated!(user)
+
+    apply_account_period!(user, account_duration_days)
+
     user
+  end
+
+  ##
+  # Sets (or clears) a supervised user's account period.
+  #
+  # Only supervised users - students and interns - carry one; for anybody else
+  # the column is cleared, so that changing a trainee to a permanent role in the
+  # same edit does not leave a stale expiry behind that would later lock them out.
+  # Supervised users always end up with a period: an omitted or unusable duration
+  # falls back to the default rather than leaving the account open-ended.
+  #
+  # An existing period is only ever moved when a duration is explicitly supplied
+  # - that is the "extend" action. Otherwise editing an unrelated field on a
+  # trainee (a phone number, a program) would silently restart their clock and
+  # the account would never actually expire.
+  def self.apply_account_period!(user, duration_days)
+    # Roles were just written through UserRole, so any set cached on this
+    # instance is stale and would misclassify the user.
+    user.association(:roles).reload
+
+    unless user.supervised_trainee?
+      clear_account_period!(user)
+      return
+    end
+
+    explicit_duration = duration_days.to_s.strip.present?
+    return if !explicit_duration && user.account_expires_on.present?
+
+    days = normalize_account_duration_days(duration_days)
+    set_account_expiry!(user, Date.current + days)
+  end
+
+  ##
+  # Writes the account's last valid day. Always ISO-formatted: the nightly sweep
+  # compares the stored strings in SQL, which only holds for a fixed format.
+  def self.set_account_expiry!(user, expires_on)
+    property = UserProperty.find_or_initialize_by(user_id: user.user_id, property: ACCOUNT_EXPIRY_PROPERTY)
+    property.user = user
+    property.property_value = expires_on.to_date.iso8601
+    property.save!
+    user.association(:properties).reload if user.association(:properties).loaded?
+    expires_on
+  end
+
+  def self.clear_account_period!(user)
+    UserProperty.where(user_id: user.user_id, property: ACCOUNT_EXPIRY_PROPERTY).delete_all
+    user.association(:properties).reload if user.association(:properties).loaded?
+  end
+
+  def self.normalize_account_duration_days(duration_days)
+    days = duration_days.to_s.strip.to_i
+    return DEFAULT_ACCOUNT_DURATION_DAYS unless days.positive?
+
+    days
+  end
+
+  ##
+  # Records that the user's password is current, starting the expiry window.
+  def self.touch_password_updated!(user, at: Time.current)
+    property = UserProperty.find_or_initialize_by(
+      user_id: user.user_id,
+      property: LoginResponseService::PASSWORD_UPDATED_PROPERTY
+    )
+    property.user = user
+    property.property_value = at.iso8601
+    property.save!
+  end
+
+  ##
+  # Backdates the expiry window so the user must set a new password at their
+  # next login.
+  def self.expire_password!(user)
+    touch_password_updated!(user, at: (LoginResponseService::PASSWORD_VALIDITY_PERIOD + 1.day).ago)
   end
 
   def self.update_username(user, new_username)
@@ -148,48 +225,55 @@ module UserService
     user
   end
 
+  ##
+  # Replaces a user's assigned villages with exactly `village_ids`.
+  #
+  # Rows are never deleted, only retired and un-retired, so the assignment
+  # history stays intact. A village the user has held before therefore already
+  # has a row: it has to be REVIVED rather than inserted, which is what the
+  # previous implementation missed - it compared the requested ids against all
+  # rows including retired ones, so a village that had ever been removed could
+  # never be assigned again.
+  #
+  # Returns the user's active village assignments.
   def self.update_user_villages(user, village_ids)
-    new_village_ids = Array(village_ids).map(&:to_i)
-    
-    current_user_villages = UserVillage.where(user_id: user.user_id)
-    
-    current_village_ids = current_user_villages.pluck(:village_id)
-    
-    villages_to_retire = current_user_villages.where(
-      village_id: current_village_ids - new_village_ids,
-      retired: 0
-    )
-    
-    villages_to_add = new_village_ids - current_village_ids
-    
-    villages_to_retire.update_all(retired: 1) if villages_to_retire.any?
-    
-    # Pass the loaded `user` object (not user_id): UserVillage belongs_to :user
-    # is required and would otherwise re-query User under its location scope,
-    # silently dropping villages for a user at another facility.
-    villages_to_add.each do |village_id|
-      UserVillage.create(
-        user:,
-        village_id: village_id,
-        creator: User.current.id
-      )
+    requested_ids = Array(village_ids).map(&:to_i).uniq
+    existing = UserVillage.where(user_id: user.user_id).index_by { |user_village| user_village.village_id.to_i }
+
+    ActiveRecord::Base.transaction do
+      existing.each do |village_id, user_village|
+        next if requested_ids.include?(village_id) || retired?(user_village)
+
+        user_village.update!(retired: 1, date_retired: Time.current, retired_by: User.current&.user_id)
+      end
+
+      requested_ids.each do |village_id|
+        user_village = existing[village_id]
+
+        if user_village.nil?
+          # Pass the loaded `user` object (not user_id): UserVillage belongs_to
+          # :user is required and would otherwise re-query User under its
+          # location scope, silently dropping villages for a user at another
+          # facility. create! rather than create so an id that is not a village
+          # is reported instead of being dropped without a trace.
+          UserVillage.create!(user:, village_id:, creator: User.current&.user_id)
+        elsif retired?(user_village)
+          user_village.update!(retired: 0, date_retired: nil, retired_by: nil)
+        end
+      end
     end
+
+    get_user_villages(user).where(retired: 0)
+  end
+
+  def self.retired?(user_village)
+    user_village.retired.to_i == 1
   end
 
   def self.get_user_villages(user, options = {})
-    query = UserVillage.includes(:village)
-                      .where(user_id: user.user_id)
-                      
-    # Apply optional filters
-    query = query.where(active: true) if options[:active_only]
-    query = query.order(created_at: options[:sort_order] || :desc)
-    
-    if options[:include_metadata]
-      query.select('user_villages.*, villages.name as village_name, 
-                   villages.population, villages.district')
-    else
-      query
-    end
+    UserVillage.includes(:village)
+               .where(user_id: user.user_id)
+               .order(created_at: options[:sort_order] || :desc)
   rescue ActiveRecord::RecordNotFound => e
     Rails.logger.error("Failed to fetch villages for user #{user.user_id}: #{e.message}")
     raise VillageQueryError, "Unable to fetch villages for user"
@@ -226,6 +310,13 @@ module UserService
     replace_user_programs(user, params[:programs]) if params.key?(:programs)
 
     person_service.update_person_attributes(user.person, cell_phone_number: params[:phone]) if params.key?(:phone)
+
+    # Re-evaluated whenever roles change, so promoting a trainee to a permanent
+    # role clears the expiry and moving somebody into a trainee role starts one,
+    # without the caller having to remember either.
+    if params.key?(:roles) || params.key?(:account_duration_days)
+      apply_account_period!(user, params[:account_duration_days])
+    end
 
     user
   end
@@ -277,9 +368,72 @@ module UserService
     raise e
   end
 
+  ##
+  # Closes an account whose period has ended, at the moment of login.
+  #
+  # The deactivation is written rather than merely reported, so the account shows
+  # as deactivated in User Management instead of silently failing to log in, and
+  # so every other check in the system (User's default_scope, active?) agrees. Any
+  # token already issued is cleared too - otherwise a session opened before the
+  # expiry date would keep working past it.
+  def self.enforce_account_period!(user)
+    return unless user&.account_expired?
+
+    expired_on = user.account_expires_on
+
+    if user.active?
+      user.deactivated_on = Time.now
+      user.authentication_token = nil
+      user.token_expiry_time = nil
+      user.save(validate: false)
+      Rails.logger.info("[AccountExpiry] Deactivated #{user.username} at login; period ended #{expired_on}")
+    end
+
+    raise AccountExpiredError.new(expired_on:)
+  end
+
+  ##
+  # Deactivates every account whose period has already ended. Used by the nightly
+  # sweep; the login path enforces the same rule for the account in front of it.
+  #
+  # Returns the number of accounts closed.
+  def self.deactivate_expired_accounts!(as_of = Date.current)
+    # Joined and compared in SQL rather than loaded and filtered in Ruby: this runs
+    # over every user in the database. ISO dates compare correctly as strings,
+    # which is why set_account_expiry! always writes that format.
+    expired = User.unscoped
+                  .where(deactivated_on: nil)
+                  .joins(<<~SQL.squish)
+                    INNER JOIN user_property account_period
+                            ON account_period.user_id = users.user_id
+                           AND account_period.property = #{ActiveRecord::Base.connection.quote(ACCOUNT_EXPIRY_PROPERTY)}
+                  SQL
+                  .where('account_period.property_value < ?', as_of.to_date.iso8601)
+
+    expired.find_each.count do |user|
+      user.update_columns(
+        deactivated_on: Time.now,
+        authentication_token: nil,
+        token_expiry_time: nil
+      )
+      Rails.logger.info("[AccountExpiry] Swept #{user.username}; period ended #{user.account_expires_on}")
+      true
+    end
+  end
+
   def self.authenticate_credentials(username, password)
+    # Raises TooManyRequestsError before any password comparison when this
+    # username is inside a back-off or lock window.
+    LoginThrottleService.check!(username)
+
     user = User.unscoped.with_authentication_preloads.find_by(username:)
-    return nil unless user
+    unless user
+      # Count unknown usernames too, otherwise the throttle reveals which
+      # accounts exist, and spend the same time hashing as a real check would.
+      LoginThrottleService.equalize_timing(password)
+      LoginThrottleService.record_failure(username)
+      return nil
+    end
 
     begin
       Location.current = user.location if user.location_id.present?
@@ -288,17 +442,53 @@ module UserService
       # Fallback to some global property or skip? 
       # For now, we skip setting it if not found to avoid crash
     end
-    unless user&.active? && \
-           (bart_authenticate(user, password) || \
-           new_arch_authenticate(user, password))
+    # The password is checked before the account state so that an expired
+    # trainee still gets told why on every attempt, not just the first one that
+    # tripped the expiry. Both helpers are pure hash comparisons with no side
+    # effects, and a deactivated user still records a throttle failure below, so
+    # nothing else about the flow changes.
+    password_valid = bart_authenticate(user, password) || new_arch_authenticate(user, password)
+
+    unless password_valid
+      LoginThrottleService.record_failure(username, user:)
       return nil
     end
 
+    # Only now that the password is confirmed correct may we say anything about
+    # the state of the account - saying it earlier would tell an unauthenticated
+    # caller which usernames are real. enforce_account_period! deactivates an
+    # expired account and raises, so the login stops here.
+    enforce_account_period!(user)
+
+    unless user.active?
+      LoginThrottleService.record_failure(username, user:)
+      return nil
+    end
+
+    LoginThrottleService.record_success(username)
     user
+  rescue TooManyRequestsError, AccountExpiredError
+    # Expected control flow, not an error to log with a backtrace.
+    raise
   rescue StandardError => e
     Rails.logger.error "Error logging in: #{e}"
     Rails.logger.error e.backtrace.join("\n")
     raise e
+  end
+
+  ##
+  # Sets a new password outside the normal update path - used by the security
+  # question reset, where there is no session and no current password to check.
+  # Mirrors what update_user does, and refreshes last_password_updated so the
+  # 90-day expiry restarts rather than firing again immediately.
+  def self.reset_password_for(user, password)
+    ActiveRecord::Base.transaction do
+      user.password = hash_password(password, user.salt)
+      user.save!
+      touch_password_updated!(user)
+    end
+
+    user
   end
 
   def self.reset_password(code:)
@@ -340,11 +530,11 @@ module UserService
     # Check if the user is active
     raise InvalidParameterError, 'User is not active' unless user.active?
 
-    # auto expire user password
-    UserProperty.where(
-      user_id: user.id,
-      property: 'last_password_reset'
-    ).update_all(property_value: 31.days.ago.to_date)
+    # Force a password change at the next login. This used to write
+    # `last_password_reset`, which nothing reads, with a date 31 days old - short
+    # of the 90-day window even if the name had been right. So a code-based reset
+    # never actually made anyone change their password.
+    expire_password!(user)
 
     # authenticate the user
     new_authentication_token(user)

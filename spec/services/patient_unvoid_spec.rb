@@ -155,7 +155,7 @@ RSpec.describe PatientService, 'void and restore' do
     expect { service.unvoid_patient(patient.patient_id, 'Voided in error') }
       .to raise_error(InvalidParameterError, /voided by a merge/)
 
-    expect(service.voided_patients(from: Date.today.to_s)[:patients].map { |entry| entry[:patient_id] })
+    expect(service.voided_patients(from: Date.current.to_s)[:patients].map { |entry| entry[:patient_id] })
       .not_to include(patient.patient_id)
   end
 
@@ -178,7 +178,11 @@ RSpec.describe PatientService, 'void and restore' do
     patient, = build_patient
     service.void_patient(patient, 'Voided the wrong client', daemonize: false)
 
-    listed = service.voided_patients(from: Date.today.to_s, to: Date.today.to_s)
+    # Date.current, not Date.today: date_voided is stamped in the application's
+    # zone (Africa/Blantyre) while Date.today follows the system zone. On a UTC
+    # runner after 22:00 those are different days, so the patient voided a line
+    # earlier falls outside the very window this filters on.
+    listed = service.voided_patients(from: Date.current.to_s, to: Date.current.to_s)
     row = listed[:patients].find { |entry| entry[:patient_id] == patient.patient_id }
 
     expect(row).to be_present
@@ -186,7 +190,7 @@ RSpec.describe PatientService, 'void and restore' do
     expect(row[:void_reason]).to eq('Voided the wrong client')
     expect(row[:void_batch_id]).to be_present
 
-    expect(service.voided_patients(from: (Date.today + 1).to_s)[:patients].map { |entry| entry[:patient_id] })
+    expect(service.voided_patients(from: (Date.current + 1).to_s)[:patients].map { |entry| entry[:patient_id] })
       .not_to include(patient.patient_id)
   end
 
