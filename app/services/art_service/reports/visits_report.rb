@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative '../incomplete_visits_evaluator'
+
 module ArtService
   module Reports
     class VisitsReport
@@ -22,9 +24,11 @@ module ArtService
 
       def calculate_daily_stats(date)
         stats = { incomplete: 0, complete: 0 }
+        patients = find_visiting_patients(date)
+        incomplete_patient_ids = incomplete_patient_ids(patients, date)
 
-        find_visiting_patients(date).each do |patient|
-          if workflow_engine(patient, date).next_encounter
+        patients.each do |patient|
+          if incomplete_patient_ids.include?(patient.patient_id)
             stats[:incomplete] += 1
           else
             stats[:complete] += 1
@@ -56,6 +60,12 @@ module ArtService
 
       private
 
+      def incomplete_patient_ids(patients, date)
+        patient_visit_dates = patients.map { |patient| [patient.patient_id, date] }
+        IncompleteVisitsEvaluator.new(program: hiv_program,
+                                      patient_visit_dates:).call.keys
+      end
+
       # Returns a list of patients who visited the ART clinic on given day.
       def find_visiting_patients(date)
         day_start, day_end = TimeUtils.day_bounds(date)
@@ -72,12 +82,6 @@ module ArtService
         SQL
 
         Patient.find_by_sql([query, day_start, day_end])
-      end
-
-      def workflow_engine(patient, date)
-        ArtService::WorkflowEngine.new patient:,
-                                       program: hiv_program,
-                                       date:
       end
 
       def hiv_program
