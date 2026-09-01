@@ -27,6 +27,7 @@ module ArtService
     TPT_DRUG_CONCEPTS    = %w[Isoniazid Rifapentine Isoniazid/Rifapentine].freeze
     TPT_IPT_MONTHS       = 6
     TPT_3HP_MONTHS       = 3
+    CPT_DRUG_CONCEPTS    = %w[Cotrimoxazole].freeze
 
     # Encounter type names (exact DB strings — match workflow_engine.rb)
     HIV_CLINIC_REGISTRATION_ENCOUNTER = 'HIV CLINIC REGISTRATION'
@@ -153,6 +154,8 @@ module ArtService
                         []
                       end
       @tpt_drug_ids = Drug.where(concept_id: @tpt_drug_concept_ids).pluck(:drug_id)
+      @cpt_drug_concept_ids = fetch_concept_ids(CPT_DRUG_CONCEPTS).values
+      @cpt_drug_ids = Drug.where(concept_id: @cpt_drug_concept_ids).pluck(:drug_id)
 
       @all_obs                = load_all_obs
       @staging_criteria       = load_staging_criteria
@@ -200,7 +203,7 @@ module ArtService
     end
 
     def load_all_orders
-      all_drug_ids = (@arv_drug_ids + @tpt_drug_ids).uniq
+      all_drug_ids = (@arv_drug_ids + @tpt_drug_ids + @cpt_drug_ids).uniq
       return {} if all_drug_ids.empty?
 
       rows = ActiveRecord::Base.connection.exec_query(<<~SQL).to_a
@@ -649,7 +652,10 @@ module ArtService
       orders_on_date = @all_orders[date_str] || []
 
       dispensed_on_date = @pills_dispensed_by_date[date_str] || []
-      arv_drugs = orders_on_date.select { |r| @arv_drug_ids.include?(r['drug_inventory_id']) }
+      # ARV, TPT and CPT dispensations all belong on the visit summary/printed
+      # label - not ARV alone - so they're built the same way and combined.
+      dispensed_drug_ids = @arv_drug_ids + @tpt_drug_ids + @cpt_drug_ids
+      arv_drugs = orders_on_date.select { |r| dispensed_drug_ids.include?(r['drug_inventory_id']) }
                                 .uniq { |r| r['drug_name'] }
                                 .map do |r|
         dispensed = dispensed_on_date.find { |d| d['name'] == r['drug_name'] }
