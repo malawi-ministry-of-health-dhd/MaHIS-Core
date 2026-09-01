@@ -22,6 +22,12 @@ mnh_stats_full_refresh:
   queue: "sync_offline_data"
   description: "Weekly full MNH stats rebuild for every DDE-activated facility (fans out one job per facility)"
 
+deactivate_expired_accounts:
+  cron: "15 0 * * * Africa/Blantyre"
+  class: "DeactivateExpiredAccountsJob"
+  queue: "default"
+  description: "Deactivates student/intern accounts whose agreed period has ended"
+
 flag_potential_duplicates:
   cron: "0 0 * * *"
   class: "FlagPotentialDuplicatesJob"

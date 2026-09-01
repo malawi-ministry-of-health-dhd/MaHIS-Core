@@ -59,7 +59,20 @@ class DrugService
 
     if filters.include?(:name)
       name = filters.delete(:name)
-      query = query.where('name LIKE ?', "%#{name}%")
+      term = "%#{ActiveRecord::Base.sanitize_sql_like(name.to_s)}%"
+      # Clinicians search with the shorthand they prescribe by - "TLD", "RHZE" -
+      # which is held in alternative_drug_names, not drug.name. Matching only
+      # drug.name made the ARV and TB combinations look absent from the list even
+      # though they are in the OPD Medication set (e.g. TLD is drug 823,
+      # "TDF300/3TC300/DTG50").
+      query = query
+              .left_joins(:alternative_names)
+              .where(
+                'drug.name LIKE :term OR alternative_drug_names.name LIKE :term ' \
+                'OR alternative_drug_names.short_name LIKE :term',
+                term: term
+              )
+              .distinct
     end
 
     query = query.where(filters) unless filters.empty?
