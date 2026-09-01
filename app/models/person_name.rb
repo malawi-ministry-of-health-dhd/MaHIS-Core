@@ -7,7 +7,10 @@ class PersonName < VoidableRecord
   include Locatable
 
   belongs_to :person, foreign_key: :person_id
-  has_one :person_name_code, foreign_key: :person_name_id
+  # The soundex row is the name's own index entry, so it has to go with the
+  # name. Without this, destroying a name (or a user, whose names are dependent
+  # destroys) trips the person_name_code foreign key.
+  has_one :person_name_code, foreign_key: :person_name_id, dependent: :destroy
 
   def self.validate_name_record(record, attr, value)
     return if value&.blank?

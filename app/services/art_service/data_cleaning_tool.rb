@@ -1,6 +1,8 @@
 # rubocop:disable Metrics/MethodLength, Metrics/ClassLength, Style/Documentation, Metrics/AbcSize, Metrics/BlockLength, Security/Eval
 # frozen_string_literal: true
 
+require_relative 'incomplete_visits_evaluator'
+
 module ArtService
   class DataCleaningTool
     include CommonSqlQueryUtils
@@ -26,10 +28,11 @@ module ArtService
       'ON ANTIRETROVIRALS CLIENTS WITHOUT HIV PROGRAM' => 'on_antiretrovirals_clients_without_hiv_program'
     }.freeze
 
-    def initialize(start_date:, end_date:, tool_name:)
+    def initialize(start_date:, end_date:, tool_name:, location_id: nil)
       @start_date = start_date.to_date
       @end_date = end_date.to_date
       @tool_name = tool_name.upcase
+      @location_id = location_id || Location.current&.location_id || User.current&.location_id
     end
 
     def results
@@ -54,10 +57,10 @@ module ArtService
         FROM orders o
         INNER JOIN encounter e USING(encounter_id)
         INNER JOIN drug_order d ON o.order_id = d.order_id
-          AND DATEDIFF(o.start_date, o.auto_expire_date) <= 180 -- 6 Months 
+          AND DATEDIFF(o.start_date, o.auto_expire_date) <= 180 -- 6 Months#{' '}
           AND o.voided = 0
         INNER JOIN (
-          SELECT SUM(value_numeric) value_numeric, order_id 
+          SELECT SUM(value_numeric) value_numeric, order_id#{' '}
           FROM obs
           WHERE concept_id = #{concept('Amount Dispensed').concept_id}
             AND obs.voided = 0
@@ -65,9 +68,9 @@ module ArtService
         ) amounts ON amounts.order_id = o.order_id
           AND amounts.value_numeric % 30 != 0 -- not divisible by 30
         INNER JOIN person_name pn ON pn.person_id = o.patient_id
-        INNER JOIN person p ON p.person_id = o.patient_id 
+        INNER JOIN person p ON p.person_id = o.patient_id#{' '}
         LEFT JOIN patient_identifier i ON i.patient_id = o.patient_id
-          AND i.identifier_type = #{indetifier_type} 
+          AND i.identifier_type = #{indetifier_type}#{' '}
           AND i.voided = 0
         LEFT JOIN obs app ON app.person_id = o.patient_id
           AND app.concept_id = #{concept('Appointment date').concept_id}
@@ -75,9 +78,10 @@ module ArtService
           AND app.obs_datetime > o.start_date -- Latest Appointment date after dispensation
         WHERE d.drug_inventory_id IN(#{arv_drugs.join(',')})
           AND e.voided = 0
-          AND d.quantity > 0 
+          AND d.quantity > 0#{' '}
           AND o.start_date >= DATE(#{ActiveRecord::Base.connection.quote(@start_date)})
           AND o.start_date <= DATE(#{ActiveRecord::Base.connection.quote(@end_date)})
+          #{location_condition('e.location_id')}
       SQL
     end
 
@@ -93,14 +97,14 @@ module ArtService
           i.identifier arv_number,
           MAX(o.start_date) last_art_dispensation_date
         FROM patient p
-        INNER JOIN person_name n ON n.person_id = p.patient_id 
+        INNER JOIN person_name n ON n.person_id = p.patient_id#{' '}
           AND n.voided = 0
         INNER JOIN person pp USING(person_id)
-        LEFT JOIN obs ob ON ob.person_id = p.patient_id 
+        LEFT JOIN obs ob ON ob.person_id = p.patient_id#{' '}
           AND ob.voided = 0
-          AND ob.concept_id = #{concept('Date antiretrovirals started').concept_id} 
-        LEFT JOIN patient_identifier i ON i.patient_id = p.patient_id 
-          AND i.identifier_type = #{indetifier_type} 
+          AND ob.concept_id = #{concept('Date antiretrovirals started').concept_id}#{' '}
+        LEFT JOIN patient_identifier i ON i.patient_id = p.patient_id#{' '}
+          AND i.identifier_type = #{indetifier_type}#{' '}
           AND i.voided = 0
         INNER JOIN orders o ON o.patient_id = p.patient_id
           AND o.voided = 0
@@ -109,10 +113,10 @@ module ArtService
           AND do.quantity > 0
           AND o.start_date < #{ActiveRecord::Base.connection.quote(@end_date)}
         AND p.patient_id NOT IN (
-          SELECT patient_id 
-            FROM patient_program 
-            WHERE program_id = #{program.id} 
-            AND voided = 0 
+          SELECT patient_id#{' '}
+            FROM patient_program#{' '}
+            WHERE program_id = #{program.id}#{' '}
+            AND voided = 0#{' '}
             AND start_date <= DATE(#{ActiveRecord::Base.connection.quote(@end_date)})
         )
         GROUP BY p.patient_id
@@ -136,8 +140,9 @@ module ArtService
         LEFT JOIN patient_identifier i ON i.patient_id = p.patient_id AND i.identifier_type = #{indetifier_type} AND i.voided = 0
         WHERE o.concept_id = #{concept('Date antiretrovirals started').concept_id}
         AND o.value_datetime <= pp.birthdate
+        #{location_condition('o.location_id')}
         GROUP BY p.patient_id;
-        SQL
+      SQL
     end
 
     def active_clients_with_adverse_outcomes
@@ -174,6 +179,7 @@ module ArtService
             AND p.voided = 0
             AND pi.voided = 0
             AND patient_outcome(p.patient_id, #{ActiveRecord::Base.connection.quote(@end_date)}) IN ('Defaulted', 'Patient died', 'Treatment stopped', 'Patient transferred out')
+            #{location_condition('e.location_id')}
         GROUP BY p.patient_id;
       SQL
     end
@@ -213,6 +219,7 @@ module ArtService
           AND pi.identifier_type = #{indetifier_type} AND pi.voided = 0
           AND o.obs_datetime < #{ActiveRecord::Base.connection.quote(@end_date)}
         WHERE e.voided = 0
+        #{location_condition('e.location_id')}
         GROUP BY o.person_id, o.value_datetime
         HAVING o.value_datetime IS NULL
       SQL
@@ -255,6 +262,7 @@ module ArtService
               between '#{@start_date.strftime('%Y-%m-%d 00:00:00')}'
               and '#{@end_date.strftime('%Y-%m-%d 23:59:59')}'
               and `p`.`patient_id` NOT IN (#{external_clients}))
+              #{location_condition('p.location_id')}
         group by `p`.`patient_id`
         HAVING NULLIF(birthdate, '') = NULL OR NULLIF(gender,'') = NULL
         OR NULLIF(given_name,'') = NULL OR NULLIF(family_name,'') = NULL
@@ -290,6 +298,7 @@ module ArtService
               between '#{@start_date.strftime('%Y-%m-%d 00:00:00')}'
               and '#{@end_date.strftime('%Y-%m-%d 23:59:59')}'
               and `p`.`patient_id` NOT IN (#{external_clients}))
+              #{location_condition('p.location_id')}
         group by `p`.`patient_id`
         HAVING (DATE(date_enrolled) < DATE(birthdate))
         OR (DATE(earliest_start_date) < DATE(birthdate))
@@ -321,6 +330,7 @@ module ArtService
               between '#{@start_date.strftime('%Y-%m-%d 00:00:00')}'
               and '#{@end_date.strftime('%Y-%m-%d 23:59:59')}'
               and `p`.`patient_id` NOT IN (#{external_clients}))
+              #{location_condition('p.location_id')}
         group by `p`.`patient_id`
         HAVING (date_enrolled IS NOT NULL AND earliest_start_date)
         AND DATE(earliest_start_date) > DATE(date_enrolled);
@@ -374,6 +384,7 @@ module ArtService
               between '#{@start_date.strftime('%Y-%m-%d 00:00:00')}'
               and '#{@end_date.strftime('%Y-%m-%d 23:59:59')}'
               and `p`.`patient_id` NOT IN (#{external_clients}))
+              #{location_condition('p.location_id')}
         group by `p`.`patient_id`
         ORDER BY s.start_date DESC;
       SQL
@@ -438,6 +449,7 @@ module ArtService
         LEFT JOIN person_name n ON n.person_id = pp.patient_id AND n.voided = 0
         WHERE o.voided = 0
         AND o.person_id NOT IN (#{external_clients})
+        #{location_condition('e.location_id')}
         GROUP BY o.person_id HAVING COUNT(DISTINCT(o.value_coded)) > 1 OR COUNT(DISTINCT(DATE(o.obs_datetime))) > 1;
       SQL
     end
@@ -476,6 +488,7 @@ module ArtService
           AND reason_for_art_eligibility.concept_id IN (SELECT concept_id FROM concept_name WHERE name = 'Reason for ART eligibility' AND voided = 0)
           AND reason_for_art_eligibility.voided = 0
         WHERE patient_program.patient_id NOT IN (#{external_clients})
+        #{location_condition('patient_program.location_id')}
         GROUP BY patient_program.patient_id
         HAVING reason_for_art IS NULL AND art_start_date >= DATE(#{start_date})
       SQL
@@ -534,6 +547,7 @@ module ArtService
           AND dispensation.voided = 0
         WHERE drug_order.drug_inventory_id IN (#{arv_drugs.join(',')})
         AND (drug_order.quantity IS NULL OR drug_order.quantity <= 0 AND orders.patient_id NOT IN(#{external_clients}))
+        #{location_condition('encounter.location_id')}
         GROUP BY DATE(orders.start_date), orders.patient_id
         HAVING COALESCE(SUM(dispensation.value_numeric), 0) <= 0
       SQL
@@ -594,6 +608,7 @@ module ArtService
           ON person_name.person_id = deaths.patient_id
           AND person_name.voided = 0
         WHERE person.person_id NOT IN(#{external_clients})
+        #{location_condition('encounter.location_id')}
         GROUP BY deaths.patient_id
         ORDER BY patient_identifier.date_created DESC
       SQL
@@ -616,6 +631,7 @@ module ArtService
         LEFT JOIN patient_identifier i ON i.patient_id = p.person_id AND i.identifier_type = #{indetifier_type} AND i.voided = 0
         LEFT JOIN person_name n ON n.person_id = p.person_id AND n.voided = 0
         WHERE p.voided = 0 AND p.person_id NOT IN(#{external_clients}) AND LEFT(p.gender, 1) != 'F'
+        #{location_condition('o.location_id')}
         GROUP BY p.person_id
       SQL
     end
@@ -642,50 +658,55 @@ module ArtService
     end
 
     def incomplete_visit
-      patient_visit_dates = patient_visits.map { |visit| [visit['patient_id'], visit['visit_date']] }
+      patient_visit_dates = patient_visits.map { |visit| [visit['patient_id'].to_i, visit['visit_date']] }
 
       return {} if patient_visit_dates.blank?
 
-      incomplete_visits_comp = {}
+      incomplete_dates_by_patient_id = IncompleteVisitsEvaluator.new(
+        program:,
+        patient_visit_dates:
+      ).call
 
-      patient_visit_dates.each do |patient_id, visit_date|
-        patient = Patient.find(patient_id)
-        date =  visit_date.to_date
-        workflow_engine = ArtService::WorkflowEngine.new(patient:, date:, program:)
-        complete = workflow_engine.next_encounter.blank? || false
+      return {} if incomplete_dates_by_patient_id.blank?
 
-        next if complete
+      # Only fetch demographics for patients that actually end up on the report.
+      person_details_by_patient_id = incomplete_visit_person_details(incomplete_dates_by_patient_id.keys)
 
-        person_details = ActiveRecord::Base.connection.select_one <<~SQL
-          SELECT
-            n.given_name, n.family_name, p.gender, p.birthdate,
-            a.identifier arv_number, i.identifier national_id
-          FROM person p
-          LEFT JOIN patient_identifier a ON a.patient_id = p.person_id
-          AND a.identifier_type = #{indetifier_type} AND a.voided = 0
-          LEFT JOIN patient_identifier i ON i.patient_id = p.person_id
-          AND i.identifier_type = 3 AND i.voided = 0
-          LEFT JOIN person_name n On n.person_id = p.person_id AND n.voided = 0
-          WHERE p.person_id = #{patient_id} AND p.voided = 0
-          GROUP BY p.person_id ORDER BY i.date_created DESC,
-          a.date_created DESC, n.date_created DESC;
-        SQL
+      incomplete_dates_by_patient_id.each_with_object({}) do |(patient_id, dates), incomplete_visits_comp|
+        person_details = person_details_by_patient_id[patient_id]
 
-        if incomplete_visits_comp[patient_id].blank?
-          incomplete_visits_comp[patient_id] = {
-            given_name: person_details['given_name'],
-            family_name: person_details['family_name'],
-            gender: person_details['gender'],
-            birthdate: person_details['birthdate'],
-            arv_number: person_details['arv_number'],
-            national_id: person_details['national_id'],
-            dates: []
-          }
-        end
-        incomplete_visits_comp[patient_id][:dates] << visit_date.to_date
+        incomplete_visits_comp[patient_id] = {
+          given_name: person_details&.[]('given_name'),
+          family_name: person_details&.[]('family_name'),
+          gender: person_details&.[]('gender'),
+          birthdate: person_details&.[]('birthdate'),
+          arv_number: person_details&.[]('arv_number'),
+          national_id: person_details&.[]('national_id'),
+          dates:
+        }
       end
+    end
 
-      incomplete_visits_comp
+    # Fetches demographics/identifiers for all patients in one query instead of one query per visit.
+    def incomplete_visit_person_details(patient_ids)
+      return {} if patient_ids.blank?
+
+      data = ActiveRecord::Base.connection.select_all <<~SQL
+        SELECT
+          p.person_id, n.given_name, n.family_name, p.gender, p.birthdate,
+          a.identifier arv_number, i.identifier national_id
+        FROM person p
+        LEFT JOIN patient_identifier a ON a.patient_id = p.person_id
+        AND a.identifier_type = #{indetifier_type} AND a.voided = 0
+        LEFT JOIN patient_identifier i ON i.patient_id = p.person_id
+        AND i.identifier_type = 3 AND i.voided = 0
+        LEFT JOIN person_name n On n.person_id = p.person_id AND n.voided = 0
+        WHERE p.person_id IN(#{patient_ids.join(',')}) AND p.voided = 0
+        GROUP BY p.person_id ORDER BY i.date_created DESC,
+        a.date_created DESC, n.date_created DESC;
+      SQL
+
+      data.each_with_object({}) { |row, hash| hash[row['person_id'].to_i] = row }
     end
 
     def missing_vl_results
@@ -704,6 +725,7 @@ module ArtService
         WHERE o.concept_id = #{concept('Test type').concept_id} AND o.value_coded = #{concept('HIV viral load').concept_id} AND o.voided = 0
         AND o.obs_datetime BETWEEN '#{@start_date}' AND '#{@end_date}'
         AND tr.obs_id IS NULL AND r.obs_id IS NULL
+        #{location_condition('o.location_id')}
       SQL
     end
 
@@ -737,6 +759,7 @@ module ArtService
           AND obs1.voided = 0
           AND obs1.value_coded <> obs2.value_coded
           AND obs1.obs_datetime BETWEEN '#{@start_date}' AND '#{@end_date}'
+          #{location_condition('obs1.location_id')}
         GROUP BY person.person_id
       SQL
     end
@@ -755,6 +778,7 @@ module ArtService
         LEFT JOIN patient_identifier i ON i.patient_id = p.person_id AND i.voided = 0 AND i.identifier_type = 3
         WHERE ps.voided = 0 AND ps.start_date BETWEEN '#{@start_date}' AND '#{@end_date}' AND (ps.end_date IS NULL OR ps.end_date > '#{@end_date}')
         AND p.person_id NOT IN(#{external_clients})
+        #{location_condition('pp.location_id')}
         GROUP BY p.person_id, ps.start_date HAVING state_count > 1;
       SQL
     end
@@ -770,6 +794,13 @@ module ArtService
     def indetifier_type
       @indetifier_type ||= PatientIdentifierType\
                            .find_by_name!(GlobalPropertyService.use_filing_numbers? ? 'Filing Number' : 'ARV Number').id
+    end
+
+    # Returns a SQL fragment filtering by @location_id, or an empty string when no location is set.
+    def location_condition(column)
+      return '' if @location_id.blank?
+
+      "AND #{column} = #{ActiveRecord::Base.connection.quote(@location_id)}"
     end
 
     ##
@@ -795,6 +826,7 @@ module ArtService
           )
           AND program_id = #{Program.find_by_name!('HIV Program').program_id}
           AND voided = 0
+          #{location_condition('encounter.location_id')}
         GROUP BY encounter.patient_id, DATE(encounter.encounter_datetime)
       SQL
     end
