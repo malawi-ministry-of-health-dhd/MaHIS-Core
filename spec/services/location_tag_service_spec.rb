@@ -94,6 +94,49 @@ RSpec.describe LocationTagService do
     end
   end
 
+  # Backs the tag indicator in the village list: the whole page is resolved in
+  # one query, so showing which rows are tagged costs no N+1.
+  describe '.assignable_tags_for' do
+    let(:other_village_id) { create_location('Village', "Spec Village #{SecureRandom.hex(3)}", parent: authority) }
+
+    it 'returns nothing for an empty list without querying' do
+      expect(described_class.assignable_tags_for([])).to eq({})
+    end
+
+    it 'keys the tags it finds by location_id' do
+      described_class.replace_assignable_tags!(village, [clinic_tag_id])
+
+      expect(described_class.assignable_tags_for([village_id, other_village_id]))
+        .to eq(village_id => ['Village Clinic'])
+    end
+
+    # Absent rather than an empty array: the controller supplies the empty array,
+    # which is what tells a client the answer is known and not merely missing.
+    it 'omits a location that carries none' do
+      expect(described_class.assignable_tags_for([other_village_id])).to eq({})
+    end
+
+    # Otherwise the indicator would report a village as a Village Clinic purely
+    # because it is a village.
+    it 'ignores the structural tags every village carries' do
+      expect(described_class.assignable_tags_for([village_id])).to eq({})
+    end
+
+    it 'resolves a whole page in a single query' do
+      described_class.replace_assignable_tags!(village, [clinic_tag_id])
+      ids = [village_id, other_village_id]
+
+      count = 0
+      subscriber = ActiveSupport::Notifications.subscribe('sql.active_record') do |*, payload|
+        count += 1 unless payload[:name].to_s.match?(/SCHEMA|TRANSACTION/)
+      end
+      described_class.assignable_tags_for(ids)
+      ActiveSupport::Notifications.unsubscribe(subscriber)
+
+      expect(count).to eq(1)
+    end
+  end
+
   describe '.replace_assignable_tags!' do
     it 'adds the tag while leaving the structural tag in place' do
       described_class.replace_assignable_tags!(village, [clinic_tag_id])

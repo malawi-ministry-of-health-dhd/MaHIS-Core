@@ -30,6 +30,21 @@ module LocationTagService
       LocationTag.where(name: ASSIGNABLE_TAG_NAMES).order(:name)
     end
 
+    # The whitelisted tags carried by each of the given locations, keyed by
+    # location_id, so a list can show which rows are tagged in ONE query rather
+    # than asking per row. Locations with none are simply absent from the hash.
+    def assignable_tags_for(location_ids)
+      ids = Array(location_ids).map(&:to_i).uniq
+      return {} if ids.empty?
+
+      LocationTagMap
+        .joins(:location_tag)
+        .where(location_id: ids, location_tag: { name: ASSIGNABLE_TAG_NAMES })
+        .pluck(:location_id, Arel.sql('location_tag.name'))
+        .group_by(&:first)
+        .transform_values { |rows| rows.map(&:last).sort }
+    end
+
     # What a location's tags look like to a client: every tag it currently
     # carries, each flagged with whether this service would let it be changed,
     # plus the assignable set with its current state for rendering toggles.
