@@ -25,7 +25,13 @@ module Api
       end
 
       def show
-        render json: find_user(params[:id]), status: :ok
+        target_user = find_user(params[:id])
+        # Opt-in: the assigned-area tree can run to several hundred villages, so
+        # callers that only want the account itself should not pay for it.
+        target_user.serialize_assigned_areas =
+          ActiveModel::Type::Boolean.new.cast(params[:include_assigned_areas]) || false
+
+        render json: target_user, status: :ok
       end
 
       def update_username
