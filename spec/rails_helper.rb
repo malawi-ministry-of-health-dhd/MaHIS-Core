@@ -91,6 +91,7 @@ RSpec.configure do |config|
     'login_throttle_spec.rb',
     'user_service_villages_spec.rb',
     'user_service_assigned_areas_spec.rb',
+    'location_tag_service_spec.rb',
     'user_villages_spec.rb',
     'security_question_service_spec.rb',
     'security_questions_spec.rb',
