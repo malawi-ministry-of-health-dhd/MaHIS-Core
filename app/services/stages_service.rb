@@ -132,6 +132,11 @@ class StagesService
       given_name: person_name(patient)&.given_name,
       family_name: person_name(patient)&.family_name,
       gender: patient&.gender,
+      # Age and length-of-visit columns on the IPD ward lists read these. They
+      # used to come from the bed allocation, which a site that does not use bed
+      # management never creates.
+      birthdate: patient&.person&.birthdate,
+      visit_date_started: stage.visit&.date_started,
       visit_number: stage.visit_number,
       patient_care_area: stage.patient_care_area,
       category: normalize_category(stage.stage),
