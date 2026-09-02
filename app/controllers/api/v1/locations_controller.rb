@@ -217,6 +217,31 @@ module Api
         render json: { error: e.record.errors.full_messages.join(', ') }, status: :unprocessable_entity
       end
 
+      # Location tags on an EXISTING location.
+      #
+      # GET /locations/:id/tags
+      # PUT /locations/:id/tags   { location_tag_ids: [10] }
+      #
+      # Only the whitelisted tags are readable as changeable and writable at all
+      # (see LocationTagService) - the tags that define a location's place in the
+      # administrative hierarchy are never on offer here.
+      def tags
+        location = Location.unscoped.find_by(location_id: params[:id])
+        return render json: { error: 'Location not found' }, status: :not_found unless location
+
+        return render json: LocationTagService.payload(location), status: :ok if request.get?
+
+        # Matches the gate the management screens already apply to village edits.
+        unless User.current&.superuser_rank.to_i.positive?
+          return render json: { error: 'You are not authorised to manage location tags' }, status: :forbidden
+        end
+
+        requested = params.permit(location_tag_ids: [])[:location_tag_ids]
+        render json: LocationTagService.replace_assignable_tags!(location, requested), status: :ok
+      rescue LocationTagService::UnassignableTagError => e
+        render json: { error: e.message }, status: :unprocessable_entity
+      end
+
       def create
         # Require and permit parameters
         params.require(:tag)
