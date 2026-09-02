@@ -10,6 +10,8 @@ class User < RetirableRecord
   SERIALIZATION_PRELOADS = [
     :location,
     :programs,
+    # Serialized payloads carry account_expires_on, which lives in user_property.
+    :properties,
     { roles: :privileges },
     { person: [:names, { person_attributes: :type }] }
   ].freeze
@@ -46,6 +48,16 @@ class User < RetirableRecord
            foreign_key: :person_id,
            dependent: :destroy)
 
+  # Opt-in: when set, as_json nests the user's assigned villages under
+  # `location` as a district -> traditional authority -> village tree (see
+  # UserService.assigned_areas). Off by default because as_json also serves the
+  # user LIST, which honours `paginate=false` - and an HSA covering a whole
+  # traditional authority carries several hundred villages, so folding the tree
+  # into every row of an unpaginated list would be an unbounded payload.
+  # Login sets it (UserService.new_authentication_token) and users#show sets it
+  # on request.
+  attr_accessor :serialize_assigned_areas
+
   scope :with_authentication_preloads, -> { includes(*AUTHENTICATION_PRELOADS) }
   scope :with_serialization_preloads, -> { includes(*SERIALIZATION_PRELOADS) }
 
@@ -58,6 +70,47 @@ class User < RetirableRecord
 
   def active?
     deactivated_on.nil?
+  end
+
+  # A supervised user - student or intern - is at the facility for a fixed
+  # rotation. The set of supervised roles is owned by LoginResponseService, which
+  # already uses it to decide who must pick a supervisor at login; deriving it
+  # from there keeps one definition of "supervised" in the system.
+  def supervised_trainee?
+    held_role_names = loaded_role_names || roles.map(&:role)
+    (held_role_names & LoginResponseService::SUPERVISION_REQUIREMENTS.keys).any?
+  end
+
+  # The LAST DAY the account may be used, held as a user_property rather than a
+  # column on users. Absent means the account never expires, which is every
+  # non-supervised user.
+  #
+  # An unreadable stored value is treated as absent, deliberately: a corrupt
+  # property must never be what locks somebody out of the system. This mirrors
+  # LoginResponseService.password_expired?, which takes the same view.
+  def account_expires_on
+    raw = account_expiry_property_value
+    return nil if raw.blank?
+
+    begin
+      Date.parse(raw.to_s)
+    rescue ArgumentError, TypeError
+      Rails.logger.warn("[AccountExpiry] Unreadable #{UserService::ACCOUNT_EXPIRY_PROPERTY} for user #{user_id}: #{raw.inspect}")
+      nil
+    end
+  end
+
+  # Expires only once the last valid day has passed.
+  def account_expired?(as_of = Date.current)
+    expires_on = account_expires_on
+    expires_on.present? && as_of > expires_on
+  end
+
+  def days_until_account_expiry(as_of = Date.current)
+    expires_on = account_expires_on
+    return nil if expires_on.blank?
+
+    (expires_on - as_of).to_i
   end
 
   def self.current
@@ -124,7 +177,7 @@ class User < RetirableRecord
     json = super(options.merge(
       except: %i[password salt secret_question secret_answer
                  authentication_token token_expiry_time],
-      methods: %i[current_location],
+      methods: %i[current_location account_expires_on],
       include: {
         roles: { include: { privileges: {} } },
         programs: {},
@@ -152,6 +205,14 @@ class User < RetirableRecord
           role['privileges'] = all_privileges
         end
       end
+    end
+
+    if serialize_assigned_areas
+      # Nested under `location` because the assigned areas hang off the facility's
+      # own district: a facility and a traditional authority are both children of
+      # the district in the location tree. The node is created when the user has
+      # no facility so that clients can always read location.assigned_areas.
+      json['location'] = (json['location'] || {}).merge('assigned_areas' => UserService.assigned_areas(self))
     end
 
     json
@@ -219,6 +280,17 @@ class User < RetirableRecord
       roles.map(&:role)
     elsif association(:user_roles).loaded?
       user_roles.map(&:role)
+    end
+  end
+
+  # Read from the preloaded association where there is one: account_expires_on is
+  # serialized for every user, and the users list renders a page of them at a
+  # time, so querying per user would be a page-sized N+1.
+  def account_expiry_property_value
+    if association(:properties).loaded?
+      properties.find { |property| property.property == UserService::ACCOUNT_EXPIRY_PROPERTY }&.property_value
+    else
+      UserProperty.where(user_id:, property: UserService::ACCOUNT_EXPIRY_PROPERTY).pick(:property_value)
     end
   end
 end

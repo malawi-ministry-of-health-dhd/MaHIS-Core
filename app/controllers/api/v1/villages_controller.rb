@@ -46,10 +46,18 @@ module Api
         total_count = villages.count
         page = (params[:page] || 1).to_i
         page_size = (params[:page_size] || DEFAULT_PAGE_SIZE).to_i
-        paginated_data = paginate(villages.order(:name))
+        paginated_data = paginate(villages.order(:name)).to_a
+
+        # `tags` carries the whitelisted tags each village holds, so a list can
+        # show which rows are tagged. Loaded for the whole page in one query;
+        # a village with none gets an empty array, which is what tells a client
+        # the answer is known rather than merely missing.
+        tags = LocationTagService.assignable_tags_for(paginated_data.map(&:location_id))
 
         render json: {
-          data: paginated_data,
+          data: paginated_data.map { |village|
+            village.as_json.merge('tags' => tags.fetch(village.location_id, []))
+          },
           pagination: {
             current_page: page,
             per_page: page_size,

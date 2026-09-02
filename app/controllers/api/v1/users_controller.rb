@@ -25,7 +25,13 @@ module Api
       end
 
       def show
-        render json: find_user(params[:id]), status: :ok
+        target_user = find_user(params[:id])
+        # Opt-in: the assigned-area tree can run to several hundred villages, so
+        # callers that only want the account itself should not pay for it.
+        target_user.serialize_assigned_areas =
+          ActiveModel::Type::Boolean.new.cast(params[:include_assigned_areas]) || false
+
+        render json: target_user, status: :ok
       end
 
       def update_username
@@ -56,7 +62,8 @@ module Api
 
         user = UserService.create_user(
           username:, password:, given_name:,
-          family_name:, roles:, programs:, location_id:, villages:, phone:, gender:
+          family_name:, roles:, programs:, location_id:, villages:, phone:, gender:,
+          account_duration_days: params[:account_duration_days]
         )
 
         if user.errors.empty?
@@ -70,7 +77,7 @@ module Api
 
       def update
         update_params = params.permit :password, :given_name, :family_name, :must_append_roles, :location_id, :phone,
-                                      roles: [], programs: []
+                                      :account_duration_days, roles: [], programs: []
 
         # Force programs through since permit can silently drop integer arrays
         update_params[:programs] = UserService.normalize_program_ids(params[:programs]) if params.key?(:programs)

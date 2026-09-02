@@ -221,6 +221,11 @@ Rails.application.routes.draw do
           get :departments
           put :departments
           patch :departments
+          # Location tags on an existing location; writes are limited to the
+          # LocationTagService whitelist.
+          get :tags
+          put :tags
+          patch :tags
         end
 
         collection do

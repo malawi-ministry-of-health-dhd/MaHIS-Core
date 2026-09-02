@@ -212,6 +212,47 @@ class CouchdbPatientService
     private
 
     MAX_ART_SUMMARY_REFRESH_ATTEMPTS = 3
+    MAX_LAB_ORDERS_REFRESH_ATTEMPTS = 3
+
+    def refresh_lab_orders(record, local_patient)
+      return record unless record.is_a?(Hash) && local_patient
+
+      lab_orders = record['labOrders']
+      return record unless lab_orders.is_a?(Hash)
+
+      fresh_saved_orders = BuildPatientRecordService.build_lab_orders_data(local_patient.patient_id)[:saved].as_json
+      replace_lab_orders(local_patient.patient_id, fresh_saved_orders) || record
+    rescue StandardError => e
+      Rails.logger.warn("Could not refresh lab orders for patient #{local_patient&.patient_id}: #{e.class}: #{e.message}")
+      record
+    end
+
+    # Only the 'saved' (MySQL-sourced) orders are refreshed; 'unsaved'/'voided'
+    # entries reflect pending offline client changes and must be preserved.
+    def replace_lab_orders(patient_id, fresh_saved_orders)
+      document_id = PatientRecordIdentityService.document_id(patient: Patient.unscoped.find_by(patient_id:)) || patient_id.to_s
+
+      MAX_LAB_ORDERS_REFRESH_ATTEMPTS.times do
+        latest_doc = JSON.parse(RestClient.get(couchdb_url(PATIENTS_DB,
+                                                           URI.encode_www_form_component(document_id))).body)
+        lab_orders = latest_doc['labOrders']
+        return latest_doc unless lab_orders.is_a?(Hash)
+        return latest_doc if lab_orders['saved'] == fresh_saved_orders
+
+        latest_doc['labOrders'] = lab_orders.merge('saved' => fresh_saved_orders)
+
+        begin
+          save_patient_record(latest_doc, patient_id)
+          return latest_doc
+        rescue RestClient::Conflict
+          next # document changed between our fetch and save; retry with a fresh fetch
+        end
+      end
+
+      nil
+    rescue RestClient::NotFound
+      nil
+    end
 
     def refresh_art_summary(record, local_patient)
       return record unless record.is_a?(Hash) && local_patient
@@ -307,7 +348,8 @@ class CouchdbPatientService
           end
           document_id = PatientRecordIdentityService.document_id(patient: local_patient) || patient_id.to_s
           response = RestClient.get(couchdb_url(PATIENTS_DB, URI.encode_www_form_component(document_id)))
-          refresh_art_summary(JSON.parse(response.body), local_patient)
+          record = refresh_art_summary(JSON.parse(response.body), local_patient)
+          refresh_lab_orders(record, local_patient)
         rescue RestClient::NotFound
           # A numeric ID that resolves to a local patient is not a legacy DDE
           # identifier. On a newly registered patient, searching for it using
