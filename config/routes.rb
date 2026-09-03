@@ -623,6 +623,11 @@ Rails.application.routes.draw do
         end
       end
     end
+
+    namespace :v1 do
+      # Browser dictation. Desktop and Android transcribe on the device.
+      resources :transcriptions, only: %i[create]
+    end
   end
 
   post '/api/v1/eir/session_schedule', to: 'api/v1/session_schedule#create'
