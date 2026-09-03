@@ -279,6 +279,55 @@ module UserService
     raise VillageQueryError, "Unable to fetch villages for user"
   end
 
+  ##
+  # A user's assigned villages as a hierarchy, for nesting under their facility:
+  # district -> traditional authority -> village.
+  #
+  # Districts are an ARRAY, not a single node, because nothing constrains a
+  # user's villages to their own facility's district - update_user_villages
+  # deliberately accepts any village id so a user at one facility can cover
+  # areas registered under another. A single district node would silently
+  # misreport the first such assignment.
+  #
+  # Built with raw joins on `location` rather than the Village /
+  # TraditionalAuthority models on purpose. Village#traditional_authority
+  # overrides its own belongs_to reader with a find_by, so `includes` preloads
+  # the association and the reader queries anyway - one query per village, and
+  # a village-per-TA count that reaches the high hundreds. This is one query for
+  # the whole tree regardless of size.
+  def self.assigned_areas(user)
+    rows = UserVillage
+           .where(user_id: user.user_id, retired: 0)
+           .joins('INNER JOIN location village ON village.location_id = user_villages.village_id')
+           .joins('LEFT JOIN location traditional_authority ON traditional_authority.location_id = village.parent_location')
+           .joins('LEFT JOIN location district ON district.location_id = traditional_authority.parent_location')
+           # Retired villages are dropped to match what the Village model would
+           # return. The traditional authority and district joins stay unfiltered:
+           # they are here to name the village's ancestry, and a retired ancestor
+           # must not blank out the name of a village that is still assigned.
+           .where(village: { retired: 0 })
+           .order(Arel.sql('district.name, traditional_authority.name, village.name'))
+           .pluck(Arel.sql(<<~SQL.squish))
+             district.location_id, district.name,
+             traditional_authority.location_id, traditional_authority.name,
+             village.location_id, village.name
+           SQL
+
+    rows.group_by { |row| row[0..1] }.map do |(district_id, district_name), district_rows|
+      {
+        district_id:,
+        name: district_name,
+        traditional_authorities: district_rows.group_by { |row| row[2..3] }.map do |(ta_id, ta_name), ta_rows|
+          {
+            traditional_authority_id: ta_id,
+            name: ta_name,
+            villages: ta_rows.map { |row| { village_id: row[4], name: row[5] } }
+          }
+        end
+      }
+    end
+  end
+
   def self.update_user(user, params)
     # Update person name if specified
     if params.include?(:given_name) || params.include?(:family_name) || params.include?(:location_id)
@@ -329,6 +378,9 @@ module UserService
     user.authentication_token = token
     user.token_expiry_time = expires
     User.preload_serialization_payload(user)
+    # The client caches this payload for offline use, so the login response is
+    # where the assigned-area tree has to travel.
+    user.serialize_assigned_areas = true
 
     { token:, expiry_time: expires, user: }
   rescue StandardError => e

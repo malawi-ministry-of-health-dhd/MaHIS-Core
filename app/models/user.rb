@@ -48,6 +48,16 @@ class User < RetirableRecord
            foreign_key: :person_id,
            dependent: :destroy)
 
+  # Opt-in: when set, as_json nests the user's assigned villages under
+  # `location` as a district -> traditional authority -> village tree (see
+  # UserService.assigned_areas). Off by default because as_json also serves the
+  # user LIST, which honours `paginate=false` - and an HSA covering a whole
+  # traditional authority carries several hundred villages, so folding the tree
+  # into every row of an unpaginated list would be an unbounded payload.
+  # Login sets it (UserService.new_authentication_token) and users#show sets it
+  # on request.
+  attr_accessor :serialize_assigned_areas
+
   scope :with_authentication_preloads, -> { includes(*AUTHENTICATION_PRELOADS) }
   scope :with_serialization_preloads, -> { includes(*SERIALIZATION_PRELOADS) }
 
@@ -195,6 +205,14 @@ class User < RetirableRecord
           role['privileges'] = all_privileges
         end
       end
+    end
+
+    if serialize_assigned_areas
+      # Nested under `location` because the assigned areas hang off the facility's
+      # own district: a facility and a traditional authority are both children of
+      # the district in the location tree. The node is created when the user has
+      # no facility so that clients can always read location.assigned_areas.
+      json['location'] = (json['location'] || {}).merge('assigned_areas' => UserService.assigned_areas(self))
     end
 
     json

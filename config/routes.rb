@@ -221,6 +221,11 @@ Rails.application.routes.draw do
           get :departments
           put :departments
           patch :departments
+          # Location tags on an existing location; writes are limited to the
+          # LocationTagService whitelist.
+          get :tags
+          put :tags
+          patch :tags
         end
 
         collection do
@@ -617,6 +622,11 @@ Rails.application.routes.draw do
           put 'visit/:visit_id', action: :update_by_visit
         end
       end
+    end
+
+    namespace :v1 do
+      # Browser dictation. Desktop and Android transcribe on the device.
+      resources :transcriptions, only: %i[create]
     end
   end
 

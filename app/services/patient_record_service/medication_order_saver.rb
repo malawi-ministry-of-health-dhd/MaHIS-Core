@@ -140,18 +140,41 @@ module PatientRecordService
             patient_id: patient_id,
             operation_type: 'dispensation.pending_update',
             payload: entry,
-            target_type: 'DrugOrder'
+            target_type: 'Dispensation'
           ) do
             orders = fetch_value(entry, :orders) || []
-            orders.each do |order_entry|
-              qty      = fetch_value(order_entry, :quantity).to_i
-              drug_ord = DrugOrder.find_by(order_id: fetch_value(order_entry, :order_id))
-              next unless drug_ord && qty.positive?
+            dispensations = orders.map do |order_entry|
+              qty = fetch_value(order_entry, :quantity).to_i
+              order_id = fetch_value(order_entry, :order_id)
+              next if order_id.blank? || qty <= 0
 
-              drug_ord.update!(quantity: qty)
+              {
+                drug_order_id: order_id,
+                date: fetch_value(entry, :encounter_datetime),
+                quantity: qty
+              }
+            end.compact
+
+            next if dispensations.empty?
+
+            program_id = fetch_value(entry, :program_id) || fetch_value(record, :program_id)
+            provider_id = fetch_value(entry, :provider_id) || fetch_value(record, :provider_id)
+            program  = find_program(program_id)
+            provider = find_provider(provider_id)
+
+            unless program && provider
+              missing = []
+              missing << "program_id=#{program_id.inspect}" unless program
+              missing << "provider_id=#{provider_id.inspect}" unless provider
+              raise "Missing required dispensing context: #{missing.join(', ')}"
             end
 
-            { target_type: 'DrugOrder', target_id: orders.map { |order_entry| fetch_value(order_entry, :order_id) }.compact.join(',') }
+            DispensationService.create(program, dispensations, provider, fetch_value(record, :location_id))
+
+            {
+              target_type: 'Dispensation',
+              target_id: dispensations.map { |dispensation| dispensation[:drug_order_id] }.compact.join(',')
+            }
           end
 
           next if result.skipped?

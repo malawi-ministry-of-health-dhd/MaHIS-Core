@@ -48,6 +48,7 @@ RSpec.configure do |config|
   # Automatically mark non-passing spec files as pending
   # Only these specs are known to pass - all others will be marked as pending
   PASSING_SPECS = [
+    'transcription_service_spec.rb',
     'beds_controller_spec.rb',
     'report_spec.rb',
     'cohort_builder_spec.rb',
@@ -90,6 +91,8 @@ RSpec.configure do |config|
     'user_service_login_throttle_spec.rb',
     'login_throttle_spec.rb',
     'user_service_villages_spec.rb',
+    'user_service_assigned_areas_spec.rb',
+    'location_tag_service_spec.rb',
     'user_villages_spec.rb',
     'security_question_service_spec.rb',
     'security_questions_spec.rb',
