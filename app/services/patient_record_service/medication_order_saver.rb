@@ -24,7 +24,7 @@ module PatientRecordService
           ) do
             ActiveRecord::Base.transaction(requires_new: true) do
               encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[:treatment])
-              encounter_id   = create_encounter(patient_id, encounter_type.id, record)
+              encounter_id   = create_encounter(patient_id, encounter_type.id, encounter_context(record, order))
               encounter      = Encounter.find(encounter_id)
 
               unless encounter.type.name.casecmp?('TREATMENT')
@@ -73,7 +73,7 @@ module PatientRecordService
               encounter_datetime = parse_encounter_datetime(entry)
               entry_record = record.merge(encounter_datetime: encounter_datetime)
 
-              encounter_id = create_encounter(patient_id, encounter_type.id, entry_record)
+              encounter_id = create_encounter(patient_id, encounter_type.id, encounter_context(entry_record, entry))
               encounter    = Encounter.find(encounter_id)
 
               drugs = fetch_value(entry, :drugs) || []

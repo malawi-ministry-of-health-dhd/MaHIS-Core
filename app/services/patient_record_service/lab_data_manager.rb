@@ -35,7 +35,7 @@ module PatientRecordService
               target_type: 'LabOrder'
             ) do
               order_params  = normalize_lab_order_params(order_params)
-              encounter_id ||= create_encounter(patient_id, encounter_type.id, record)
+              encounter_id ||= create_encounter(patient_id, encounter_type.id, encounter_context(record, order_params))
               order_params  = order_params.merge(encounter_id: encounter_id)
               accession_pool_service.validate_usable!(
                 accession_number: operation_value_for(order_params, :accession_number),
@@ -251,7 +251,7 @@ module PatientRecordService
             end
 
             encounter_type = EncounterType.find_by_name(ENCOUNTER_TYPE_MAPPING[data_key])
-            encounter_id   = create_encounter(patient_id, encounter_type.id, record)
+            encounter_id   = create_encounter(patient_id, encounter_type.id, encounter_context(record, order_params))
             lab_results    = lab_result_payload(order_params, encounter_id)
 
             without_lab_patient_record_rebuild do

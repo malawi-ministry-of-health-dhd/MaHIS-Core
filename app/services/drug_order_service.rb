@@ -132,6 +132,32 @@ module DrugOrderService
           t.equivalent_daily_dose AS equivalent_daily_dose,
           e.program_id AS program_id,
           o.fulfiller_status AS fulfiller_status,
+          -- Who prescribed the drug, so a printout produced by the dispensing
+          -- pharmacist still credits the prescriber. orders.orderer is stamped at
+          -- prescription time; the treatment encounter's provider covers rows
+          -- recorded before orderer was set, and the username is a last resort so
+          -- something still prints when the provider has no person name. The client
+          -- shortens this to "P.Kayange". Correlated selects (not joins) keep a
+          -- person with several names or user accounts from multiplying order rows.
+          COALESCE(
+            NULLIF((
+              SELECT CONCAT_WS(' ', NULLIF(pn.given_name, ''), NULLIF(pn.family_name, ''))
+              FROM person_name pn
+              WHERE pn.person_id = (SELECT ou.person_id FROM users ou WHERE ou.user_id = o.orderer LIMIT 1)
+                AND pn.voided = 0
+              ORDER BY pn.preferred DESC, pn.date_created ASC
+              LIMIT 1
+            ), ''),
+            NULLIF((
+              SELECT CONCAT_WS(' ', NULLIF(pn.given_name, ''), NULLIF(pn.family_name, ''))
+              FROM person_name pn
+              WHERE pn.person_id = e.provider_id
+                AND pn.voided = 0
+              ORDER BY pn.preferred DESC, pn.date_created ASC
+              LIMIT 1
+            ), ''),
+            NULLIF((SELECT ou.username FROM users ou WHERE ou.user_id = o.orderer LIMIT 1), '')
+          ) AS prescriber,
           EXISTS (
             SELECT 1
             FROM obs dispensation_obs
@@ -168,6 +194,7 @@ module DrugOrderService
           units: m['units'],
           equivalent_daily_dose: m['equivalent_daily_dose'],
           program_id: m['program_id'],
+          prescriber: m['prescriber'],
           dispensed: m['dispensed'].to_i == 1,
           # Surfacing the stock-out here is what makes the flag survive a record
           # rebuild: the client stamps out_of_stock locally, but every rebuild of
@@ -545,6 +572,16 @@ module DrugOrderService
       [query_cond.join(' AND ')] + query_params
     end
 
+    # Who prescribed the drug. The item carries the user who wrote it, which offline is
+    # not the user who happens to sync it; an unknown or missing id falls back to the
+    # authenticated user so the column is never left dangling.
+    def orderer_for(create_params)
+      provider_id = create_params[:provider_id] || create_params['provider_id']
+      return User.current.user_id if provider_id.blank?
+
+      User.where(user_id: provider_id).pick(:user_id) || User.current.user_id
+    end
+
     def create_order(encounter:, create_params:, order_type:)
       start_date = TimeUtils.retro_timestamp(create_params[:start_date].to_date)
       drug_runout_date = TimeUtils.retro_timestamp(create_params[:auto_expire_date].to_date)
@@ -554,7 +591,7 @@ module DrugOrderService
         concept_id: Drug.find(create_params[:drug_inventory_id]).concept_id,
         encounter_id: encounter.encounter_id,
         patient_id: encounter.patient_id,
-        orderer: User.current.user_id,
+        orderer: orderer_for(create_params),
         start_date:,
         auto_expire_date: drug_runout_date,
         obs_id: create_params[:obs_id],
