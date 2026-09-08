@@ -92,7 +92,7 @@ module LaboratoryService
             INNER JOIN concept_name AS measure_concept
               ON measure_concept.concept_name_id = (#{concept_name_id_query('measure.concept_id', exclude_result_metadata: true)})
             WHERE lab_result_obs.voided = 0
-              #{"AND #{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}" if filter_by_occupation}
+              #{"AND#{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}" if filter_by_occupation}
               AND lab_result_obs.obs_datetime >= DATE(#{start_date})
               AND lab_result_obs.obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
             GROUP BY orders.order_id
