@@ -264,8 +264,8 @@ module ArtService
               and `p`.`patient_id` NOT IN (#{external_clients}))
               #{location_condition('p.location_id')}
         group by `p`.`patient_id`
-        HAVING NULLIF(birthdate, '') = NULL OR NULLIF(gender,'') = NULL
-        OR NULLIF(given_name,'') = NULL OR NULLIF(family_name,'') = NULL
+        HAVING birthdate IS NULL OR NULLIF(gender,'') IS NULL
+        OR NULLIF(given_name,'') IS NULL OR NULLIF(family_name,'') IS NULL
         ORDER BY n.date_created DESC;
       SQL
 
