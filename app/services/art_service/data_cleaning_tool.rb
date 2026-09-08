@@ -28,21 +28,34 @@ module ArtService
       'ON ANTIRETROVIRALS CLIENTS WITHOUT HIV PROGRAM' => 'on_antiretrovirals_clients_without_hiv_program'
     }.freeze
 
-    def initialize(start_date:, end_date:, tool_name:, location_id: nil)
+    def initialize(start_date:, end_date:, tool_name:, location_id: nil, page: nil, per_page: nil)
       @start_date = start_date.to_date
       @end_date = end_date.to_date
       @tool_name = tool_name.upcase
       @location_id = location_id || Location.current&.location_id || User.current&.location_id
+      @page = page.presence&.to_i
+      @per_page = per_page.presence&.to_i
     end
 
     def results
-      eval(TOOLS[@tool_name.to_s])
+      data = eval(TOOLS[@tool_name.to_s])
+      return data if data.is_a?(String) || data.is_a?(Hash) || !paginate?
+
+      {
+        data: data,
+        meta: {
+          current_page: @page,
+          per_page: @per_page,
+          total_count: @total_count || data.size,
+          total_pages: @total_count ? (@total_count.to_f / @per_page).ceil : 1
+        }
+      }
     rescue StandardError => e
       "#{e.class}: #{e.message}"
     end
 
     def dispensed_implausible_amounts
-      ActiveRecord::Base.connection.select_all <<~SQL
+      paginated_select_all(<<~SQL)
         SELECT
           o.patient_id,
           p.gender,
@@ -86,7 +99,7 @@ module ArtService
     end
 
     def on_antiretrovirals_clients_without_hiv_program
-      ActiveRecord::Base.connection.select_all <<~SQL
+      paginated_select_all(<<~SQL)
         SELECT
           p.patient_id,
           pp.birthdate,
@@ -124,7 +137,7 @@ module ArtService
     end
 
     def art_start_date_before_date_of_birth
-      ActiveRecord::Base.connection.select_all <<~SQL
+      paginated_select_all(<<~SQL)
         SELECT
           p.patient_id,
           pp.birthdate,
@@ -146,7 +159,7 @@ module ArtService
     end
 
     def active_clients_with_adverse_outcomes
-      ActiveRecord::Base.connection.select_all <<~SQL
+      paginated_select_all(<<~SQL)
         SELECT p.patient_id, outcome,
                outcome_date, DATE(e.encounter_datetime) dispensation_visit_date,
                pi.identifier arv_number, fn.identifier filling_number
@@ -198,7 +211,7 @@ module ArtService
     end
 
     def missing_start_date
-      ActiveRecord::Base.connection.select_all <<~SQL
+      paginated_select_all(<<~SQL)
         SELECT
         o.person_id AS patient_id,
         p.birthdate,
@@ -242,7 +255,7 @@ module ArtService
     private
 
     def incomplete_demographics
-      data = ActiveRecord::Base.connection.select_all <<~SQL
+      data = paginated_select_all(<<~SQL)
         select
           `p`.`patient_id` AS `patient_id`, `pe`.`birthdate`,
           n.given_name, n.family_name, pe.gender, i.identifier arv_number
@@ -275,7 +288,7 @@ module ArtService
     end
 
     def dob_more_than_date_enrolled
-      data = ActiveRecord::Base.connection.select_all <<~SQL
+      data = paginated_select_all(<<~SQL)
         select
           `p`.`patient_id` AS `patient_id`, `pe`.`birthdate`,
           cast(patient_date_enrolled(`p`.`patient_id`) as date) AS `date_enrolled`,
@@ -340,7 +353,7 @@ module ArtService
 
       patient_ids = data.map { |d| d['patient_id'].to_i }
 
-      data = ActiveRecord::Base.connection.select_all <<~SQL
+      data = paginated_select_all(<<~SQL)
         SELECT
           p.person_id, i.identifier arv_number, birthdate, gender, death_date,
           n.given_name, n.family_name
@@ -404,7 +417,7 @@ module ArtService
 
       return {} if patient_ids.blank?
 
-      data = ActiveRecord::Base.connection.select_all <<~SQL
+      data = paginated_select_all(<<~SQL)
         SELECT
           p.person_id, i.identifier arv_number, birthdate, gender, death_date,
           n.given_name, n.family_name
@@ -420,7 +433,7 @@ module ArtService
     end
 
     def multiple_start_reasons
-      ActiveRecord::Base.connection.select_all <<~SQL
+      paginated_select_all(<<~SQL)
         SELECT
           o.person_id patient_id,
           a.identifier arv_number,
@@ -496,7 +509,7 @@ module ArtService
       patient_ids = clients.map { |p| p['patient_id'].to_i }
       return {} if patient_ids.blank?
 
-      data = ActiveRecord::Base.connection.select_all <<~SQL
+      data = paginated_select_all(<<~SQL)
         SELECT
           p.person_id, i.identifier arv_number, birthdate, gender, death_date,
           n.given_name, n.family_name
@@ -515,7 +528,7 @@ module ArtService
       start_date = ActiveRecord::Base.connection.quote(@start_date.strftime('%Y-%m-%d 00:00:00'))
       end_date = ActiveRecord::Base.connection.quote(@end_date.strftime('%Y-%m-%d 23:59:59'))
 
-      ActiveRecord::Base.connection.select_all <<~SQL
+      paginated_select_all(<<~SQL)
         SELECT orders.patient_id,
                patient_identifier.identifier AS arv_number,
                birthdate,
@@ -554,7 +567,7 @@ module ArtService
     end
 
     def client_with_encounters_after_declared_dead
-      data = ActiveRecord::Base.connection.select_all <<~SQL
+      data = paginated_select_all(<<~SQL)
         SELECT person.person_id,
                patient_identifier.identifier AS arv_number,
                person.birthdate,
@@ -623,7 +636,7 @@ module ArtService
       concept_ids << concept('PATIENT PREGNANT').concept_id
       concept_ids << concept('Family planning method').concept_id
 
-      ActiveRecord::Base.connection.select_all <<~SQL
+      paginated_select_all(<<~SQL)
         SELECT p.person_id patient_id, given_name, family_name, LEFT(gender, 1) gender, birthdate,
                i.identifier arv_number, GROUP_CONCAT(DISTINCT(DATE(o.obs_datetime))) visit_date
         FROM person p
@@ -710,7 +723,7 @@ module ArtService
     end
 
     def missing_vl_results
-      ActiveRecord::Base.connection.select_all <<~SQL
+      paginated_select_all(<<~SQL)
         SELECT o.order_id, n.given_name, n.family_name, p.gender, p.birthdate, a.identifier arv_number,
         i.identifier national_id, ord.accession_number, DATE(ord.start_date) order_date, p.person_id patient_id
         FROM obs o
@@ -730,7 +743,7 @@ module ArtService
     end
 
     def different_pregnancy_value_on_same_date
-      ActiveRecord::Base.connection.select_all <<~SQL
+      paginated_select_all(<<~SQL)
         SELECT
           person.person_id patient_id,
           person_name.given_name,
@@ -765,7 +778,7 @@ module ArtService
     end
 
     def multiple_open_states
-      ActiveRecord::Base.connection.select_all <<~SQL
+      paginated_select_all(<<~SQL)
         SELECT p.person_id patient_id, n.given_name,n.family_name, p.gender,p.birthdate,a.identifier arv_number, i.identifier national_id,
         ps.start_date, GROUP_CONCAT(DISTINCT(cn.name)) states, COUNT(DISTINCT(ps.state)) state_count
         FROM patient_state ps
@@ -801,6 +814,28 @@ module ArtService
       return '' if @location_id.blank?
 
       "AND #{column} = #{ActiveRecord::Base.connection.quote(@location_id)}"
+    end
+
+    # Whether pagination params were supplied for this request
+    def paginate?
+      @page.present? && @page.positive? && @per_page.present? && @per_page.positive?
+    end
+
+    # Executes +sql+, applying LIMIT/OFFSET at the DB level and recording the
+    # total row count when pagination params are present.
+    def paginated_select_all(sql)
+      return ActiveRecord::Base.connection.select_all(sql) unless paginate?
+
+      trimmed_sql = sql.strip.chomp(';')
+      offset = (@page - 1) * @per_page
+
+      @total_count = ActiveRecord::Base.connection.select_value(
+        "SELECT COUNT(*) FROM (#{trimmed_sql}) paginated_count_query"
+      ).to_i
+
+      ActiveRecord::Base.connection.select_all(
+        "SELECT * FROM (#{trimmed_sql}) paginated_results_query LIMIT #{@per_page} OFFSET #{offset}"
+      )
     end
 
     ##
