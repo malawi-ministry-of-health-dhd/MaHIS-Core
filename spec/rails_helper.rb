@@ -51,6 +51,7 @@ RSpec.configure do |config|
     'transcription_service_spec.rb',
     'beds_controller_spec.rb',
     'report_spec.rb',
+    'processed_results_spec.rb',
     'cohort_builder_spec.rb',
     'medication_order_saver_spec.rb',
     'push_dde_footprints_job_spec.rb',
