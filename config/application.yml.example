@@ -24,6 +24,11 @@ production:
  facility_code: KCH
  cohort_keep_temp_tables: false
 
+# Basic auth credentials for the /sidekiq web dashboard
+sidekiq:
+ username: admin
+ password: change_me
+
 # Configuration for Pacs
 ftp_host:
   192.168.3.202
