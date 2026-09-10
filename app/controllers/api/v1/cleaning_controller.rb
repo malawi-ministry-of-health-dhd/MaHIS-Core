@@ -132,7 +132,8 @@ module Api
       def art_tools
         program = Program.find(params[:program_id])
         service = SERVICES[program.name.upcase].new(start_date: params[:start_date],
-                                                    end_date: params[:end_date], tool_name: params[:report_name])
+                                                    end_date: params[:end_date], tool_name: params[:report_name],
+                                                    page: params[:page], per_page: params[:per_page])
         render json: service.results
       end
 
