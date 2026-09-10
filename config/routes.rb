@@ -78,6 +78,8 @@ Rails.application.routes.draw do
         put '/update_username', to: 'users#update_username'
         get '/get_user_villages', to: 'users#get_user_villages'
         put '/update_user_villages', to: 'users#update_user_villages'
+        get '/get_user_clinic_assignment', to: 'users#get_user_clinic_assignment'
+        put '/update_user_clinic_assignment', to: 'users#update_user_clinic_assignment'
         get '/check_first_time_login', to: 'users#check_first_time_login'
         post '/clear_last_login_time', to: 'users#clear_last_login_time'
         post '/unlock_login', to: 'users#unlock_login'

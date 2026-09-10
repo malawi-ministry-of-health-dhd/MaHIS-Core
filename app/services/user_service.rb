@@ -236,6 +236,35 @@ module UserService
   # never be assigned again.
   #
   # Returns the user's active village assignments.
+  def self.current_clinic_assignment(user)
+    user.current_clinic_assignment
+  end
+
+  def self.update_clinic_assignment(user, location_id)
+    normalized_location_id = location_id.to_s.strip
+    return current_clinic_assignment(user) if normalized_location_id.blank?
+
+    active_assignment = current_clinic_assignment(user)
+    if active_assignment && active_assignment.location_id.to_s == normalized_location_id
+      return active_assignment
+    end
+
+    ActiveRecord::Base.transaction do
+      if active_assignment
+        active_assignment.update!(retired: 1, date_retired: Time.current, retired_by: User.current&.user_id)
+      end
+
+      UserClinicAssignment.create!(
+        user:,
+        location_id: normalized_location_id,
+        creator: User.current&.user_id || user.user_id,
+        retired: 0,
+        date_retired: nil,
+        retired_by: nil
+      )
+    end
+  end
+
   def self.update_user_villages(user, village_ids)
     requested_ids = Array(village_ids).map(&:to_i).uniq
     existing = UserVillage.where(user_id: user.user_id).index_by { |user_village| user_village.village_id.to_i }
