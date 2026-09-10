@@ -746,7 +746,7 @@ module ArtService
     end
 
     def guardian_present_on?(obs_on_date)
-      obs_value_on(obs_on_date, PATIENT_PRESENT_CONCEPT)&.match?(/guardian/i) || false
+      obs_value_on(obs_on_date, PATIENT_PRESENT_CONCEPT)&.match?(/^no$/i) || false
     end
 
     def truthy_value?(row)

@@ -6,6 +6,7 @@ require 'digest/sha1'
 require 'securerandom'
 require 'shellwords'
 require 'tempfile'
+require_relative '../lib/seed_metadata_downloader'
 
 if ENV['INITIAL_SETUP']
   puts "\e[31mWARNING: This will wipe out your database. Do you want to continue? (y/N)\e[0m"
@@ -29,6 +30,11 @@ port     = db_config['port']
 GITHUB_METADATA_URL = ENV.fetch(
   'GITHUB_METADATA_URL',
   'https://raw.githubusercontent.com/malawi-ministry-of-health-dhd/MaHIS-Metadata/main/metadata.sql'
+).freeze
+
+METADATA_FALLBACK_URL = ENV.fetch(
+  'METADATA_FALLBACK_URL',
+  'https://concepts.health.gov.mw/downloads/metadata.sql'
 ).freeze
 
 SEED_CONCEPT_WORD_STOP_WORDS = %w[A AND AT BUT BY FOR HAS OF THE TO].freeze
@@ -68,19 +74,13 @@ def mysql_import_command(username:, password:, host:, port:, database:)
   command
 end
 
-def fetch_metadata_from_github!(url, local_path)
-  FileUtils.mkdir_p(local_path.dirname)
-
-  puts 'Downloading latest metadata from GitHub...'
-  URI.open(url, open_timeout: 30, read_timeout: 300) do |remote|
-    File.open(local_path, 'wb') do |file|
-      IO.copy_stream(remote, file)
-    end
-  end
-
-  raise "Downloaded file is empty: #{local_path}" unless File.exist?(local_path) && File.size(local_path).positive?
-
-  puts "Metadata downloaded to #{local_path}"
+def fetch_metadata!(local_path)
+  SeedMetadataDownloader.new(
+    primary_url: GITHUB_METADATA_URL,
+    fallback_url: METADATA_FALLBACK_URL,
+    destination: local_path,
+    location_tables: LOCATION_METADATA_TABLES
+  ).download!
 end
 
 def apply_metadata_compatibility_fixes!(file_path)
@@ -1541,7 +1541,7 @@ if local_sql_files.any?
 
     if location_metadata_seed_file?(file_path)
       if live_location_metadata_present?
-        puts 'Skipping bundled location metadata because live locations already exist; GitHub metadata sync will handle changes.'
+        puts 'Skipping bundled location metadata because live locations already exist; downloaded metadata sync will handle changes.'
       else
         sync_location_metadata_from_seed_file!(
           file_path: file_path,
@@ -1579,7 +1579,7 @@ ensure_required_routines!(
 begin
   tmp_file = Rails.root.join('tmp', 'metadata.sql')
 
-  fetch_metadata_from_github!(GITHUB_METADATA_URL, tmp_file)
+  metadata_source = fetch_metadata!(tmp_file)
   apply_metadata_compatibility_fixes!(tmp_file)
   location_metadata_synced = sync_location_metadata_from_dump!(
     file_path: tmp_file,
@@ -1600,9 +1600,9 @@ begin
     database: database
   )
 
-  puts 'GitHub metadata import complete.'
+  puts "Metadata import complete (source: #{metadata_source})."
 rescue StandardError => e
-  raise "Failed to import metadata from GitHub: #{e.message}"
+  raise "Metadata seed failed: #{e.message}"
 end
 
 ensure_arv_drug_view!
