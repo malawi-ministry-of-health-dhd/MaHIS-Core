@@ -48,6 +48,7 @@ RSpec.configure do |config|
   # Automatically mark non-passing spec files as pending
   # Only these specs are known to pass - all others will be marked as pending
   PASSING_SPECS = [
+    'seed_metadata_downloader_spec.rb',
     'transcription_service_spec.rb',
     'beds_controller_spec.rb',
     'report_spec.rb',
