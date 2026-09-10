@@ -44,9 +44,11 @@ class PatientIdentifier < VoidableRecord
   NCD_NUMBER_RANGE_DEFAULT = 100_000
 
   # Lowest unused NCD sequence number (gap-filling) for the given site prefix.
-  # Uses `unscoped` so voided identifiers still count as taken — voided NCD
-  # numbers are never reused. Returns an Integer. Callers format the final
-  # identifier string themselves (the suggestion and save paths differ).
+  # Uses `unscoped` so voided identifiers still count as taken — auto-allocation
+  # never *silently* recycles a number that has been used before (a voided number
+  # can still be re-assigned when a user enters it explicitly). Returns an Integer.
+  # Callers format the final identifier string themselves (the suggestion and save
+  # paths differ).
   def self.next_available_ncd_number(site_prefix)
     type = PatientIdentifierType.find_by_name('NCD Number')
     raise 'Patient identifier type `NCD Number` not found' unless type
