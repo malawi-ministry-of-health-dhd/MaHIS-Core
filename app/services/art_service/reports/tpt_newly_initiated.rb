@@ -10,6 +10,8 @@ module ArtService
     # break for a period that is at least 9 months long before restarting TPT
     # in the current reporting period.
     class TptNewlyInitiated
+      include ConcurrencyUtils
+
       attr_reader :start_date, :end_date
 
       def initialize(start_date:, end_date:, **kwargs)
@@ -20,39 +22,59 @@ module ArtService
       end
 
       def find_report
-        report = init_report
-        newly_initiated_on_tpt.each do |tpt, patients|
-          patients.each do |patient|
-            patient_id = patient['patient_id']
-            person = ActiveRecord::Base.connection.select_one <<~SQL
-              SELECT disaggregated_age_group(birthdate, DATE('#{end_date.to_date}')) AS age_group,
-              patient_identifier.identifier AS arv_number, person.*
-              FROM person
-              LEFT JOIN patient_identifier ON patient_identifier.patient_id = person.person_id
-              AND patient_identifier.identifier_type IN (SELECT patient_identifier_type_id FROM patient_identifier_type
-              WHERE name = 'ARV Number') AND patient_identifier.voided = 0
-              WHERE person_id = #{patient_id} LIMIT 1;
-            SQL
-            age_group = person['age_group']
-            gender = person['gender']&.strip&.first&.upcase || 'Unknown'
-            # course = patient_on_3hp?(patient) ? '3HP' : '6H'
+        with_lock(lock_file) do
+          initialize_cohort_tables
+          report = init_report
+          newly_initiated_on_tpt.each do |tpt, patients|
+            patients.each do |patient|
+              patient_id = patient['patient_id']
+              person = ActiveRecord::Base.connection.select_one <<~SQL
+                SELECT disaggregated_age_group(birthdate, DATE('#{end_date.to_date}')) AS age_group,
+                patient_identifier.identifier AS arv_number, person.*
+                FROM person
+                LEFT JOIN patient_identifier ON patient_identifier.patient_id = person.person_id
+                AND patient_identifier.identifier_type IN (SELECT patient_identifier_type_id FROM patient_identifier_type
+                WHERE name = 'ARV Number') AND patient_identifier.voided = 0
+                WHERE person_id = #{patient_id} LIMIT 1;
+              SQL
+              age_group = person['age_group']
+              gender = person['gender']&.strip&.first&.upcase || 'Unknown'
+              # course = patient_on_3hp?(patient) ? '3HP' : '6H'
 
-            report[age_group][tpt][gender] << {
-              patient_id: person['person_id'],
-              birthdate: person['birthdate'],
-              arv_number: person['arv_number'],
-              gender:,
-              dispensation_date: dispensation_date(patient_id, patient['drug_concepts']),
-              art_start_date: patient['earliest_start_date'],
-              tpt_start_date: patient['tpt_start_date']
-            }
+              report[age_group][tpt][gender] << {
+                patient_id: person['person_id'],
+                birthdate: person['birthdate'],
+                arv_number: person['arv_number'],
+                gender:,
+                dispensation_date: dispensation_date(patient_id, patient['drug_concepts']),
+                art_start_date: patient['earliest_start_date'],
+                tpt_start_date: patient['tpt_start_date']
+              }
+            end
           end
+          report['Location'] = Location.current.city_village
+          report
         end
-        report['Location'] = Location.current.city_village
-        report
       end
 
       private
+
+      def lock_file
+        "art_service/reports/cohort_#{Location.current&.location_id || 'default'}.lock"
+      end
+
+      def initialize_cohort_tables
+        ArtService::Reports::CohortBuilder.new(outcomes_definition: 'moh')
+                                          .init_temporary_tables(start_date_value, end_date_value, @occupation)
+      end
+
+      def start_date_value
+        @start_date.to_s.tr("'", '').to_date
+      end
+
+      def end_date_value
+        @end_date.to_s.tr("'", '').to_date
+      end
 
       AGE_GROUPS = [
         'Unknown',
@@ -94,7 +116,9 @@ module ArtService
             '3HP_new' => { 'M' => [], 'F' => [], 'Unknown' => [] },
             '6H_new' => { 'M' => [], 'F' => [], 'Unknown' => [] },
             '3HP_prev' => { 'M' => [], 'F' => [], 'Unknown' => [] },
-            '6H_prev' => { 'M' => [], 'F' => [], 'Unknown' => [] }
+            '6H_prev' => { 'M' => [], 'F' => [], 'Unknown' => [] },
+            'tx_new' => { 'M' => [], 'F' => [], 'Unknown' => [] },
+            'tx_new_eligible_tpt' => { 'M' => [], 'F' => [], 'Unknown' => [] }
           }
         end
       end
