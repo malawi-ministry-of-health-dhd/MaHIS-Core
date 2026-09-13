@@ -263,6 +263,7 @@ class SavePatientRecordService
       merge_patients:         run_if(merge_requested?(record)) { managers[:merge_patients_manager].merge_patients(patient_id, record) },
       manage_guardian:        run_if(guardian_work_pending?(record)) { managers[:guardian_manager].manage_guardian(patient_id, record) },
       create_relationship:    run_if(relationships_pending?(record)) { managers[:guardian_manager].create_relationship(record) },
+      void_relationships:     run_if(relationship_voids_pending?(record)) { managers[:guardian_manager].void_relationships(patient_id, record) },
       enroll_program:         run_if(enrollments_pending?(record)) { managers[:enrollment_manager].enroll_program(patient_id, record) },
       save_lab_orders_data:   run_if(lab_orders_pending?(record)) { managers[:lab_data_manager].save_lab_orders_data(patient_id, record) },
       save_lab_results_data:  run_if(lab_results_pending?(record)) { managers[:lab_data_manager].save_lab_results_data(patient_id, record) },
@@ -338,6 +339,10 @@ class SavePatientRecordService
       when :manage_guardian, :create_relationship
         patient_data[:guardianInformation] = BuildPatientRecordService.build_guardian_data(patient_id)
         patient_data[:relationships]       = []
+
+      when :void_relationships
+        patient_data[:guardianInformation] = BuildPatientRecordService.build_guardian_data(patient_id)
+        patient_data[:voidedRelationships] = []
 
       when :enroll_program
         patient_data[:activePrograms] = BuildPatientRecordService.fetch_active_programs(patient_id)
@@ -694,6 +699,7 @@ class SavePatientRecordService
       send_sms
       update_person_info
       void_lab_order
+      void_relationships
     ]
 
     visit_affecting_operations.any?
@@ -912,6 +918,10 @@ class SavePatientRecordService
 
   def relationships_pending?(record)
     Array.wrap(record_value(record, :relationships)).any?
+  end
+
+  def relationship_voids_pending?(record)
+    Array.wrap(record_value(record, :voidedRelationships)).any?
   end
 
   def enrollments_pending?(record)
