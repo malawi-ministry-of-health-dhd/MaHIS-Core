@@ -78,6 +78,7 @@ RSpec.configure do |config|
     'dde_service_spec.rb',
     'dde_merging_service_spec.rb',
     'ncd_identifier_cleanup_spec.rb',
+    'ncd_number_allocation_spec.rb',
     'mnh_stats_sync_job_spec.rb',
     'build_patient_record_drug_service_spec.rb',
     'patient_sync_reconciler_spec.rb',

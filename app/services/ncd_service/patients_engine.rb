@@ -28,10 +28,12 @@ class NcdService::PatientsEngine
     "#{current_ncd_code} #{PatientIdentifier.next_available_ncd_number(current_ncd_code)}"
   end
 
+  # Only an *active* identifier makes a number taken. A voided one (e.g. freed
+  # when a patient's NCD number was corrected) is available again and may be
+  # assigned to another patient.
   def ncd_number_already_exists(ncd_number)
     identifier_type = PatientIdentifierType.find_by_name('NCD Number')
-    # `unscoped` so a voided number still reports as taken and is never reused.
-    PatientIdentifier.unscoped.where(
+    PatientIdentifier.where(
       identifier: ncd_number,
       identifier_type: identifier_type.id
     ).exists?
