@@ -60,6 +60,14 @@ INITIAL_SETUP=true rails db:seed
 
 The `INITIAL_SETUP=true` environment variable ensures proper initialization of the database with all required seed data.
 
+Metadata downloads use GitHub first, then fall back to
+`https://concepts.health.gov.mw/downloads/metadata.sql` if GitHub cannot provide a
+valid dump. Override these sources with `GITHUB_METADATA_URL` and
+`METADATA_FALLBACK_URL`. Temporary network errors are retried up to five times
+per source. Each download is validated before replacing `tmp/metadata.sql`;
+the seed output identifies the source used. SQL import failures stop seeding
+without switching sources and attempting another import.
+
 ## Running the Application
 
 ### Development Mode

@@ -46,6 +46,10 @@ module LaboratoryService
         def query
           start_date = ActiveRecord::Base.connection.quote(@start_date)
           end_date = ActiveRecord::Base.connection.quote(@end_date)
+          filter_by_occupation = %w[Military Civilian].include?(@occupation)
+          occupation_join = if filter_by_occupation
+                              "LEFT JOIN (#{current_occupation_query}) AS a ON a.person_id = lab_result_obs.person_id"
+                            end
 
           ActiveRecord::Base.connection.select_all <<~SQL
             SELECT lab_result_obs.obs_id AS result_id,
@@ -66,22 +70,18 @@ module LaboratoryService
               ON orders.order_id = lab_result_obs.order_id
               AND orders.voided = 0
             #{dsd_query(dsd: @dsd, model: 'orders') if @dsd}
-            INNER JOIN (
-              SELECT concept_id, name FROM concept_name INNER JOIN concept USING (concept_id) WHERE concept.retired = 0 GROUP BY concept_id
-            ) AS specimen_concept
-              ON specimen_concept.concept_id = orders.concept_id
+            INNER JOIN concept_name AS specimen_concept
+              ON specimen_concept.concept_name_id = (#{concept_name_id_query('orders.concept_id')})
             INNER JOIN obs AS reason_for_test_obs
               ON reason_for_test_obs.order_id = lab_result_obs.order_id
               AND reason_for_test_obs.voided = 0
               AND reason_for_test_obs.concept_id IN (SELECT concept_id FROM concept_name WHERE name LIKE 'Reason for test')
-            LEFT JOIN (
-              SELECT concept_id, name FROM concept_name INNER JOIN concept USING (concept_id) WHERE concept.retired = 0 GROUP BY concept_id
-            ) AS reason_for_test
-              ON reason_for_test.concept_id = reason_for_test_obs.value_coded
+            LEFT JOIN concept_name AS reason_for_test
+              ON reason_for_test.concept_name_id = (#{concept_name_id_query('reason_for_test_obs.value_coded')})
             INNER JOIN person
               ON person.person_id = lab_result_obs.person_id
               AND person.voided = 0
-            LEFT JOIN (#{current_occupation_query}) AS a ON a.person_id = lab_result_obs.person_id
+            #{occupation_join}
             LEFT JOIN patient_identifier
               ON patient_identifier.patient_id = lab_result_obs.person_id
               AND patient_identifier.voided = 0
@@ -89,20 +89,33 @@ module LaboratoryService
             INNER JOIN obs AS measure
               ON measure.obs_group_id = lab_result_obs.obs_id
               AND measure.voided = 0
-            INNER JOIN (
-              SELECT concept_id, name
-              FROM concept_name
-              INNER JOIN concept USING (concept_id)
-              WHERE concept.retired = 0
-                AND name NOT LIKE 'Lab test result'
-                AND name NOT LIKE 'Lab Test Status'
-              GROUP BY concept_id
-            ) AS measure_concept
-              ON measure_concept.concept_id = measure.concept_id
-            WHERE lab_result_obs.voided = 0 #{%w[Military Civilian].include?(@occupation) ? 'AND' : ''} #{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}
+            INNER JOIN concept_name AS measure_concept
+              ON measure_concept.concept_name_id = (#{concept_name_id_query('measure.concept_id', exclude_result_metadata: true)})
+            WHERE lab_result_obs.voided = 0
+              #{"AND#{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}" if filter_by_occupation}
               AND lab_result_obs.obs_datetime >= DATE(#{start_date})
               AND lab_result_obs.obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
             GROUP BY orders.order_id
+          SQL
+        end
+
+        # Look up one name only for the referenced concept, rather than grouping
+        # the entire dictionary. Keep the existing name eligibility rules, but
+        # choose the lowest ID deterministically instead of an arbitrary name.
+        # concept_id is an internal SQL column expression, never request input.
+        def concept_name_id_query(concept_id, exclude_result_metadata: false)
+          exclusions = if exclude_result_metadata
+                         "AND cn.name NOT LIKE 'Lab test result' AND cn.name NOT LIKE 'Lab Test Status'"
+                       end
+
+          <<~SQL
+            SELECT cn.concept_name_id
+            FROM concept_name AS cn
+            INNER JOIN concept AS c ON c.concept_id = cn.concept_id AND c.retired = 0
+            WHERE cn.concept_id = #{concept_id}
+              #{exclusions}
+            ORDER BY cn.concept_name_id
+            LIMIT 1
           SQL
         end
       end

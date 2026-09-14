@@ -3,6 +3,18 @@
 require 'sidekiq/web'
 require 'sidekiq/cron/web'
 
+sidekiq_web_config = YAML.safe_load(File.read(Rails.root.join('config', 'application.yml')))['sidekiq'] || {}
+
+Sidekiq::Web.use Rack::Auth::Basic do |username, password|
+  expected_username = sidekiq_web_config['username']
+  expected_password = sidekiq_web_config['password']
+
+  raise 'config/application.yml is missing sidekiq.username/sidekiq.password' if expected_username.blank? || expected_password.blank?
+
+  ActiveSupport::SecurityUtils.secure_compare(username, expected_username) &&
+    ActiveSupport::SecurityUtils.secure_compare(password, expected_password)
+end
+
 Rails.application.routes.draw do
   mount Lab::Engine => '/'
   # mount Radiology::Engine => '/'

@@ -61,15 +61,28 @@ module ArtService
 
     def mark_patient_art_start_date(patient)
       art_start_date_concept = concept('ART start date')
+      legacy_art_start_date_concept = concept('Date antiretrovirals started') rescue nil
+
       has_art_start_date = Observation.where(person_id: patient.patient_id,
                                              concept: art_start_date_concept)
                                       .exists?
       return if has_art_start_date
 
+      legacy_art_start_date = if legacy_art_start_date_concept
+                                Observation.where(person_id: patient.patient_id,
+                                                  concept: legacy_art_start_date_concept)
+                                           .where.not(value_datetime: nil)
+                                           .order(:obs_datetime, :obs_id)
+                                           .first
+                                           &.value_datetime
+                              end
+
+      resolved_start_date = legacy_art_start_date || date
+
       Observation.create(person_id: patient.patient_id,
                          concept: art_start_date_concept,
-                         value_datetime: date,
-                         obs_datetime: TimeUtils.retro_timestamp(date))
+                         value_datetime: resolved_start_date,
+                         obs_datetime: TimeUtils.retro_timestamp(resolved_start_date))
     end
 
     def create_patient_state(program_workflow_state, date, previous_state = nil)
