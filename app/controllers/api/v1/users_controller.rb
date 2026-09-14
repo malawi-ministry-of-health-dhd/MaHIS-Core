@@ -318,6 +318,27 @@ module Api
         render json: { errors: [e.message] }, status: :internal_server_error
       end
 
+      def get_user_clinic_assignment
+        assignment = UserService.current_clinic_assignment(user)
+        render json: { clinic_assignment: assignment }, status: :ok
+      rescue StandardError => e
+        render json: { errors: [e.message] }, status: :internal_server_error
+      end
+
+      def update_user_clinic_assignment
+        target_user = user
+        location_id = params[:location_id]
+        return render json: { errors: ['location_id is required'] }, status: :bad_request if location_id.blank?
+        return unless validate_location(location_id)
+
+        assignment = UserService.update_clinic_assignment(target_user, location_id)
+        render json: { clinic_assignment: assignment }, status: :ok
+      rescue ActiveRecord::RecordInvalid => e
+        render json: { errors: [e.message] }, status: :bad_request
+      rescue StandardError => e
+        render json: { errors: [e.message] }, status: :internal_server_error
+      end
+
       def check_username_exist
         username_param = params.permit(:username)
         if username_param[:username].blank?
