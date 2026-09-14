@@ -62,6 +62,9 @@ Rails.application.routes.draw do
           patch :discharge
         end
       end
+      resources :ward_patients, path: 'ward-patients', only: %i[index] do
+        get :summary, on: :collection
+      end
       resources :appointments
       resources :dispensations, only: %i[index create destroy]
       get '/check_username', to: 'users#check_username_exist'
