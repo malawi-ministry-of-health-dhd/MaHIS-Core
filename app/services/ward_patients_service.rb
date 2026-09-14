@@ -34,6 +34,15 @@ class WardPatientsService
 
   PANEL_SIZE = 5
 
+  # A consult specialty request is an "Awaiting specialty" encounter carrying a
+  # specialty or a reason — never the concept on its own. The AETC admission
+  # form writes "Speciality Department" too, into a PATIENT_ADMISSIONS encounter,
+  # and those patients are admitted, not awaiting a consult.
+  AWAITING_SPECIALTY_ENCOUNTER = 'Awaiting specialty'
+  SPECIALITY_DEPARTMENT_CONCEPT = 'Speciality Department'
+  REASON_FOR_REQUEST_CONCEPT = 'Reason for request'
+  PROVIDER_CONCEPT = 'Provider'
+
   # A bed is occupied when an active allocation holds it — beds carry no
   # occupancy column of their own. Covered by idx_bed_alloc_bed_status_released.
   OCCUPIED_BED = <<~SQL.squish
@@ -126,6 +135,7 @@ class WardPatientsService
     def roster_rows_sql(ward_id, filters)
       search_clause, search_binds = search_clause(filters[:search])
       status_clause = status_clause(filters[:status])
+      request_columns, request_clause, request_binds = specialty_request_sql(filters)
 
       sanitize_sql_array([
         <<~SQL,
@@ -135,6 +145,7 @@ class WardPatientsService
             pe.birthdate,
             pn.given_name,
             pn.family_name
+            #{request_columns}
           FROM (#{roster_sql(ward_id, filters)}) roster
           INNER JOIN person pe ON pe.person_id = roster.patient_id AND pe.voided = 0
           LEFT JOIN person_name pn
@@ -150,10 +161,101 @@ class WardPatientsService
            )
           WHERE 1 = 1
             #{status_clause}
+            #{request_clause}
             #{search_clause}
         SQL
+        *request_binds,
         *search_binds
       ])
+    end
+
+    # The patient's latest consult specialty request, and the filter that keeps
+    # only the patients who have one. Returns empty strings when the caller did
+    # not ask, leaving the roster query exactly as it was.
+    def specialty_request_sql(filters)
+      return ['', '', []] unless truthy?(filters[:has_specialty_request]) || truthy?(filters[:with_specialty_request])
+
+      encounter_type_id = awaiting_specialty_encounter_type_id
+      # Without the encounter type nothing can be a request, so the list is empty
+      # rather than unfiltered — showing every patient is the bug being fixed.
+      return ['', 'AND 1 = 0', []] if encounter_type_id.blank?
+
+      specialty_ids = concept_ids(SPECIALITY_DEPARTMENT_CONCEPT)
+      reason_ids = concept_ids(REASON_FOR_REQUEST_CONCEPT)
+      provider_ids = concept_ids(PROVIDER_CONCEPT)
+      value_ids = specialty_ids + reason_ids
+      return ['', 'AND 1 = 0', []] if value_ids.empty?
+
+      latest_encounter = <<~SQL.squish
+        SELECT e.encounter_id
+        FROM encounter e
+        WHERE e.patient_id = roster.patient_id
+          AND e.voided = 0
+          AND e.encounter_type = ?
+        ORDER BY e.encounter_datetime DESC, e.encounter_id DESC
+        LIMIT 1
+      SQL
+
+      columns = <<~SQL
+        , (#{latest_obs_text(specialty_ids, latest_encounter)}) AS specialty
+        , (#{latest_obs_text(provider_ids, latest_encounter)}) AS requester
+        , (SELECT e.encounter_datetime FROM encounter e WHERE e.encounter_id = (#{latest_encounter})) AS requested_at
+      SQL
+
+      # An empty "Awaiting specialty" encounter is not a request, so the filter
+      # asks for a specialty or a reason, mirroring the client-side reader.
+      clause = <<~SQL.squish
+        AND EXISTS (
+          SELECT 1
+          FROM encounter e
+          INNER JOIN obs o ON o.encounter_id = e.encounter_id AND o.voided = 0 AND o.concept_id IN (?)
+          WHERE e.patient_id = roster.patient_id
+            AND e.voided = 0
+            AND e.encounter_type = ?
+            AND COALESCE(o.value_text, '') <> ''
+        )
+      SQL
+
+      # Placeholders bind in the order they appear in the finished statement:
+      # the SELECT columns first (each latest-encounter subquery carries the
+      # encounter type before its own concept list), then the WHERE clause.
+      binds = []
+      binds += [encounter_type_id, specialty_ids] if specialty_ids.any?
+      binds += [encounter_type_id, provider_ids] if provider_ids.any?
+      binds << encounter_type_id
+      binds += [value_ids, encounter_type_id]
+
+      [columns, clause, binds]
+    end
+
+    def latest_obs_text(concept_ids, latest_encounter)
+      return "SELECT NULL" if concept_ids.empty?
+
+      <<~SQL.squish
+        SELECT o.value_text
+        FROM obs o
+        WHERE o.encounter_id = (#{latest_encounter})
+          AND o.voided = 0
+          AND o.concept_id IN (?)
+        ORDER BY o.obs_datetime DESC, o.obs_id DESC
+        LIMIT 1
+      SQL
+    end
+
+    def awaiting_specialty_encounter_type_id
+      EncounterType.where(retired: false)
+                   .where('LOWER(name) = ?', AWAITING_SPECIALTY_ENCOUNTER.downcase)
+                   .pick(:encounter_type_id)
+    end
+
+    # Compared case-insensitively: reference name columns are utf8_bin on TiDB,
+    # where an exact-name lookup silently misses differently cased spellings.
+    def concept_ids(name)
+      ConceptName.where(voided: 0).where('LOWER(name) = ?', name.downcase).distinct.pluck(:concept_id)
+    end
+
+    def truthy?(value)
+      ActiveModel::Type::Boolean.new.cast(value).present?
     end
 
     def roster_sql(ward_id, filters)
@@ -420,7 +522,10 @@ class WardPatientsService
         ward_location_id: row['ward_location_id'],
         admitted_at: row['admitted_at'],
         visit_date_started: row['visit_date_started'],
-        days_in_ward: row['days_in_ward'].to_i
+        days_in_ward: row['days_in_ward'].to_i,
+        specialty: row['specialty'],
+        requester: row['requester'],
+        requested_at: row['requested_at']
       }
     end
 

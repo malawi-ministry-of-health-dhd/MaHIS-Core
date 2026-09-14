@@ -17,7 +17,7 @@ module Api
       private
 
       def roster_filters
-        params.permit(:ward_id, :program_id, :page, :page_size, :per_page, :search, :status)
+        params.permit(:ward_id, :program_id, :page, :page_size, :per_page, :search, :status, :has_specialty_request)
               .to_h.symbolize_keys
       end
     end
