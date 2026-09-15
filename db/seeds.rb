@@ -1618,6 +1618,12 @@ load Rails.root.join('db', 'seeds', 'privileges_seed.rb')
 # fresh production DBs are typically created.
 load Rails.root.join('db', 'seeds', 'role_privileges_seed.rb')
 
+# Must run after the metadata import above: the published metadata carries some
+# concept names double-encoded, so every seed reintroduces the corruption and it
+# has to be repaired again afterwards. See the file for the full explanation.
+load Rails.root.join('db', 'seeds', 'concept_name_repairs_seed.rb')
+ConceptNameRepairs.run!
+
 puts <<~MSG
   ----------------------------------------
   Database seeding complete
