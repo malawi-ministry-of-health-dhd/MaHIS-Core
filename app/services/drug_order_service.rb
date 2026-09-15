@@ -23,6 +23,18 @@ module DrugOrderService
   # The client never sees this string: it is projected to the boolean out_of_stock
   # field by fetch_all_patient_drug_orders below.
   OUT_OF_STOCK_STATUS = 'OUT_OF_STOCK'
+
+  # Written to orders.fulfiller_status when a pharmacist absconds a patient from
+  # the dispensation queue: the patient left without collecting their drugs. Like
+  # a stock-out this is a completed pharmacy action rather than a void - the
+  # prescription stands, it simply was not collected. Projected to the boolean
+  # absconded field by fetch_all_patient_drug_orders below.
+  ABSCONDED_STATUS = 'ABSCONDED'
+
+  # fulfiller_status values that take an order out of the dispensation queue
+  # without dispensing it. Mirrored offline by isPendingMedicationOrder in
+  # patient_record_search_fields.
+  DISPENSATION_CLOSED_STATUSES = [OUT_OF_STOCK_STATUS, ABSCONDED_STATUS].freeze
   FREQUENCY_DAILY_DOSES = {
     'OD' => 1,
     'BD' => 2,
@@ -199,7 +211,10 @@ module DrugOrderService
           # Surfacing the stock-out here is what makes the flag survive a record
           # rebuild: the client stamps out_of_stock locally, but every rebuild of
           # MedicationOrder.saved comes from this fixed field list.
-          out_of_stock: m['fulfiller_status'] == OUT_OF_STOCK_STATUS
+          out_of_stock: m['fulfiller_status'] == OUT_OF_STOCK_STATUS,
+          # Same survival reason as out_of_stock: the pharmacist's abscond has no
+          # other column to live in once MedicationOrder.saved is rebuilt.
+          absconded: m['fulfiller_status'] == ABSCONDED_STATUS
         }
       end
     rescue StandardError => e
@@ -483,11 +498,11 @@ module DrugOrderService
         binds << dispensed_concept_ids
       end
 
-      # A stock-out is a completed pharmacy action, so the order leaves the queue
-      # even though nothing was dispensed. Mirrored offline by
+      # A stock-out or an abscond is a completed pharmacy action, so the order
+      # leaves the queue even though nothing was dispensed. Mirrored offline by
       # isPendingMedicationOrder in patient_record_search_fields.
-      where_clauses << '(o.fulfiller_status IS NULL OR o.fulfiller_status <> ?)'
-      binds << OUT_OF_STOCK_STATUS
+      where_clauses << '(o.fulfiller_status IS NULL OR o.fulfiller_status NOT IN (?))'
+      binds << DISPENSATION_CLOSED_STATUSES
 
       if location_id.present?
         where_clauses << 'e.location_id = ?'

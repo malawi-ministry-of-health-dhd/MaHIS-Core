@@ -207,6 +207,35 @@ RSpec.describe DrugOrderService do
       expect(awaiting_patient_ids).not_to include(drug_order.order.patient_id)
     end
 
+    it 'excludes orders a pharmacist marked as out of stock' do
+      drug_order = create_drug_order_for_queue(patient:)
+      DispensationService.mark_out_of_stock(drug_order)
+
+      expect(awaiting_patient_ids).not_to include(drug_order.order.patient_id)
+    end
+
+    it 'excludes orders of a patient who absconded before dispensation' do
+      drug_order = create_drug_order_for_queue(patient:)
+
+      expect(awaiting_patient_ids).to include(drug_order.order.patient_id)
+
+      DispensationService.mark_absconded(drug_order)
+
+      expect(awaiting_patient_ids).not_to include(drug_order.order.patient_id)
+    end
+
+    it 'reports an absconded order back to the client as absconded, not voided' do
+      drug_order = create_drug_order_for_queue(patient:)
+      DispensationService.mark_absconded(drug_order)
+
+      built = service.fetch_all_patient_drug_orders(patient.patient_id)
+                     .find { |order| order[:order_id] == drug_order.order_id }
+
+      expect(built[:absconded]).to be(true)
+      expect(built[:out_of_stock]).to be(false)
+      expect(drug_order.order.reload.voided).to be_falsey
+    end
+
     it 'repairs drug concept orders that were saved without drug_order rows' do
       exact_drug = create(:drug, concept: drug.concept, form: drug.form, name: 'Queue spec drug 500mg')
       order = create_orphan_medication_order(

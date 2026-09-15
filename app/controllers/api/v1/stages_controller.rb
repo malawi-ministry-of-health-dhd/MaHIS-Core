@@ -64,6 +64,9 @@ module Api
           :location_id,
           :program_id,
           :referring_program_id,
+          # Falsey status retires the patient's queue row for this program while
+          # leaving the visit open (see StagesService#deactivation_request?).
+          :status,
           :disposition_type,
           :patient_care_area,
           :department,
