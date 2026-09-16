@@ -28,6 +28,19 @@ class LabResultsQueueService
   SHOW_HTS_ONLY_ORDERS_PROPERTY = 'lab_queue_show_hts_only_orders'
   SHOW_VIRAL_LOAD_ONLY_ORDERS_PROPERTY = 'lab_queue_show_viral_load_only_orders'
 
+  # A user can hold this role alongside clinical roles and be assigned to any
+  # number of programs. The role is deliberately treated as an additional
+  # restriction: whenever it is present, this queue contains only orders whose
+  # test type carries an MRDT result indicator.
+  MRDT_LAB_ROLE_NAME = 'MRDT Lab'
+  MRDT_CONCEPT_NAMES = [
+    'MRDT',
+    'Malaria Rapid Diagnostic Test (MRDT)',
+    'Malaria Rapid Diagnostic Test',
+    # This misspelling is the catalogue name currently seeded at many sites.
+    'Malaria Rapid Diagonostic Test'
+  ].freeze
+
   # Both spellings exist in the dictionary, so match on all of them rather than
   # betting on the one a particular site happens to have seeded.
   VIRAL_LOAD_CONCEPT_NAMES = ['Viral Load', 'HIV Viral Load', 'HIV viral load'].freeze
@@ -44,7 +57,8 @@ class LabResultsQueueService
       pending_sql = pending_lab_results_patients_sql(
         location_id,
         show_hts_only: user_property_enabled?(SHOW_HTS_ONLY_ORDERS_PROPERTY),
-        show_viral_load_only: user_property_enabled?(SHOW_VIRAL_LOAD_ONLY_ORDERS_PROPERTY)
+        show_viral_load_only: user_property_enabled?(SHOW_VIRAL_LOAD_ONLY_ORDERS_PROPERTY),
+        mrdt_only: current_user_mrdt_lab?
       )
       rows_sql = pending_lab_results_patient_rows_sql(pending_sql, search)
 
@@ -140,7 +154,7 @@ class LabResultsQueueService
       ]
     end
 
-    def pending_lab_results_patients_sql(location_id, show_hts_only: false, show_viral_load_only: false)
+    def pending_lab_results_patients_sql(location_id, show_hts_only: false, show_viral_load_only: false, mrdt_only: false)
       # Resolve the lab order-type and result-concept id(s) once so the main scan
       # can filter orders directly by order_type_id (indexed) and the per-order
       # existence check is a direct, indexed obs lookup — instead of joining to
@@ -157,6 +171,28 @@ class LabResultsQueueService
         'lo.order_type_id IN (?)'
       ]
       binds = [order_type_ids]
+
+      if mrdt_only
+        mrdt_test_type_ids = mrdt_lab_test_type_concept_ids
+        # Fail closed if a site's dictionary has not seeded the MRDT catalogue:
+        # an MRDT-only user must never fall back to seeing every pending test.
+        if mrdt_test_type_ids.empty? || test_type_concept_ids.empty?
+          where_clauses << '1 = 0'
+        else
+          where_clauses << <<~SQL.squish
+            EXISTS (
+              SELECT 1
+              FROM obs mrdt_test
+              WHERE mrdt_test.order_id = lo.order_id
+                AND mrdt_test.voided = 0
+                AND mrdt_test.concept_id IN (?)
+                AND mrdt_test.value_coded IN (?)
+            )
+          SQL
+          binds << test_type_concept_ids
+          binds << mrdt_test_type_ids
+        end
+      end
 
       # Restrict to orders placed within the pending window (last 7 days).
       where_clauses << 'e.encounter_datetime >= ?'
@@ -263,6 +299,35 @@ class LabResultsQueueService
       ConceptName.where(voided: 0)
                  .where('LOWER(name) IN (?)', VIRAL_LOAD_CONCEPT_NAMES.map(&:downcase))
                  .distinct.pluck(:concept_id)
+    end
+
+    # MRDT is a result indicator in the national test catalogue, while orders
+    # store the parent test type (currently "Malaria Screening") as the value of
+    # their "Test type" observation. Resolve that relationship from concept_set
+    # rather than hard-coding site-specific concept ids. Direct MRDT test types
+    # are included as well for sites whose dictionaries model it that way.
+    def mrdt_lab_test_type_concept_ids
+      mrdt_concept_ids = ConceptName.where(voided: 0)
+                                    .where('LOWER(name) IN (?)', MRDT_CONCEPT_NAMES.map(&:downcase))
+                                    .distinct.pluck(:concept_id)
+      return [] if mrdt_concept_ids.empty?
+
+      catalogue_test_type_ids = ConceptSet.find_members_by_name(TEST_TYPE_CONCEPT_NAME).distinct.pluck(:concept_id)
+      return [] if catalogue_test_type_ids.empty?
+
+      parent_test_type_ids = ConceptSet.where(
+        concept_id: mrdt_concept_ids,
+        concept_set: catalogue_test_type_ids
+      ).distinct.pluck(:concept_set)
+
+      ((mrdt_concept_ids & catalogue_test_type_ids) + parent_test_type_ids).uniq
+    end
+
+    def current_user_mrdt_lab?
+      user_id = User.current&.user_id
+      return false if user_id.blank?
+
+      UserRole.where(user_id:, role: MRDT_LAB_ROLE_NAME).exists?
     end
 
     def user_property_enabled?(property)
