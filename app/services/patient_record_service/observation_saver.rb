@@ -6,6 +6,8 @@ module PatientRecordService
     class ObservationEncounterSaveError < StandardError; end
 
     NCD_PROGRAM_ID = 32
+    TREATMENT_STATUS_CONCEPT_NAME = "Treatment status".freeze
+    HIV_PROGRAM_NAME = "HIV Program".freeze
     PRIMARY_DIAGNOSIS_CONCEPT_NAME = "primary diagnosis".freeze
     NOTES_ENCOUNTER_TYPE_NAME = "notes".freeze
     DIABETES_DIAGNOSIS_CONCEPT_NAMES = [
@@ -68,6 +70,7 @@ module PatientRecordService
                   end
 
                   observation_service.create_observation(encounter, params)
+                  sync_hiv_program_state_from_treatment_status(patient_id, params)
                 rescue StandardError => e
                   log_error("Error saving obs for encounter #{encounter_id}", e)
                   item_errors << "obs #{format_observation_reference(archetype)}: #{e.message}"
@@ -175,6 +178,51 @@ module PatientRecordService
 
       record.delete(:send_ichis_enrolled_in_care)
       record.delete('send_ichis_enrolled_in_care')
+    end
+
+    # The ART "Change outcome" UI (Patient outcome encounter) only records the
+    # new outcome as a "Treatment status" observation. Reports like TX_ML derive
+    # a patient's cumulative outcome from patient_state/program_workflow_state
+    # (see ArtService::Reports::Cohort::Outcomes), so without this the outcome
+    # is visible on the patient profile (reads observations) but invisible to
+    # every report that walks program state (reads patient_state) - mirrors the
+    # existing ArtService::PatientStateEngine#on_drug_dispensation hook, which
+    # does the same thing for the "On antiretrovirals" transition.
+    def sync_hiv_program_state_from_treatment_status(patient_id, params)
+      return unless treatment_status_observation?(params)
+
+      workflow_state_id = hiv_program_workflow_state_id(params[:value_coded])
+      return unless workflow_state_id
+
+      date = params[:obs_datetime]&.to_date || Date.today
+      patient_state_service.create_patient_state(hiv_program, Patient.find(patient_id), workflow_state_id, date)
+    rescue StandardError => e
+      log_error("Error syncing HIV program state for patient #{patient_id}", e)
+    end
+
+    def treatment_status_observation?(params)
+      params[:value_coded].present? && params[:concept_id].to_i == treatment_status_concept_id.to_i
+    end
+
+    def treatment_status_concept_id
+      @treatment_status_concept_id ||= ConceptName.find_by(name: TREATMENT_STATUS_CONCEPT_NAME, voided: 0)&.concept_id
+    end
+
+    def hiv_program
+      @hiv_program ||= Program.find_by(name: HIV_PROGRAM_NAME)
+    end
+
+    def hiv_program_workflow_state_id(value_coded)
+      return nil unless hiv_program
+
+      ProgramWorkflowState.joins(:program_workflow)
+                          .where(concept_id: value_coded.to_i, retired: 0)
+                          .where(program_workflow: { program_id: hiv_program.program_id, retired: 0 })
+                          .pick(:program_workflow_state_id)
+    end
+
+    def patient_state_service
+      @patient_state_service ||= PatientStateService.new
     end
 
     def ncd_program?(record)
