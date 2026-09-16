@@ -70,7 +70,7 @@ module PatientRecordService
                   end
 
                   observation_service.create_observation(encounter, params)
-                  sync_hiv_program_state_from_treatment_status(patient_id, params)
+                  sync_hiv_program_state_from_treatment_status(patient_id, encounter, params)
                 rescue StandardError => e
                   log_error("Error saving obs for encounter #{encounter_id}", e)
                   item_errors << "obs #{format_observation_reference(archetype)}: #{e.message}"
@@ -188,14 +188,16 @@ module PatientRecordService
     # every report that walks program state (reads patient_state) - mirrors the
     # existing ArtService::PatientStateEngine#on_drug_dispensation hook, which
     # does the same thing for the "On antiretrovirals" transition.
-    def sync_hiv_program_state_from_treatment_status(patient_id, params)
+    def sync_hiv_program_state_from_treatment_status(patient_id, encounter, params)
+      program = hiv_program
+      return unless program && encounter&.program_id&.to_i == program&.program_id&.to_i
       return unless treatment_status_observation?(params)
 
       workflow_state_id = hiv_program_workflow_state_id(params[:value_coded])
       return unless workflow_state_id
 
       date = params[:obs_datetime]&.to_date || Date.today
-      patient_state_service.create_patient_state(hiv_program, Patient.find(patient_id), workflow_state_id, date)
+      patient_state_service.create_patient_state(program, Patient.find(patient_id), workflow_state_id, date)
     rescue StandardError => e
       log_error("Error syncing HIV program state for patient #{patient_id}", e)
     end
