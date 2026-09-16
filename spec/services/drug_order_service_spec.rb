@@ -233,7 +233,7 @@ RSpec.describe DrugOrderService do
 
       expect(built[:absconded]).to be(true)
       expect(built[:out_of_stock]).to be(false)
-      expect(drug_order.order.reload.voided).to be_falsey
+      expect(drug_order.order.reload.voided).to eq(0)
     end
 
     it 'repairs drug concept orders that were saved without drug_order rows' do
