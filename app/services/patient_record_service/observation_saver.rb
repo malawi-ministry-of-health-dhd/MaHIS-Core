@@ -197,9 +197,30 @@ module PatientRecordService
       return unless workflow_state_id
 
       date = params[:obs_datetime]&.to_date || Date.today
-      patient_state_service.create_patient_state(program, Patient.find(patient_id), workflow_state_id, date)
+      with_acting_user(encounter.creator) do
+        patient_state_service.create_patient_state(program, Patient.find(patient_id), workflow_state_id, date)
+      end
     rescue StandardError => e
       log_error("Error syncing HIV program state for patient #{patient_id}", e)
+    end
+
+    # Some ingestion paths (e.g. the CouchDB listener, when a document's
+    # top-level provider_id can't be resolved to a user - see
+    # lib/couchdb_changes_listener.rb) leave User.current nil. That crashes
+    # Auditable#update_create_trail on the new PatientState even though the
+    # encounter/observation we just saved a moment earlier already carries a
+    # valid creator. Reuse that creator so the state write doesn't silently
+    # fail on top of an already-saved observation.
+    def with_acting_user(creator_id)
+      return yield if User.current
+
+      previous_user = User.current
+      begin
+        User.current = User.unscoped.find_by(user_id: creator_id) if creator_id.to_i.positive?
+        yield
+      ensure
+        User.current = previous_user
+      end
     end
 
     def treatment_status_observation?(params)
