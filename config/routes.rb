@@ -431,6 +431,9 @@ Rails.application.routes.draw do
       # Program-agnostic lab technician queue (patients with lab orders lacking
       # results). Top-level so it works without an active program in context.
       get '/lab_tests/patients_awaiting_results', to: 'lab_test_orders#patients_awaiting_results'
+      # Count behind the brought-in-dead dashboard card, so the client does not
+      # have to rebuild the whole list just to show a number.
+      get '/brought_in_dead/count', to: 'brought_in_dead#count'
       post '/lab/accession_numbers/top_up', to: 'lab_accession_numbers#top_up'
       post '/lab/accession_numbers/top_up_all', to: 'lab_accession_numbers#top_up_all'
       post '/lab/accession_numbers/reserve', to: 'lab_accession_numbers#reserve'

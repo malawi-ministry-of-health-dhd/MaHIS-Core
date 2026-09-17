@@ -138,6 +138,11 @@ module BuildPatientRecordService
           program_id: encounter.program_id,
           encounter_id: encounter.encounter_id,
           encounter_datetime: encounter.encounter_datetime,
+          # Carried per observation, not just on the encounter-type entry above:
+          # that entry aggregates every encounter of a type, so its visit_id only
+          # reflects the first one while its obs span all visits. Clients that
+          # filter a record by visit need it here.
+          visit_id: encounter.visit_id,
         }
       rescue StandardError => e
         Rails.logger.error("Error building observation hash for obs #{observation.id}: #{e.message}")
