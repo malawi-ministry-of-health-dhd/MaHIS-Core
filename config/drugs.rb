@@ -113,7 +113,8 @@ module Drugs
       { drug_id: 881, name: 'RAL (Raltegravir 25mg)' },
       { drug_id: 882, name: 'ABC/3TC (Abacavir and Lamivudine 120/60mg tablet)' },
       { drug_id: 1046, name: 'Darunavir 150mg' },
-      { drug_id: 1047, name: 'Ritonavir 50mg' }
+      { drug_id: 1047, name: 'Ritonavir 50mg' },
+      { drug_id: 1170, name: 'ABC/3TC/DTG (Abacavir Lamivudine Dolutegravir 60/30/5mg tablet)' }
     ]
   }.freeze
 

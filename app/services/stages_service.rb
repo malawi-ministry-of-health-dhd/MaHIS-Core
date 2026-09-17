@@ -2,6 +2,11 @@
 
 class StagesService
   MAX_STAGE_LOCATION_DEPTH = 5
+  # A stage write carrying an explicit falsey `status` retires the patient's
+  # queue row instead of creating/moving one. Used by cross-program hand-offs
+  # that must leave the source visit OPEN (OPD -> HTS: the patient comes back to
+  # the same consultation), which a visit closure cannot do.
+  DEACTIVATING_STATUSES = [false, 0, 'false', '0', 'f'].freeze
 
   def create_stage(stage_params)
     patient_id = resolve_patient_id(stage_params)
@@ -27,10 +32,23 @@ class StagesService
   def create_or_update_stage(patient_id, active_visit, stage_params)
 
     location_id = resolve_stage_location(stage_params[:location_id])
-    stage_name = normalize_stage(stage_params[:stage])
+    # An explicit falsey `status` means "take this patient off this program's
+    # queue" (the OPD -> HTS hand-off) rather than "queue them here". The row is
+    # kept and only its status flips, so the still-open visit keeps its single
+    # stage record and a later queueing reuses it. The stage NAME is optional
+    # then: the caller removes the patient from whichever stage they are on.
+    deactivating = deactivation_request?(stage_params)
+    stage_name = deactivating && stage_params[:stage].blank? ? nil : normalize_stage(stage_params[:stage])
 
     # Keep one stage record per active visit and update it as patient moves.
     stage = Stage.where(visit_id: active_visit.visit_id).order(updated_at: :desc).first
+
+    # Nothing is queued on this visit. Never manufacture a row just to retire it,
+    # but still answer with the inactive projection so the CouchDB copy that
+    # offline devices read is cleared too.
+    if stage.nil? && deactivating
+      return inactive_stage_projection(patient_id, active_visit, stage_params, location_id, stage_name)
+    end
 
     if stage.nil?
       stage = Stage.new(
@@ -41,7 +59,7 @@ class StagesService
       )
     end
 
-    if Program.find_by_name("AETC Program").id == stage_params[:program_id]
+    if !deactivating && Program.find_by_name("AETC Program").id == stage_params[:program_id]
       stage.visit_number = VisitService.next_daily_visit_number! 
     end
 
@@ -49,7 +67,7 @@ class StagesService
     stage.patient_id = patient_id
     stage.visit_id = active_visit.visit_id
     stage.location_id = location_id
-    stage.status = true
+    stage.status = !deactivating
     # Record the program the patient was sent from (e.g. OPD -> HTS) once, and
     # keep it as the patient moves between stages of the destination program.
     if stage_params[:referring_program_id].present? && stage.referring_program_id.blank?
@@ -58,7 +76,7 @@ class StagesService
     assign_arrival_time(stage, stage_params)
     assign_stage_metadata(stage, stage_params)
 
-    if stage.stage != stage_name
+    if stage_name.present? && stage.stage != stage_name
       stage.stage = stage_name
     end
 
@@ -254,6 +272,28 @@ class StagesService
       value = params[field].presence || params[field.to_s].presence
       stage.public_send("#{field}=", value) if value.present?
     end
+  end
+
+  def deactivation_request?(stage_params)
+    status = stage_params[:status]
+    return false if status.nil?
+
+    DEACTIVATING_STATUSES.include?(status.is_a?(String) ? status.strip.downcase : status)
+  end
+
+  # Serializable stand-in for "this patient holds no queue row on that visit",
+  # so the caller and the CouchDB mirror still receive an inactive stage payload.
+  def inactive_stage_projection(patient_id, active_visit, stage_params, location_id, stage_name)
+    serialize(
+      Stage.new(
+        patient_id: patient_id,
+        visit_id: active_visit.visit_id,
+        location_id: location_id,
+        program_id: stage_params[:program_id],
+        stage: stage_name,
+        status: false
+      )
+    )
   end
 
   def normalize_stage(stage)

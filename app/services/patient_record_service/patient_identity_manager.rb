@@ -326,9 +326,9 @@ module PatientRecordService
 
     # Assign an NCD number to a patient under the allocation lock so two saves can
     # never persist the same number. `requested` is the desired number (blank →
-    # auto-allocate); if it is already held by another patient (incl. voided) the
-    # next available number is used instead. Creating the identifier voids the
-    # patient's previous NCD number when the value changes (handles updates).
+    # auto-allocate); if it is actively held by another patient the next available
+    # number is used instead. Creating the identifier voids the patient's previous
+    # NCD number when the value changes (handles updates).
     # Returns the assigned identifier string.
     def assign_ncd_number(patient_id, requested, location_id)
       with_ncd_number_lock do
@@ -352,14 +352,15 @@ module PatientRecordService
       end
     end
 
-    # True when the NCD number is already assigned to a different patient.
-    # Uses `unscoped` so voided identifiers still count as taken — a voided NCD
-    # number must never be reused. Kept consistent with find_next_available_ncd_number.
+    # True when the NCD number is *actively* assigned to a different patient.
+    # Voided identifiers do not count as taken: a number freed by correcting a
+    # patient's NCD number can be re-assigned to another patient. Auto-allocation
+    # (find_next_available_ncd_number) still skips them, so a number is only ever
+    # recycled when a user asks for it explicitly.
     def ncd_number_taken_by_other?(identifier, patient_id)
       return false if identifier.blank?
 
-      PatientIdentifier.unscoped
-                       .where(identifier: identifier, identifier_type: 31)
+      PatientIdentifier.where(identifier: identifier, identifier_type: 31)
                        .where.not(patient_id: patient_id)
                        .exists?
     end

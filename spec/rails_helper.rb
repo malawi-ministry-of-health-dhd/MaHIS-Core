@@ -48,9 +48,11 @@ RSpec.configure do |config|
   # Automatically mark non-passing spec files as pending
   # Only these specs are known to pass - all others will be marked as pending
   PASSING_SPECS = [
+    'seed_metadata_downloader_spec.rb',
     'transcription_service_spec.rb',
     'beds_controller_spec.rb',
     'report_spec.rb',
+    'processed_results_spec.rb',
     'cohort_builder_spec.rb',
     'medication_order_saver_spec.rb',
     'push_dde_footprints_job_spec.rb',
@@ -76,6 +78,7 @@ RSpec.configure do |config|
     'dde_service_spec.rb',
     'dde_merging_service_spec.rb',
     'ncd_identifier_cleanup_spec.rb',
+    'ncd_number_allocation_spec.rb',
     'mnh_stats_sync_job_spec.rb',
     'build_patient_record_drug_service_spec.rb',
     'patient_sync_reconciler_spec.rb',
@@ -97,7 +100,9 @@ RSpec.configure do |config|
     'security_question_service_spec.rb',
     'security_questions_spec.rb',
     'password_expiry_spec.rb',
-    'account_expiry_spec.rb'
+    'account_expiry_spec.rb',
+    'brought_in_dead_service_spec.rb',
+    'lab_results_queue_service_spec.rb'
   ].freeze
 
   # Wrap individual test execution to skip non-passing specs
