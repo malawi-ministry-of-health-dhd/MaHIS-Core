@@ -6,6 +6,8 @@ module PatientRecordService
     class ObservationEncounterSaveError < StandardError; end
 
     NCD_PROGRAM_ID = 32
+    TREATMENT_STATUS_CONCEPT_NAME = "Treatment status".freeze
+    HIV_PROGRAM_NAME = "HIV Program".freeze
     PRIMARY_DIAGNOSIS_CONCEPT_NAME = "primary diagnosis".freeze
     NOTES_ENCOUNTER_TYPE_NAME = "notes".freeze
     DIABETES_DIAGNOSIS_CONCEPT_NAMES = [
@@ -68,6 +70,7 @@ module PatientRecordService
                   end
 
                   observation_service.create_observation(encounter, params)
+                  sync_hiv_program_state_from_treatment_status(patient_id, encounter, params)
                 rescue StandardError => e
                   log_error("Error saving obs for encounter #{encounter_id}", e)
                   item_errors << "obs #{format_observation_reference(archetype)}: #{e.message}"
@@ -175,6 +178,74 @@ module PatientRecordService
 
       record.delete(:send_ichis_enrolled_in_care)
       record.delete('send_ichis_enrolled_in_care')
+    end
+
+    # The ART "Change outcome" UI (Patient outcome encounter) only records the
+    # new outcome as a "Treatment status" observation. Reports like TX_ML derive
+    # a patient's cumulative outcome from patient_state/program_workflow_state
+    # (see ArtService::Reports::Cohort::Outcomes), so without this the outcome
+    # is visible on the patient profile (reads observations) but invisible to
+    # every report that walks program state (reads patient_state) - mirrors the
+    # existing ArtService::PatientStateEngine#on_drug_dispensation hook, which
+    # does the same thing for the "On antiretrovirals" transition.
+    def sync_hiv_program_state_from_treatment_status(patient_id, encounter, params)
+      program = hiv_program
+      return unless program && encounter&.program_id&.to_i == program&.program_id&.to_i
+      return unless treatment_status_observation?(params)
+
+      workflow_state_id = hiv_program_workflow_state_id(params[:value_coded])
+      return unless workflow_state_id
+
+      date = params[:obs_datetime]&.to_date || Date.today
+      with_acting_user(encounter.creator) do
+        patient_state_service.create_patient_state(program, Patient.find(patient_id), workflow_state_id, date)
+      end
+    rescue StandardError => e
+      log_error("Error syncing HIV program state for patient #{patient_id}", e)
+    end
+
+    # Some ingestion paths (e.g. the CouchDB listener, when a document's
+    # top-level provider_id can't be resolved to a user - see
+    # lib/couchdb_changes_listener.rb) leave User.current nil. That crashes
+    # Auditable#update_create_trail on the new PatientState even though the
+    # encounter/observation we just saved a moment earlier already carries a
+    # valid creator. Reuse that creator so the state write doesn't silently
+    # fail on top of an already-saved observation.
+    def with_acting_user(creator_id)
+      return yield if User.current
+
+      previous_user = User.current
+      begin
+        User.current = User.unscoped.find_by(user_id: creator_id) if creator_id.to_i.positive?
+        yield
+      ensure
+        User.current = previous_user
+      end
+    end
+
+    def treatment_status_observation?(params)
+      params[:value_coded].present? && params[:concept_id].to_i == treatment_status_concept_id.to_i
+    end
+
+    def treatment_status_concept_id
+      @treatment_status_concept_id ||= ConceptName.find_by(name: TREATMENT_STATUS_CONCEPT_NAME, voided: 0)&.concept_id
+    end
+
+    def hiv_program
+      @hiv_program ||= Program.find_by(name: HIV_PROGRAM_NAME)
+    end
+
+    def hiv_program_workflow_state_id(value_coded)
+      return nil unless hiv_program
+
+      ProgramWorkflowState.joins(:program_workflow)
+                          .where(concept_id: value_coded.to_i, retired: 0)
+                          .where(program_workflow: { program_id: hiv_program.program_id, retired: 0 })
+                          .pick(:program_workflow_state_id)
+    end
+
+    def patient_state_service
+      @patient_state_service ||= PatientStateService.new
     end
 
     def ncd_program?(record)

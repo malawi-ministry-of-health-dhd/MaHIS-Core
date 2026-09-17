@@ -91,6 +91,23 @@ module DispensationService
       order
     end
 
+    # Records an abscond against a drug order: the patient left the facility
+    # without collecting the prescription. Like mark_out_of_stock the order is NOT
+    # voided - the prescription stands, it was simply never collected - and the
+    # flag lives on orders.fulfiller_status so it survives a patient-record
+    # rebuild, which regenerates MedicationOrder.saved from a fixed field list.
+    def mark_absconded(drug_order, reason: nil)
+      order = drug_order.order
+      raise "DrugOrder #{drug_order.order_id} has no order row" if order.blank?
+      return order if order.fulfiller_status == DrugOrderService::ABSCONDED_STATUS
+
+      order.update!(
+        fulfiller_status: DrugOrderService::ABSCONDED_STATUS,
+        fulfiller_comment: reason.presence || 'Patient absconded'
+      )
+      order
+    end
+
     def void_dispensations(drug_order)
       voided_dispensations = ActiveRecord::Base.transaction do
         observations = lambda do |concept_names|

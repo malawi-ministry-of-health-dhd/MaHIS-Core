@@ -386,8 +386,8 @@ class PatientService
         'AMOUNT DISPENSED'
       )
       .where(
-        '(orders.fulfiller_status IS NULL OR orders.fulfiller_status <> ?)',
-        DrugOrderService::OUT_OF_STOCK_STATUS
+        '(orders.fulfiller_status IS NULL OR orders.fulfiller_status NOT IN (?))',
+        DrugOrderService::DISPENSATION_CLOSED_STATUSES
       )
       .order('orders.start_date DESC')
   
