@@ -186,6 +186,7 @@ module ArtService
             FROM #{temp_patient_outcomes} tpo
             INNER JOIN #{temp_earliest_start_date} tesd ON tesd.patient_id = tpo.patient_id
             WHERE tpo.pepfar_cum_outcome = 'On antiretrovirals'
+              AND tesd.date_enrolled <= '#{end_date.to_date}'
           SQL
         end
 
