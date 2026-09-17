@@ -41,6 +41,7 @@ class User < RetirableRecord
   has_many :session_schedule_assignees
   has_many :programs, through: :user_programs # User programs
   has_many :user_villages
+  has_many :user_clinic_assignments
   has_many :villages, through: :user_villages
   has_many(:names,
            -> { order('person_name.preferred' => 'DESC') },
@@ -125,6 +126,13 @@ class User < RetirableRecord
     Location.current
   end
 
+  def current_clinic_assignment
+    UserClinicAssignment.includes(:location)
+                         .where(user_id: user_id, retired: 0)
+                         .order(:user_clinic_assignment_id)
+                         .first
+  end
+
   def global_superuser?
     role_assigned?('Global Superuser')
   end
@@ -205,6 +213,13 @@ class User < RetirableRecord
           role['privileges'] = all_privileges
         end
       end
+    end
+
+    if (clinic_assignment = current_clinic_assignment)
+      json['clinic_assignment'] = clinic_assignment.as_json(
+        only: %i[user_clinic_assignment_id location_id retired date_retired created_at],
+        include: { location: { only: %i[location_id name parent_location] } }
+      )
     end
 
     if serialize_assigned_areas

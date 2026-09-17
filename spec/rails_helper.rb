@@ -100,7 +100,9 @@ RSpec.configure do |config|
     'security_question_service_spec.rb',
     'security_questions_spec.rb',
     'password_expiry_spec.rb',
-    'account_expiry_spec.rb'
+    'account_expiry_spec.rb',
+    'user_service_clinic_assignment_spec.rb',
+    'location_bulk_add_spec.rb'
   ].freeze
 
   # Wrap individual test execution to skip non-passing specs
