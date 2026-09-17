@@ -240,9 +240,11 @@ module PatientRecordSearchFields
   def pending_medication_order?(order)
     return false if fetch_value(order, :voided).to_i == 1 || fetch_value(order, :status).to_s == 'voided'
     return false if fetch_value(order, :dispensed) == true
-    # A stock-out is a completed pharmacy action, matching the online queue's
-    # fulfiller_status exclusion in DrugOrderService.pending_dispensation_patients_sql.
+    # A stock-out or an abscond is a completed pharmacy action, matching the
+    # online queue's fulfiller_status exclusion in
+    # DrugOrderService.pending_dispensation_patients_sql.
     return false if fetch_value(order, :out_of_stock) == true
+    return false if fetch_value(order, :absconded) == true
 
     dispensation = fetch_value(order, :dispensation)
     return false if dispensation.present? && (!dispensation.respond_to?(:empty?) || !dispensation.empty?)
