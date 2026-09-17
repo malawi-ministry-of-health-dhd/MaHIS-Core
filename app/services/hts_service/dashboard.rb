@@ -21,7 +21,8 @@ module HtsService
     HTS_TESTING_ENCOUNTER_NAMES = ['hiv testing', 'confirmatory hiv testing', 'testing'].freeze
     # HIV outcomes recorded by the HIV Testing flow are stored as the full outcome
     # label in value_text (not a bare "Positive"), so they must be matched explicitly.
-    CONCLUSIVE_HIV_OUTCOMES = ['Positive- Confirmed Professional Test'].freeze
+    # The legacy label is kept so results recorded before the outcome list changed still count.
+    CONCLUSIVE_HIV_OUTCOMES = ['New Positive', 'Positive re-test', 'Positive- Confirmed Professional Test'].freeze
 
     def self.daily_statistics(start_date, _end_date)
       art = Observation.joins('INNER JOIN concept_name ON concept_name.concept_id = obs.concept_id')
