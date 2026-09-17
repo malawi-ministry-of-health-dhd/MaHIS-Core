@@ -118,6 +118,51 @@ module PatientRecordService
       OperationResult.new(success: true, errors: collected_errors, changed: created_relationship)
     end
 
+    def void_relationships(patient_id, record)
+      void_requests = record[:voidedRelationships]
+      return ok unless void_requests.is_a?(Array) && void_requests.any?
+
+      collected_errors = []
+      voided_relationship = false
+
+      void_requests.each do |void_request|
+        relationship_id = void_request[:relationship_id].presence || void_request[:id].presence
+
+        unless relationship_id.present?
+          collected_errors << "Missing relationship_id for request=#{void_request.inspect}"
+          next
+        end
+
+        reason = void_request[:reason].presence || 'Relationship removed'
+
+        begin
+          result = with_operation_guard(
+            patient_id: patient_id,
+            operation_type: 'relationship.void',
+            payload: void_request,
+            target_type: 'Relationship'
+          ) do
+            # A relationship is stored once, in one direction: the patient is
+            # person_a on links made from their own record and person_b on links
+            # made from the other person's. Look on both sides, but stay scoped
+            # to this patient so no arbitrary relationship can be voided by ID.
+            relationship = Relationship.for_person(patient_id).find_by(relationship_id: relationship_id)
+            relationship&.void(reason)
+            { target_type: 'Relationship', target_id: relationship_id }
+          end
+
+          next if result.skipped?
+
+          voided_relationship = true
+        rescue StandardError => e
+          collected_errors << "Relationship #{relationship_id}: #{e.message}"
+          Rails.logger.error("Failed to void relationship #{relationship_id}: #{e.message}")
+        end
+      end
+
+      OperationResult.new(success: true, errors: collected_errors, changed: voided_relationship)
+    end
+
     def create_next_of_kin(patient_id, record, initial_guardian_status = nil)
       return ok unless (initial_guardian_status || record[:saveStatusGuardianInformation]) == 'pending'
       return ok unless record[:nextOfKinInformation].present?
