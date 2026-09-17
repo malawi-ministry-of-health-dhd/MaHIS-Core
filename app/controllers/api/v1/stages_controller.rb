@@ -68,6 +68,7 @@ module Api
           # leaving the visit open (see StagesService#deactivation_request?).
           :status,
           :disposition_type,
+          :triage_result,
           :patient_care_area,
           :department,
           :destination

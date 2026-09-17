@@ -268,7 +268,7 @@ class StagesService
   end
 
   def assign_stage_metadata(stage, params)
-    %i[disposition_type patient_care_area department destination].each do |field|
+    %i[disposition_type triage_result patient_care_area department destination].each do |field|
       value = params[field].presence || params[field.to_s].presence
       stage.public_send("#{field}=", value) if value.present?
     end
