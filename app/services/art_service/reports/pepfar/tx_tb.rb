@@ -14,6 +14,9 @@ module ArtService
         include ArtTempTablesNaming
 
         def initialize(start_date:, end_date:, **kwargs)
+          rebuild = kwargs[:rebuild] || kwargs[:rebuild_outcome]
+          kwargs[:rebuild] = rebuild.to_s unless rebuild.nil?
+
           super(start_date: (end_date - 2.months).beginning_of_month, end_date:, **kwargs)
           @start_date = start_date
           @dsd = kwargs[:dsd]
