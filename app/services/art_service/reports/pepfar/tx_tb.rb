@@ -9,6 +9,7 @@ module ArtService
         attr_accessor :start_date, :end_date, :report, :rebuild_outcome
 
         include Utils
+        include ModelUtils
         include CommonSqlQueryUtils
         include ArtTempTablesNaming
 
