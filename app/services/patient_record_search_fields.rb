@@ -50,6 +50,7 @@ module PatientRecordSearchFields
     { name: 'idx_full_name_search', ddoc: DDOC_NAME_SEARCH, fields: ['full_name_search'] },
     { name: 'idx_location_full_name_search', ddoc: DDOC_NAME_SEARCH, fields: ['location_id_search', 'full_name_search'] },
     { name: 'idx_has_pending_dispensation', ddoc: DDOC_QUEUES, fields: ['has_pending_dispensation'] },
+    { name: 'idx_has_brought_in_dead', ddoc: DDOC_QUEUES, fields: ['has_brought_in_dead'] },
     { name: 'idx_has_pending_lab_results', ddoc: DDOC_QUEUES, fields: ['has_pending_lab_results'] },
     { name: 'idx_location_pending_dispensation', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_dispensation'] },
     { name: 'idx_location_pending_lab_results', ddoc: DDOC_QUEUES, fields: ['location_id_search', 'has_pending_lab_results'] },
@@ -119,6 +120,10 @@ module PatientRecordSearchFields
     idx_has_pending_nlims_orders
   ].freeze
 
+  # A brought-in-dead record, as BroughtInDeadService defines one.
+  DEATH_OUTCOME_ENCOUNTER_TYPE_IDS = [37, 40].freeze
+  DEATH_CONCEPT_IDS = [38_748, 11_520].freeze
+
   NCD_PROGRAM_ID = 32
   NCD_COMPLICATIONS_ENCOUNTER_TYPE_ID = 28
   NCD_PRIMARY_DIAGNOSIS_CONCEPT_NAME = 'Primary diagnosis'
@@ -175,6 +180,7 @@ module PatientRecordSearchFields
     record['has_pending_dispensation'] = pending_dispensation?(record)
     record['pending_dispensation_location_id'] = pending_dispensation_location_id(record)
     record['pending_dispensation_last_order_date'] = pending_dispensation_last_order_date(record)
+    record['has_brought_in_dead'] = brought_in_dead?(record)
     record['has_pending_lab_results'] = pending_lab_results?(record)
     record['pending_lab_results_location_id'] = pending_lab_results_location_id(record)
     record['pending_lab_results_last_order_date'] = pending_lab_results_last_order_date(record)
@@ -231,6 +237,52 @@ module PatientRecordSearchFields
   def medication_orders(record)
     medication_order = fetch_value(record, :MedicationOrder) || {}
     Array(fetch_value(medication_order, :saved)) + Array(fetch_value(medication_order, :unsaved))
+  end
+
+  # Mirrors the frontend hasBroughtInDeadRecord, which in turn matches
+  # BroughtInDeadService: a death-outcome encounter carrying a "Death"
+  # observation. The AETC list reads this flag through its index instead of
+  # scanning every patient document.
+  def brought_in_dead?(record)
+    encounters = %i[observations encounters patient_encounters].flat_map do |key|
+      value = fetch_value(record, key)
+      value.is_a?(Array) ? value : []
+    end
+
+    encounters.any? do |encounter|
+      encounter_type = first_present(fetch_value(encounter, :encounter_type), fetch_value(encounter, :encounter_type_id))
+      next false unless DEATH_OUTCOME_ENCOUNTER_TYPE_IDS.include?(encounter_type.to_i)
+
+      observations = fetch_value(encounter, :obs) || fetch_value(encounter, :observations)
+      death_observation?(observations.is_a?(Array) ? observations : [])
+    end
+  end
+
+  def death_observation?(observations)
+    observations.any? do |observation|
+      next false unless observation.is_a?(Hash)
+      next true if death_concept?(observation)
+
+      children = fetch_value(observation, :children) || fetch_value(observation, :child)
+      children.is_a?(Array) && death_observation?(children)
+    end
+  end
+
+  def death_concept?(observation)
+    concept = fetch_value(observation, :concept)
+    concept_id = first_present(
+      fetch_value(observation, :concept_id),
+      concept.is_a?(Hash) ? fetch_value(concept, :concept_id) : nil,
+      concept.is_a?(Hash) ? fetch_value(concept, :id) : nil
+    )
+    return true if DEATH_CONCEPT_IDS.include?(concept_id.to_i)
+
+    names = [
+      fetch_value(observation, :concept_name),
+      concept.is_a?(Hash) ? fetch_value(concept, :name) : nil,
+      concept.is_a?(Hash) ? fetch_value(concept, :display) : nil
+    ]
+    names.any? { |name| name.to_s.strip.casecmp?('death') }
   end
 
   def pending_dispensation?(record)
