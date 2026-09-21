@@ -116,5 +116,26 @@ RSpec.describe CouchdbPatientService do
 
       expect(record['art_summary']).to eq(fresh_art_summary)
     end
+
+    it 'does not switch to MySQL when configured CouchDB fails during lookup' do
+      patient_id = '641108'
+      document_id = '203a851a-920d-11f1-827d-9458fce7901c'
+      person = instance_double(Person, uuid: document_id)
+      patient = instance_double(Patient, person: person)
+      patient_scope = double('patient scope')
+
+      allow(described_class).to receive(:ensure_db_exists).and_return(true)
+      allow(described_class).to receive(:couchdb_configured?).and_return(true)
+      allow(Patient).to receive(:unscoped).and_return(patient_scope)
+      allow(patient_scope).to receive(:includes).with(:person).and_return(patient_scope)
+      allow(patient_scope).to receive(:find_by).with(patient_id: patient_id).and_return(patient)
+      allow(RestClient).to receive(:get)
+        .with(described_class.couchdb_url('patients_records', document_id))
+        .and_raise(Errno::ECONNREFUSED)
+
+      expect(BuildPatientRecordService).not_to receive(:build_patient_record)
+
+      expect(described_class.get_patient_record(patient_id: patient_id)).to be_nil
+    end
   end
 end
