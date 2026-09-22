@@ -93,7 +93,7 @@ class StockManagementService
 
       stock_items.each_with_index do |item, _i|
         drug_id = fetch_parameter(item, :drug_id)
-        quantity = fetch_parameter(item, :quantity)
+        quantity = fetch_parameter(item, :quantity).to_f
         barcode = fetch_parameter(item, :barcode)
         product_code = fetch_parameter(item, :product_code)
         manufacture = item.fetch(:manufacture, nil)  # Optional parameter
