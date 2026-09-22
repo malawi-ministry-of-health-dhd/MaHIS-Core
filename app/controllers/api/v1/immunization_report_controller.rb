@@ -189,9 +189,7 @@ class Api::V1::ImmunizationReportController < ApplicationController
   end
 
   def persist_cache(name, location_id, value)
-    cache = ImmunizationCacheDatum.find_or_initialize_by(name:, location_id:)
-    cache.value = value
-    cache.save!
+    ImmunizationCacheDatum.upsert_cache(name:, location_id:, value:)
   end
 
   def normalize_dashboard_stats_hash(value)

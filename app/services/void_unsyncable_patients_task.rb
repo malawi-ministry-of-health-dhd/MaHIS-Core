@@ -1,9 +1,17 @@
 # frozen_string_literal: true
 
-# Voids active patient rows that cannot produce a CouchDB patient document and
-# have never been enrolled in a program. It intentionally leaves person and
-# clinical tables unchanged so the operation remains auditable and recoverable.
+# Voids active patient rows that lack a type-3 identifier and have never been
+# enrolled in a program. It intentionally leaves person and clinical tables
+# unchanged so the operation remains auditable and recoverable.
+#
+# A patient without a type-3 identifier can still have a synced CouchDB
+# document, since PatientSyncReconciler.eligible_patient_scope only requires
+# a person UUID (see patient_sync_reconciler.rb). So each voided patient's
+# document is deleted here too, mirroring SavePatientRecordService's online
+# void path (finalize_voided_patient_record) — otherwise the voided patient
+# stays fully visible and editable on offline clients indefinitely.
 class VoidUnsyncablePatientsTask
+  include CouchdbSync
   SAFE_CONFIRMATION = 'VOID_UNSYNCABLE_PATIENTS'
   CLINICAL_CONFIRMATION = 'VOID_PATIENTS_WITH_CLINICAL_DATA'
   DEFAULT_BATCH_SIZE = 5_000
@@ -149,6 +157,7 @@ class VoidUnsyncablePatientsTask
         date_voided: voided_at,
         void_reason: VOID_REASON
       )
+      delete_couchdb_documents(ids)
       total_voided += updated
       last_patient_id = ids.last
       puts "Voided #{total_voided}/#{selected_count} patient(s)"
@@ -156,5 +165,15 @@ class VoidUnsyncablePatientsTask
 
     puts "\nCompleted. Voided #{total_voided} patient(s)."
     puts 'No patient, person, identifier, program, encounter, observation, or order rows were deleted.'
+  end
+
+  def delete_couchdb_documents(patient_ids)
+    return unless couchdb_configured?
+
+    Person.unscoped.where(person_id: patient_ids).where.not(uuid: [nil, '']).pluck(:uuid).each do |uuid|
+      delete_from_couchdb('patients_records', uuid)
+    rescue StandardError => e
+      Rails.logger.error("VoidUnsyncablePatientsTask: CouchDB delete failed for #{uuid}: #{e.class}: #{e.message}")
+    end
   end
 end
