@@ -480,7 +480,8 @@ end
     batch = PharmacyBatch.unscoped.find_by(batch_number: batch_number, location_id: location_id, program_id: program_id)
     return batch if batch
 
-    PharmacyBatch.create(batch_number: batch_number, location_id: location_id, program_id: program_id)
+    batch = PharmacyBatch.create(batch_number: batch_number, location_id: location_id, program_id: program_id)
+    validate_activerecord_object(batch)
   end
 
   def create_batch_item(batch, drug_id, pack_size, quantity, delivery_date, expiry_date, product_code, barcode,manufacture)
