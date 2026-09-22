@@ -81,6 +81,44 @@ require 'mysql2'
 # obs_group_id IS NULL, so an observation already resolved (by this task, by
 # update_group_obs_ids, or by hand) is never revisited, and a run that's
 # killed partway just picks back up from the lowest remaining order_id.
+
+# Decides, for one batch of ungrouped local observations, which can be repaired and
+# which must be skipped (and why), given what's already been looked up locally and from
+# the source DB. Kept free of any DB/network IO so it's unit-testable without a real or
+# mocked MySQL connection on either side.
+class ObsGroupIdBatchResolution
+  attr_reader :resolved, :skipped_not_in_source, :skipped_source_also_ungrouped, :skipped_parent_not_migrated
+
+  def initialize(obs_batch:, source_group_by_uuid:, parent_uuid_by_source_id:, target_parent_id_by_uuid:)
+    @resolved = []
+    @skipped_not_in_source = 0
+    @skipped_source_also_ungrouped = 0
+    @skipped_parent_not_migrated = 0
+
+    obs_batch.each do |(obs_id, uuid)|
+      unless source_group_by_uuid.key?(uuid)
+        @skipped_not_in_source += 1
+        next
+      end
+
+      src_group_id = source_group_by_uuid[uuid]
+      if src_group_id.nil?
+        @skipped_source_also_ungrouped += 1
+        next
+      end
+
+      parent_uuid = parent_uuid_by_source_id[src_group_id]
+      target_parent_id = parent_uuid && target_parent_id_by_uuid[parent_uuid]
+      unless target_parent_id
+        @skipped_parent_not_migrated += 1
+        next
+      end
+
+      @resolved << [obs_id, target_parent_id]
+    end
+  end
+end
+
 namespace :lab do
   desc 'Backfill obs_group_id (lab orders only) by resolving true parent/child linkage from the original facility database'
   task :repair_obs_group_ids, [:accession_number] => :environment do |_t, args|
@@ -222,28 +260,13 @@ namespace :lab do
                                              .where(uuid: parent_uuid_by_source_id.values.compact.uniq)
                                              .pluck(:uuid, :obs_id).to_h
 
-      resolved = []
-      obs_batch.each do |(obs_id, uuid)|
-        unless source_group_by_uuid.key?(uuid)
-          skipped_not_in_source += 1
-          next
-        end
-
-        src_group_id = source_group_by_uuid[uuid]
-        if src_group_id.nil?
-          skipped_source_also_ungrouped += 1
-          next
-        end
-
-        parent_uuid = parent_uuid_by_source_id[src_group_id]
-        target_parent_id = parent_uuid && target_parent_id_by_uuid[parent_uuid]
-        unless target_parent_id
-          skipped_parent_not_migrated += 1
-          next
-        end
-
-        resolved << [obs_id, target_parent_id]
-      end
+      batch_resolution = ObsGroupIdBatchResolution.new(
+        obs_batch:, source_group_by_uuid:, parent_uuid_by_source_id:, target_parent_id_by_uuid:
+      )
+      resolved = batch_resolution.resolved
+      skipped_not_in_source += batch_resolution.skipped_not_in_source
+      skipped_source_also_ungrouped += batch_resolution.skipped_source_also_ungrouped
+      skipped_parent_not_migrated += batch_resolution.skipped_parent_not_migrated
 
       if resolved.any?
         if dry_run
