@@ -9,27 +9,26 @@ module AdministerVaccineService
       validate_batch_numbers!(drug_orders)
 
       ActiveRecord::Base.transaction do
-        begin
-          # Create drug orders
-          orders = DrugOrderService.create_drug_orders(
-            encounter: Encounter.find(encounter_id),
-            drug_orders: drug_orders
-          )
+        # Create drug orders
+        orders = DrugOrderService.create_drug_orders(
+          encounter: Encounter.find(encounter_id),
+          drug_orders: drug_orders
+        )
 
-          # Create dispensations
-          dispensation = create_dispensations(orders, drug_orders, program_id, provider_id)
-          raise ActiveRecord::Rollback unless dispensation
+        # Create dispensations
+        dispensation = create_dispensations(orders, drug_orders, program_id, provider_id)
+        raise StandardError, 'Failed to create dispensations' unless dispensation
 
-          # Create observations
-          observations = create_observations(encounter_id, obs_archetypes, location_id)
-          raise ActiveRecord::Rollback if observations.any?(&:nil?)
+        # Create observations
+        observations = create_observations(encounter_id, obs_archetypes, location_id)
+        raise StandardError, 'Failed to create observations' if observations.any?(&:nil?)
 
-        rescue StandardError => e
-          Rails.logger.error("Failed in administer_vaccine: #{e.message}")
-          Rails.logger.error(e.backtrace.join("\n"))
-          raise ActiveRecord::Rollback
-        end
+        observations
       end
+    rescue StandardError => e
+      Rails.logger.error("Failed in administer_vaccine: #{e.message}")
+      Rails.logger.error(e.backtrace.join("\n"))
+      raise
     end
     def validate_program_and_encounter!(program_id, encounter_id)
       program = Program.find(program_id)

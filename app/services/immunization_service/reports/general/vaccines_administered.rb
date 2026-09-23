@@ -55,7 +55,7 @@ module ImmunizationService
                              .or(base_query.where(auto_expire_date: start_date..end_date))
                              .or(base_query.where('orders.start_date < ? AND orders.auto_expire_date > ?', start_date, end_date))
         
-          grouped_orders = orders.group_by { |order| [order.patient_id, order.start_date] }
+          grouped_orders = orders.group_by(&:order_id)
           unique_orders = grouped_orders.map { |_, group| group.first }
         
           less_than_one_year = []

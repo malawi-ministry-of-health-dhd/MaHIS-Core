@@ -826,11 +826,11 @@ module ArtService
         LEFT JOIN encounter as hiv_registration ON hiv_registration.patient_id = e.patient_id AND hiv_registration.encounter_datetime < DATE(#{end_date}) AND hiv_registration.encounter_type = #{hiv_clinic_registration_id} AND hiv_registration.voided = 0
         LEFT JOIN (SELECT * FROM obs WHERE concept_id = #{type_of_patient_concept} AND voided = 0 AND value_coded = #{new_patient_concept} AND obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY) AS new_patient ON e.patient_id = new_patient.person_id
         LEFT JOIN (SELECT * FROM obs WHERE concept_id = #{type_of_patient_concept} AND voided = 0 AND value_coded = #{drug_refill_concept} AND obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY) AS refill ON e.patient_id = refill.person_id
-        LEFT JOIN (SELECT * FROM obs WHERE concept_id = #{type_of_patient_concept} AND voided = 0 AND value_coded = #{external_concept} AND obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY) AS external ON e.patient_id = external.person_id
-        WHERE (refill.value_coded IS NOT NULL OR external.value_coded IS NOT NULL)
+        LEFT JOIN (SELECT * FROM obs WHERE concept_id = #{type_of_patient_concept} AND voided = 0 AND value_coded = #{external_concept} AND obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY) AS external_consultation ON e.patient_id = external_consultation.person_id
+        WHERE (refill.value_coded IS NOT NULL OR external_consultation.value_coded IS NOT NULL)
         AND NOT (hiv_registration.encounter_id IS NOT NULL OR new_patient.value_coded IS NOT NULL)
         GROUP BY e.patient_id
-        ORDER BY hiv_registration.encounter_datetime DESC, refill.obs_datetime DESC, external.obs_datetime DESC;").each do |record|
+        ORDER BY hiv_registration.encounter_datetime DESC, refill.obs_datetime DESC, external_consultation.obs_datetime DESC;").each do |record|
           to_remove << record['patient_id'].to_i
         end
         to_remove.join(',')
