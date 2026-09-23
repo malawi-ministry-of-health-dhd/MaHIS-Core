@@ -30,7 +30,12 @@ module Locatable
           end
         end
         validates :location_id, presence: true
-        before_save :set_location_id
+        # Must run before validation, not just before save: `validates
+        # :location_id, presence: true` above runs before any before_save
+        # callback, so a blank location_id (nil, or "" from an unset client
+        # dropdown) would fail validation before this ever gets a chance to
+        # fill in the fallback.
+        before_validation :set_location_id
 
       end
     rescue ActiveRecord::NoDatabaseError, Mysql2::Error
@@ -39,7 +44,11 @@ module Locatable
   end
 
   def set_location_id
-    self.location_id ||= current_location_id
+    # `||=` only fills in nil — a blank string (e.g. an unset dropdown
+    # serialized as "" by the client) is truthy in Ruby, so it silently
+    # survived as an invalid location_id and failed the presence validation
+    # below instead of falling back to the current location.
+    self.location_id = self.class.current_location_id if location_id.blank?
   end
 
   class_methods do

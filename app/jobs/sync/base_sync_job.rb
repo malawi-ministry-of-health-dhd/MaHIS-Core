@@ -688,9 +688,12 @@ module Sync
           Sidekiq.logger.info "Successfully cleaned all #{model_name} records from CouchDB"
           return :continue_sync
         else
-          # Count matches but the source changed since last sync: upsert in place
-          # (no delete needed since the id set is unchanged).
+          # Count matches but the source changed since last sync. The id set can
+          # still differ (e.g. one row retired while another was added in the
+          # same window), so diff CouchDB's ids against MySQL's and remove any
+          # that fell out of the query instead of assuming none did.
           Sidekiq.logger.info "#{model_name}: count matches but source changed since last sync; re-syncing in place."
+          delete_stale_couchdb_documents(model_class, db_name, get_document_prefix(model_class), query, model_name)
           return :continue_sync
         end
 
@@ -881,6 +884,36 @@ module Sync
       end
     end
     
+    # Deletes CouchDB documents whose prefixed id no longer matches any row
+    # returned by `query`. Unlike delete_all_records_from_couchdb, this only
+    # removes the ids that actually fell out of the source data.
+    def delete_stale_couchdb_documents(model_class, db_name, document_prefix, query, model_name)
+      db_url = couchdb_url(db_name)
+
+      require 'uri'
+      start_key = URI.encode_www_form_component("\"#{document_prefix}\"")
+      end_key = URI.encode_www_form_component("\"#{document_prefix}\\ufff0\"")
+      response = with_couchdb_retries { RestClient.get("#{db_url}/_all_docs?startkey=#{start_key}&endkey=#{end_key}") }
+      couchdb_rows = JSON.parse(response.body)['rows'] || []
+
+      expected_ids = query.pluck(model_class.primary_key).map { |id| "#{document_prefix}#{id}" }.to_set
+      stale_rows = couchdb_rows.reject { |row| expected_ids.include?(row['id']) }
+
+      return if stale_rows.empty?
+
+      Sidekiq.logger.info "Found #{stale_rows.length} stale #{model_name} document(s) to delete from CouchDB"
+
+      docs_to_delete = stale_rows.map do |row|
+        { '_id' => row['id'], '_rev' => row['value']['rev'], '_deleted' => true }
+      end
+
+      perform_bulk_delete(db_url, docs_to_delete, model_name)
+    rescue RestClient::NotFound
+      nil
+    rescue StandardError => e
+      Sidekiq.logger.error "Error deleting stale #{model_name.pluralize} from CouchDB: #{e.message}"
+    end
+
     def delete_all_records_from_couchdb(db_name, document_prefix, model_name)
       begin
         db_url = couchdb_url(db_name)
