@@ -58,6 +58,10 @@ module ArtTempTablesNaming
     temp_table_name('temp_art_start_date')
   end
 
+  def temp_art_start_date_by_enrollment
+    temp_table_name('temp_art_start_date_by_enrollment')
+  end
+
   def temp_patient_tb_status
     temp_table_name('temp_patient_tb_status')
   end
