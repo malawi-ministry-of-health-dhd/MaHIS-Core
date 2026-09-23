@@ -9,7 +9,7 @@ module ImmunizationService
     LOGGER = Logger.new $stdout
 
     def initialize(program:, patient:, retro_date: Date.today)
-      @ref_date = retro_date.respond_to?(:to_date) ? retro_date.to_date : date
+      @ref_date = retro_date.respond_to?(:to_date) ? retro_date.to_date : Date.today
       @program = program
       @patient = patient
     end
