@@ -56,7 +56,7 @@ module BuildPatientRecordService
       observations = Observation.unscoped
         .where(encounter_id: encounter_ids)
         .where(voided: [false, 0])
-        .select(:obs_id, :obs_group_id, :encounter_id, :concept_id, :obs_datetime, :value_coded, :value_text, :value_numeric, :value_datetime, :comments)
+        .select(:obs_id, :obs_group_id, :encounter_id, :concept_id, :order_id, :obs_datetime, :value_coded, :value_text, :value_numeric, :value_datetime, :comments)
         .to_a
 
       observations_by_encounter = Hash.new { |hash, key| hash[key] = [] }
@@ -131,12 +131,18 @@ module BuildPatientRecordService
           value_numeric: observation.value_numeric,
           value_datetime: observation.value_datetime,
           comments: observation.comments,
+          order_id: observation.order_id,
           provider_id: encounter.provider_id,
           provider_name: provider_names_by_id[encounter.provider_id] || '',
           location_id: encounter.location_id,
           program_id: encounter.program_id,
           encounter_id: encounter.encounter_id,
           encounter_datetime: encounter.encounter_datetime,
+          # Carried per observation, not just on the encounter-type entry above:
+          # that entry aggregates every encounter of a type, so its visit_id only
+          # reflects the first one while its obs span all visits. Clients that
+          # filter a record by visit need it here.
+          visit_id: encounter.visit_id,
         }
       rescue StandardError => e
         Rails.logger.error("Error building observation hash for obs #{observation.id}: #{e.message}")

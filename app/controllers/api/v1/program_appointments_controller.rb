@@ -15,7 +15,7 @@ module Api
       def scheduled_appointments
         program_id = params[:program_id].to_i
         date = params[:date]&.to_date || Date.today
-        end_date = params[:end_date]&.to_date || Date.today
+        end_date = params[:end_date]&.to_date || date
 
         return_data(program_id, date, end_date)
       end
