@@ -93,7 +93,7 @@ class StockManagementService
 
       stock_items.each_with_index do |item, _i|
         drug_id = fetch_parameter(item, :drug_id)
-        quantity = fetch_parameter(item, :quantity)
+        quantity = fetch_parameter(item, :quantity).to_f
         barcode = fetch_parameter(item, :barcode)
         product_code = fetch_parameter(item, :product_code)
         manufacture = item.fetch(:manufacture, nil)  # Optional parameter
@@ -480,7 +480,8 @@ end
     batch = PharmacyBatch.unscoped.find_by(batch_number: batch_number, location_id: location_id, program_id: program_id)
     return batch if batch
 
-    PharmacyBatch.create(batch_number: batch_number, location_id: location_id, program_id: program_id)
+    batch = PharmacyBatch.create(batch_number: batch_number, location_id: location_id, program_id: program_id)
+    validate_activerecord_object(batch)
   end
 
   def create_batch_item(batch, drug_id, pack_size, quantity, delivery_date, expiry_date, product_code, barcode,manufacture)

@@ -3,7 +3,14 @@
 # Permanently removes complete patient records for active patients that have no
 # valid type-3 identifier and no patient_program row. This is intentionally a
 # separate task from the recoverable void workflow.
+#
+# A candidate can still have a synced CouchDB document (PatientSyncReconciler
+# only requires a person UUID to consider a patient synced), so each batch's
+# CouchDB document is deleted alongside its MySQL rows — otherwise a
+# permanently deleted patient stays fully visible and editable offline.
 class HardDeleteUnsyncablePatientsTask
+  include CouchdbSync
+
   CONFIRMATION = 'HARD_DELETE_COMPLETE_PATIENT_RECORDS'
   DEFAULT_BATCH_SIZE = 500
   MAX_BATCH_SIZE = 2_000
@@ -160,7 +167,9 @@ class HardDeleteUnsyncablePatientsTask
         break if batch_count.zero?
 
         verify_batch_still_eligible!(connection, batch_count)
+        couchdb_document_ids = batch_couchdb_document_ids(connection)
         delete_batch(connection)
+        delete_couchdb_documents(couchdb_document_ids)
         total_deleted += batch_count
         puts "Deleted #{total_deleted}/#{snapshot_count} complete patient record(s)"
       end
@@ -307,6 +316,25 @@ class HardDeleteUnsyncablePatientsTask
     raise "Candidate batch changed while cleanup was running " \
           "(expected #{batch_count}, still eligible #{current_count}); " \
           'no rows from this batch were deleted'
+  end
+
+  def batch_couchdb_document_ids(connection)
+    return [] unless couchdb_configured?
+
+    connection.select_values(<<~SQL.squish)
+      SELECT person.uuid
+      FROM person
+      INNER JOIN #{quoted(connection, TEMP_BATCH)} batch ON batch.id = person.person_id
+      WHERE person.uuid IS NOT NULL AND person.uuid != ''
+    SQL
+  end
+
+  def delete_couchdb_documents(uuids)
+    uuids.each do |uuid|
+      delete_from_couchdb('patients_records', uuid)
+    rescue StandardError => e
+      Rails.logger.error("HardDeleteUnsyncablePatientsTask: CouchDB delete failed for #{uuid}: #{e.class}: #{e.message}")
+    end
   end
 
   def prepare_related_ids(connection)

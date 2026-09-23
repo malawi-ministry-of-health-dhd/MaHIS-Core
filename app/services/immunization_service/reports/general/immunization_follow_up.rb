@@ -10,26 +10,8 @@ module ImmunizationService
         end
 
         def data
-          report = init_report
-          load_patients_into_report report, fetch_clients
-          response = []
+          raise StandardError, 'ImmunizationService::Reports::General::ImmunizationFollowUp is not implemented yet'
         end
-
-        private
-
-        def init_report
-          
-        end
-
-        def load_patients_into_report(report, patients)
-         
-        end
-
-        def fetch_clients
-          
-        end
-
-
       end
     end
   end
