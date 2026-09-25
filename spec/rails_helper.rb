@@ -74,6 +74,7 @@ RSpec.configure do |config|
     'clinical_data_deduplication_job_spec.rb',
     'hard_delete_unsyncable_patients_task_spec.rb',
     'exact_duplicate_patient_cleanup_task_spec.rb',
+    'art_duplicate_merge_rollback_task_spec.rb',
     'duplicate_identifier_cleanup_task_spec.rb',
     'dde_service_spec.rb',
     'dde_merging_service_spec.rb',
