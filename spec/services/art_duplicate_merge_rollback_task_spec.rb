@@ -6,37 +6,37 @@ RSpec.describe ArtDuplicateMergeRollbackTask do
   describe 'apply safeguards' do
     it 'requires the exact confirmation phrase' do
       expect do
-        described_class.new(
+        described_class.new({
           'APPLY' => '1', 'CONFIRM' => 'RESTORE', 'USER_ID' => '1',
           'APPROVAL_FILE' => __FILE__
-        )
+        })
       end.to raise_error(/CONFIRM=RESTORE_REVIEWED_ART_DUPLICATE_MERGES_WITHOUT_DELETING/)
     end
 
     it 'requires a review file and operator user' do
       expect do
-        described_class.new('APPLY' => '1', 'CONFIRM' => described_class::CONFIRMATION)
+        described_class.new({ 'APPLY' => '1', 'CONFIRM' => described_class::CONFIRMATION })
       end.to raise_error(/USER_ID/)
 
       expect do
-        described_class.new(
+        described_class.new({
           'APPLY' => '1', 'CONFIRM' => described_class::CONFIRMATION, 'USER_ID' => '1'
-        )
+        })
       end.to raise_error(/APPROVAL_FILE/)
     end
 
     it 'allows apply without a review file when every discovered group is explicitly approved' do
       expect do
-        described_class.new(
+        described_class.new({
           'APPLY' => '1', 'APPROVE_ALL' => '1',
           'CONFIRM' => described_class::CONFIRMATION, 'USER_ID' => '1'
-        )
+        })
       end.not_to raise_error
     end
 
     it 'requires different source and target databases' do
       expect do
-        described_class.new('SOURCE_DB' => 'same', 'TARGET_DB' => 'same')
+        described_class.new({ 'SOURCE_DB' => 'same', 'TARGET_DB' => 'same' })
       end.to raise_error(/must differ/)
     end
   end
