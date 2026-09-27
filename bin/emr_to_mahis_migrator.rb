@@ -2513,58 +2513,109 @@ def backfill_orders_obs_ids(source_db)
   puts "✓ orders.obs_id backfill complete (#{updated} records updated)"
 end
 
+##
+# Resolves obs.obs_group_id for every observation just migrated from source_db.
+#
+# Both child obs and parent obs are already migrated into the target DB. We
+# resolve obs_group_id entirely in SQL:
+#   1. Match each target obs to its source row by UUID.
+#   2. From the source row, get the source obs_group_id.
+#   3. Look up that source obs_group_id's UUID in the source DB.
+#   4. Find the corresponding target obs by that UUID to get the new obs_id.
+#
+# Previously this ran as ONE unbounded UPDATE with a 4-way JOIN across the
+# entire (possibly tens-of-millions-of-rows) obs table. For a large facility
+# that single statement could run long enough to hit a connection/lock
+# timeout; the rescue block retried the WHOLE statement up to 5 times and
+# then gave up silently — the migration kept going and reported success,
+# leaving real observations (with real values) permanently ungrouped. This
+# is the root cause traced for order XA18262224 (see lab-sync-defect-report):
+# Lab::LabOrderSerializer returned result: nil for a value that was sitting
+# right there in obs, because its obs_group_id was never resolved.
+#
+# Fix: batch the UPDATE by known SOURCE obs_id (chunks of source rows that
+# actually have a group parent), rather than one statement spanning however
+# large the central obs table has grown. Each batch's JOIN starts from that
+# small `src.obs_id IN (chunk)` set — confirmed via EXPLAIN to drive the plan
+# as a chain of indexed nested-loop lookups (PRIMARY on src/src_parent,
+# obs_uuid_index on o/tgt_parent), never a scan of the full obs table on
+# either side. A batch that still fails after retries is logged and skipped
+# rather than aborting the rest — same batch-continues-past-failure pattern
+# migrate_obs_via_sql already uses for the INSERT side of this same table. A
+# final pass reports exactly how many rows (if any) remain unresolved, so a
+# failure is visible instead of silent, with a direct pointer at the
+# follow-up repair task.
 def update_group_obs_ids(source_db, _foreign_keys = {})
   puts 'Starting obs_group_id update...'
+  conn = ActiveRecord::Base.connection
 
-  total_records = ActiveRecord::Base.connection
-                                    .select_one("SELECT COUNT(*) AS count
-                                    FROM #{source_db}.obs WHERE obs_group_id IS NOT NULL")['count'].to_i
+  source_ids = conn.select_values(
+    "SELECT obs_id FROM #{source_db}.obs WHERE obs_group_id IS NOT NULL"
+  )
+  return if source_ids.empty?
 
-  return if total_records == 0
+  puts "Found #{source_ids.size} observations with obs_group_id to resolve (source-side)"
 
-  puts "Found #{total_records} observations with obs_group_id to update"
-  puts 'Resolving obs_group_id via single SQL JOIN (UUID-based, no Ruby batching)...'
-
-  # Both child obs and parent obs are already migrated into the target DB.
-  # We resolve obs_group_id entirely in SQL:
-  #   1. Match each target obs to its source row by UUID.
-  #   2. From the source row, get the source obs_group_id.
-  #   3. Look up that source obs_group_id's UUID in the source DB.
-  #   4. Find the corresponding target obs by that UUID to get the new obs_id.
   align_uuid_collations(source_db, %w[obs])
-  ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS = 0')
-  retries = 0
-  begin
-    ActiveRecord::Base.connection.execute(<<~SQL)
-      UPDATE obs o
-      JOIN #{source_db}.obs src
-        ON o.uuid = src.uuid
-      JOIN #{source_db}.obs src_parent
-        ON src_parent.obs_id = src.obs_group_id
-      JOIN obs tgt_parent
-        ON tgt_parent.uuid = src_parent.uuid
-      SET o.obs_group_id = tgt_parent.obs_id
-      WHERE src.obs_group_id IS NOT NULL
-        AND o.obs_group_id IS NULL
-    SQL
-  rescue ActiveRecord::DatabaseConnectionError, ActiveRecord::ConnectionNotEstablished, Mysql2::Error => e
-    retries += 1
-    if retries <= 5
-      puts "  ⚠ Connection error in obs_group_id update, retry #{retries}/5: #{e.message}"
-      sleep(retries * 5)
-      ActiveRecord::Base.connection_pool.disconnect!
-      retry
-    else
-      puts "❌ update_group_obs_ids failed after 5 retries: #{e.message}"
+  conn.execute('SET SESSION net_read_timeout=3600, net_write_timeout=3600, wait_timeout=28800, interactive_timeout=28800')
+
+  batch_size = (ENV['OBS_GROUP_ID_BATCH'] || 20_000).to_i
+  resolved_total = 0
+  failed_batches = 0
+
+  conn.execute('SET FOREIGN_KEY_CHECKS = 0')
+  source_ids.each_slice(batch_size).with_index do |chunk, i|
+    ids_list = chunk.join(',')
+    retries = 0
+    begin
+      t = Time.now
+      updated = conn.update(<<~SQL)
+        UPDATE obs o
+        JOIN #{source_db}.obs src
+          ON o.uuid = src.uuid AND src.obs_id IN (#{ids_list})
+        JOIN #{source_db}.obs src_parent
+          ON src_parent.obs_id = src.obs_group_id
+        JOIN obs tgt_parent
+          ON tgt_parent.uuid = src_parent.uuid
+        SET o.obs_group_id = tgt_parent.obs_id
+        WHERE o.obs_group_id IS NULL
+      SQL
+      resolved_total += updated
+      puts "  batch #{i + 1} (#{chunk.size} source obs): +#{updated} resolved (#{resolved_total} total, #{(Time.now - t).round(1)}s)"
+    rescue ActiveRecord::DatabaseConnectionError, ActiveRecord::ConnectionNotEstablished, Mysql2::Error => e
+      retries += 1
+      if retries <= 5
+        puts "  ⚠ batch #{i + 1}: retry #{retries}/5 after error: #{e.message}"
+        sleep(retries * 5)
+        ActiveRecord::Base.connection_pool.disconnect!
+        conn = ActiveRecord::Base.connection
+        retry
+      else
+        puts "  ❌ batch #{i + 1}: failed after 5 retries, skipping this batch: #{e.message}"
+        failed_batches += 1
+      end
     end
   end
-  ActiveRecord::Base.connection.execute('SET FOREIGN_KEY_CHECKS = 1')
+  conn.execute('SET FOREIGN_KEY_CHECKS = 1')
 
-  updated = ActiveRecord::Base.connection.select_value(
-    'SELECT COUNT(*) FROM obs WHERE obs_group_id IS NOT NULL'
-  ).to_i
+  # Same chunked-IN-list shape as the main loop (not a fresh full-table join),
+  # so this check stays cheap regardless of how large obs has grown overall.
+  still_pending = source_ids.each_slice(batch_size).sum do |chunk|
+    conn.select_value(<<~SQL).to_i
+      SELECT COUNT(*)
+      FROM obs o
+      JOIN #{source_db}.obs src ON o.uuid = src.uuid AND src.obs_id IN (#{chunk.join(',')})
+      WHERE o.obs_group_id IS NULL
+    SQL
+  end
 
-  puts "✓ obs_group_id update complete (#{updated} records now have obs_group_id set)"
+  puts "✓ obs_group_id update complete: #{resolved_total} resolved this run"
+  puts "⚠️  #{failed_batches} batch(es) failed after retries and were skipped" if failed_batches.positive?
+  return unless still_pending.positive?
+
+  puts "⚠️  #{still_pending} observation(s) with a resolvable source obs_group_id are STILL unset for #{source_db}."
+  puts '    Safe to re-run this step, or: bin/rails "lab:repair_obs_group_ids" scoped to this facility ' \
+       '(lib/tasks/repair_obs_group_ids.rake) — both only ever touch obs_group_id IS NULL rows.'
 end
 
 def initialize_art_number_sequence_from_cohort
