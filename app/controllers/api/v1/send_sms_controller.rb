@@ -100,7 +100,7 @@ class Api::V1::SendSmsController < ApplicationController
   def fetch_configuration_from_global_property(facility_id)
     config = {}
     CONFIG_KEYS.each do |key|
-      GlobalProperty.where("property", "#{facility_id}_#{key}")
+      GlobalProperty.where(property: "#{facility_id}_#{key}")
                     .each do |gp|
         config[gp.property.sub("#{facility_id}_", '')] = gp.property_value
       end
@@ -166,9 +166,12 @@ class Api::V1::SendSmsController < ApplicationController
   def guardian_phone
     filters = params.permit %i[person_b relationship]
     relationships = service.find_relationships(filters)
-    relationships[0].relation.try(:person_attributes)
-                    .try(:find_by, person_attribute_type_id: PersonAttributeType.find_by_name('Cell Phone Number').id)
-                    .try(:value).gsub(/\s+/, '')
+    return nil if relationships.blank?
+
+    phone = relationships[0].relation.try(:person_attributes)
+                             .try(:find_by, person_attribute_type_id: PersonAttributeType.find_by_name('Cell Phone Number').id)
+                             .try(:value)
+    phone&.gsub(/\s+/, '')
   end
 
   def service

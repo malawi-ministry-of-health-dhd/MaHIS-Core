@@ -3,11 +3,10 @@ class Api::V1::ImmunizationFollowUpController < ApplicationController
     location_id = User.current.location_id
 
     missed_visits = ImmunizationService::FollowUp.new.fetch_missed_immunizations(location_id)
-    cache = ImmunizationCacheDatum.find_or_initialize_by(name: 'missed_immunizations', location_id:)
-    cache.value = missed_visits
-    cache.save!
+    ImmunizationCacheDatum.upsert_cache(name: 'missed_immunizations', location_id:, value: missed_visits)
+    cache = ImmunizationCacheDatum.where(name: 'missed_immunizations', location_id:)
 
-    render json: [cache], status: :ok
+    render json: cache, status: :ok
   rescue StandardError => e
     Rails.logger.error("Failed to refresh missed immunizations for location #{location_id}: #{e.class}: #{e.message}")
 

@@ -33,13 +33,6 @@ class ImmunizationReportJob < ApplicationJob
   end
 
   def update_cache(name, location_id, value)
-    cache_id = ImmunizationCacheDatum.where(name:, location_id:)
-
-    if cache_id.blank?
-      ImmunizationCacheDatum.create(name:, location_id:, value:)
-    else
-      # For some reason the updated_at Field is not being updated after a run so will figure it out someday.
-      cache_id.update_all(value:, updated_at: Time.now)
-    end
+    ImmunizationCacheDatum.upsert_cache(name:, location_id:, value:)
   end
 end
