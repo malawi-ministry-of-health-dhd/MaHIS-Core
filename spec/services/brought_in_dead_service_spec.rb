@@ -52,6 +52,10 @@ RSpec.describe BroughtInDeadService do
     described_class.count(program_id: program.program_id, location_id:, **args)
   end
 
+  def list(**args)
+    described_class.list(program_id: program.program_id, location_id:, **args)
+  end
+
   describe '.count' do
     it 'counts one record per brought-in-dead encounter' do
       2.times { record_death }
@@ -146,6 +150,105 @@ RSpec.describe BroughtInDeadService do
       record_death(date_of_death: nil)
 
       expect(count).to eq(1)
+    end
+  end
+  describe '.list' do
+    let(:place_of_death_concept) { concept_named('Place of death') }
+    let(:guardian_concept) { concept_named('Guardian; name and first names') }
+    let(:confirmed_by_concept) { concept_named('Responsible person present') }
+    let(:date_of_confirmation_concept) { concept_named('Date of confinement') }
+
+    # The client writes the rest of the row as observations hanging off the
+    # death observation, the same way #record_death attaches the date of death.
+    def record_detail(encounter, death, concept, value)
+      create(:observation, encounter:, person: encounter.patient.person, concept:,
+                           obs_group_id: death.obs_id, value_text: value)
+    end
+
+    # Identifier types are reference data the schema requires to exist, and the
+    # service reads them by id the way the client does.
+    def identifier_type(id, name)
+      PatientIdentifierType.find_by(patient_identifier_type_id: id) ||
+        PatientIdentifierType.create!(patient_identifier_type_id: id, name:, description: name,
+                                      creator: 1, date_created: Time.now)
+    end
+
+    it 'returns one row per brought-in-dead encounter' do
+      2.times { record_death }
+
+      expect(list.length).to eq(2)
+    end
+
+    it 'returns nothing when nothing has been recorded' do
+      expect(list).to eq([])
+    end
+
+    it 'reads the row off the observations hanging from the death' do
+      encounter, death = record_death(date_of_death: '06 Jan, 2026')
+      record_detail(encounter, death, place_of_death_concept, 'Home')
+      record_detail(encounter, death, guardian_concept, 'James')
+      record_detail(encounter, death, confirmed_by_concept, 'Danielle')
+      record_detail(encounter, death, date_of_confirmation_concept, '07 Jan, 2026')
+
+      expect(list.first).to include(
+        place_of_death: 'Home',
+        date_of_death: '06 Jan, 2026',
+        brought_by: 'James',
+        confirmed_by: 'Danielle',
+        date_of_confirmation: '07 Jan, 2026'
+      )
+    end
+
+    # An unrecorded person confirming the death falls back to whoever recorded
+    # the encounter, and an unrecorded confirmation date to when they did.
+    it 'falls back to the encounter when the confirmation was not recorded' do
+      provider = create(:person)
+      create(:person_name, person: provider, given_name: 'Ruth', family_name: 'Chongoza')
+      encounter, = record_death
+      encounter.update_column(:provider_id, provider.person_id)
+
+      row = list.first
+      expect(row[:confirmed_by]).to eq('Ruth Chongoza')
+      expect(row[:date_of_confirmation].to_time).to be_within(1.second).of(encounter.encounter_datetime)
+    end
+
+    it 'carries the identifiers the client opens the record with' do
+      patient = create(:patient)
+      create(:patient_identifier, patient:, identifier: 'P103200000477',
+                                  type: identifier_type(BroughtInDeadService::RECORD_IDENTIFIER_TYPE, 'National id'))
+      create(:patient_identifier, patient:, identifier: 'MW-123',
+                                  type: identifier_type(BroughtInDeadService::MALAWI_NATIONAL_ID_TYPE, 'Malawi national id'))
+      record_death(patient:)
+
+      row = list.first
+      expect(row[:national_id]).to eq('MW-123')
+      expect(row[:patient_lookup_ids]).to eq(['P103200000477', patient.patient_id.to_s])
+    end
+
+    it 'returns one row when the same death is recorded twice inside one encounter' do
+      patient = create(:patient)
+      encounter, = record_death(patient:)
+      create(:observation, encounter:, person: patient.person, concept: death_concept)
+
+      expect(list.length).to eq(1)
+    end
+
+    it 'scopes rows the same way the count does' do
+      record_death(program: other_program)
+      record_death(location: location_id + 1)
+      record_death(type: unrelated_encounter_type)
+      record_death
+
+      expect(list.length).to eq(count)
+    end
+
+    it 'returns the newest record first' do
+      older, = record_death
+      newer, = record_death
+      older.update_column(:encounter_datetime, 2.days.ago)
+      newer.update_column(:encounter_datetime, 1.day.ago)
+
+      expect(list.map { |row| row[:patient_id] }).to eq([newer.patient_id, older.patient_id])
     end
   end
 end
