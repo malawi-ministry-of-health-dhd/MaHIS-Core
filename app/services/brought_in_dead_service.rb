@@ -28,8 +28,7 @@ class BroughtInDeadService
     # Returns the number of brought-in-dead records visible to the given
     # program and location.
     #
-    # program_id  - counts encounters for this program; encounters saved
-    #               without a program are always included, matching the client.
+    # program_id  - counts encounters for this program only.
     # location_id - defaults to the current user's location. Encounters saved
     #               without a location are always included.
     def count(program_id: nil, location_id: nil)
@@ -45,9 +44,7 @@ class BroughtInDeadService
 
     def count_sql(death_concept_ids, program_id, location_id)
       conditions = ['e.encounter_type IN (:encounter_types)']
-      # An encounter with no program belongs to whoever is asking, so it is
-      # counted for every program rather than dropped.
-      conditions << '(e.program_id IS NULL OR e.program_id <= 0 OR e.program_id = :program_id)' if program_id
+      conditions << 'e.program_id = :program_id' if program_id
       conditions << '(e.location_id IS NULL OR e.location_id = :location_id)' if location_id
 
       ActiveRecord::Base.sanitize_sql_array(
