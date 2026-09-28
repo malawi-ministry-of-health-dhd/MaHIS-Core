@@ -357,16 +357,22 @@ class DdeMergingService
       check = Order.find_by('order_type_id = ? AND concept_id = ? AND patient_id = ? AND DATE(start_date) = ?',
                             order.order_type_id, order.concept_id, primary_patient.id, order.start_date.strftime('%Y-%m-%d'))
       if check.blank?
+        mapped_encounter_id = encounter_map[order.encounter_id]
+        if mapped_encounter_id.blank?
+          Rails.logger.warn("Skipping order ##{order.id}: no merged encounter found for encounter ##{order.encounter_id}")
+          next
+        end
+
         primary_order_hash = order.attributes
         primary_order_hash.delete('order_id')
         primary_order_hash.delete('uuid')
         primary_order_hash.delete('creator')
         primary_order_hash.delete('order_id')
         primary_order_hash['patient_id'] = primary_patient.id
-        primary_order_hash['encounter_id'] = encounter_map[order.encounter_id]
+        primary_order_hash['encounter_id'] = mapped_encounter_id
         primary_order_hash['obs_id'] = @obs_map[order.obs_id] unless order.obs_id.blank?
-        primary_order = Order.create!(primary_order_hash)
-        raise "Could not merge patient orders: #{primary_order.errors.as_json}" unless primary_order.errors.empty?
+        primary_order = Order.new(primary_order_hash)
+        persist_copied_order!(primary_order, order.orderer)
 
         create_new_drug_order(order, primary_order)
         order.void("Merged into patient ##{primary_patient.patient_id}:#{primary_order.id}")
@@ -378,6 +384,23 @@ class DdeMergingService
       end
     end
     update_obs_order_id(orders_map, @obs_map)
+  end
+
+  def persist_copied_order!(order, orderer_id)
+    return order if order.save
+
+    provider_is_only_error = order.errors.attribute_names.uniq == [:provider]
+    provider_exists = User.unscoped.where(user_id: orderer_id).exists?
+    unless provider_is_only_error && provider_exists
+      raise "Could not merge patient orders: #{order.errors.as_json}"
+    end
+
+    # Historical orders may reference a provider (User) who was later retired
+    # or deactivated. The FK is still valid, but belongs_to hides that user
+    # through User's active-only default scope. Preserve the order, mirroring
+    # the same workaround used for Encounter#provider above.
+    order.save!(validate: false)
+    order
   end
 
   def create_new_drug_order(order, primary_order)
