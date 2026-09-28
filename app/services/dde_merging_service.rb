@@ -55,6 +55,8 @@ class DdeMergingService
     ActiveRecord::Base.transaction do
       primary_patient = Patient.find(primary_patient_ids['patient_id'])
       secondary_patient = Patient.find(secondary_patient_ids['patient_id'])
+      raise InvalidParameterError, 'Cannot merge a patient into itself' if primary_patient.id == secondary_patient.id
+
       merge_name(primary_patient, secondary_patient)
       merge_identifiers(primary_patient, secondary_patient, strategy: identifier_strategy)
       merge_attributes(primary_patient, secondary_patient)
@@ -355,7 +357,7 @@ class DdeMergingService
     orders_map = {}
     Order.where(patient_id: secondary_patient.id).each do |order|
       check = Order.find_by('order_type_id = ? AND concept_id = ? AND patient_id = ? AND DATE(start_date) = ?',
-                            order.order_type_id, order.concept_id, primary_patient.id, order.start_date.strftime('%Y-%m-%d'))
+                            order.order_type_id, order.concept_id, primary_patient.id, order.start_date&.strftime('%Y-%m-%d'))
       if check.blank?
         mapped_encounter_id = encounter_map[order.encounter_id]
         if mapped_encounter_id.blank?
@@ -452,7 +454,7 @@ class DdeMergingService
     Rails.logger.debug("Merging patient states: #{primary_patient_program.patient_id} <= #{secondary_patient_states[0].patient_program.patient_id}")
     secondary_patient_states.each do |state|
       check = PatientState.find_by('patient_program_id = ? AND state = ? AND DATE(start_date) = ?',
-                                   primary_patient_program.id, state.state, state.start_date.strftime('%Y-%m-%d'))
+                                   primary_patient_program.id, state.state, state.start_date&.strftime('%Y-%m-%d'))
       next unless check.blank?
 
       primary_state_hash = state.attributes
@@ -525,7 +527,13 @@ class DdeMergingService
 
   # method to check whether to add observations
   def check_clinician?(provider)
-    User.find(provider).roles.map { |role| role['role'] }.include? 'Clinician'
+    # Historical observations may reference a creator who was later retired
+    # or deactivated; User.find respects that active-only default scope, so
+    # look the user up unscoped instead of raising and aborting the merge.
+    user = User.unscoped.find_by(user_id: provider)
+    return false unless user
+
+    user.roles.map { |role| role['role'] }.include? 'Clinician'
   end
 
   # central place to void and create new observation
@@ -643,7 +651,7 @@ class DdeMergingService
                                                                                                                                                                  end} #{unless encounter.form_id.blank?
                                                                                                                                                                           "#{encounter.form_id},"
                                                                                                                                                                         end} uuid(), #{User.current.id}, '#{encounter.date_created.strftime('%Y-%m-%d %H:%M:%S')}', #{encounter.voided} #{unless encounter.changed_by.blank?
-                                                                                                                                                                                                                                                                                            ',{encounter.changed_by}'
+                                                                                                                                                                                                                                                                                            ",#{encounter.changed_by}"
                                                                                                                                                                                                                                                                                           end} #{unless encounter.date_changed.blank?
                                                                                                                                                                                                                                                                                                    ",#{encounter.date_changed.strftime('%Y-%m-%d %H:%M:%S')}"
                                                                                                                                                                                                                                                                                                  end})
@@ -682,7 +690,7 @@ class DdeMergingService
                          date_voided: Time.now, voided_by: User.current.id)
       # now one needs to added all obs that occured after this choice of referral
       # these will be by the clinician/specialist
-      Observation.where('encounter_id = ? AND obs_datetime >= ? AND obs_datetime <= ? person_id = ? ', encounter.id,
+      Observation.where('encounter_id = ? AND obs_datetime >= ? AND obs_datetime <= ? AND person_id = ? ', encounter.id,
                         obs.obs_datetime, obs.obs_datetime.end_of_day, secondary_patient.id).each do |observation|
         if check_clinician?(observation.creator)
           result = process_obervation_merging(observation, primary_patient, encounter_map, secondary_patient)

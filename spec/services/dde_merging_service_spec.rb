@@ -77,6 +77,29 @@ RSpec.describe DdeMergingService do
     end
   end
 
+  describe '#merge_local_patients' do
+    it 'raises when the primary and secondary patient are the same' do
+      service = described_class.new(nil, nil)
+      patient = instance_double(Patient, id: 500)
+      allow(Patient).to receive(:find).with(500).and_return(patient)
+
+      expect do
+        service.merge_local_patients({ 'patient_id' => 500 }, { 'patient_id' => 500 }, 'Local Patients')
+      end.to raise_error(InvalidParameterError, /Cannot merge a patient into itself/)
+    end
+  end
+
+  describe '#check_clinician?' do
+    it 'treats a retired or deactivated creator as not a clinician instead of raising' do
+      service = described_class.new(nil, nil)
+      users = double('unscoped users')
+      allow(User).to receive(:unscoped).and_return(users)
+      allow(users).to receive(:find_by).with(user_id: 900).and_return(nil)
+
+      expect(service.send(:check_clinician?, 900)).to be(false)
+    end
+  end
+
   describe '#persist_copied_order!' do
     it 'preserves a copied order when its provider was later retired or deactivated' do
       service = described_class.new(nil, nil)
