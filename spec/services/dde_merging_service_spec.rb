@@ -89,6 +89,31 @@ RSpec.describe DdeMergingService do
     end
   end
 
+  describe '#merge_remote_and_local_patients' do
+    it 'raises before contacting DDE when primary and secondary share the same local patient id' do
+      service = described_class.new(nil, nil)
+
+      expect(service).not_to receive(:reassign_remote_patient_npid)
+      expect do
+        service.send(:merge_remote_and_local_patients,
+                     { 'patient_id' => 500 }, { 'patient_id' => 500, 'doc_id' => 'DOC1' }, 'Remote and Local Patient')
+      end.to raise_error(InvalidParameterError, /Cannot merge a patient into itself/)
+    end
+  end
+
+  describe '#merge_orders' do
+    it 'fails the merge instead of silently dropping an order with no mapped encounter' do
+      service = described_class.new(nil, nil)
+      secondary_patient = create(:patient)
+      primary_patient = create(:patient)
+      order = create(:order, patient: secondary_patient)
+
+      expect do
+        service.send(:merge_orders, primary_patient, secondary_patient, {})
+      end.to raise_error(/no merged encounter found for encounter ##{order.encounter_id}/)
+    end
+  end
+
   describe '#check_clinician?' do
     it 'treats a retired or deactivated creator as not a clinician instead of raising' do
       service = described_class.new(nil, nil)

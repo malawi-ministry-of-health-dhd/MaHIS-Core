@@ -154,6 +154,11 @@ class DdeMergingService
 
   # Merge remote secondary patient into local primary patient
   def merge_remote_and_local_patients(primary_patient_ids, secondary_patient_ids, merge_type)
+    if primary_patient_ids['patient_id'].present? &&
+       primary_patient_ids['patient_id'] == secondary_patient_ids['patient_id']
+      raise InvalidParameterError, 'Cannot merge a patient into itself'
+    end
+
     local_patient = Patient.find(primary_patient_ids['patient_id'])
     remote_patient = reassign_remote_patient_npid(secondary_patient_ids['doc_id'])
 
@@ -356,13 +361,12 @@ class DdeMergingService
     Rails.logger.debug("Merging patient orders: #{primary_patient} <= #{secondary_patient}")
     orders_map = {}
     Order.where(patient_id: secondary_patient.id).each do |order|
-      check = Order.find_by('order_type_id = ? AND concept_id = ? AND patient_id = ? AND DATE(start_date) = ?',
+      check = Order.find_by('order_type_id = ? AND concept_id = ? AND patient_id = ? AND DATE(start_date) <=> ?',
                             order.order_type_id, order.concept_id, primary_patient.id, order.start_date&.strftime('%Y-%m-%d'))
       if check.blank?
         mapped_encounter_id = encounter_map[order.encounter_id]
         if mapped_encounter_id.blank?
-          Rails.logger.warn("Skipping order ##{order.id}: no merged encounter found for encounter ##{order.encounter_id}")
-          next
+          raise "Could not merge order ##{order.id}: no merged encounter found for encounter ##{order.encounter_id}"
         end
 
         primary_order_hash = order.attributes
@@ -453,7 +457,7 @@ class DdeMergingService
 
     Rails.logger.debug("Merging patient states: #{primary_patient_program.patient_id} <= #{secondary_patient_states[0].patient_program.patient_id}")
     secondary_patient_states.each do |state|
-      check = PatientState.find_by('patient_program_id = ? AND state = ? AND DATE(start_date) = ?',
+      check = PatientState.find_by('patient_program_id = ? AND state = ? AND DATE(start_date) <=> ?',
                                    primary_patient_program.id, state.state, state.start_date&.strftime('%Y-%m-%d'))
       next unless check.blank?
 
@@ -653,7 +657,7 @@ class DdeMergingService
                                                                                                                                                                         end} uuid(), #{User.current.id}, '#{encounter.date_created.strftime('%Y-%m-%d %H:%M:%S')}', #{encounter.voided} #{unless encounter.changed_by.blank?
                                                                                                                                                                                                                                                                                             ",#{encounter.changed_by}"
                                                                                                                                                                                                                                                                                           end} #{unless encounter.date_changed.blank?
-                                                                                                                                                                                                                                                                                                   ",#{encounter.date_changed.strftime('%Y-%m-%d %H:%M:%S')}"
+                                                                                                                                                                                                                                                                                                   ",'#{encounter.date_changed.strftime('%Y-%m-%d %H:%M:%S')}'"
                                                                                                                                                                                                                                                                                                  end})
       SQL
     end
@@ -694,7 +698,7 @@ class DdeMergingService
                         obs.obs_datetime, obs.obs_datetime.end_of_day, secondary_patient.id).each do |observation|
         if check_clinician?(observation.creator)
           result = process_obervation_merging(observation, primary_patient, encounter_map, secondary_patient)
-          @obs_map[obs.id] = result.id if result
+          @obs_map[observation.id] = result.id if result
         end
       end
     end
