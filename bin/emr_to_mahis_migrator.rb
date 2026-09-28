@@ -280,7 +280,9 @@ File.write(SITE_USER_MAPPING, '{}') unless File.exist?(SITE_USER_MAPPING)
 # this database-derived scope when a narrower or site-specific list is needed.
 ART_OBS_CONCEPT_IDS = if ENV['ART_OBS_CONCEPT_IDS'].present?
                         ENV['ART_OBS_CONCEPT_IDS'].split(',').filter_map do |value|
-                          Integer(value.strip, 10) rescue nil
+                          Integer(value.strip, 10)
+                        rescue StandardError
+                          nil
                         end.uniq
                       else
                         ActiveRecord::Base.connection.select_values(<<~SQL).map(&:to_i)
@@ -331,7 +333,7 @@ CURRENT_USER = User.current
 # Ties every Audit row written by this run back to this script/execution.
 MIGRATION_RUN_UUID = SecureRandom.uuid.freeze
 MIGRATION_AUDIT_USERNAME = 'emr_to_mahis_migrator'.freeze
-MIGRATION_AUDIT_COMMENT = "Migrated from source EMR by bin/emr_to_mahis_migrator.rb " \
+MIGRATION_AUDIT_COMMENT = 'Migrated from source EMR by bin/emr_to_mahis_migrator.rb ' \
                           "(site_id=#{SITE_ID}, run=#{MIGRATION_RUN_UUID})".freeze
 
 # Initialize caches for frequently accessed mappings to reduce database queries
@@ -738,7 +740,7 @@ def build_art_observation_scope(source_db)
     JOIN #{source_db}.encounter e ON e.encounter_id = a.encounter_id
     WHERE e.program_id IS NULL OR e.program_id <> #{HIV_PROGRAM_ID}
   SQL
-  puts "📊 ART-related records not attached to HIV encounters: " \
+  puts '📊 ART-related records not attached to HIV encounters: ' \
        "#{non_hiv['encounters']} encounters, #{non_hiv['orders']} orders, " \
        "#{non_hiv['observations']} observations"
 end
@@ -849,6 +851,35 @@ def build_migration_id_maps(source_db)
     SQL
     cnt = conn.select_value("SELECT COUNT(*) FROM #{DEST_DB}.#{tbl}").to_i
     puts "  ✓ #{tbl}: #{cnt} rows"
+  end
+
+  # mig_person_id_map above is a plain uuid join, so it is blind to TYPE27_PERSON_MAP
+  # (national DDE identifier merges) applied to encounter/patient_program/orders via
+  # PERSON_ID_CACHE on the ActiveRecord path. Without this override, obs.person_id
+  # for a DDE-merged patient stays on their unmerged "orphan" person while
+  # obs.encounter_id resolves to an encounter owned by the canonical merged person —
+  # splitting the patient's identity and dropping them from patient_program-based
+  # reports (e.g. ART cohort cum_total_registered).
+  if TYPE27_PERSON_MAP.any?
+    conn.execute("DROP TABLE IF EXISTS #{DEST_DB}.mig_type27_override")
+    conn.execute(<<~SQL)
+      CREATE TABLE #{DEST_DB}.mig_type27_override (
+        source_id INT NOT NULL,
+        target_id INT NOT NULL,
+        PRIMARY KEY (source_id)
+      ) ENGINE=InnoDB
+    SQL
+    TYPE27_PERSON_MAP.each_slice(5000) do |batch|
+      vals = batch.map { |src, tgt| "(#{src.to_i}, #{tgt.to_i})" }.join(',')
+      conn.execute("INSERT INTO #{DEST_DB}.mig_type27_override (source_id, target_id) VALUES #{vals}")
+    end
+    conn.execute(<<~SQL)
+      UPDATE #{DEST_DB}.mig_person_id_map m
+      JOIN #{DEST_DB}.mig_type27_override ovr ON ovr.source_id = m.source_id
+      SET m.target_id = ovr.target_id
+    SQL
+    conn.execute("DROP TABLE IF EXISTS #{DEST_DB}.mig_type27_override")
+    puts "  ✓ mig_person_id_map: applied #{TYPE27_PERSON_MAP.size} type-27 (DDE) merge override(s)"
   end
 
   # Concept ID map: from the pre-loaded CONCEPT_ID_MAP hash → SQL table
@@ -1900,37 +1931,41 @@ def migrate_latest_demographic(source_table, dest_model, group_keys, source_db)
   to_insert = []
 
   source_records.group_by { |r| group_keys.map { |k| r[k] } }.each do |gkey, src_group|
-    src_latest = src_group.max_by { |r| r[:date_created].to_datetime rescue Time.at(0) }
-    dest_key   = group_keys.size == 1 ? gkey.first : gkey
+    src_latest = src_group.max_by do |r|
+      r[:date_created].to_datetime
+    rescue StandardError
+      Time.at(0)
+    end
+    dest_key = group_keys.size == 1 ? gkey.first : gkey
     dest_max_date = dest_max[dest_key]
 
-    if dest_max_date.nil? || src_latest[:date_created].to_datetime > dest_max_date.to_datetime
-      # Mark existing dest records for this group as voided
-      source_person_id = src_latest[:_source_person_id]
-      to_void << { gkey: gkey, source_person_id: source_person_id, identifier: TYPE27_IDENTIFIER_MAP[source_person_id] }
-      src_latest[:person_id] = TYPE27_PERSON_MAP[src_latest[:person_id]] || src_latest[:person_id]
-      src_latest.delete(:_source_person_id)
-      src_latest[dest_model.primary_key.to_sym] = nil
-      # creator/changed_by/voided_by still hold SOURCE user_ids — remap to dest, else FK violation
-      %i[creator changed_by voided_by].each do |key|
-        next unless src_latest.key?(key) && src_latest[key]
+    next unless dest_max_date.nil? || src_latest[:date_created].to_datetime > dest_max_date.to_datetime
 
-        source_user_id = src_latest[key]
-        resolved_id = get_new_user_id(source_user_id, source_db)
-        if resolved_id
-          src_latest[key] = resolved_id
-        else
-          src_latest[key] = 1
-          TYPE27_DEMOGRAPHIC_UNRESOLVED_USERS << {
-            source_table: source_table,
-            field: key,
-            source_user_id: source_user_id,
-            dest_person_id: src_latest[:person_id]
-          }
-        end
+    # Mark existing dest records for this group as voided
+    source_person_id = src_latest[:_source_person_id]
+    to_void << { gkey: gkey, source_person_id: source_person_id, identifier: TYPE27_IDENTIFIER_MAP[source_person_id] }
+    src_latest[:person_id] = TYPE27_PERSON_MAP[src_latest[:person_id]] || src_latest[:person_id]
+    src_latest.delete(:_source_person_id)
+    src_latest[dest_model.primary_key.to_sym] = nil
+    # creator/changed_by/voided_by still hold SOURCE user_ids — remap to dest, else FK violation
+    %i[creator changed_by voided_by].each do |key|
+      next unless src_latest.key?(key) && src_latest[key]
+
+      source_user_id = src_latest[key]
+      resolved_id = get_new_user_id(source_user_id, source_db)
+      if resolved_id
+        src_latest[key] = resolved_id
+      else
+        src_latest[key] = 1
+        TYPE27_DEMOGRAPHIC_UNRESOLVED_USERS << {
+          source_table: source_table,
+          field: key,
+          source_user_id: source_user_id,
+          dest_person_id: src_latest[:person_id]
+        }
       end
-      to_insert << src_latest
     end
+    to_insert << src_latest
   end
 
   return if to_void.empty?
@@ -2882,7 +2917,7 @@ def initialize_art_number_sequence_from_cohort
   )&.property_value
   return if site_prefix.blank?
 
-    baseline_sequence = ArtNumberSequence.cohort_baseline(SITE_ID, site_prefix)
+  baseline_sequence = ArtNumberSequence.cohort_baseline(SITE_ID, site_prefix)
 
   counter = ArtNumberSequence.find_or_initialize_by(location_id: SITE_ID)
   counter.site_prefix = site_prefix
@@ -3421,9 +3456,12 @@ if __FILE__ == $0
 
     if group_name == 'Group_1' && TYPE27_PERSON_MAP.any?
       puts '  → Merging latest demographics for type-27 matched patients...'
-      migrate_latest_demographic('person_name',      PersonName,      [:person_id],                             source_db)
-      migrate_latest_demographic('person_address',   PersonAddress,   [:person_id],                             source_db)
-      migrate_latest_demographic('person_attribute', PersonAttribute, [:person_id, :person_attribute_type_id],  source_db)
+      migrate_latest_demographic('person_name', PersonName, [:person_id],
+                                 source_db)
+      migrate_latest_demographic('person_address', PersonAddress, [:person_id],
+                                 source_db)
+      migrate_latest_demographic('person_attribute', PersonAttribute, %i[person_id person_attribute_type_id],
+                                 source_db)
     end
 
     clear_migrated_caches(group_name)
