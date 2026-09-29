@@ -139,4 +139,26 @@ RSpec.describe ArtDuplicateMergeRollbackTask do
       expect(executed_sql).not_to match(/DELETE/i)
     end
   end
+
+  describe 'moving new encounters' do
+    it 'does not inspect or move visits when the reviewed owner is already the primary patient' do
+      task = described_class.new({})
+      cleanup_at = Time.zone.parse('2026-08-09 10:00:00')
+      allow(task).to receive(:select_all).and_return([{
+        'encounter_id' => 42,
+        'uuid' => 'encounter-uuid',
+        'patient_id' => 10,
+        'voided' => 0,
+        'creator' => 2,
+        'date_created' => '2026-08-10 10:00:00',
+        'visit_id' => 7
+      }])
+      allow(task).to receive(:source_uuid_exists?).and_return(false)
+
+      expect(task).not_to receive(:ensure_visits_are_not_shared!)
+      expect(task).not_to receive(:update_where)
+
+      task.send(:move_new_encounters!, ['encounter-uuid'], 10, 10, cleanup_at)
+    end
+  end
 end

@@ -705,6 +705,8 @@ class ArtDuplicateMergeRollbackTask
         raise "Encounter #{row['uuid']} changed after review"
       end
     end
+    return if to_id == from_id
+
     movable = rows.select { |row| row['patient_id'].to_i == from_id }
     return if movable.empty?
     if to_id != from_id && movable.length != rows.length
