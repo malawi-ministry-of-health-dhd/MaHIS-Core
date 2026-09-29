@@ -1921,7 +1921,7 @@ module ArtService
         ActiveRecord::Base.connection.select_all(
           "SELECT * FROM #{temp_earliest_start_date}
           WHERE date_enrolled BETWEEN '#{start_date}' AND '#{end_date}'
-          AND (gender IS NULL OR LENGTH(TRIM(gender)) < 1) GROUP BY patient_id;"
+          AND gender IS NULL OR LENGTH(gender) < 1  GROUP BY patient_id;"
         )
       end
 
