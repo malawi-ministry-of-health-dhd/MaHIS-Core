@@ -94,6 +94,7 @@ RSpec.describe ArtDuplicateMergeRollbackTask do
       allow(connection).to receive(:quote) do |value|
         value.respond_to?(:strftime) ? "'#{value.strftime('%Y-%m-%d %H:%M:%S')}'" : "'#{value}'"
       end
+      allow(connection).to receive(:quote_table_name) { |value| "`#{value}`" }
       task = described_class.new({}, connection: connection)
       captured_sql = nil
       allow(task).to receive(:select_all) do |sql|
