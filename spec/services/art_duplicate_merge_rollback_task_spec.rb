@@ -88,6 +88,34 @@ RSpec.describe ArtDuplicateMergeRollbackTask do
     end
   end
 
+  describe 'candidate discovery' do
+    it 'detects exact ART duplicate merges from generated encounter copies when names were unchanged' do
+      connection = double('connection')
+      allow(connection).to receive(:quote) do |value|
+        value.respond_to?(:strftime) ? "'#{value.strftime('%Y-%m-%d %H:%M:%S')}'" : "'#{value}'"
+      end
+      task = described_class.new({}, connection: connection)
+      captured_sql = nil
+      allow(task).to receive(:select_all) do |sql|
+        captured_sql = sql
+        [{
+          'primary_source_id' => 10,
+          'primary_uuid' => 'primary-uuid',
+          'secondary_source_id' => 20,
+          'secondary_uuid' => 'secondary-uuid',
+          'cleanup_at' => '2026-08-09 22:00:00'
+        }]
+      end
+
+      rows = task.send(:candidate_pairs)
+
+      expect(rows.length).to eq(1)
+      expect(captured_sql).to include('exact_art_pairs', 'target_encounter.creator=1')
+      expect(captured_sql).to include('original_uuid.uuid IS NULL')
+      expect(captured_sql).to include('target_encounter.encounter_datetime <=> source_encounter.encounter_datetime')
+    end
+  end
+
   describe 'voiding generated records' do
     it 'writes void audit columns without invoking model callbacks' do
       connection = double('connection')

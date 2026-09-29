@@ -164,7 +164,7 @@ class ArtDuplicateMergeRollbackTask
 
   def candidate_pairs
     select_all(<<~SQL)
-      WITH affected AS (
+      WITH name_audit_affected AS (
         SELECT pn.person_id AS primary_source_id,
                MAX(CASE
                  WHEN pn.changed_by=#{CLEANUP_USER_ID} THEN pn.date_changed
@@ -187,35 +187,94 @@ class ArtDuplicateMergeRollbackTask
         ) AS row_num
         FROM #{source_table('person_address')} pa WHERE pa.voided=0
       ), source_identities AS (
-        SELECT p.patient_id, pe.uuid,
+        SELECT p.patient_id, p.date_created, pe.uuid,
                LOWER(TRIM(n.given_name)) AS given_name,
                LOWER(TRIM(n.family_name)) AS family_name,
                UPPER(TRIM(pe.gender)) AS gender, pe.birthdate,
                LOWER(TRIM(COALESCE(a.neighborhood_cell, ''))) AS village,
                LOWER(TRIM(COALESCE(a.county_district, ''))) AS traditional_authority,
-               LOWER(TRIM(COALESCE(a.address2, ''))) AS district
+               LOWER(TRIM(COALESCE(a.address2, ''))) AS district,
+               EXISTS(
+                 SELECT 1 FROM #{source_table('patient_program')} art_program
+                 WHERE art_program.patient_id=p.patient_id
+                   AND art_program.program_id=#{PROGRAM_ID}
+                   AND art_program.voided=0
+               ) AS belongs_to_art
         FROM #{source_table('patient')} p
         INNER JOIN #{source_table('person')} pe ON pe.person_id=p.patient_id AND pe.voided=0
         INNER JOIN source_names n ON n.person_id=p.patient_id AND n.row_num=1
         INNER JOIN source_addresses a ON a.person_id=p.patient_id AND a.row_num=1
         WHERE p.voided=0
+          AND NULLIF(TRIM(n.given_name), '') IS NOT NULL
+          AND NULLIF(TRIM(n.family_name), '') IS NOT NULL
+          AND NULLIF(TRIM(pe.gender), '') IS NOT NULL
+          AND pe.birthdate IS NOT NULL
+          AND (
+                NULLIF(TRIM(a.neighborhood_cell), '') IS NOT NULL
+             OR NULLIF(TRIM(a.county_district), '') IS NOT NULL
+             OR NULLIF(TRIM(a.address2), '') IS NOT NULL
+          )
+      ), ranked_identities AS (
+        SELECT source_identities.*,
+               FIRST_VALUE(patient_id) OVER identity_window AS primary_source_id,
+               FIRST_VALUE(uuid) OVER identity_window AS primary_uuid,
+               ROW_NUMBER() OVER identity_window AS identity_rank,
+               MAX(belongs_to_art) OVER identity_partition AS art_group
+        FROM source_identities
+        WINDOW
+          identity_partition AS (
+            PARTITION BY given_name, family_name, gender, birthdate,
+                         village, traditional_authority, district
+          ),
+          identity_window AS (
+            PARTITION BY given_name, family_name, gender, birthdate,
+                         village, traditional_authority, district
+            ORDER BY date_created, patient_id
+          )
+      ), exact_art_pairs AS (
+        SELECT primary_source_id, primary_uuid,
+               patient_id AS secondary_source_id, uuid AS secondary_uuid
+        FROM ranked_identities
+        WHERE identity_rank > 1 AND art_group=1
+      ), detected_pairs AS (
+        -- Preserve the original signal for merges that changed the primary name.
+        SELECT pair.*, affected.cleanup_at
+        FROM exact_art_pairs pair
+        INNER JOIN name_audit_affected affected
+          ON affected.primary_source_id=pair.primary_source_id
+
+        UNION ALL
+
+        -- Exact duplicates often already had identical names, so the merge did
+        -- not touch person_name. Detect those merges from the encounter copies
+        -- that DdeMergingService created on the primary with a new UUID.
+        SELECT pair.*, MIN(target_encounter.date_created) AS cleanup_at
+        FROM exact_art_pairs pair
+        INNER JOIN person target_person ON target_person.uuid=pair.primary_uuid
+        INNER JOIN #{source_table('encounter')} source_encounter
+          ON source_encounter.patient_id=pair.secondary_source_id
+         AND source_encounter.voided=0
+        INNER JOIN encounter target_encounter
+          ON target_encounter.patient_id=target_person.person_id
+         AND target_encounter.voided=0
+         AND target_encounter.creator=#{CLEANUP_USER_ID}
+         AND target_encounter.encounter_type <=> source_encounter.encounter_type
+         AND target_encounter.encounter_datetime <=> source_encounter.encounter_datetime
+         AND target_encounter.program_id <=> source_encounter.program_id
+         AND target_encounter.location_id <=> source_encounter.location_id
+        LEFT JOIN #{source_table('encounter')} original_uuid
+          ON original_uuid.uuid=target_encounter.uuid
+        WHERE original_uuid.uuid IS NULL
+          AND target_encounter.date_created >= #{quote(CLEANUP_FROM)}
+          AND target_encounter.date_created < #{quote(CLEANUP_TO)}
+        GROUP BY pair.primary_source_id, pair.primary_uuid,
+                 pair.secondary_source_id, pair.secondary_uuid
       )
-      SELECT DISTINCT affected.primary_source_id, primary_identity.uuid AS primary_uuid,
-             secondary_identity.patient_id AS secondary_source_id,
-             secondary_identity.uuid AS secondary_uuid, affected.cleanup_at
-      FROM affected
-      INNER JOIN source_identities primary_identity
-        ON primary_identity.patient_id=affected.primary_source_id
-      INNER JOIN source_identities secondary_identity
-        ON secondary_identity.patient_id<>primary_identity.patient_id
-       AND secondary_identity.given_name=primary_identity.given_name
-       AND secondary_identity.family_name=primary_identity.family_name
-       AND secondary_identity.gender=primary_identity.gender
-       AND secondary_identity.birthdate=primary_identity.birthdate
-       AND secondary_identity.village=primary_identity.village
-       AND secondary_identity.traditional_authority=primary_identity.traditional_authority
-       AND secondary_identity.district=primary_identity.district
-      ORDER BY affected.primary_source_id, secondary_identity.patient_id
+      SELECT primary_source_id, primary_uuid, secondary_source_id, secondary_uuid,
+             MIN(cleanup_at) AS cleanup_at
+      FROM detected_pairs
+      GROUP BY primary_source_id, primary_uuid, secondary_source_id, secondary_uuid
+      ORDER BY primary_source_id, secondary_source_id
     SQL
   end
 
