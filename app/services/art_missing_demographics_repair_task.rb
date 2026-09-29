@@ -8,6 +8,7 @@ class ArtMissingDemographicsRepairTask
   TARGET_DATABASE = 'mahis_prod'
   PROGRAM_ID = 1
   ARV_IDENTIFIER_TYPE = 4
+  VALID_GENDERS = %w[M MALE F FEMALE].freeze
   TRUTHY = %w[1 true yes y].freeze
 
   def initialize(env = ENV, connection: ActiveRecord::Base.connection)
@@ -112,8 +113,9 @@ class ArtMissingDemographicsRepairTask
        AND source_arv.identifier_type=#{ARV_IDENTIFIER_TYPE} AND source_arv.voided=0
        AND source_arv.identifier=target_arv.identifier
       WHERE target.voided=0
-        AND (NULLIF(TRIM(target.gender), '') IS NULL OR target.birthdate IS NULL)
-        AND NULLIF(TRIM(source.gender), '') IS NOT NULL
+        AND (UPPER(TRIM(COALESCE(target.gender, ''))) NOT IN ('M', 'MALE', 'F', 'FEMALE')
+             OR target.birthdate IS NULL)
+        AND UPPER(TRIM(source.gender)) IN ('M', 'MALE', 'F', 'FEMALE')
         AND source.birthdate IS NOT NULL
       ORDER BY target.person_id
     SQL
@@ -129,7 +131,7 @@ class ArtMissingDemographicsRepairTask
     raise "Target patient #{row['uuid']} changed after review" unless current
 
     updates = {}
-    updates['gender'] = row['source_gender'] if current['gender'].blank?
+    updates['gender'] = row['source_gender'] unless valid_gender?(current['gender'])
     if current['birthdate'].blank?
       updates['birthdate'] = row['source_birthdate']
       updates['birthdate_estimated'] = row['source_birthdate_estimated']
@@ -165,5 +167,9 @@ class ArtMissingDemographicsRepairTask
 
   def truthy?(value)
     TRUTHY.include?(value.to_s.downcase)
+  end
+
+  def valid_gender?(value)
+    VALID_GENDERS.include?(value.to_s.strip.upcase)
   end
 end

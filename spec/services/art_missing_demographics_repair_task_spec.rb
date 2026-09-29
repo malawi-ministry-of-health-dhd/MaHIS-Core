@@ -28,6 +28,37 @@ RSpec.describe ArtMissingDemographicsRepairTask do
     expect(captured_sql).to include('source.uuid=target.uuid')
     expect(captured_sql).to include('source_arv.identifier=target_arv.identifier')
     expect(captured_sql).to include('target_program.program_id=1')
-    expect(captured_sql).to include("NULLIF(TRIM(target.gender), '') IS NULL OR target.birthdate IS NULL")
+    expect(captured_sql).to include("UPPER(TRIM(COALESCE(target.gender, ''))) NOT IN ('M', 'MALE', 'F', 'FEMALE')")
+    expect(captured_sql).to include("UPPER(TRIM(source.gender)) IN ('M', 'MALE', 'F', 'FEMALE')")
+  end
+
+  it 'restores a report-invalid gender from the matched source patient' do
+    connection = double('connection')
+    allow(connection).to receive(:quote_table_name) { |value| "`#{value}`" }
+    allow(connection).to receive(:quote_column_name) { |value| "`#{value}`" }
+    allow(connection).to receive(:quote) { |value| "'#{value}'" }
+    task = described_class.new({}, connection: connection)
+    task.instance_variable_set(:@operator_user_id, 1)
+    allow(task).to receive(:select_all).and_return([{
+      'person_id' => 275_800,
+      'uuid' => 'patient-uuid',
+      'gender' => 'Undetermined',
+      'birthdate' => Date.new(1974, 7, 1)
+    }])
+    update_sql = nil
+    allow(connection).to receive(:update) do |sql|
+      update_sql = sql
+      1
+    end
+
+    task.send(:repair!, {
+      'target_id' => 275_800,
+      'uuid' => 'patient-uuid',
+      'source_gender' => 'F',
+      'source_birthdate' => Date.new(1974, 7, 1),
+      'source_birthdate_estimated' => 0
+    })
+
+    expect(update_sql).to include("`gender`='F'")
   end
 end
