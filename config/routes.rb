@@ -434,6 +434,7 @@ Rails.application.routes.draw do
       # Count behind the brought-in-dead dashboard card, so the client does not
       # have to rebuild the whole list just to show a number.
       get '/brought_in_dead/count', to: 'brought_in_dead#count'
+      get '/brought_in_dead', to: 'brought_in_dead#index'
       post '/lab/accession_numbers/top_up', to: 'lab_accession_numbers#top_up'
       post '/lab/accession_numbers/top_up_all', to: 'lab_accession_numbers#top_up_all'
       post '/lab/accession_numbers/reserve', to: 'lab_accession_numbers#reserve'

@@ -22,9 +22,7 @@ class Api::V1::FollowUpController < ApplicationController
   private
 
   def initialize_variables
-
-    #here when the user is mapped to location replace 265 with current user location
-   @patients = Observation.where(location_id: 265,voided:0)
+   @patients = Observation.where(location_id: User.current.location_id, voided: 0)
                .group(:person_id)
                .joins("INNER JOIN encounter ON encounter.encounter_id = obs.encounter_id AND encounter.encounter_type = #{EncounterType.find_by_name('IMMUNIZATION RECORD').id}")
                .joins("INNER JOIN person ON person.person_id = obs.person_id")

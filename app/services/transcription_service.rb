@@ -74,7 +74,16 @@ class TranscriptionService
     end
 
     text = parsed.is_a?(Hash) ? parsed['text'] : parsed
-    text.to_s.strip
+    normalise(text)
   end
   private_class_method :extract_text
+
+  # The engine breaks its output into timed segments and joins them with
+  # newlines, which lands mid-sentence - "your country can\n do for you". Those
+  # are an artefact of how it chunks audio, not sentence structure, so they are
+  # collapsed to single spaces before the text reaches a clinical note.
+  def self.normalise(text)
+    text.to_s.gsub(/\s+/, ' ').strip
+  end
+  private_class_method :normalise
 end

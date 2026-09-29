@@ -31,6 +31,18 @@ RSpec.describe TranscriptionService do
     expect(described_class.transcribe(audio)).to eq('patient reports chest pain')
   end
 
+  it 'collapses the engine segment breaks that land mid-sentence' do
+    # whisper.cpp joins its timed segments with newlines, which arrive in the
+    # middle of a sentence and would show as hard breaks in a clinical note.
+    stub_engine(
+      status: 200,
+      body: { text: " And so my fellow Americans, ask not what your country can\n do for you.\n" }.to_json
+    )
+
+    expect(described_class.transcribe(audio))
+      .to eq('And so my fellow Americans, ask not what your country can do for you.')
+  end
+
   it 'tolerates an engine that returns a bare string' do
     stub_engine(status: 200, body: 'patient is stable')
 

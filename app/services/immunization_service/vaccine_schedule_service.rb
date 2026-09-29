@@ -505,7 +505,7 @@ module ImmunizationService
   
         age_in_weeks > milestone_weeks ? 'passed' : 'upcoming'
       elsif milestone.include?('months') || milestone.include?('month')
-        milestone_months = milestone.split.first.to_i
+        milestone_months = milestone.split.first.to_f
         age_in_months = (today.year * 12 + today.month) - (dob.year * 12 + dob.month)
         return 'current' if milestone_months == age_in_months
   
@@ -514,35 +514,12 @@ module ImmunizationService
         milestone_years = milestone.split.first.to_i
         age_in_years = (today - dob).to_i / 365
 
-        case milestone_years
-        when 9
-          return 'current' if age_in_years >= 9
-  
-          default_milstone_status(age_in_years, milestone_years)
-        when 12
-          return 'current' if age_in_years >= 12
-  
-          default_milstone_status(age_in_years, milestone_years)
-        when 15
-          return 'current' if age_in_years >= 15 
-  
-          default_milstone_status(age_in_years, milestone_years)
-        when 18
-          return 'current' if age_in_years >= 18
-  
-          default_milstone_status(age_in_years, milestone_years)
-        else
-          return 'current' if milestone_years == age_in_years
-  
-          age_in_years > milestone_years ? 'passed' : 'upcoming'
-        end
+        return 'current' if milestone_years == age_in_years
+
+        age_in_years > milestone_years ? 'passed' : 'upcoming'
       end
     end
-  
-    def self.default_milstone_status(age, milestone)
-      age > milestone ? 'passed' : 'upcoming'
-    end
-  
+
     def self.can_administer_drug?(drug, dob, milestone)
       drug[:window_period] = '100 years' if drug[:window_period].blank?
   

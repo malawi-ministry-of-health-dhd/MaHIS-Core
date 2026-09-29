@@ -3,6 +3,21 @@
 module Api
   module V1
     class BroughtInDeadController < ApplicationController
+      # Brought-in-dead records, for the list.
+      #
+      # GET /api/v1/brought_in_dead
+      #
+      # Takes the same optional parameters as #count, and scopes the rows the
+      # same way, so the list and the dashboard card agree.
+      def index
+        filters = params.permit(:program_id, :location_id)
+
+        render json: BroughtInDeadService.list(
+          program_id: filters[:program_id],
+          location_id: filters[:location_id]
+        )
+      end
+
       # Number of brought-in-dead records, for the program dashboard card.
       #
       # GET /api/v1/brought_in_dead/count

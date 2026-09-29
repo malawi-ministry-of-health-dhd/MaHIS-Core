@@ -203,7 +203,14 @@ class CouchdbPatientService
         { content_type: :json, accept: :json }
       )
 
-      { success: true, response: JSON.parse(response.body) }
+      results = JSON.parse(response.body)
+      failed = results.select { |result| result['error'].present? }
+      if failed.any?
+        Rails.logger.error "Bulk update failed for #{failed.length} document(s): #{failed}"
+        return { success: false, response: results, errors: failed }
+      end
+
+      { success: true, response: results }
     rescue StandardError => e
       Rails.logger.error "Error in bulk update: #{e.message}"
       { success: false, error: e.message }
@@ -331,8 +338,12 @@ class CouchdbPatientService
       missing_ids = patient_ids.reject { |value| found_ids.include?(value.to_s) }
 
       missing_ids.each do |missing_id|
-        new_record = build_patient_record(missing_id)
-        records << new_record if new_record
+        # Patient documents are keyed by UUID, never by legacy DDE identifier
+        # (see PatientRecordIdentityService), so a non-numeric id that missed
+        # the direct _all_docs lookup may still exist under its real UUID key.
+        found_record = missing_id.to_s.match?(/\A\d+\z/) ? nil : find_patient_document_by_identifier(missing_id)
+        found_record ||= build_patient_record(missing_id)
+        records << found_record if found_record
       end
 
       records
@@ -392,20 +403,26 @@ class CouchdbPatientService
                                              'last_sync_at' => Time.current.iso8601,
                                              'sync_status' => 'synced'
                                            })
+      doc_url = couchdb_url(PATIENTS_DB, URI.encode_www_form_component(document_id))
 
-      # Check if document exists to get _rev
+      attempt = 1
       begin
-        existing_doc = RestClient.get(couchdb_url(PATIENTS_DB, URI.encode_www_form_component(document_id)))
-        doc_data['_rev'] = JSON.parse(existing_doc.body)['_rev']
-      rescue RestClient::NotFound
-        # New document, no _rev needed
-      end
+        # Check if document exists to get _rev
+        begin
+          existing_doc = RestClient.get(doc_url)
+          doc_data['_rev'] = JSON.parse(existing_doc.body)['_rev']
+        rescue RestClient::NotFound
+          # New document, no _rev needed
+        end
 
-      RestClient.put(
-        couchdb_url(PATIENTS_DB, URI.encode_www_form_component(document_id)),
-        doc_data.to_json,
-        { content_type: :json, accept: :json }
-      )
+        RestClient.put(doc_url, doc_data.to_json, { content_type: :json, accept: :json })
+      rescue RestClient::Conflict, RestClient::PreconditionFailed => e
+        raise if attempt >= 3
+
+        attempt += 1
+        sleep(0.1 * attempt)
+        retry
+      end
     end
 
     def find_patient_document_by_identifier(identifier)

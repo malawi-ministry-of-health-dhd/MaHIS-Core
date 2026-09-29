@@ -85,6 +85,11 @@ module Api
           )
         end
 
+        if records.nil?
+          render json: { error: 'Patient record is temporarily unavailable' }, status: :service_unavailable
+          return
+        end
+
         render json: records
       rescue ArgumentError => e
         render json: { error: e.message }, status: :bad_request

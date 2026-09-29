@@ -50,6 +50,16 @@ RSpec.describe StockManagementService do
       duplicated_stock_item = PharmacyBatchItem.where(drug_id: stock_item[:drug_id]).first
       expect(duplicated_stock_item.current_quantity).to eq(stock_item[:quantity] * 2)
     end
+
+    it 'updates the stock balance when quantity is provided as a string' do
+      drug = create(:drug, form: create(:concept))
+      string_stock_item = { drug_id: drug.id, quantity: '10', delivery_date: Date.today, expiry_date: 1.year.after }
+
+      service.add_items_to_batch('1234567890', [string_stock_item])
+
+      balance = PharmacyStockBalance.find_by(drug_id: drug.id)
+      expect(balance.close_balance).to eq(10)
+    end
   end
 
   describe :void_batch do
