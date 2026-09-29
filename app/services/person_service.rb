@@ -41,7 +41,7 @@ class PersonService
 
   def update_person(person, params)
     Person.transaction do
-      person_params = params.select { |k, _| PERSON_TRUNK_FIELDS.include? k.to_sym }
+      person_params = safe_person_trunk_params(person, params)
       person.update!(person_params) unless person_params.empty?
 
       update_person_name(person, params)
@@ -50,6 +50,20 @@ class PersonService
 
       person
     end
+  end
+
+  # Existing gender and birthdate values must not be erased by stale or partial
+  # offline patient records. Valid nonblank edits still pass through normally.
+  def safe_person_trunk_params(person, params)
+    updates = params.each_with_object({}) do |(key, value), selected|
+      selected[key.to_sym] = value if PERSON_TRUNK_FIELDS.include?(key.to_sym)
+    end
+    updates.delete(:gender) if person.gender.present? && updates[:gender].blank?
+    updates.delete(:birthdate) if person.birthdate.present? && updates[:birthdate].blank?
+    if !person.birthdate_estimated.nil? && [nil, ''].include?(updates[:birthdate_estimated])
+      updates.delete(:birthdate_estimated)
+    end
+    updates
   end
 
   def find_people_by_name_and_gender(given_name, middle_name, family_name, gender, use_soundex: true)
