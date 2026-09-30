@@ -358,6 +358,11 @@ class ArtDuplicateMergeRollbackTask
 
   def apply_review
     all_rows = @approve_all ? automatically_approved_rows : CSV.read(@approval_path, headers: true)
+    if @approve_all && all_rows.empty?
+      puts 'No ART duplicate merge groups require rollback.'
+      return
+    end
+
     approved = all_rows.select { |row| truthy?(row['approved']) }
     raise 'The approval file has no rows marked approved=yes' if approved.empty?
 

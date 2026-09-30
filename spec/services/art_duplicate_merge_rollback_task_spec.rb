@@ -34,6 +34,16 @@ RSpec.describe ArtDuplicateMergeRollbackTask do
       end.not_to raise_error
     end
 
+    it 'treats an approve-all rerun with no remaining groups as successful' do
+      task = described_class.new({
+        'APPLY' => '1', 'APPROVE_ALL' => '1',
+        'CONFIRM' => described_class::CONFIRMATION, 'USER_ID' => '1'
+      })
+      allow(task).to receive(:automatically_approved_rows).and_return([])
+
+      expect { task.send(:apply_review) }.not_to raise_error
+    end
+
     it 'requires different source and target databases' do
       expect do
         described_class.new({ 'SOURCE_DB' => 'same', 'TARGET_DB' => 'same' })
