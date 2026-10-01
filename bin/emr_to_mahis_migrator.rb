@@ -275,6 +275,31 @@ DEST_DB = ActiveRecord::Base.connection.current_database
 SITE_USER_MAPPING = Rails.root.join('log', "users_mapping_#{SITE_ID}.json")
 File.write(SITE_USER_MAPPING, '{}') unless File.exist?(SITE_USER_MAPPING)
 
+# Derive the ART observation concept scope from all non-voided observations
+# recorded on source HIV PROGRAM encounters. ART_OBS_CONCEPT_IDS can override
+# this database-derived scope when a narrower or site-specific list is needed.
+ART_OBS_CONCEPT_IDS = if ENV['ART_OBS_CONCEPT_IDS'].present?
+                        ENV['ART_OBS_CONCEPT_IDS'].split(',').filter_map do |value|
+                          Integer(value.strip, 10)
+                        rescue StandardError
+                          nil
+                        end.uniq
+                      else
+                        ActiveRecord::Base.connection.select_values(<<~SQL).map(&:to_i)
+                          SELECT DISTINCT o.concept_id
+                          FROM #{source_db}.encounter e
+                          INNER JOIN #{source_db}.obs o ON o.encounter_id = e.encounter_id
+                          WHERE e.program_id = #{HIV_PROGRAM_ID}
+                            AND o.voided = 0
+                            AND o.concept_id IS NOT NULL
+                        SQL
+                      end.freeze
+scope_source = ENV['ART_OBS_CONCEPT_IDS'].present? ? 'environment override' : 'HIV PROGRAM encounters'
+puts "✓ ART observation concept scope: #{ART_OBS_CONCEPT_IDS.size} concepts (#{scope_source})" \
+  unless ART_OBS_CONCEPT_IDS.empty?
+ART_PROGRAM_NAME = ENV.fetch('ART_PROGRAM_NAME', 'HIV Program').freeze
+ART_PROGRAM_ID = Program.unscoped.find_by(name: ART_PROGRAM_NAME)&.program_id
+
 # Load concept mapping file for fast lookups
 CONCEPT_MAPPING_FILE = Rails.root.join('db', 'concept_id_mapping.json')
 if File.exist?(CONCEPT_MAPPING_FILE)
@@ -305,6 +330,12 @@ if user
 end
 CURRENT_USER = User.current
 
+# Ties every Audit row written by this run back to this script/execution.
+MIGRATION_RUN_UUID = SecureRandom.uuid.freeze
+MIGRATION_AUDIT_USERNAME = 'emr_to_mahis_migrator'.freeze
+MIGRATION_AUDIT_COMMENT = 'Migrated from source EMR by bin/emr_to_mahis_migrator.rb ' \
+                          "(site_id=#{SITE_ID}, run=#{MIGRATION_RUN_UUID})".freeze
+
 # Initialize caches for frequently accessed mappings to reduce database queries
 USER_ID_CACHE = {}
 PERSON_ID_CACHE = {}
@@ -314,6 +345,11 @@ PROGRAM_ID_CACHE = {}
 OBS_ID_CACHE = {}
 # source_patient_id => dest_person_id for patients matched by identifier_type 27
 TYPE27_PERSON_MAP = {}
+# source_patient_id => the type-27 (DDE) identifier value that produced the match, for tracing
+TYPE27_IDENTIFIER_MAP = {}
+# Records where creator/changed_by/voided_by could not be resolved during type-27
+# demographic merge (migrate_latest_demographic) and fell back to user_id 1.
+TYPE27_DEMOGRAPHIC_UNRESOLVED_USERS = Concurrent::Array.new
 
 # Program filtering caches (indexed by selected program IDs)
 SELECTED_PROGRAM_PATIENT_IDS = Set.new
@@ -358,6 +394,37 @@ PERFORMANCE_THRESHOLDS = {
 
 # Mutex for thread-safe cache updates
 CACHE_MUTEX = Mutex.new
+
+# Bulk-write Audit rows for records this migration run created/updated. insert_all,
+# insert_all!, update_all and raw SQL all bypass ActiveRecord callbacks — and therefore
+# the `audited` gem — so this is the only way migrated/merged data gets an audit trail.
+# Batched (Audit.insert_all) to match the script's bulk-insert design; every row carries
+# MIGRATION_RUN_UUID/MIGRATION_AUDIT_USERNAME/MIGRATION_AUDIT_COMMENT so it is traceable
+# back to this script and this specific run.
+def write_migration_audit_batch(auditable_type, auditable_ids, action = 'create')
+  return unless defined?(Audit)
+  return if auditable_ids.blank?
+
+  now = Time.now
+  rows = auditable_ids.compact.uniq.map do |id|
+    {
+      auditable_type: auditable_type,
+      auditable_id: id,
+      action: action,
+      audited_changes: '{}',
+      comment: MIGRATION_AUDIT_COMMENT,
+      username: MIGRATION_AUDIT_USERNAME,
+      user_id: CURRENT_USER&.id,
+      request_uuid: MIGRATION_RUN_UUID,
+      version: 1,
+      created_at: now
+    }
+  end
+
+  rows.each_slice(5000) { |batch| Audit.insert_all(batch) }
+rescue StandardError => e
+  puts "⚠️  Could not write migration audit batch for #{auditable_type}: #{e.message}"
+end
 
 def prepare_centralized_db
   puts 'Preparing Centralized database for migration...'
@@ -599,13 +666,83 @@ def create_program_encounter_ids_cache(source_db)
   SQL
   conn.execute(<<~SQL)
     INSERT INTO #{DEST_DB}.prog_enc_ids_cache (encounter_id)
-    SELECT DISTINCT encounter_id FROM #{source_db}.encounter WHERE program_id IN (#{SELECTED_PROGRAM_IDS.join(',')}) OR program_id IS NULL
+    SELECT DISTINCT encounter_id
+    FROM #{source_db}.encounter
+    WHERE program_id IN (#{SELECTED_PROGRAM_IDS.join(',')})
+       OR program_id IS NULL
+       OR encounter_id IN (SELECT encounter_id FROM #{DEST_DB}.art_encounter_scope)
   SQL
   count = conn.select_value("SELECT COUNT(*) FROM #{DEST_DB}.prog_enc_ids_cache").to_i
   puts "✅ Program encounter IDs cache ready: #{count} IDs (#{(Time.now - start).round(1)}s)"
 rescue StandardError => e
   puts "❌ Could not create prog_enc_ids_cache: #{e.message}"
   raise
+end
+
+# Build explicit ART observation and dependency scopes. ART observations on
+# non-HIV encounters are included, while unrelated observations on those same
+# encounters remain excluded.
+def build_art_observation_scope(source_db)
+  conn = ActiveRecord::Base.connection
+  conn.execute("DROP TABLE IF EXISTS #{DEST_DB}.art_obs_scope")
+  conn.execute("DROP TABLE IF EXISTS #{DEST_DB}.art_encounter_scope")
+  conn.execute("DROP TABLE IF EXISTS #{DEST_DB}.art_order_scope")
+
+  conn.execute(<<~SQL)
+    CREATE TABLE #{DEST_DB}.art_obs_scope (
+      obs_id INT NOT NULL PRIMARY KEY,
+      encounter_id INT NOT NULL,
+      order_id INT NULL
+    ) ENGINE=InnoDB
+  SQL
+  conn.execute(<<~SQL)
+    CREATE TABLE #{DEST_DB}.art_encounter_scope (
+      encounter_id INT NOT NULL PRIMARY KEY
+    ) ENGINE=InnoDB
+  SQL
+  conn.execute(<<~SQL)
+    CREATE TABLE #{DEST_DB}.art_order_scope (
+      order_id INT NOT NULL PRIMARY KEY
+    ) ENGINE=InnoDB
+  SQL
+
+  if ART_OBS_CONCEPT_IDS.empty?
+    puts 'ℹ ART_OBS_CONCEPT_IDS not set — no extra ART observation scope enabled'
+    return
+  end
+
+  concept_ids = ART_OBS_CONCEPT_IDS.join(',')
+  conn.execute(<<~SQL)
+    INSERT INTO #{DEST_DB}.art_obs_scope (obs_id, encounter_id, order_id)
+    SELECT obs_id, encounter_id, order_id
+    FROM #{source_db}.obs
+    WHERE concept_id IN (#{concept_ids})
+      AND voided = 0
+      AND encounter_id IS NOT NULL
+  SQL
+  conn.execute(<<~SQL)
+    INSERT INTO #{DEST_DB}.art_encounter_scope (encounter_id)
+    SELECT DISTINCT encounter_id FROM #{DEST_DB}.art_obs_scope
+  SQL
+  conn.execute(<<~SQL)
+    INSERT INTO #{DEST_DB}.art_order_scope (order_id)
+    SELECT DISTINCT order_id
+    FROM #{DEST_DB}.art_obs_scope
+    WHERE order_id IS NOT NULL
+  SQL
+
+  non_hiv = conn.select_one(<<~SQL)
+    SELECT
+      COUNT(DISTINCT e.encounter_id) AS encounters,
+      COUNT(DISTINCT a.order_id) AS orders,
+      COUNT(DISTINCT a.obs_id) AS observations
+    FROM #{DEST_DB}.art_obs_scope a
+    JOIN #{source_db}.encounter e ON e.encounter_id = a.encounter_id
+    WHERE e.program_id IS NULL OR e.program_id <> #{HIV_PROGRAM_ID}
+  SQL
+  puts '📊 ART-related records not attached to HIV encounters: ' \
+       "#{non_hiv['encounters']} encounters, #{non_hiv['orders']} orders, " \
+       "#{non_hiv['observations']} observations"
 end
 
 # Build a table of source HIV obs_ids whose UUIDs are NOT yet present in the target DB.
@@ -632,7 +769,13 @@ def build_obs_pending_table(source_db)
     INSERT INTO #{DEST_DB}.obs_pending (obs_id)
     SELECT o.obs_id
     FROM #{source_db}.obs o
-    INNER JOIN #{DEST_DB}.prog_enc_ids_cache h ON h.encounter_id = o.encounter_id
+    INNER JOIN (
+      SELECT o2.obs_id
+      FROM #{source_db}.obs o2
+      INNER JOIN #{DEST_DB}.prog_enc_ids_cache h ON h.encounter_id = o2.encounter_id
+      UNION
+      SELECT obs_id FROM #{DEST_DB}.art_obs_scope
+    ) scope ON scope.obs_id = o.obs_id
     LEFT JOIN #{DEST_DB}.obs t ON t.uuid = o.uuid
     WHERE t.obs_id IS NULL
   SQL
@@ -708,6 +851,35 @@ def build_migration_id_maps(source_db)
     SQL
     cnt = conn.select_value("SELECT COUNT(*) FROM #{DEST_DB}.#{tbl}").to_i
     puts "  ✓ #{tbl}: #{cnt} rows"
+  end
+
+  # mig_person_id_map above is a plain uuid join, so it is blind to TYPE27_PERSON_MAP
+  # (national DDE identifier merges) applied to encounter/patient_program/orders via
+  # PERSON_ID_CACHE on the ActiveRecord path. Without this override, obs.person_id
+  # for a DDE-merged patient stays on their unmerged "orphan" person while
+  # obs.encounter_id resolves to an encounter owned by the canonical merged person —
+  # splitting the patient's identity and dropping them from patient_program-based
+  # reports (e.g. ART cohort cum_total_registered).
+  if TYPE27_PERSON_MAP.any?
+    conn.execute("DROP TABLE IF EXISTS #{DEST_DB}.mig_type27_override")
+    conn.execute(<<~SQL)
+      CREATE TABLE #{DEST_DB}.mig_type27_override (
+        source_id INT NOT NULL,
+        target_id INT NOT NULL,
+        PRIMARY KEY (source_id)
+      ) ENGINE=InnoDB
+    SQL
+    TYPE27_PERSON_MAP.each_slice(5000) do |batch|
+      vals = batch.map { |src, tgt| "(#{src.to_i}, #{tgt.to_i})" }.join(',')
+      conn.execute("INSERT INTO #{DEST_DB}.mig_type27_override (source_id, target_id) VALUES #{vals}")
+    end
+    conn.execute(<<~SQL)
+      UPDATE #{DEST_DB}.mig_person_id_map m
+      JOIN #{DEST_DB}.mig_type27_override ovr ON ovr.source_id = m.source_id
+      SET m.target_id = ovr.target_id
+    SQL
+    conn.execute("DROP TABLE IF EXISTS #{DEST_DB}.mig_type27_override")
+    puts "  ✓ mig_person_id_map: applied #{TYPE27_PERSON_MAP.size} type-27 (DDE) merge override(s)"
   end
 
   # Concept ID map: from the pre-loaded CONCEPT_ID_MAP hash → SQL table
@@ -869,16 +1041,43 @@ def migrate_drug_orders_via_sql(source_db)
   conn.execute('SET FOREIGN_KEY_CHECKS = 0')
   begin; conn.execute('SET SESSION sql_log_bin = 0'); rescue StandardError; nil; end
 
+  # Snapshot the order_ids about to be (re)created BEFORE the INSERT IGNORE, so the
+  # audit trail reflects only genuinely new rows for this run — not every row in scope.
+  pending_order_ids = conn.select_values(<<~SQL).map(&:to_i)
+    SELECT ord.target_id
+    FROM #{source_db}.drug_order do_src
+    JOIN #{DEST_DB}.mig_order_id_map ord ON ord.source_id = do_src.order_id
+    LEFT JOIN #{DEST_DB}.drug_order existing ON existing.order_id = ord.target_id
+    WHERE existing.order_id IS NULL
+      AND do_src.order_id IN (
+        SELECT o.order_id
+        FROM #{source_db}.orders o
+        JOIN #{DEST_DB}.prog_enc_ids_cache h ON h.encounter_id = o.encounter_id
+        UNION
+        SELECT order_id FROM #{DEST_DB}.art_order_scope
+      )
+  SQL
+
   rows = conn.update(<<~SQL)
     INSERT IGNORE INTO #{DEST_DB}.drug_order (#{col_list})
     SELECT #{select_expr}
     FROM #{source_db}.drug_order do_src
     JOIN #{DEST_DB}.mig_order_id_map ord ON ord.source_id = do_src.order_id
     LEFT JOIN #{DEST_DB}.mig_drug_id_map drg ON drg.source_id = do_src.drug_inventory_id
+    WHERE do_src.order_id IN (
+      SELECT o.order_id
+      FROM #{source_db}.orders o
+      JOIN #{DEST_DB}.prog_enc_ids_cache h ON h.encounter_id = o.encounter_id
+      UNION
+      SELECT order_id FROM #{DEST_DB}.art_order_scope
+    )
   SQL
 
   conn.execute('SET FOREIGN_KEY_CHECKS = 1')
   begin; conn.execute('SET SESSION sql_log_bin = 1'); rescue StandardError; nil; end
+
+  # DrugOrder is `audited`, but this raw SQL path bypasses ActiveRecord entirely.
+  write_migration_audit_batch('DrugOrder', pending_order_ids)
 
   puts "✅ SQL drug_order migration: #{rows} rows inserted (#{(Time.now - start).round(1)}s)"
 rescue StandardError => e
@@ -903,15 +1102,24 @@ def build_program_filter_clause(table_name, source_db)
     "patient_id IN (SELECT DISTINCT patient_id FROM #{source_db}.patient_program WHERE program_id IN (#{prog_in}))"
   when 'encounter'
     # NULL program_id encounters are treated as HIV
-    "(program_id IN (#{prog_in}) OR program_id IS NULL)"
+    "(program_id IN (#{prog_in}) OR program_id IS NULL OR encounter_id IN " \
+      "(SELECT encounter_id FROM #{DEST_DB}.art_encounter_scope))"
   when 'patient_state'
     # filtered in populate_records pre-pass instead
     nil
   when 'orders', 'obs'
     # Use pre-built cache table (O(index_lookup)) instead of inline subquery
-    "encounter_id IN (SELECT encounter_id FROM #{DEST_DB}.prog_enc_ids_cache)"
+    if table_name.to_s == 'obs'
+      "(encounter_id IN (SELECT encounter_id FROM #{DEST_DB}.prog_enc_ids_cache) " \
+        "OR obs_id IN (SELECT obs_id FROM #{DEST_DB}.art_obs_scope))"
+    else
+      "(encounter_id IN (SELECT encounter_id FROM #{DEST_DB}.prog_enc_ids_cache) " \
+        "OR order_id IN (SELECT order_id FROM #{DEST_DB}.art_order_scope))"
+    end
   when 'drug_order'
-    "order_id IN (SELECT o.order_id FROM #{source_db}.orders o JOIN #{DEST_DB}.prog_enc_ids_cache h ON h.encounter_id = o.encounter_id)"
+    "order_id IN (SELECT o.order_id FROM #{source_db}.orders o " \
+      "JOIN #{DEST_DB}.prog_enc_ids_cache h ON h.encounter_id = o.encounter_id " \
+      "UNION SELECT order_id FROM #{DEST_DB}.art_order_scope)"
   end
 end
 
@@ -991,6 +1199,60 @@ def report_data_quality_issues
                                                }))
 
   puts "\n✓ Detailed report saved to: #{report_file}"
+  puts '=' * 80
+end
+
+# Report records whose creator/changed_by/voided_by could not be resolved during
+# type-27 demographic merge and were force-set to user_id 1 as a fallback.
+# Writes both a JSON report and a CSV table for easy reference/lookup.
+def report_unresolved_type27_demographic_users
+  return if TYPE27_DEMOGRAPHIC_UNRESOLVED_USERS.empty?
+
+  puts "\n" + '=' * 80
+  puts 'TYPE-27 DEMOGRAPHIC MERGE — UNRESOLVED USER REFERENCES (fell back to user_id 1)'
+  puts '=' * 80
+
+  TYPE27_DEMOGRAPHIC_UNRESOLVED_USERS.group_by { |r| [r[:source_table], r[:field]] }.each do |(table, field), rows|
+    source_ids = rows.map { |r| r[:source_user_id] }.uniq
+    puts "\n⚠ #{table} (#{field}): #{rows.size} record(s), #{source_ids.size} distinct unresolved source user_id(s)"
+    puts "  Unresolved source user_id(s): #{source_ids.sort.join(', ')}"
+    puts "  Affected dest person_id(s): #{rows.map { |r| r[:dest_person_id] }.uniq.sort.join(', ')}"
+  end
+
+  # Pre-fetch patient identifiers for affected persons so the CSV is human-referenceable
+  # without needing to re-query the database.
+  dest_person_ids = TYPE27_DEMOGRAPHIC_UNRESOLVED_USERS.map { |r| r[:dest_person_id] }.compact.uniq
+  identifiers_by_person = PatientIdentifier.unscoped
+                                           .where(patient_id: dest_person_ids)
+                                           .pluck(:patient_id, :identifier)
+                                           .group_by(&:first)
+                                           .transform_values { |rows| rows.map(&:last).join('; ') }
+
+  report_basename = "type27_unresolved_users_#{SITE_ID}_#{Time.now.strftime('%Y%m%d_%H%M%S')}"
+  json_file = Rails.root.join('log', "#{report_basename}.json")
+  csv_file  = Rails.root.join('log', "#{report_basename}.csv")
+
+  File.write(json_file, JSON.pretty_generate({
+                                               site_id: SITE_ID,
+                                               timestamp: Time.now.iso8601,
+                                               unresolved: TYPE27_DEMOGRAPHIC_UNRESOLVED_USERS.to_a
+                                             }))
+
+  CSV.open(csv_file, 'w') do |csv|
+    csv << %w[source_table field source_user_id dest_person_id dest_patient_identifiers]
+    TYPE27_DEMOGRAPHIC_UNRESOLVED_USERS.each do |row|
+      csv << [
+        row[:source_table],
+        row[:field],
+        row[:source_user_id],
+        row[:dest_person_id],
+        identifiers_by_person[row[:dest_person_id]]
+      ]
+    end
+  end
+
+  puts "\n✓ Detailed report saved to: #{json_file}"
+  puts "✓ Reference table saved to: #{csv_file}"
   puts '=' * 80
 end
 
@@ -1628,6 +1890,7 @@ def build_type27_person_map(source_db)
     end
     TYPE27_PERSON_MAP[src_id] = dest_id
     PERSON_ID_CACHE[src_id]   = dest_id
+    TYPE27_IDENTIFIER_MAP[src_id] = row['identifier']
   end
 
   if conflicts.uniq.any?
@@ -1650,7 +1913,13 @@ def migrate_latest_demographic(source_table, dest_model, group_keys, source_db)
   ).map(&:symbolize_keys)
   return if source_records.empty?
 
-  source_records.each { |r| r[:person_id] = TYPE27_PERSON_MAP[r[:person_id].to_i] }
+  # Preserve the source-side person_id before it's overwritten below, so voided rows
+  # can be traced back to both the source record and the type-27 identifier that matched it.
+  source_records.each do |r|
+    source_person_id = r[:person_id].to_i
+    r[:_source_person_id] = source_person_id
+    r[:person_id] = TYPE27_PERSON_MAP[source_person_id]
+  end
 
   # Build a lookup of the latest dest date_created per group key
   dest_max = dest_model.unscoped
@@ -1662,32 +1931,73 @@ def migrate_latest_demographic(source_table, dest_model, group_keys, source_db)
   to_insert = []
 
   source_records.group_by { |r| group_keys.map { |k| r[k] } }.each do |gkey, src_group|
-    src_latest = src_group.max_by { |r| r[:date_created].to_datetime rescue Time.at(0) }
-    dest_key   = group_keys.size == 1 ? gkey.first : gkey
+    src_latest = src_group.max_by do |r|
+      r[:date_created].to_datetime
+    rescue StandardError
+      Time.at(0)
+    end
+    dest_key = group_keys.size == 1 ? gkey.first : gkey
     dest_max_date = dest_max[dest_key]
 
-    if dest_max_date.nil? || src_latest[:date_created].to_datetime > dest_max_date.to_datetime
-      # Mark existing dest records for this group as voided
-      to_void << gkey
-      src_latest[:person_id] = TYPE27_PERSON_MAP[src_latest[:person_id]] || src_latest[:person_id]
-      src_latest[dest_model.primary_key.to_sym] = nil
-      to_insert << src_latest
+    next unless dest_max_date.nil? || src_latest[:date_created].to_datetime > dest_max_date.to_datetime
+
+    # Mark existing dest records for this group as voided
+    source_person_id = src_latest[:_source_person_id]
+    to_void << { gkey: gkey, source_person_id: source_person_id, identifier: TYPE27_IDENTIFIER_MAP[source_person_id] }
+    src_latest[:person_id] = TYPE27_PERSON_MAP[src_latest[:person_id]] || src_latest[:person_id]
+    src_latest.delete(:_source_person_id)
+    src_latest[dest_model.primary_key.to_sym] = nil
+    # creator/changed_by/voided_by still hold SOURCE user_ids — remap to dest, else FK violation
+    %i[creator changed_by voided_by].each do |key|
+      next unless src_latest.key?(key) && src_latest[key]
+
+      source_user_id = src_latest[key]
+      resolved_id = get_new_user_id(source_user_id, source_db)
+      if resolved_id
+        src_latest[key] = resolved_id
+      else
+        src_latest[key] = 1
+        TYPE27_DEMOGRAPHIC_UNRESOLVED_USERS << {
+          source_table: source_table,
+          field: key,
+          source_user_id: source_user_id,
+          dest_person_id: src_latest[:person_id]
+        }
+      end
     end
+    to_insert << src_latest
   end
 
   return if to_void.empty?
 
-  to_void.each do |gkey|
-    cond = group_keys.zip(gkey).to_h
-    dest_model.unscoped.where(cond.merge(person_id: dest_ids)).update_all(
+  voided_ids = []
+  to_void.each do |entry|
+    cond = group_keys.zip(entry[:gkey]).to_h
+    # `cond` already pins the specific person_id (and any other group key) for this
+    # group. Using Hash#merge here would let `person_id: dest_ids` win the key
+    # collision and silently widen the scope to EVERY type-27 matched person,
+    # voiding unrelated people's demographic rows. Chain .where instead so the
+    # dest_ids check is additive, not a replacement.
+    scope = dest_model.unscoped.where(person_id: dest_ids).where(cond)
+    voided_ids.concat(scope.pluck(dest_model.primary_key))
+    void_reason = "Superseded by newer #{source_db}.#{source_table} record during type-27 migration " \
+                  "(#{cond.map { |k, v| "#{k}=#{v}" }.join(', ')}, source_person_id=#{entry[:source_person_id]}, " \
+                  "type27_identifier=#{entry[:identifier]}, run=#{MIGRATION_RUN_UUID})"
+    scope.update_all(
       voided: 1,
       date_voided: Time.now,
-      void_reason: 'Superseded by newer source record during type-27 migration',
+      void_reason: void_reason,
       voided_by: 1
     )
   end
+  write_migration_audit_batch(dest_model.to_s, voided_ids, 'update')
 
-  dest_model.unscoped.insert_all(to_insert.compact) if to_insert.any?
+  if to_insert.any?
+    dest_model.unscoped.insert_all(to_insert.compact)
+    new_uuids = to_insert.compact.map { |r| r[:uuid] }.compact
+    new_ids = new_uuids.any? ? dest_model.unscoped.where(uuid: new_uuids).pluck(dest_model.primary_key) : []
+    write_migration_audit_batch(dest_model.to_s, new_ids, 'create')
+  end
   puts "  ✓ #{source_table}: voided #{to_void.size} dest record(s), inserted #{to_insert.size} newer source record(s)"
 end
 
@@ -1716,6 +2026,14 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
 
   process_in_batches(source_db, source_table, nil, target_model) do |records|
     records.each(&:symbolize_keys!)
+    art_encounter_source_ids = if target_model.to_s == 'Encounter' && ART_OBS_CONCEPT_IDS.any?
+                                 ActiveRecord::Base.connection.select_values(<<~SQL).map(&:to_i).to_set
+                                   SELECT encounter_id
+                                   FROM #{DEST_DB}.art_encounter_scope
+                                 SQL
+                               else
+                                 Set.new
+                               end
     # Fetch only the records that exist in the current batch
     record_keys = case target_model.to_s
                   when 'Patient'
@@ -1848,6 +2166,12 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
 
     keys_to_process.each do |foreign_key, mapping_method|
       records = send(mapping_method, records, foreign_key, source_db)
+    end
+
+    if target_model.to_s == 'Encounter' && ART_PROGRAM_ID
+      records.each do |record|
+        record[:program_id] = ART_PROGRAM_ID if art_encounter_source_ids.include?(record[:encounter_id].to_i)
+      end
     end
 
     # Skip patient_identifier records already present in destination by content (not UUID)
@@ -1998,6 +2322,20 @@ def populate_records(source_table, target_model, source_db, foreign_keys = {})
         else
           target_model.unscoped.insert_all!(insertable_records.compact)
         end
+
+        # insert_all/insert_all! bypass the `audited` gem — write matching Audit rows in batch
+        # so migrated data for audited models keeps a script-attributed audit trail.
+        if target_model.respond_to?(:audited_options)
+          audit_ids = if NON_RESET_MODELS.include?(target_model.to_s)
+                        insertable_records.map { |r| r[target_model.primary_key.to_sym] }.compact
+                      elsif insertable_records.first&.key?(:uuid)
+                        batch_uuids = insertable_records.map { |r| r[:uuid] }.compact
+                        batch_uuids.any? ? target_model.unscoped.where(uuid: batch_uuids).pluck(target_model.primary_key) : []
+                      else
+                        []
+                      end
+          write_migration_audit_batch(target_model.to_s, audit_ids)
+        end
       rescue ActiveRecord::RecordNotUnique, Mysql2::Error => e
         # Skip duplicate entries - they already exist
         if e.message.include?('Duplicate entry')
@@ -2085,6 +2423,11 @@ def populate_users(source_db)
 
     User.current = CURRENT_USER
     User.unscoped.insert_all!(insertable_records.compact)
+
+    # User is `audited` — insert_all! bypasses that, so record the audit trail ourselves.
+    new_uuids = insertable_records.compact.map { |r| r[:uuid] }.compact
+    new_user_ids = new_uuids.any? ? User.unscoped.where(uuid: new_uuids).pluck(:user_id) : []
+    write_migration_audit_batch('User', new_user_ids)
   end
 end
 
@@ -2625,7 +2968,7 @@ def initialize_art_number_sequence_from_cohort
   )&.property_value
   return if site_prefix.blank?
 
-    baseline_sequence = ArtNumberSequence.cohort_baseline(SITE_ID, site_prefix)
+  baseline_sequence = ArtNumberSequence.cohort_baseline(SITE_ID, site_prefix)
 
   counter = ArtNumberSequence.find_or_initialize_by(location_id: SITE_ID)
   counter.site_prefix = site_prefix
@@ -2753,6 +3096,10 @@ end
 
 # Pre-build encounter IDs cache table for all selected programs.
 # This is idempotent: drops and recreates on each run. Takes ~30-60s but saves hours over 3000+ batches.
+if ART_OBS_CONCEPT_IDS.any? && ART_PROGRAM_ID.nil?
+  abort "✗ ART program '#{ART_PROGRAM_NAME}' was not found in the destination program table"
+end
+build_art_observation_scope(source_db)
 create_program_encounter_ids_cache(source_db)
 
 # -----------------------------------------------------------------------
@@ -3160,9 +3507,12 @@ if __FILE__ == $0
 
     if group_name == 'Group_1' && TYPE27_PERSON_MAP.any?
       puts '  → Merging latest demographics for type-27 matched patients...'
-      migrate_latest_demographic('person_name',      PersonName,      [:person_id],                             source_db)
-      migrate_latest_demographic('person_address',   PersonAddress,   [:person_id],                             source_db)
-      migrate_latest_demographic('person_attribute', PersonAttribute, [:person_id, :person_attribute_type_id],  source_db)
+      migrate_latest_demographic('person_name', PersonName, [:person_id],
+                                 source_db)
+      migrate_latest_demographic('person_address', PersonAddress, [:person_id],
+                                 source_db)
+      migrate_latest_demographic('person_attribute', PersonAttribute, %i[person_id person_attribute_type_id],
+                                 source_db)
     end
 
     clear_migrated_caches(group_name)
@@ -3200,6 +3550,10 @@ if __FILE__ == $0
 
   # Report data quality issues
   report_data_quality_issues
+
+  # Report records whose creator/changed_by/voided_by fell back to user_id 1
+  # during type-27 demographic merge (migrate_latest_demographic)
+  report_unresolved_type27_demographic_users
 
   # Report performance metrics
   report_performance_metrics
