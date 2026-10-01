@@ -3,6 +3,22 @@
 require 'rails_helper'
 
 RSpec.describe TbService::AppointmentEngine do
+  # The suite runs without transactional fixtures, roll back each example's records
+  around do |example|
+    ActiveRecord::Base.transaction do
+      example.run
+      raise ActiveRecord::Rollback
+    end
+  end
+
+  # The TUBERCULOSIS DRUGS concept set ships empty in the current metadata
+  before do
+    tb_drugs_set = ConceptName.find_by!(name: 'TUBERCULOSIS DRUGS').concept
+    ['Rifampicin (300mg)', 'Rifabutin (300mg)', 'Rifapentine (150mg)'].each do |name|
+      create(:concept_set, set: tb_drugs_set, concept: Drug.find_by!(name:).concept)
+    end
+  end
+
   subject { TbService::AppointmentEngine }
   let(:patient) { create :patient }
   let(:program) { Program.find_by_name('TB Program') }
