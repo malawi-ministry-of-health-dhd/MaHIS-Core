@@ -13,6 +13,21 @@
 module Locatable
   extend ActiveSupport::Concern
 
+  # Patient-wide operations (e.g. merging two patients) must see a patient's
+  # records from every facility, not only the current one. Only reads are
+  # affected; set_location_id still stamps new records.
+  def self.without_location_scope
+    previous = Thread.current[:locatable_scope_disabled]
+    Thread.current[:locatable_scope_disabled] = true
+    yield
+  ensure
+    Thread.current[:locatable_scope_disabled] = previous
+  end
+
+  def self.location_scope_disabled?
+    Thread.current[:locatable_scope_disabled] == true
+  end
+
   included do
     # Check if table exists and has location_id column before setting up associations
     # This prevents errors during schema loading when tables don't exist yet
@@ -22,7 +37,7 @@ module Locatable
         belongs_to :location, foreign_key: :location_id, primary_key: :location_id, optional: true
 
         default_scope do
-          location = current_location_id
+          location = Locatable.location_scope_disabled? ? nil : current_location_id
           if location.present?
             where(location_id: location)
           else

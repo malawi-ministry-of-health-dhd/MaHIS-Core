@@ -3,6 +3,58 @@
 require 'rails_helper'
 
 RSpec.describe DdeMergingService do
+  describe 'location scoping' do
+    # A patient merged at one facility can have encounters, observations and
+    # programmes recorded at another. Those rows must be merged too, so the
+    # Locatable default scope is lifted for the duration of the merge.
+    before { allow(Location).to receive(:current).and_return(instance_double(Location, id: 58)) }
+
+    it 'filters encounters by the current location outside a merge' do
+      expect(Encounter.where(patient_id: 1).to_sql).to include("`location_id` = '58'")
+    end
+
+    it 'lifts the location filter inside Locatable.without_location_scope and restores it after' do
+      inside = Locatable.without_location_scope do
+        [Encounter, Observation, PatientProgram].map { |model| model.where(person_or_patient_column(model) => 1).to_sql }
+      end
+
+      expect(inside).to all(satisfy { |sql| !sql.include?('location_id') })
+      expect(Encounter.where(patient_id: 1).to_sql).to include("`location_id` = '58'")
+    end
+
+    it 'runs the whole local merge without the location filter' do
+      service = described_class.new(nil, nil)
+      primary = instance_double(Patient, id: 1, patient_id: 1)
+      secondary = instance_double(Patient, id: 2, patient_id: 2, void: true)
+      scope_disabled_during = {}
+
+      allow(Patient).to receive(:find).with(1).and_return(primary)
+      allow(Patient).to receive(:find).with(2).and_return(secondary)
+      %i[merge_name merge_identifiers merge_attributes merge_address merge_programs].each do |step|
+        allow(service).to receive(step)
+      end
+      allow(service).to receive(:female_male_merge?).and_return(false)
+      allow(service).to receive(:merge_encounters) do
+        scope_disabled_during[:encounters] = Encounter.where(patient_id: 2).to_sql.exclude?('location_id')
+        {}
+      end
+      allow(service).to receive(:merge_observations)
+      allow(service).to receive(:merge_orders) do
+        scope_disabled_during[:orders] = Observation.where(person_id: 2).to_sql.exclude?('location_id')
+      end
+      allow(MergeAuditService).to receive(:new).and_return(double(create_merge_audit: true))
+
+      service.send(:merge_local_patients, { 'patient_id' => 1 }, { 'patient_id' => 2 }, 'Local Patients')
+
+      expect(scope_disabled_during).to eq(encounters: true, orders: true)
+      expect(Encounter.where(patient_id: 2).to_sql).to include("`location_id` = '58'")
+    end
+
+    def person_or_patient_column(model)
+      model == Observation ? :person_id : :patient_id
+    end
+  end
+
   describe '#create_local_patient_identifier' do
     it 'uses the unscoped creator location when linking a DDE identifier' do
       service = described_class.new(nil, nil)
