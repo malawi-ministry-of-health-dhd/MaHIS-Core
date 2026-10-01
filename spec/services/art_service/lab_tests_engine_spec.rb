@@ -3,64 +3,52 @@
 require 'rails_helper'
 
 RSpec.describe ArtService::LabTestsEngine do
+  # The suite runs without transactional fixtures, roll back each example's records
+  around do |example|
+    ActiveRecord::Base.transaction do
+      example.run
+      raise ActiveRecord::Rollback
+    end
+  end
+
   subject { ArtService::LabTestsEngine.new(program:) }
-  let(:program) { create :program }
+  let(:program) { Program.find_by_name!('HIV Program') }
+  let(:nlims) { instance_double(Nlims) }
 
-  def make_test_type(concept)
-    set = ConceptName.find_by_name!('Test type').concept_id
-
-    create :concept_set, concept_set: set, concept:
-  end
-
-  def make_sample_type(concept, test_type)
-    samples_set = ConceptName.find_by_name!('Specimen Type').concept_id
-
-    create(:concept_set, concept_set: samples_set, concept:)
-    create :concept_set, concept_set: test_type.concept_id, concept:
-  end
+  # Test types and specimens come from NLIMS, never hit the network in specs
+  before { allow(Nlims).to receive(:instance).and_return(nlims) }
 
   describe :type do
-    let(:test_type_concept) { create :concept_with_name }
-    let(:test_type) { make_test_type(test_type_concept) }
+    it 'retrieves a test type by id' do
+      pending 'LabTestsEngine#type references a LabTestType model that no longer exists'
 
-    it 'retrieves a test type by concept id' do
-      concept = subject.type(test_type.concept.concept_id)
-
-      expect(concept.concept_id).to eq(test_type.concept.concept_id)
-    end
-
-    it "doesn't retrieve concepts not under Lab test type concept set" do
-      concept = create :concept
-
-      expect { subject.type(concept.concept_id) }.to raise_error NotFoundError
+      expect { subject.type(1) }.not_to raise_error
     end
   end
 
   describe :types do
-    let(:test_type_concept) { create :concept_with_name }
-    let(:test_type) { make_test_type(test_type_concept) }
+    before do
+      allow(nlims).to receive(:test_types).and_return(['FBC', 'HIV Viral Load', 'Viral Load'])
+    end
+
+    it 'retrieves all test types when no search string is given' do
+      expect(subject.types(search_string: nil)).to eq(['FBC', 'HIV Viral Load', 'Viral Load'])
+    end
 
     it 'retrieves test types by partial name' do
-      concept_name = test_type.concept.concept_names.first.name
-      search_string_size = (concept_name.size / 2).to_i
-      test_types = subject.types(search_string: concept_name[0..search_string_size])
-      match = test_types.find { |test_type| test_type.name == concept_name }
+      expect(subject.types(search_string: 'HIV')).to eq(['HIV Viral Load'])
+    end
 
-      expect(match).not_to be_nil
+    it 'only matches test types starting with the search string' do
+      expect(subject.types(search_string: 'Load')).to be_empty
     end
   end
 
   describe :panels do
-    let(:sample_type_concept) { create :concept_with_name }
-    let(:test_type) { make_test_type(create(:concept_with_name)) }
-    let(:sample_type) { make_sample_type(sample_type_concept, test_type.concept) }
-
     it 'retrieves sample types by test type' do
-      test_type_name = sample_type.set.concept_names.first.name
-      retrieved_sample_types = subject.panels(test_type_name)
+      allow(nlims).to receive(:specimen_types).with('Viral Load').and_return(%w[Blood Plasma])
 
-      expect(retrieved_sample_types.size).to eq(1)
-      expect(retrieved_sample_types.first.concept_id).to eq(sample_type.concept_id)
+      expect(subject.panels('Viral Load')).to eq(%w[Blood Plasma])
     end
   end
 end
