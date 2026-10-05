@@ -3,6 +3,7 @@ require 'bantu_soundex'
 module Api
   module V1
     class DdeController < ApplicationController
+      include CouchdbSync
 
       MATCH_PARAMS = %i[given_name family_name gender birthdate home_village
                         home_traditional_authority home_district].freeze
@@ -53,6 +54,9 @@ module Api
           result = service.merge_patients(primary_patient_ids, secondary_patient_ids_list)
           update_merged_potential_duplicates(primary_patient_ids, secondary_patient_ids_list)
         end
+
+        Sync::PatientRecordSyncJob.perform_async(result.id)
+        delete_merged_secondary_couchdb_documents(secondary_patient_ids_list)
 
         render json: result, status: :ok
       end
@@ -173,6 +177,23 @@ module Api
 
       def program
         Program.find(params.require(:program_id))
+      end
+
+      # The merge only updates MySQL; the merged-away patients keep looking like
+      # live, separate patients on any device that already synced their CouchDB
+      # document. Delete those documents, mirroring VoidUnsyncablePatientsTask's
+      # handling of voided patients.
+      def delete_merged_secondary_couchdb_documents(secondary_patient_ids_list)
+        return unless couchdb_configured?
+
+        secondary_ids = secondary_patient_ids_list.filter_map { |ids| ids[:patient_id] }
+        return if secondary_ids.empty?
+
+        Person.unscoped.where(person_id: secondary_ids).where.not(uuid: [nil, '']).pluck(:uuid).each do |uuid|
+          delete_from_couchdb('patients_records', uuid)
+        rescue StandardError => e
+          Rails.logger.error("DdeController#merge_patients: CouchDB delete failed for #{uuid}: #{e.class}: #{e.message}")
+        end
       end
 
       def update_merged_potential_duplicates(primary_patient_id, secondary_patient_ids)
