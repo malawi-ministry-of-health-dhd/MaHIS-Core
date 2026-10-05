@@ -323,6 +323,14 @@ location_id,facility_code,facility_name
 bundle exec rails runner bin/emr_to_mahis_migrator.rb
 ```
 
+By default, the migrator includes HIV and the active Laboratory program, so lab encounters,
+orders, and observations retain the parent records needed by HIV-linked lab results.
+Set `PROGRAM_IDS` to add other programs; HIV and the active Laboratory program are
+always included, including when `PROGRAM_IDS=1`.
+Program references use the same destination ID when its name matches the source program.
+The ART cohort selects HIV-program enrollment; laboratory encounters do not add patients
+to that cohort, though lab-dependent indicators can change when results are migrated.
+
 The script will:
 
 1. **Validate location** - Automatically map source location to target location

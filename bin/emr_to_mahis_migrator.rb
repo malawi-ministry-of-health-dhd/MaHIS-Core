@@ -183,6 +183,7 @@ def select_programs_to_migrate(source_db, hiv_program_id)
   end
 
   hiv_name = all_programs[hiv_program_id] || 'HIV PROGRAM'
+  lab_program = all_programs.find { |_, name| name.casecmp?('Laboratory program') }
 
   selected = if ENV['PROGRAM_IDS']
                tokens = ENV['PROGRAM_IDS'].split(',').map(&:strip)
@@ -198,34 +199,35 @@ def select_programs_to_migrate(source_db, hiv_program_id)
                ids << hiv_program_id unless ids.include?(hiv_program_id)
                all_programs.select { |id, _| ids.include?(id) }.merge(hiv_program_id => hiv_name)
              elsif $stdin.isatty
-               interactive_program_selection(all_programs, hiv_program_id, hiv_name)
+               interactive_program_selection(all_programs, hiv_program_id, hiv_name, lab_program&.first)
              else
-               puts 'Auto-selecting HIV program only (non-interactive)'
+               puts 'Auto-selecting default programs (non-interactive)'
                { hiv_program_id => hiv_name }
              end
 
+  selected[lab_program.first] = lab_program.last if lab_program
   puts "✓ Programs selected: #{selected.values.join(', ')}"
   selected
 end
 
-def interactive_program_selection(all_programs, hiv_program_id, hiv_name)
+def interactive_program_selection(all_programs, hiv_program_id, hiv_name, lab_program_id)
   puts "\n" + '=' * 60
   puts 'PROGRAM SELECTION (source database programs)'
   puts '=' * 60
   puts 'Available programs (* = always included):'
   indexed = all_programs.each_with_index.map { |(id, name), idx| [idx + 1, id, name] }
   indexed.each do |num, id, name|
-    marker = id == hiv_program_id ? '*' : ' '
+    marker = [hiv_program_id, lab_program_id].include?(id) ? '*' : ' '
     puts "  #{marker} #{num}. #{name} (ID: #{id})"
   end
   puts '=' * 60
 
   loop do
-    print 'Add programs to migrate (comma-separated numbers), or press Enter for HIV only: '
+    print 'Add programs to migrate (comma-separated numbers), or press Enter for default programs: '
     input = $stdin.gets.chomp.strip
 
     if input.empty?
-      puts '✓ Migrating HIV program only'
+      puts '✓ Using default program selection'
       return { hiv_program_id => hiv_name }
     end
 
@@ -2554,13 +2556,22 @@ def fetch_new_ids_by_name(records, source_db, table_name, id_column, name_column
                         .order(id_column => :asc)
                         .pluck(name_column, id_column)
                         .each_with_object({}) { |(name, id), h| h[name.downcase.strip] ||= id }
+  matching_program_names = if table_name == 'program'
+                             model.unscoped.where(id_column => old_ids).pluck(id_column, name_column).to_h
+                           else
+                             {}
+                           end
 
   records.compact.each do |record|
     next if record[new_id_key].blank?
 
     begin
       source_name = name_mapping[record[new_id_key]][name_column.to_s]&.strip
-      destination_id = name_to_id_map[source_name&.downcase]
+      destination_id = if matching_program_names[record[new_id_key]]&.strip&.casecmp?(source_name)
+                         record[new_id_key]
+                       else
+                         name_to_id_map[source_name&.downcase]
+                       end
 
       if destination_id
         record[new_id_key] = destination_id
@@ -2885,9 +2896,8 @@ end
 # either side. A batch that still fails after retries is logged and skipped
 # rather than aborting the rest — same batch-continues-past-failure pattern
 # migrate_obs_via_sql already uses for the INSERT side of this same table. A
-# final pass reports exactly how many rows (if any) remain unresolved, so a
-# failure is visible instead of silent, with a direct pointer at the
-# follow-up repair task.
+# final pass logs any source-linked rows that remain unresolved without stopping
+# the rest of the migration.
 def update_group_obs_ids(source_db, _foreign_keys = {})
   puts 'Starting obs_group_id update...'
   conn = ActiveRecord::Base.connection
@@ -2902,63 +2912,155 @@ def update_group_obs_ids(source_db, _foreign_keys = {})
   align_uuid_collations(source_db, %w[obs])
   conn.execute('SET SESSION net_read_timeout=3600, net_write_timeout=3600, wait_timeout=28800, interactive_timeout=28800')
 
-  batch_size = (ENV['OBS_GROUP_ID_BATCH'] || 20_000).to_i
+  batch_size = source_ids.size
   resolved_total = 0
   failed_batches = 0
 
   conn.execute('SET FOREIGN_KEY_CHECKS = 0')
-  source_ids.each_slice(batch_size).with_index do |chunk, i|
-    ids_list = chunk.join(',')
+  offset = 0
+  while offset < source_ids.size
     retries = 0
-    begin
-      t = Time.now
-      updated = conn.update(<<~SQL)
-        UPDATE obs o
-        JOIN #{source_db}.obs src
-          ON o.uuid = src.uuid AND src.obs_id IN (#{ids_list})
-        JOIN #{source_db}.obs src_parent
-          ON src_parent.obs_id = src.obs_group_id
-        JOIN obs tgt_parent
-          ON tgt_parent.uuid = src_parent.uuid
-        SET o.obs_group_id = tgt_parent.obs_id
-        WHERE o.obs_group_id IS NULL
-      SQL
-      resolved_total += updated
-      puts "  batch #{i + 1} (#{chunk.size} source obs): +#{updated} resolved (#{resolved_total} total, #{(Time.now - t).round(1)}s)"
-    rescue ActiveRecord::DatabaseConnectionError, ActiveRecord::ConnectionNotEstablished, Mysql2::Error => e
-      retries += 1
-      if retries <= 5
-        puts "  ⚠ batch #{i + 1}: retry #{retries}/5 after error: #{e.message}"
-        sleep(retries * 5)
-        ActiveRecord::Base.connection_pool.disconnect!
-        conn = ActiveRecord::Base.connection
-        retry
-      else
-        puts "  ❌ batch #{i + 1}: failed after 5 retries, skipping this batch: #{e.message}"
-        failed_batches += 1
+    loop do
+      chunk = source_ids.slice(offset, batch_size)
+      ids_list = chunk.join(',')
+      begin
+        t = Time.now
+        updated = conn.update(<<~SQL)
+          UPDATE obs o
+          JOIN #{source_db}.obs src
+            ON o.uuid = src.uuid AND src.obs_id IN (#{ids_list})
+          JOIN #{source_db}.obs src_parent
+            ON src_parent.obs_id = src.obs_group_id
+          JOIN obs tgt_parent
+            ON tgt_parent.uuid = src_parent.uuid
+          SET o.obs_group_id = tgt_parent.obs_id
+          WHERE o.obs_group_id IS NULL
+        SQL
+        resolved_total += updated
+        offset += chunk.size
+        progress = (offset * 100.0 / source_ids.size).round(1)
+        puts "  update progress #{progress}% (#{offset}/#{source_ids.size} source obs, batch #{chunk.size}): +#{updated} linked (#{resolved_total} total, #{(Time.now - t).round(1)}s)"
+        break
+      rescue ActiveRecord::DatabaseConnectionError, ActiveRecord::ConnectionNotEstablished,
+             ActiveRecord::StatementInvalid, Mysql2::Error => e
+        error = e
+        retryable_batch_error = false
+        connection_failure = false
+        while error
+          retryable_batch_error ||= error.class.name == 'ActiveRecord::QueryCanceled' ||
+                                    (error.respond_to?(:error_number) && [1153, 1205, 1213, 3024].include?(error.error_number)) ||
+                                    error.message.match?(/timeout|timed out|maximum statement execution time|packet too large|packet bigger than|max_allowed_packet|deadlock/i)
+          connection_failure ||= connection_error?(error)
+          error = error.cause
+        end
+
+        if retryable_batch_error && batch_size > 1
+          previous_batch_size = batch_size
+          batch_size = [batch_size / 2, 1].max
+          puts "  ⚠ batch failed at #{previous_batch_size}; backing off to #{batch_size} and retrying from #{offset}/#{source_ids.size}: #{e.message}"
+          if connection_failure
+            retries += 1
+            if retries > 5
+              puts "  ❌ connection failed after 5 retries at source obs_id #{chunk.first}; skipping batch of #{previous_batch_size}: #{e.message}"
+              failed_batches += 1
+              offset += previous_batch_size
+              break
+            end
+
+            sleep(retries * 5)
+            ActiveRecord::Base.connection_pool.disconnect!
+            conn = ActiveRecord::Base.connection
+          end
+          next
+        elsif connection_failure
+          retries += 1
+          if retries <= 5
+            puts "  ⚠ connection retry #{retries}/5 at #{offset}/#{source_ids.size}: #{e.message}"
+            sleep(retries * 5)
+            ActiveRecord::Base.connection_pool.disconnect!
+            conn = ActiveRecord::Base.connection
+            retry
+          end
+
+          puts "  ❌ connection failed after 5 retries at source obs_id #{chunk.first}; skipping batch of #{chunk.size}: #{e.message}"
+          failed_batches += 1
+          offset += chunk.size
+          break
+        elsif retryable_batch_error
+          puts "  ❌ single-observation batch failed at source obs_id #{chunk.first}; skipping: #{e.message}"
+          failed_batches += 1
+          offset += chunk.size
+          break
+        else
+          raise
+        end
       end
     end
   end
   conn.execute('SET FOREIGN_KEY_CHECKS = 1')
 
-  # Same chunked-IN-list shape as the main loop (not a fresh full-table join),
-  # so this check stays cheap regardless of how large obs has grown overall.
-  still_pending = source_ids.each_slice(batch_size).sum do |chunk|
-    conn.select_value(<<~SQL).to_i
-      SELECT COUNT(*)
-      FROM obs o
-      JOIN #{source_db}.obs src ON o.uuid = src.uuid AND src.obs_id IN (#{chunk.join(',')})
-      WHERE o.obs_group_id IS NULL
-    SQL
+  unresolved_count = 0
+  unresolved_log_path = Rails.root.join('log', "unresolved_obs_group_ids_#{SITE_ID}_#{Time.current.strftime('%Y%m%d%H%M%S')}.csv")
+  log_file = nil
+  csv = nil
+  logging_completed = false
+  begin
+    # Keep the diagnostic pass chunked so it never scans all target rows with a NULL group ID.
+    audit_batch_size = [(ENV['OBS_GROUP_ID_BATCH'] || 100_000).to_i, batch_size].min
+    audit_batches = (source_ids.size.to_f / audit_batch_size).ceil
+    source_ids.each_slice(audit_batch_size).with_index do |chunk, i|
+      unresolved = conn.select_all(<<~SQL).to_a
+        SELECT src.obs_id AS source_obs_id, src.uuid AS source_obs_uuid,
+               src.person_id AS source_person_id, src.encounter_id AS source_encounter_id,
+               src.obs_group_id AS source_parent_obs_id, src_parent.uuid AS source_parent_uuid,
+               target.obs_id AS target_obs_id, target.obs_group_id AS target_parent_obs_id,
+               CASE
+                 WHEN src_parent.obs_id IS NULL THEN 'source_parent_missing'
+                 WHEN target_parent.obs_id IS NULL THEN 'target_parent_not_migrated'
+                 ELSE 'link_update_unresolved'
+               END AS failure_reason
+        FROM #{source_db}.obs src
+        STRAIGHT_JOIN obs target FORCE INDEX (obs_uuid_index) ON target.uuid = src.uuid
+        LEFT JOIN #{source_db}.obs src_parent ON src_parent.obs_id = src.obs_group_id
+        LEFT JOIN obs target_parent FORCE INDEX (obs_uuid_index) ON target_parent.uuid = src_parent.uuid
+        WHERE src.obs_id IN (#{chunk.join(',')})
+          AND src.obs_group_id IS NOT NULL
+          AND target.obs_group_id IS NULL
+      SQL
+      processed = [((i + 1) * audit_batch_size), source_ids.size].min
+      progress = (processed * 100.0 / source_ids.size).round(1)
+      puts "  audit progress #{progress}% (#{processed}/#{source_ids.size} source obs, batch #{i + 1}/#{audit_batches}): #{unresolved.size} unresolved in batch"
+      next if unresolved.empty?
+
+      unless csv
+        log_file = File.open(unresolved_log_path, 'w')
+        csv = CSV.new(log_file)
+        csv << %w[source_obs_id source_obs_uuid source_person_id source_encounter_id source_parent_obs_id
+                  source_parent_uuid target_obs_id target_parent_obs_id failure_reason]
+      end
+
+      unresolved.each do |row|
+        csv << %w[source_obs_id source_obs_uuid source_person_id source_encounter_id source_parent_obs_id
+                  source_parent_uuid target_obs_id target_parent_obs_id failure_reason].map { |column| row[column] }
+        unresolved_count += 1
+      end
+    end
+    logging_completed = true
+  rescue StandardError => e
+    puts "⚠️  Could not complete obs_group_id failure logging: #{e.class}: #{e.message}"
+  ensure
+    log_file&.close
   end
 
   puts "✓ obs_group_id update complete: #{resolved_total} resolved this run"
   puts "⚠️  #{failed_batches} batch(es) failed after retries and were skipped" if failed_batches.positive?
-  return unless still_pending.positive?
-
-  puts "⚠️  #{still_pending} observation(s) with a resolvable source obs_group_id are STILL unset for #{source_db}."
-  puts '    Safe to re-run this step, or: bin/rails "lab:repair_obs_group_ids" scoped to this facility ' \
-       '(lib/tasks/repair_obs_group_ids.rake) — both only ever touch obs_group_id IS NULL rows.'
+  if unresolved_count.positive?
+    puts "⚠️  #{unresolved_count} observation(s) remain unlinked; details logged to #{unresolved_log_path}"
+  elsif logging_completed
+    puts '✓ No unresolved obs_group_id links found'
+  else
+    puts '⚠️  Unresolved obs_group_id count could not be confirmed; see the logging warning above'
+  end
 end
 
 def initialize_art_number_sequence_from_cohort
