@@ -30,6 +30,7 @@ RSpec.describe ArtMissingDemographicsRepairTask do
     expect(captured_sql).to include('target_program.program_id=1')
     expect(captured_sql).to include("UPPER(TRIM(COALESCE(target.gender, ''))) NOT IN ('M', 'MALE', 'F', 'FEMALE')")
     expect(captured_sql).to include("UPPER(TRIM(source.gender)) IN ('M', 'MALE', 'F', 'FEMALE')")
+    expect(captured_sql).to include('OR (target.birthdate IS NULL AND source.birthdate IS NOT NULL)')
   end
 
   it 'restores a report-invalid gender from the matched source patient' do
@@ -43,7 +44,8 @@ RSpec.describe ArtMissingDemographicsRepairTask do
       'person_id' => 275_800,
       'uuid' => 'patient-uuid',
       'gender' => 'Undetermined',
-      'birthdate' => Date.new(1974, 7, 1)
+      'birthdate' => Date.new(1974, 7, 1),
+      'birthdate_estimated' => 0
     }])
     update_sql = nil
     allow(connection).to receive(:update) do |sql|
@@ -60,5 +62,38 @@ RSpec.describe ArtMissingDemographicsRepairTask do
     })
 
     expect(update_sql).to include("`gender`='F'")
+    expect(update_sql).to include('gender <=>', 'birthdate <=>', 'birthdate_estimated <=>')
+  end
+
+  it 'restores birthdate without requiring a valid source gender' do
+    connection = double('connection')
+    allow(connection).to receive(:quote_table_name) { |value| "`#{value}`" }
+    allow(connection).to receive(:quote_column_name) { |value| "`#{value}`" }
+    allow(connection).to receive(:quote) { |value| value.nil? ? 'NULL' : "'#{value}'" }
+    task = described_class.new({}, connection: connection)
+    task.instance_variable_set(:@operator_user_id, 1)
+    allow(task).to receive(:select_all).and_return([{
+      'person_id' => 123,
+      'uuid' => 'patient-uuid',
+      'gender' => 'F',
+      'birthdate' => nil,
+      'birthdate_estimated' => nil
+    }])
+    update_sql = nil
+    allow(connection).to receive(:update) do |sql|
+      update_sql = sql
+      1
+    end
+
+    task.send(:repair!, {
+      'target_id' => 123,
+      'uuid' => 'patient-uuid',
+      'source_gender' => 'Undetermined',
+      'source_birthdate' => Date.new(1980, 1, 1),
+      'source_birthdate_estimated' => 1
+    })
+
+    expect(update_sql).not_to include('SET `gender`')
+    expect(update_sql).to include("`birthdate`='1980-01-01'", "`birthdate_estimated`='1'")
   end
 end

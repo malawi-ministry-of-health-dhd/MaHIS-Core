@@ -44,6 +44,27 @@ RSpec.describe ArtDuplicateMergeRollbackTask do
       expect { task.send(:apply_review) }.not_to raise_error
     end
 
+    it 'processes every discovered group in approve-all mode regardless of LIMIT' do
+      connection = double('connection')
+      allow(connection).to receive(:transaction).and_yield
+      task = described_class.new({
+        'APPLY' => '1', 'APPROVE_ALL' => '1', 'LIMIT' => '1',
+        'CONFIRM' => described_class::CONFIRMATION, 'USER_ID' => '1'
+      }, connection: connection)
+      rows = [
+        { 'approved' => 'yes', 'primary_uuid' => 'primary-one' },
+        { 'approved' => 'yes', 'primary_uuid' => 'primary-two' }
+      ]
+      allow(task).to receive(:automatically_approved_rows).and_return(rows)
+      allow(task).to receive(:lock_group_patients!)
+      allow(task).to receive(:validate_complete_group!)
+      allow(task).to receive(:write_csv)
+
+      expect(task).to receive(:apply_group!).twice
+
+      task.send(:apply_review)
+    end
+
     it 'requires different source and target databases' do
       expect do
         described_class.new({ 'SOURCE_DB' => 'same', 'TARGET_DB' => 'same' })
@@ -124,6 +145,69 @@ RSpec.describe ArtDuplicateMergeRollbackTask do
       expect(captured_sql).to include('exact_art_pairs', 'target_encounter.creator=1')
       expect(captured_sql).to include('original_uuid.uuid IS NULL')
       expect(captured_sql).to include('target_encounter.encounter_datetime <=> source_encounter.encounter_datetime')
+    end
+  end
+
+  describe 'review enrichment' do
+    it 'uses the earliest cleanup timestamp across every secondary in the group' do
+      task = described_class.new({})
+      group = [
+        {
+          'primary_source_id' => 10, 'primary_uuid' => 'primary-uuid',
+          'secondary_source_id' => 20, 'secondary_uuid' => 'secondary-one',
+          'cleanup_at' => '2026-08-09 10:00:00'
+        },
+        {
+          'primary_source_id' => 10, 'primary_uuid' => 'primary-uuid',
+          'secondary_source_id' => 30, 'secondary_uuid' => 'secondary-two',
+          'cleanup_at' => '2026-08-07 10:00:00'
+        }
+      ]
+      allow(task).to receive(:source_arv_numbers).and_return(10 => ['A'], 20 => ['B'], 30 => ['C'])
+      earliest = Time.zone.parse('2026-08-07 10:00:00')
+      expect(task).to receive(:new_encounters).with('primary-uuid', earliest).and_return([])
+      allow(task).to receive(:recommend_owner).and_return(['primary-uuid', 'reason'])
+
+      rows = task.send(:enrich_group, group)
+
+      expect(rows.map { |row| row['cleanup_at'] }.uniq).to eq([earliest.iso8601])
+    end
+
+    it 'leaves a missing automatic owner for group-level validation' do
+      task = described_class.new({})
+      allow(task).to receive(:build_review_rows).and_return([{
+        'primary_uuid' => 'primary-uuid',
+        'new_encounter_count' => 1,
+        'recommended_new_encounter_owner_uuid' => ''
+      }])
+
+      rows = task.send(:automatically_approved_rows)
+
+      expect(rows.first['approved']).to eq('yes')
+      expect(rows.first['new_encounter_owner_uuid']).to eq('')
+    end
+  end
+
+  describe 'primary demographic preservation' do
+    it 'does not restore the primary person, name, or address from the old snapshot' do
+      task = described_class.new({})
+      row = {
+        'primary_source_id' => 10,
+        'primary_uuid' => 'primary-uuid',
+        'secondary_source_id' => 20,
+        'secondary_uuid' => 'secondary-uuid',
+        'new_encounter_uuids' => ''
+      }
+      allow(task).to receive(:validate_source_identity!)
+      allow(task).to receive(:target_person_id).and_return(100)
+      allow(task).to receive(:restore_primary_rows_voided_by_merge!)
+      allow(task).to receive(:restore_patient_graph!).and_return(200)
+      allow(task).to receive(:void_generated_copies!)
+      allow(task).to receive(:reverse_cleanup_metadata!)
+
+      expect(task).not_to receive(:restore_original_row!)
+
+      task.send(:apply_group!, [row])
     end
   end
 

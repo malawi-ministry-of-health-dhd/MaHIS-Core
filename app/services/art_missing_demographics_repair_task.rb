@@ -113,26 +113,30 @@ class ArtMissingDemographicsRepairTask
        AND source_arv.identifier_type=#{ARV_IDENTIFIER_TYPE} AND source_arv.voided=0
        AND source_arv.identifier=target_arv.identifier
       WHERE target.voided=0
-        AND (UPPER(TRIM(COALESCE(target.gender, ''))) NOT IN ('M', 'MALE', 'F', 'FEMALE')
-             OR target.birthdate IS NULL)
-        AND UPPER(TRIM(source.gender)) IN ('M', 'MALE', 'F', 'FEMALE')
-        AND source.birthdate IS NOT NULL
+        AND (
+          (UPPER(TRIM(COALESCE(target.gender, ''))) NOT IN ('M', 'MALE', 'F', 'FEMALE')
+           AND UPPER(TRIM(source.gender)) IN ('M', 'MALE', 'F', 'FEMALE'))
+          OR (target.birthdate IS NULL AND source.birthdate IS NOT NULL)
+        )
       ORDER BY target.person_id
     SQL
   end
 
   def repair!(row)
     current = select_all(<<~SQL).first
-      SELECT person_id, uuid, gender, birthdate
+      SELECT person_id, uuid, gender, birthdate, birthdate_estimated
       FROM #{quote_table(@target_database)}.person
       WHERE person_id=#{row['target_id'].to_i} AND uuid=#{quote(row['uuid'])} AND voided=0
       LIMIT 1
+      FOR UPDATE
     SQL
     raise "Target patient #{row['uuid']} changed after review" unless current
 
     updates = {}
-    updates['gender'] = row['source_gender'] unless valid_gender?(current['gender'])
-    if current['birthdate'].blank?
+    if !valid_gender?(current['gender']) && valid_gender?(row['source_gender'])
+      updates['gender'] = row['source_gender']
+    end
+    if current['birthdate'].blank? && row['source_birthdate'].present?
       updates['birthdate'] = row['source_birthdate']
       updates['birthdate_estimated'] = row['source_birthdate_estimated']
     end
@@ -145,6 +149,9 @@ class ArtMissingDemographicsRepairTask
       UPDATE #{quote_table(@target_database)}.person
       SET #{assignments}
       WHERE person_id=#{row['target_id'].to_i} AND uuid=#{quote(row['uuid'])} AND voided=0
+        AND gender <=> #{quote(current['gender'])}
+        AND birthdate <=> #{quote(current['birthdate'])}
+        AND birthdate_estimated <=> #{quote(current['birthdate_estimated'])}
     SQL
     raise "Failed to update target patient #{row['uuid']}" unless affected == 1
   end

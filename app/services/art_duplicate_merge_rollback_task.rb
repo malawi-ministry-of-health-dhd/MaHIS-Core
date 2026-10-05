@@ -280,7 +280,9 @@ class ArtDuplicateMergeRollbackTask
 
   def enrich_group(group)
     primary = group.first
-    cleanup_at = Time.zone.parse(primary['cleanup_at'].to_s)
+    cleanup_at = group.filter_map { |pair| Time.zone.parse(pair['cleanup_at'].to_s) }.min
+    raise "Duplicate group #{primary['primary_uuid']} has no cleanup timestamp" unless cleanup_at
+
     patient_uuids = [primary['primary_uuid']] + group.map { |row| row['secondary_uuid'] }
     source_ids = [primary['primary_source_id']] + group.map { |row| row['secondary_source_id'] }
     arvs = source_arv_numbers(source_ids)
@@ -366,12 +368,15 @@ class ArtDuplicateMergeRollbackTask
     approved = all_rows.select { |row| truthy?(row['approved']) }
     raise 'The approval file has no rows marked approved=yes' if approved.empty?
 
-    selected_groups = approved.group_by { |row| row['primary_uuid'].to_s }.first(@limit)
+    grouped = approved.group_by { |row| row['primary_uuid'].to_s }
+    selected_groups = @approve_all ? grouped.to_a : grouped.first(@limit)
+    deferred_groups = grouped.length - selected_groups.length
     results = []
     successful_groups = 0
     selected_groups.each do |primary_uuid, rows|
-      validate_complete_group!(primary_uuid, rows, all_rows)
       @connection.transaction(requires_new: true) do
+        lock_group_patients!(rows)
+        validate_complete_group!(primary_uuid, rows, all_rows)
         apply_group!(rows)
       end
       rows.each do |row|
@@ -388,6 +393,10 @@ class ArtDuplicateMergeRollbackTask
 
     failures = results.count { |row| row['status'] == 'failed' }
     puts "\nCompleted #{successful_groups} group(s); result report: #{@result_path}"
+    if deferred_groups.positive?
+      puts "Deferred #{deferred_groups} approved group(s) because LIMIT=#{@limit}. " \
+           'Run the task again to process them.'
+    end
     raise "#{failures} reviewed row(s) failed; successful groups remain committed" if failures.positive?
   end
 
@@ -396,8 +405,6 @@ class ArtDuplicateMergeRollbackTask
       row['approved'] = 'yes'
       if row['new_encounter_count'].to_i.positive?
         owner = row['recommended_new_encounter_owner_uuid'].to_s
-        raise "No automatic ARV owner recommendation for primary UUID #{row['primary_uuid']}" if owner.blank?
-
         row['new_encounter_owner_uuid'] = owner
       end
       row
@@ -459,7 +466,9 @@ class ArtDuplicateMergeRollbackTask
     primary_target_id = target_person_id(primary_uuid)
     raise "Primary UUID #{primary_uuid} no longer exists" unless primary_target_id
 
-    restore_primary_demographics!(primary_source_id, primary_target_id)
+    # DdeMergingService only fills blank primary name/address values. Restoring
+    # the complete pre-cleanup snapshot here would overwrite legitimate edits
+    # made after the merge, so current primary demographics are preserved.
     restore_primary_rows_voided_by_merge!(primary_source_id)
     restored = rows.to_h do |row|
       source_id = row['secondary_source_id'].to_i
@@ -479,15 +488,6 @@ class ArtDuplicateMergeRollbackTask
     owner_id = owner_uuid == primary_uuid ? primary_target_id : restored.fetch(owner_uuid)
     ensure_active_arv_owner!(owner_id)
     move_new_encounters!(encounter_uuids, primary_target_id, owner_id, Time.zone.parse(rows.first['cleanup_at']))
-  end
-
-  def restore_primary_demographics!(source_id, target_id)
-    restore_original_row!('person', 'person_id', source_row!('person', 'person_id', source_id), target_id, overwrite: true)
-    %w[person_name person_address].each do |table|
-      source_rows(table, owner_column(table), source_id).each do |row|
-        restore_uuid_row!(table, primary_key(table), row, { owner_column(table) => target_id }, overwrite: true)
-      end
-    end
   end
 
   def restore_primary_rows_voided_by_merge!(source_patient_id)
@@ -774,6 +774,15 @@ class ArtDuplicateMergeRollbackTask
         AND NULLIF(TRIM(identifier), '') IS NOT NULL LIMIT 1
     SQL
     raise "Selected encounter owner #{patient_id} has no active ARV number" unless exists
+  end
+
+  def lock_group_patients!(rows)
+    uuids = rows.flat_map { |row| [row['primary_uuid'], row['secondary_uuid']] }.compact.uniq
+    ids = uuids.filter_map { |uuid| target_person_id(uuid) }.uniq.sort
+    return if ids.empty?
+
+    select_all("SELECT person_id FROM person WHERE person_id IN (#{integers(ids)}) ORDER BY person_id FOR UPDATE")
+    select_all("SELECT patient_id FROM patient WHERE patient_id IN (#{integers(ids)}) ORDER BY patient_id FOR UPDATE")
   end
 
   def restore_uuid_row!(table, pk, source_record, overrides, overwrite:)
