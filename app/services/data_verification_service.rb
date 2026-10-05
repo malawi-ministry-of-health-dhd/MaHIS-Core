@@ -31,31 +31,42 @@ class DataVerificationService
       report
     end
 
+    # user_property keeps one row per (user_id, property) - overwritten on
+    # every change, not a history - so this can only ever report a user's
+    # latest password change, never a running count of how many times
+    # they've changed it. It used to read the `last_password_reset` key,
+    # which nothing writes any more; password changes now write
+    # LoginResponseService::PASSWORD_UPDATED_PROPERTY instead (see
+    # UserService.touch_password_updated!), as an iso8601 timestamp rather
+    # than a plain date, so the range check is done in Ruby rather than a
+    # SQL date cast.
     def password_changes(params)
-      start_date, end_date, _ = verify_params(params)
+      verify_params(params)
+      range = Date.parse(params[:start_date])..Date.parse(params[:end_date])
 
       query = ActiveRecord::Base.connection.select_all <<~SQL
         SELECT up.property_value, u.user_id, CONCAT(p.given_name, ' ', p.family_name) AS username
         FROM user_property up
-        INNER JOIN users u USING(user_id)
+        INNER JOIN users u ON u.user_id = up.user_id
         INNER JOIN person_name p ON p.person_id = u.person_id
-        AND STR_TO_DATE(up.property_value, '%Y-%m-%d') >= #{start_date}
-        AND STR_TO_DATE(up.property_value, '%Y-%m-%d') <= #{end_date} 
-        WHERE up.property LIKE 'last_password_reset%'
-        GROUP BY u.user_id
+        WHERE up.property = '#{LoginResponseService::PASSWORD_UPDATED_PROPERTY}'
       SQL
 
       report = {}
 
       query.each do |pr|
-        id = pr['user_id']
-        date = pr['property_value']
-        username = pr['username']
+        date = begin
+          Time.zone.parse(pr['property_value']).to_date
+        rescue ArgumentError, TypeError
+          nil
+        end
+        next unless date && range.cover?(date)
 
+        username = pr['username']
         report[username] ||= []
         report[username].push({
-          date:,
-          user_id: id
+          date: pr['property_value'],
+          user_id: pr['user_id']
         })
       end
 

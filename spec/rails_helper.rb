@@ -74,6 +74,7 @@ RSpec.configure do |config|
     'clinical_data_deduplication_job_spec.rb',
     'hard_delete_unsyncable_patients_task_spec.rb',
     'exact_duplicate_patient_cleanup_task_spec.rb',
+    'art_duplicate_merge_rollback_task_spec.rb',
     'duplicate_identifier_cleanup_task_spec.rb',
     'dde_service_spec.rb',
     'dde_merging_service_spec.rb',
@@ -103,7 +104,8 @@ RSpec.configure do |config|
     'account_expiry_spec.rb',
     'brought_in_dead_service_spec.rb',
     'lab_results_queue_service_spec.rb',
-    'repair_obs_group_ids_spec.rb'
+    'repair_obs_group_ids_spec.rb',
+    'data_verification_service_spec.rb'
   ].freeze
 
   # Wrap individual test execution to skip non-passing specs

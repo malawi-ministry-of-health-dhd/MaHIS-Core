@@ -52,28 +52,32 @@ class DdeMergingService
     previous_footprint_suppression = Encounter.suppress_dde_footprint_push
     Encounter.suppress_dde_footprint_push = true if suppress_dde_footprints
 
-    ActiveRecord::Base.transaction do
-      primary_patient = Patient.find(primary_patient_ids['patient_id'])
-      secondary_patient = Patient.find(secondary_patient_ids['patient_id'])
-      raise InvalidParameterError, 'Cannot merge a patient into itself' if primary_patient.id == secondary_patient.id
+    # A patient's encounters, observations and programmes can come from other
+    # facilities; merge them all, not only those at the current location.
+    Locatable.without_location_scope do
+      ActiveRecord::Base.transaction do
+        primary_patient = Patient.find(primary_patient_ids['patient_id'])
+        secondary_patient = Patient.find(secondary_patient_ids['patient_id'])
+        raise InvalidParameterError, 'Cannot merge a patient into itself' if primary_patient.id == secondary_patient.id
 
-      merge_name(primary_patient, secondary_patient)
-      merge_identifiers(primary_patient, secondary_patient, strategy: identifier_strategy)
-      merge_attributes(primary_patient, secondary_patient)
-      merge_address(primary_patient, secondary_patient)
-      @obs_map = {}
-      if female_male_merge?(primary_patient, secondary_patient) && secondary_female?(secondary_patient)
-        void_program_encounter(primary_patient, secondary_patient, 'CxCa program')
-        void_program_encounter(primary_patient, secondary_patient, 'ANC PROGRAM')
+        merge_name(primary_patient, secondary_patient)
+        merge_identifiers(primary_patient, secondary_patient, strategy: identifier_strategy)
+        merge_attributes(primary_patient, secondary_patient)
+        merge_address(primary_patient, secondary_patient)
+        @obs_map = {}
+        if female_male_merge?(primary_patient, secondary_patient) && secondary_female?(secondary_patient)
+          void_program_encounter(primary_patient, secondary_patient, 'CxCa program')
+          void_program_encounter(primary_patient, secondary_patient, 'ANC PROGRAM')
+        end
+        result = merge_encounters(primary_patient, secondary_patient)
+        merge_observations(primary_patient, secondary_patient, result)
+        merge_orders(primary_patient, secondary_patient, result)
+        merge_programs(primary_patient, secondary_patient)
+        MergeAuditService.new.create_merge_audit(primary_patient.id, secondary_patient.id, merge_type)
+        secondary_patient.void("Merged into patient ##{primary_patient.id}:0")
+
+        primary_patient
       end
-      result = merge_encounters(primary_patient, secondary_patient)
-      merge_observations(primary_patient, secondary_patient, result)
-      merge_orders(primary_patient, secondary_patient, result)
-      merge_programs(primary_patient, secondary_patient)
-      MergeAuditService.new.create_merge_audit(primary_patient.id, secondary_patient.id, merge_type)
-      secondary_patient.void("Merged into patient ##{primary_patient.id}:0")
-
-      primary_patient
     end
   ensure
     Encounter.suppress_dde_footprint_push = previous_footprint_suppression

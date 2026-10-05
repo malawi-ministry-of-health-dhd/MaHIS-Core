@@ -94,7 +94,7 @@ module ArtService
               AND order_type.retired = 0
             INNER JOIN concept_name
               ON concept_name.concept_id = orders.concept_id
-              AND concept_name.name IN ('Blood', 'DBS (Free drop to DBS card)', 'DBS (Using capillary tube)', 'Plasma')
+              AND concept_name.name IN (#{specimen_names_sql})
               AND concept_name.voided = 0
             LEFT JOIN obs AS reason_for_test
               ON reason_for_test.order_id = orders.order_id
@@ -118,7 +118,7 @@ module ArtService
                 AND order_type.retired = 0
               INNER JOIN concept_name
                 ON concept_name.concept_id = orders.concept_id
-                AND concept_name.name IN ('Blood', 'DBS (Free drop to DBS card)', 'DBS (Using capillary tube)', 'Plasma')
+                AND concept_name.name IN (#{specimen_names_sql})
                 AND concept_name.voided = 0
               WHERE orders.start_date < DATE(#{ActiveRecord::Base.connection.quote(end_date)}) + INTERVAL 1 DAY
                 AND orders.start_date >= DATE(#{ActiveRecord::Base.connection.quote(start_date)}) - INTERVAL 12 MONTH
@@ -142,6 +142,20 @@ module ArtService
         # rubocop:enable Metrics/MethodLength
 
         private
+
+        SPECIMEN_TYPES = [
+          'Blood',
+          'DBS (Free drop to DBS card)',
+          'DBS (Using capillary tube)',
+          'Plasma',
+          '50:50 Normal Plasma',
+          'DBS 70ml',
+          'Venous Whole Blood'
+        ].freeze
+
+        def specimen_names_sql
+          SPECIMEN_TYPES.map { |name| ActiveRecord::Base.connection.quote(name) }.join(', ')
+        end
 
         # rubocop:disable Metrics/AbcSize
         # rubocop:disable Metrics/MethodLength
@@ -348,7 +362,7 @@ module ArtService
               FROM orders ab
               INNER JOIN concept_name
                 ON concept_name.concept_id = ab.concept_id
-                AND concept_name.name IN ('Blood', 'DBS (Free drop to DBS card)', 'DBS (Using capillary tube)', '50:50 Normal Plasma')
+                AND concept_name.name IN (#{specimen_names_sql})
                 AND concept_name.voided = 0
               LEFT OUTER JOIN orders b ON ab.patient_id = b.patient_id
                 AND ab.order_id = b.order_id
