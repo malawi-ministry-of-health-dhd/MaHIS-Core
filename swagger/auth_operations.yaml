@@ -1,0 +1,526 @@
+# Reviewed auth operations applied by bin/sync_swagger_routes.rb after rswag generation.
+paths:
+  /api/v1/auth/login:
+    post:
+      summary: Log in to MaHIS
+      tags: [Auth]
+      description: >-
+        Authenticate with a username and password. A successful response contains
+        authorization.token for the API's Authorization header. Some users must
+        complete supervision or a passkey step before login is complete.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+                  format: password
+                platform:
+                  type: string
+                  description: Optional platform for passkey authentication.
+                enroll_device:
+                  type: boolean
+                  description: Request passkey enrolment for this device when needed.
+      responses:
+        '200':
+          description: Authenticated; the token is in authorization.token.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [authorization, first_time_login, password_needs_update]
+                properties:
+                  authorization:
+                    type: object
+                    required: [token, expiry_time, user]
+                    properties:
+                      token:
+                        type: string
+                      expiry_time:
+                        type: string
+                        format: date-time
+                      user:
+                        type: object
+                        additionalProperties: true
+                  facility_level:
+                    type: string
+                    nullable: true
+                  first_time_login:
+                    type: boolean
+                  password_needs_update:
+                    type: boolean
+        '202':
+          description: Further action is required before a token is issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Supervision details or a passkey challenge, depending on the user.
+                properties:
+                  action:
+                    type: string
+                    example: supervision_required
+                  supervision_required:
+                    type: boolean
+                  passkey_registration_required:
+                    type: boolean
+                  passkey_authentication_required:
+                    type: boolean
+                  passkey_session:
+                    type: string
+                  public_key:
+                    type: object
+                    additionalProperties: true
+        '400':
+          description: Required login fields are missing or invalid.
+        '401':
+          description: Invalid username or password.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errors:
+                    type: array
+                    items:
+                      type: string
+        '403':
+          description: The account period has expired.
+        '429':
+          description: Login is temporarily throttled; see Retry-After.
+          headers:
+            Retry-After:
+              description: Seconds before retrying.
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errors:
+                    type: array
+                    items:
+                      type: string
+                  retry_after:
+                    type: integer
+  /api/v1/lab/users/login:
+    post:
+      summary: Log in to the Lab API
+      tags: [Auth]
+      description: Authenticate a Lab user and return a Lab auth token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+                  format: password
+      responses:
+        '200':
+          description: Authenticated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [auth_token]
+                properties:
+                  auth_token:
+                    type: string
+        '401':
+          description: Invalid credentials.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+  /api/v1/auth/confirm_supervision:
+    post:
+      summary: Complete a supervised login
+      tags: [Auth]
+      description: Recheck the user's password, record the selected supervisor when required, and issue a token or passkey challenge. A supervisor may be omitted only when the supervision requirement is optional.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string, format: password }
+                supervisor_user_id: { type: integer, description: ID of the selected supervisor. }
+                platform: { type: string, description: Platform used for a subsequent passkey step. }
+                enroll_device: { type: boolean }
+      responses:
+        '200':
+          description: Login completed. The response includes authorization.token and may include supervision_session.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authorization:
+                    type: object
+                    properties:
+                      token: { type: string }
+                      expiry_time: { type: string, format: date-time }
+                      user: { type: object, additionalProperties: true }
+                  supervision_session: { type: object, additionalProperties: true }
+                  first_time_login: { type: boolean }
+                  password_needs_update: { type: boolean }
+        '202':
+          description: Passkey registration or authentication must be completed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  passkey_registration_required: { type: boolean }
+                  passkey_authentication_required: { type: boolean }
+                  passkey_session: { type: string }
+                  public_key: { type: object, additionalProperties: true }
+        '400': { description: 'Missing credentials, missing mandatory supervisor, or supervision is not required.' }
+        '401': { description: Invalid username or password. }
+        '403': { description: Selected supervisor cannot supervise this user. }
+  /api/v1/auth/passkeys/register:
+    post:
+      summary: Register a passkey and complete login
+      tags: [Auth]
+      description: Complete the registration challenge returned by login or confirm_supervision. credential is the WebAuthn registration response supplied by the client authenticator.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_token, credential]
+              properties:
+                session_token: { type: string, description: passkey_session from the challenge response. }
+                credential: { type: object, additionalProperties: true, description: WebAuthn registration credential. }
+                nickname: { type: string, description: Optional device label. }
+      responses:
+        '200':
+          description: Passkey registered and login completed; use authorization.token for subsequent requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authorization:
+                    type: object
+                    properties:
+                      token: { type: string }
+                      expiry_time: { type: string, format: date-time }
+                      user: { type: object, additionalProperties: true }
+                  first_time_login: { type: boolean }
+                  password_needs_update: { type: boolean }
+        '400': { description: Required session token or credential is missing. }
+        '401': { description: Session or WebAuthn credential could not be verified. }
+  /api/v1/auth/passkeys/authenticate:
+    post:
+      summary: Authenticate a passkey and complete login
+      tags: [Auth]
+      description: Complete the authentication challenge returned by login or confirm_supervision. credential is the WebAuthn assertion supplied by the client authenticator.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_token, credential]
+              properties:
+                session_token: { type: string, description: passkey_session from the challenge response. }
+                credential: { type: object, additionalProperties: true, description: WebAuthn authentication assertion. }
+      responses:
+        '200':
+          description: Passkey accepted and login completed; use authorization.token for subsequent requests.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authorization:
+                    type: object
+                    properties:
+                      token: { type: string }
+                      expiry_time: { type: string, format: date-time }
+                      user: { type: object, additionalProperties: true }
+                  first_time_login: { type: boolean }
+                  password_needs_update: { type: boolean }
+        '400': { description: Required session token or credential is missing. }
+        '401': { description: Session or WebAuthn credential could not be verified. }
+  /api/v1/auth/security_questions:
+    get:
+      summary: Get a user's password recovery questions
+      tags: [Auth]
+      description: Returns the three questions configured for a username without revealing answers. Requests are throttled by username.
+      security: []
+      parameters:
+        - name: username
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Recovery questions for the user.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [username, questions]
+                properties:
+                  username: { type: string }
+                  questions:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, text]
+                      properties:
+                        id: { type: string }
+                        text: { type: string }
+        '404': { description: Password recovery questions are unavailable for this account. }
+        '429': { description: Too many attempts; retry after the throttle interval. }
+  /api/v1/auth/security_questions/verify:
+    post:
+      summary: Verify recovery answers
+      tags: [Auth]
+      description: Submit all three configured answers. At least two must match. A successful response contains a one-use reset token valid for ten minutes.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, answers]
+              properties:
+                username: { type: string }
+                answers:
+                  type: array
+                  minItems: 3
+                  maxItems: 3
+                  items:
+                    type: object
+                    required: [question_id, answer]
+                    properties:
+                      question_id: { type: string }
+                      answer: { type: string }
+      responses:
+        '200':
+          description: Answers verified; token can only be used to reset a password.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, expires_in]
+                properties:
+                  token: { type: string }
+                  expires_in: { type: integer, example: 600 }
+        '401': { description: Answers did not match or recovery is unavailable. }
+        '429': { description: Too many attempts; retry after the throttle interval. }
+  /api/v1/auth/security_questions/reset_password:
+    post:
+      summary: Reset a password with a recovery token
+      tags: [Auth]
+      description: Consumes the one-use reset token even when the submitted password is too short. Obtain a new token before retrying in that case.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reset_token, password]
+              properties:
+                reset_token: { type: string }
+                password: { type: string, format: password, minLength: 6 }
+      responses:
+        '200':
+          description: Password changed; log in using the new password.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+        '400': { description: Password is shorter than six characters. }
+        '401': { description: 'Reset token is invalid, expired, or already used.' }
+  /api/v1/auth/reset_password:
+    post:
+      summary: Reset password access with a recovery code
+      tags: [Auth]
+      description: Validates an issued recovery code and returns an API authorization token. The account is marked to require a password change on the next login.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string }
+      responses:
+        '200':
+          description: Recovery code accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authorization:
+                    type: object
+                    properties:
+                      token: { type: string }
+                      expiry_time: { type: string, format: date-time }
+        '400': { description: 'Code is missing, invalid, expired, or does not match the configured location.' }
+        '404': { description: User identified by the code was not found. }
+  /api/v1/auth/verify_token:
+    post:
+      summary: Check an API token
+      tags: [Auth]
+      description: Checks the Authorization header using the same token validation as protected endpoints.
+      responses:
+        '200':
+          description: Token is valid.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [valid]
+                properties:
+                  valid: { type: boolean, example: true }
+        '401': { description: 'Authorization header is missing, invalid, or expired.' }
+  /api/v1/security_questions:
+    get:
+      summary: List security questions and current selections
+      tags: [Auth]
+      description: Requires an Authorization token. Answers are never returned.
+      responses:
+        '200':
+          description: Question catalogue and current user's configuration.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [questions, required, configured, selected]
+                properties:
+                  questions:
+                    type: array
+                    items: { type: object, properties: { id: { type: string }, text: { type: string } } }
+                  required: { type: integer, example: 3 }
+                  configured: { type: boolean }
+                  selected:
+                    type: array
+                    items: { type: object, properties: { id: { type: string }, text: { type: string } } }
+        '401': { description: 'Authorization token is missing, invalid, or expired.' }
+    post:
+      summary: Set security questions for the current user
+      tags: [Auth]
+      description: Replaces the current user's three answers. Answers are stored as salted hashes and are never returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [answers]
+              properties:
+                answers:
+                  type: array
+                  minItems: 3
+                  maxItems: 3
+                  items:
+                    type: object
+                    required: [question_id, answer]
+                    properties:
+                      question_id: { type: string }
+                      answer: { type: string, minLength: 2 }
+      responses:
+        '200':
+          description: Questions saved; selected contains question IDs and text, never answers.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  selected:
+                    type: array
+                    items: { type: object, properties: { id: { type: string }, text: { type: string } } }
+        '400': { description: Must choose three distinct catalogue questions and answers of at least two characters. }
+        '401': { description: 'Authorization token is missing, invalid, or expired.' }
+    delete:
+      summary: Remove the current user's security questions
+      tags: [Auth]
+      responses:
+        '200':
+          description: Questions and any outstanding recovery token removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+        '401': { description: 'Authorization token is missing, invalid, or expired.' }
+  /api/v1/users/{user_id}/passkeys:
+    get:
+      summary: List a user's registered passkey devices
+      tags: [Auth]
+      description: Requires an API token and sufficient permission to manage the target user.
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Registered device summaries.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  devices: { type: array, items: { type: object, additionalProperties: true } }
+        '401': { description: Token invalid or caller cannot manage this user. }
+        '404': { description: Target user was not found or is outside the caller's managed locations. }
+    delete:
+      summary: Revoke a user's passkeys
+      tags: [Auth]
+      description: Requires an API token and sufficient permission to manage the target user. The next login will require passkey registration.
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Number of passkeys revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revoked: { type: integer }
+        '401': { description: Token invalid or caller cannot manage this user. }
+        '404': { description: Target user was not found or is outside the caller's managed locations. }

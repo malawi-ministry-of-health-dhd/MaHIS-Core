@@ -115,6 +115,11 @@ module Api
                 status: :ok
       end
 
+      # Authentication has already been checked by ApplicationController.
+      def check_token_validity
+        render json: { valid: true }, status: :ok
+      end
+
       def login
         login_params, error = required_params required: %i[username password]
         return render json: login_params, status: :bad_request if error

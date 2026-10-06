@@ -3,6 +3,9 @@ openapi: 3.0.1
 info:
   title: API V1
   version: v1
+tags:
+- name: Auth
+  description: Sign-in endpoints
 paths:
   "/api/v1/lab/orders":
     post:
@@ -168,7 +171,8 @@ paths:
         required: false
         description: Select results falling on a specific date
         schema:
-          type: date
+          type: string
+          format: date
       - name: status
         in: query
         required: false
@@ -180,7 +184,8 @@ paths:
         required: false
         description: Select all results before this date
         schema:
-          type: date
+          type: string
+          format: date
       responses:
         '200':
           description: Success
@@ -288,83 +293,81 @@ paths:
               schema:
                 type: object
                 properties:
-                  type: object
-                  properties:
-                    id:
-                      type: integer
-                    patient_id:
-                      type: integer
-                    encounter_id:
-                      type: integer
-                    order_date:
-                      type: string
-                      format: datetime
-                    accession_number:
-                      type: string
-                    specimen:
+                  id:
+                    type: integer
+                  patient_id:
+                    type: integer
+                  encounter_id:
+                    type: integer
+                  order_date:
+                    type: string
+                    format: datetime
+                  accession_number:
+                    type: string
+                  specimen:
+                    type: object
+                    properties:
+                      concept_id:
+                        type: integer
+                      name:
+                        type: string
+                    required:
+                    - concept_id
+                    - name
+                  requesting_clinician:
+                    type: string
+                    nullable: true
+                  target_lab:
+                    type: string
+                  reason_for_test:
+                    type: object
+                    properties:
+                      concept_id:
+                        type: integer
+                      name:
+                        type: string
+                    required:
+                    - concept_id
+                    - name
+                  tests:
+                    type: array
+                    items:
                       type: object
                       properties:
+                        id:
+                          type: integer
                         concept_id:
                           type: integer
                         name:
                           type: string
+                        result:
+                          type: object
+                          nullable: true
+                          properties:
+                            id:
+                              type: integer
+                            value:
+                              type: string
+                              nullable: true
+                            date:
+                              type: string
+                              format: datetime
+                              nullable: true
+                          required:
+                          - id
+                          - value
+                          - date
                       required:
+                      - id
                       - concept_id
                       - name
-                    requesting_clinician:
-                      type: string
-                      nullable: true
-                    target_lab:
-                      type: string
-                    reason_for_test:
-                      type: object
-                      properties:
-                        concept_id:
-                          type: integer
-                        name:
-                          type: string
-                      required:
-                      - concept_id
-                      - name
-                    tests:
-                      type: array
-                      items:
-                        type: object
-                        properties:
-                          id:
-                            type: integer
-                          concept_id:
-                            type: integer
-                          name:
-                            type: string
-                          result:
-                            type: object
-                            nullable: true
-                            properties:
-                              id:
-                                type: integer
-                              value:
-                                type: string
-                                nullable: true
-                              date:
-                                type: string
-                                format: datetime
-                                nullable: true
-                            required:
-                            - id
-                            - value
-                            - date
-                        required:
-                        - id
-                        - concept_id
-                        - name
-                  required:
-                  - id
-                  - specimen
-                  - reason_for_test
-                  - accession_number
-                  - patient_id
-                  - order_date
+                required:
+                - id
+                - specimen
+                - reason_for_test
+                - accession_number
+                - patient_id
+                - order_date
       requestBody:
         content:
           application/json:
@@ -403,39 +406,80 @@ paths:
         '204':
           description: No Content
     get:
-      summary: GET /api/v1/lab/orders/{order_id}
+      summary: 'Unavailable: GET /api/v1/lab/orders/{order_id}'
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not yet
-        been documented.
+      description: The registered controller action is absent or not dispatchable in this
+        build.
+      deprecated: true
       parameters:
       - name: order_id
         in: path
         required: true
+        description: URL path segment; Rails passes it to the action as a string.
         schema:
           type: string
       responses:
         default:
-          description: Response status and schema depend on the controller action.
+          description: The route cannot be dispatched to an implemented controller action.
       x-rails-action: lab/orders#show
-      x-route-inventory: true
+      x-route-unavailable: true
     patch:
-      summary: PATCH /api/v1/lab/orders/{order_id}
+      summary: Update lab orders
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not yet
-        been documented.
+      description: 'Update lab orders. Reads specimen, id, force_update. Serialized JSON
+        result of `OrdersService.update_order(params[:id], specimen:, force_update: params[:force_update])`.'
+      x-rails-action: lab/orders#update
+      x-controller-source: "../../../.rvm/gems/ruby-3.2.2/gems/his_emr_api_lab-2.4.7/app/controllers/lab/orders_controller.rb:23"
+      x-contract-source: controller
       parameters:
       - name: order_id
         in: path
         required: true
+        description: URL path segment; Rails passes it to the action as a string.
         schema:
           type: string
+      requestBody:
+        required: true
+        description: Controller request parameters. Rails may also accept these in the
+          query string.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                specimen:
+                  type: string
+                id:
+                  type: integer
+                force_update:
+                  type: string
+              required:
+              - specimen
       responses:
-        default:
-          description: Response status and schema depend on the controller action.
-      x-rails-action: lab/orders#update
-      x-route-inventory: true
+        '200':
+          description: 'Serialized JSON result of `OrdersService.update_order(params[:id],
+            specimen:, force_update: params[:force_update])`.'
+          content:
+            application/json:
+              schema:
+                description: 'Serialized result of `OrdersService.update_order(params[:id],
+                  specimen:, force_update: params[:force_update])`. The output shape is
+                  defined by the called service.'
+        '400':
+          description: A required request parameter is missing.
+        '401':
+          description: Authorization header is missing, invalid, or expired.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errors:
+                    type: array
+                    items:
+                      type: string
   "/api/v1/lab/reasons_for_test":
     get:
       summary: Reasons for test
@@ -501,10 +545,10 @@ paths:
                         properties:
                           concept_id:
                             type: integer
-                            description: Concept ID of a test result indicator for
-                              this test (see GET /test_result_indicators)
-                          required:
-                          - concept_id
+                            description: Concept ID of a test result indicator for this
+                              test (see GET /test_result_indicators)
+                        required:
+                        - concept_id
                       value:
                         type: string
                         example: LDL
@@ -518,8 +562,8 @@ paths:
                         - boolean
                         - numeric
                         - coded
-                        description: Determines under what column the value is to
-                          be saved under in the obs table (defaults to text)
+                        description: Determines under what column the value is to be saved
+                          under in the obs table (defaults to text)
                         example: text
                     required:
                     - indicator
@@ -527,22 +571,24 @@ paths:
               required:
               - measures
     get:
-      summary: GET /api/v1/lab/tests/{test_id}/results
+      summary: 'Unavailable: GET /api/v1/lab/tests/{test_id}/results'
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not yet
-        been documented.
+      description: The registered controller action is absent or not dispatchable in this
+        build.
+      deprecated: true
       parameters:
       - name: test_id
         in: path
         required: true
+        description: URL path segment; Rails passes it to the action as a string.
         schema:
           type: string
       responses:
         default:
-          description: Response status and schema depend on the controller action.
+          description: The route cannot be dispatched to an implemented controller action.
       x-rails-action: lab/results#index
-      x-route-inventory: true
+      x-route-unavailable: true
   "/api/v1/lab/specimen_types":
     get:
       summary: Specimen types
@@ -690,10 +736,12 @@ paths:
                     name:
                       type: string
                     order:
-                      order_id:
-                        type: string
-                      accession_number:
-                        type: string
+                      type: object
+                      properties:
+                        order_id:
+                          type: string
+                        accession_number:
+                          type: string
     post:
       summary: Add tests to an existing order
       tags:
@@ -723,10 +771,12 @@ paths:
                     name:
                       type: string
                     order:
-                      order_id:
-                        type: string
-                      accession_number:
-                        type: string
+                      type: object
+                      properties:
+                        order_id:
+                          type: string
+                        accession_number:
+                          type: string
       requestBody:
         content:
           application/json:
@@ -750,267 +800,640 @@ paths:
               - tests
   "/api/v1/lab/accession_numbers/top_up":
     post:
-      summary: POST /api/v1/lab/accession_numbers/top_up
+      summary: Top up lab accession numbers
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not
-        yet been documented.
-      parameters: []
-      responses:
-        default:
-          description: Response status and schema depend on the controller action.
+      description: Top up lab accession numbers. Reads location_id, target_count, count.
+        Serialized JSON result of `service.ensure_pool_for_location(`.
       x-rails-action: api/v1/lab_accession_numbers#top_up
-      x-route-inventory: true
+      x-controller-source: app/controllers/api/v1/lab_accession_numbers_controller.rb:6
+      x-contract-source: controller
+      parameters: []
+      requestBody:
+        required: false
+        description: Controller request parameters. Rails may also accept these in the
+          query string.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                location_id:
+                  type: integer
+                target_count:
+                  type: integer
+                count:
+                  type: integer
+      responses:
+        '200':
+          description: Serialized JSON result of `service.ensure_pool_for_location(`.
+          content:
+            application/json:
+              schema:
+                description: Serialized result of `service.ensure_pool_for_location(`.
+                  The output shape is defined by the called service.
+        '401':
+          description: Authorization header is missing, invalid, or expired.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errors:
+                    type: array
+                    items:
+                      type: string
+        '422':
+          description: 'JSON fields: errors.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errors:
+                    type: array
+                    items: {}
   "/api/v1/lab/accession_numbers/top_up_all":
     post:
-      summary: POST /api/v1/lab/accession_numbers/top_up_all
+      summary: Top up all lab accession numbers
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not
-        yet been documented.
-      parameters: []
-      responses:
-        default:
-          description: Response status and schema depend on the controller action.
+      description: 'Top up all lab accession numbers. Reads target_count. Serialized JSON
+        result of `service.ensure_pool_for_all_facilities(target_count: params[:target_count])`.'
       x-rails-action: api/v1/lab_accession_numbers#top_up_all
-      x-route-inventory: true
+      x-controller-source: app/controllers/api/v1/lab_accession_numbers_controller.rb:18
+      x-contract-source: controller
+      parameters: []
+      requestBody:
+        required: false
+        description: Controller request parameters. Rails may also accept these in the
+          query string.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_count:
+                  type: integer
+      responses:
+        '200':
+          description: 'Serialized JSON result of `service.ensure_pool_for_all_facilities(target_count:
+            params[:target_count])`.'
+          content:
+            application/json:
+              schema:
+                description: 'Serialized result of `service.ensure_pool_for_all_facilities(target_count:
+                  params[:target_count])`. The output shape is defined by the called service.'
+        '401':
+          description: Authorization header is missing, invalid, or expired.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errors:
+                    type: array
+                    items:
+                      type: string
   "/api/v1/lab/accession_numbers/reserve":
     post:
-      summary: POST /api/v1/lab/accession_numbers/reserve
+      summary: Reserve lab accession numbers
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not
-        yet been documented.
-      parameters: []
-      responses:
-        default:
-          description: Response status and schema depend on the controller action.
+      description: 'Reserve lab accession numbers. Reads location_id, device_id, count.
+        JSON fields: count, accession_numbers.'
       x-rails-action: api/v1/lab_accession_numbers#reserve
-      x-route-inventory: true
+      x-controller-source: app/controllers/api/v1/lab_accession_numbers_controller.rb:22
+      x-contract-source: controller
+      parameters: []
+      requestBody:
+        required: false
+        description: Controller request parameters. Rails may also accept these in the
+          query string.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                location_id:
+                  type: integer
+                device_id:
+                  type: integer
+                count:
+                  type: integer
+      responses:
+        '200':
+          description: 'JSON fields: count, accession_numbers.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                  accession_numbers:
+                    type: object
+                    properties: {}
+        '401':
+          description: Authorization header is missing, invalid, or expired.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errors:
+                    type: array
+                    items:
+                      type: string
+        '422':
+          description: 'JSON fields: errors.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errors:
+                    type: array
+                    items: {}
   "/api/v1/lab/orders/order_status":
     post:
-      summary: POST /api/v1/lab/orders/order_status
+      summary: Order status lab orders
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not
-        yet been documented.
-      parameters: []
-      responses:
-        default:
-          description: Response status and schema depend on the controller action.
+      description: 'Order status lab orders. Reads tracking_number, status, status_time,
+        comments, status_id, updated_by. JSON fields: message.'
       x-rails-action: lab/orders#order_status
-      x-route-inventory: true
+      x-controller-source: "../../../.rvm/gems/ruby-3.2.2/gems/his_emr_api_lab-2.4.7/app/controllers/lab/orders_controller.rb:79"
+      x-contract-source: controller
+      security: []
+      parameters: []
+      requestBody:
+        required: false
+        description: Controller request parameters. Rails may also accept these in the
+          query string.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tracking_number:
+                  type: string
+                status:
+                  type: string
+                status_time:
+                  type: string
+                comments:
+                  type: string
+                status_id:
+                  type: integer
+                updated_by:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      first_name:
+                        type: string
+                      last_name:
+                        type: string
+                      id:
+                        type: integer
+                      phone_number:
+                        type: string
+      responses:
+        '200':
+          description: 'JSON fields: message.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
   "/api/v1/lab/orders/order_result":
     post:
-      summary: POST /api/v1/lab/orders/order_result
+      summary: Order result lab orders
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not
-        yet been documented.
-      parameters: []
-      responses:
-        default:
-          description: Response status and schema depend on the controller action.
+      description: 'Order result lab orders. Reads data. JSON fields: message.'
       x-rails-action: lab/orders#order_result
-      x-route-inventory: true
+      x-controller-source: "../../../.rvm/gems/ruby-3.2.2/gems/his_emr_api_lab-2.4.7/app/controllers/lab/orders_controller.rb:86"
+      x-contract-source: controller
+      security: []
+      parameters: []
+      requestBody:
+        required: false
+        description: Controller request parameters. Rails may also accept these in the
+          query string.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: string
+      responses:
+        '200':
+          description: 'JSON fields: message.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
   "/api/v1/lab/orders/summary":
     get:
-      summary: GET /api/v1/lab/orders/summary
+      summary: Summary lab orders
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not
-        yet been documented.
-      parameters: []
-      responses:
-        default:
-          description: Response status and schema depend on the controller action.
+      description: 'Summary lab orders. Reads start_date, end_date, concept_id, include_data,
+        location_id. Serialized JSON result of `OrdersService.lab_orders(start_date, end_date,
+        concept_id, include_data: include_data, location_id: location_id)`.'
       x-rails-action: lab/orders#summary
-      x-route-inventory: true
+      x-controller-source: "../../../.rvm/gems/ruby-3.2.2/gems/his_emr_api_lab-2.4.7/app/controllers/lab/orders_controller.rb:93"
+      x-contract-source: controller
+      security: []
+      parameters:
+      - name: start_date
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+      - name: end_date
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+      - name: concept_id
+        in: query
+        required: false
+        schema:
+          type: integer
+      - name: include_data
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: location_id
+        in: query
+        required: false
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: 'Serialized JSON result of `OrdersService.lab_orders(start_date,
+            end_date, concept_id, include_data: include_data, location_id: location_id)`.'
+          content:
+            application/json:
+              schema:
+                description: 'Serialized result of `OrdersService.lab_orders(start_date,
+                  end_date, concept_id, include_data: include_data, location_id: location_id)`.
+                  The output shape is defined by the called service.'
   "/api/v1/lab/orders/new":
     get:
-      summary: GET /api/v1/lab/orders/new
+      summary: 'Unavailable: GET /api/v1/lab/orders/new'
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not
-        yet been documented.
+      description: The registered controller action is absent or not dispatchable in this
+        build.
+      deprecated: true
       parameters: []
       responses:
         default:
-          description: Response status and schema depend on the controller action.
+          description: The route cannot be dispatched to an implemented controller action.
       x-rails-action: lab/orders#new
-      x-route-inventory: true
+      x-route-unavailable: true
   "/api/v1/lab/orders/{id}/edit":
     get:
-      summary: GET /api/v1/lab/orders/{id}/edit
+      summary: 'Unavailable: GET /api/v1/lab/orders/{id}/edit'
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not
-        yet been documented.
+      description: The registered controller action is absent or not dispatchable in this
+        build.
+      deprecated: true
       parameters:
       - name: id
         in: path
         required: true
+        description: URL path segment; Rails passes it to the action as a string.
         schema:
           type: string
       responses:
         default:
-          description: Response status and schema depend on the controller action.
+          description: The route cannot be dispatched to an implemented controller action.
       x-rails-action: lab/orders#edit
-      x-route-inventory: true
+      x-route-unavailable: true
   "/api/v1/lab/tests/{test_id}/results/{id}":
     delete:
-      summary: DELETE /api/v1/lab/tests/{test_id}/results/{id}
+      summary: 'Unavailable: DELETE /api/v1/lab/tests/{test_id}/results/{id}'
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not
-        yet been documented.
+      description: The registered controller action is absent or not dispatchable in this
+        build.
+      deprecated: true
       parameters:
       - name: test_id
         in: path
         required: true
+        description: URL path segment; Rails passes it to the action as a string.
         schema:
           type: string
       - name: id
         in: path
         required: true
+        description: URL path segment; Rails passes it to the action as a string.
         schema:
           type: string
       responses:
         default:
-          description: Response status and schema depend on the controller action.
+          description: The route cannot be dispatched to an implemented controller action.
       x-rails-action: lab/results#destroy
-      x-route-inventory: true
+      x-route-unavailable: true
   "/api/v1/lab/tests/new":
     get:
-      summary: GET /api/v1/lab/tests/new
+      summary: 'Unavailable: GET /api/v1/lab/tests/new'
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not
-        yet been documented.
+      description: The registered controller action is absent or not dispatchable in this
+        build.
+      deprecated: true
       parameters: []
       responses:
         default:
-          description: Response status and schema depend on the controller action.
+          description: The route cannot be dispatched to an implemented controller action.
       x-rails-action: lab/tests#new
-      x-route-inventory: true
+      x-route-unavailable: true
   "/api/v1/lab/tests/{id}/edit":
     get:
-      summary: GET /api/v1/lab/tests/{id}/edit
+      summary: 'Unavailable: GET /api/v1/lab/tests/{id}/edit'
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not
-        yet been documented.
+      description: The registered controller action is absent or not dispatchable in this
+        build.
+      deprecated: true
       parameters:
       - name: id
         in: path
         required: true
+        description: URL path segment; Rails passes it to the action as a string.
         schema:
           type: string
       responses:
         default:
-          description: Response status and schema depend on the controller action.
+          description: The route cannot be dispatched to an implemented controller action.
       x-rails-action: lab/tests#edit
-      x-route-inventory: true
+      x-route-unavailable: true
   "/api/v1/lab/tests/{id}":
     get:
-      summary: GET /api/v1/lab/tests/{id}
+      summary: 'Unavailable: GET /api/v1/lab/tests/{id}'
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not
-        yet been documented.
+      description: The registered controller action is absent or not dispatchable in this
+        build.
+      deprecated: true
       parameters:
       - name: id
         in: path
         required: true
+        description: URL path segment; Rails passes it to the action as a string.
         schema:
           type: string
       responses:
         default:
-          description: Response status and schema depend on the controller action.
+          description: The route cannot be dispatched to an implemented controller action.
       x-rails-action: lab/tests#show
-      x-route-inventory: true
+      x-route-unavailable: true
     delete:
-      summary: DELETE /api/v1/lab/tests/{id}
+      summary: 'Unavailable: DELETE /api/v1/lab/tests/{id}'
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not
-        yet been documented.
+      description: The registered controller action is absent or not dispatchable in this
+        build.
+      deprecated: true
       parameters:
       - name: id
         in: path
         required: true
+        description: URL path segment; Rails passes it to the action as a string.
         schema:
           type: string
       responses:
         default:
-          description: Response status and schema depend on the controller action.
+          description: The route cannot be dispatched to an implemented controller action.
       x-rails-action: lab/tests#destroy
-      x-route-inventory: true
+      x-route-unavailable: true
   "/api/v1/lab/labels/order":
     get:
-      summary: GET /api/v1/lab/labels/order
+      summary: Print order label lab labels
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not
-        yet been documented.
-      parameters: []
-      responses:
-        default:
-          description: Response status and schema depend on the controller action.
+      description: Print order label lab labels. Reads order_id, number_of_copies, use_small_specimen_label,
+        raw. Barcode or label data. Use raw=true for a printable label stream.
       x-rails-action: lab/labels#print_order_label
-      x-route-inventory: true
+      x-controller-source: "../../../.rvm/gems/ruby-3.2.2/gems/his_emr_api_lab-2.4.7/app/controllers/lab/labels_controller.rb:8"
+      x-contract-source: controller
+      security: []
+      parameters:
+      - name: order_id
+        in: query
+        required: true
+        schema:
+          type: integer
+      - name: number_of_copies
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: use_small_specimen_label
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: raw
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Barcode or label data. Use raw=true for a printable label stream.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            application/label:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: A required request parameter is missing.
   "/api/v1/lab/accession_number":
     get:
-      summary: GET /api/v1/lab/accession_number
+      summary: Verify tracking number lab orders
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not
-        yet been documented.
-      parameters: []
-      responses:
-        default:
-          description: Response status and schema depend on the controller action.
+      description: 'Verify tracking number lab orders. Reads accession_number. JSON fields:
+        exists.'
       x-rails-action: lab/orders#verify_tracking_number
-      x-route-inventory: true
+      x-controller-source: "../../../.rvm/gems/ruby-3.2.2/gems/his_emr_api_lab-2.4.7/app/controllers/lab/orders_controller.rb:58"
+      x-contract-source: controller
+      parameters:
+      - name: accession_number
+        in: query
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 'JSON fields: exists.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exists:
+                    type: object
+                    properties: {}
+        '400':
+          description: A required request parameter is missing.
+        '401':
+          description: Authorization header is missing, invalid, or expired.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errors:
+                    type: array
+                    items:
+                      type: string
+        '502':
+          description: 'JSON fields: errors.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errors:
+                    type: array
+                    items: {}
   "/api/v1/lab/test_methods":
     get:
-      summary: GET /api/v1/lab/test_methods
+      summary: List lab test methods
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not
-        yet been documented.
-      parameters: []
-      responses:
-        default:
-          description: Response status and schema depend on the controller action.
+      description: List lab test methods. Reads nlims_code. Serialized JSON result of
+        `ConceptsService.test_methods(params.require(:nlims_code))`.
       x-rails-action: lab/test_methods#index
-      x-route-inventory: true
+      x-controller-source: "../../../.rvm/gems/ruby-3.2.2/gems/his_emr_api_lab-2.4.7/app/controllers/lab/test_methods_controller.rb:5"
+      x-contract-source: controller
+      parameters:
+      - name: nlims_code
+        in: query
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Serialized JSON result of `ConceptsService.test_methods(params.require(:nlims_code))`.
+          content:
+            application/json:
+              schema:
+                description: Serialized result of `ConceptsService.test_methods(params.require(:nlims_code))`.
+                  The output shape is defined by the called service.
+        '400':
+          description: A required request parameter is missing.
+        '401':
+          description: Authorization header is missing, invalid, or expired.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  errors:
+                    type: array
+                    items:
+                      type: string
   "/api/v1/lab/users/login":
     post:
-      summary: POST /api/v1/lab/users/login
+      summary: Log in to the Lab API
       tags:
-      - Lab
-      description: Route inventory entry. Request body and response schema have not
-        yet been documented.
-      parameters: []
+      - Auth
+      description: Authenticate a Lab user and return a Lab auth token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - username
+              - password
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+                  format: password
       responses:
-        default:
-          description: Response status and schema depend on the controller action.
-      x-rails-action: lab/users#login
-      x-route-inventory: true
+        '200':
+          description: Authenticated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - auth_token
+                properties:
+                  auth_token:
+                    type: string
+        '401':
+          description: Invalid credentials.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
   "/api/v1/lab/users":
     post:
-      summary: POST /api/v1/lab/users
+      summary: Create lab users
       tags:
       - Lab
-      description: Route inventory entry. Request body and response schema have not
-        yet been documented.
-      parameters: []
-      responses:
-        default:
-          description: Response status and schema depend on the controller action.
+      description: create a LIMS User that will be responsible for sending lab results
       x-rails-action: lab/users#create
-      x-route-inventory: true
+      x-controller-source: "../../../.rvm/gems/ruby-3.2.2/gems/his_emr_api_lab-2.4.7/app/controllers/lab/users_controller.rb:9"
+      x-contract-source: controller
+      security: []
+      parameters: []
+      requestBody:
+        required: false
+        description: Controller request parameters. Rails may also accept these in the
+          query string.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: 'JSON fields: message.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
 servers:
 - url: http://{defaultHost}
   variables:
@@ -1023,6 +1446,5 @@ components:
       name: Authorization
       in: header
     bearer:
-      type: bearer
-      name: Authorization
-      in: header
+      type: http
+      scheme: bearer

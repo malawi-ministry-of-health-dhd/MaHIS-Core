@@ -81,6 +81,7 @@ rails server
 Swagger UI is available at `/api-docs/index.html`. The **API Core v1 docs**
 selector includes the registered `/api/v1` routes, including Lab routes. The
 **Lab API V1 Docs** selector shows only Lab routes.
+See [the API guide](docs/API.md) for authentication flows and documentation status.
 
 When routes change, sync the checked-in OpenAPI files:
 
@@ -89,11 +90,25 @@ bundle exec ruby bin/sync_swagger_routes.rb
 bundle exec ruby bin/sync_swagger_routes.rb --check
 ```
 
-The sync script keeps hand-written rswag operation details and adds missing
-method/path entries from Rails routes. Generated entries are marked with
-`x-route-inventory: true`; their request body, response schema, and status codes
-still need endpoint-specific documentation. Run the sync command again after
-`rswag:specs:swaggerize`, which rewrites the Core Swagger file.
+The sync script keeps hand-written rswag operation details and adds every
+registered method/path from Rails routes. For operations without a reviewed
+contract, it derives request parameters and response branches from the
+controller action and its local parameter helpers. Those operations are marked
+`x-contract-source: controller` and link to their source line. Registered routes
+without a dispatchable action are marked `x-route-unavailable: true` and
+deprecated and listed in [the route status report](docs/API_UNAVAILABLE.md);
+Rails redirects are documented as redirects. Run the sync command
+again after `rswag:specs:swaggerize`, which rewrites the Core Swagger file.
+
+Reviewed authentication contracts are maintained in
+`swagger/auth_operations.yaml`. The sync command applies them to the Core and
+Lab documents and prints counts for curated, controller-derived, redirect, and
+unavailable operations. A zero count of **missing routes** in `--check` means
+route coverage is complete. Controller-derived operations should be upgraded to
+reviewed rswag contracts when a service returns a dynamic or program-specific
+response that cannot be determined from the controller alone. Add exact request
+fields, authentication behavior, response status codes, and response schemas in
+an rswag request spec or operation override, then rerun the sync command.
 
 ## Bulk MaHIS User Creation
 
