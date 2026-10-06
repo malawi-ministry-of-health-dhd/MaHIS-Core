@@ -76,6 +76,25 @@ without switching sources and attempting another import.
 rails server
 ```
 
+### API documentation
+
+Swagger UI is available at `/api-docs/index.html`. The **API Core v1 docs**
+selector includes the registered `/api/v1` routes, including Lab routes. The
+**Lab API V1 Docs** selector shows only Lab routes.
+
+When routes change, sync the checked-in OpenAPI files:
+
+```bash
+bundle exec ruby bin/sync_swagger_routes.rb
+bundle exec ruby bin/sync_swagger_routes.rb --check
+```
+
+The sync script keeps hand-written rswag operation details and adds missing
+method/path entries from Rails routes. Generated entries are marked with
+`x-route-inventory: true`; their request body, response schema, and status codes
+still need endpoint-specific documentation. Run the sync command again after
+`rswag:specs:swaggerize`, which rewrites the Core Swagger file.
+
 ## Bulk MaHIS User Creation
 
 Create a local config file and fill in the target instance, admin username, admin password, and Excel path:

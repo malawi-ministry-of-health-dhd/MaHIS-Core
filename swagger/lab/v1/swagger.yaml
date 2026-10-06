@@ -402,6 +402,40 @@ paths:
       responses:
         '204':
           description: No Content
+    get:
+      summary: GET /api/v1/lab/orders/{order_id}
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not yet
+        been documented.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: lab/orders#show
+      x-route-inventory: true
+    patch:
+      summary: PATCH /api/v1/lab/orders/{order_id}
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not yet
+        been documented.
+      parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: lab/orders#update
+      x-route-inventory: true
   "/api/v1/lab/reasons_for_test":
     get:
       summary: Reasons for test
@@ -492,6 +526,23 @@ paths:
                     - value
               required:
               - measures
+    get:
+      summary: GET /api/v1/lab/tests/{test_id}/results
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not yet
+        been documented.
+      parameters:
+      - name: test_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: lab/results#index
+      x-route-inventory: true
   "/api/v1/lab/specimen_types":
     get:
       summary: Specimen types
@@ -697,6 +748,269 @@ paths:
               required:
               - order_id
               - tests
+  "/api/v1/lab/accession_numbers/top_up":
+    post:
+      summary: POST /api/v1/lab/accession_numbers/top_up
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not
+        yet been documented.
+      parameters: []
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: api/v1/lab_accession_numbers#top_up
+      x-route-inventory: true
+  "/api/v1/lab/accession_numbers/top_up_all":
+    post:
+      summary: POST /api/v1/lab/accession_numbers/top_up_all
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not
+        yet been documented.
+      parameters: []
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: api/v1/lab_accession_numbers#top_up_all
+      x-route-inventory: true
+  "/api/v1/lab/accession_numbers/reserve":
+    post:
+      summary: POST /api/v1/lab/accession_numbers/reserve
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not
+        yet been documented.
+      parameters: []
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: api/v1/lab_accession_numbers#reserve
+      x-route-inventory: true
+  "/api/v1/lab/orders/order_status":
+    post:
+      summary: POST /api/v1/lab/orders/order_status
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not
+        yet been documented.
+      parameters: []
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: lab/orders#order_status
+      x-route-inventory: true
+  "/api/v1/lab/orders/order_result":
+    post:
+      summary: POST /api/v1/lab/orders/order_result
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not
+        yet been documented.
+      parameters: []
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: lab/orders#order_result
+      x-route-inventory: true
+  "/api/v1/lab/orders/summary":
+    get:
+      summary: GET /api/v1/lab/orders/summary
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not
+        yet been documented.
+      parameters: []
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: lab/orders#summary
+      x-route-inventory: true
+  "/api/v1/lab/orders/new":
+    get:
+      summary: GET /api/v1/lab/orders/new
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not
+        yet been documented.
+      parameters: []
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: lab/orders#new
+      x-route-inventory: true
+  "/api/v1/lab/orders/{id}/edit":
+    get:
+      summary: GET /api/v1/lab/orders/{id}/edit
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not
+        yet been documented.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: lab/orders#edit
+      x-route-inventory: true
+  "/api/v1/lab/tests/{test_id}/results/{id}":
+    delete:
+      summary: DELETE /api/v1/lab/tests/{test_id}/results/{id}
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not
+        yet been documented.
+      parameters:
+      - name: test_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: lab/results#destroy
+      x-route-inventory: true
+  "/api/v1/lab/tests/new":
+    get:
+      summary: GET /api/v1/lab/tests/new
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not
+        yet been documented.
+      parameters: []
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: lab/tests#new
+      x-route-inventory: true
+  "/api/v1/lab/tests/{id}/edit":
+    get:
+      summary: GET /api/v1/lab/tests/{id}/edit
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not
+        yet been documented.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: lab/tests#edit
+      x-route-inventory: true
+  "/api/v1/lab/tests/{id}":
+    get:
+      summary: GET /api/v1/lab/tests/{id}
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not
+        yet been documented.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: lab/tests#show
+      x-route-inventory: true
+    delete:
+      summary: DELETE /api/v1/lab/tests/{id}
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not
+        yet been documented.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: lab/tests#destroy
+      x-route-inventory: true
+  "/api/v1/lab/labels/order":
+    get:
+      summary: GET /api/v1/lab/labels/order
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not
+        yet been documented.
+      parameters: []
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: lab/labels#print_order_label
+      x-route-inventory: true
+  "/api/v1/lab/accession_number":
+    get:
+      summary: GET /api/v1/lab/accession_number
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not
+        yet been documented.
+      parameters: []
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: lab/orders#verify_tracking_number
+      x-route-inventory: true
+  "/api/v1/lab/test_methods":
+    get:
+      summary: GET /api/v1/lab/test_methods
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not
+        yet been documented.
+      parameters: []
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: lab/test_methods#index
+      x-route-inventory: true
+  "/api/v1/lab/users/login":
+    post:
+      summary: POST /api/v1/lab/users/login
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not
+        yet been documented.
+      parameters: []
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: lab/users#login
+      x-route-inventory: true
+  "/api/v1/lab/users":
+    post:
+      summary: POST /api/v1/lab/users
+      tags:
+      - Lab
+      description: Route inventory entry. Request body and response schema have not
+        yet been documented.
+      parameters: []
+      responses:
+        default:
+          description: Response status and schema depend on the controller action.
+      x-rails-action: lab/users#create
+      x-route-inventory: true
 servers:
 - url: http://{defaultHost}
   variables:
