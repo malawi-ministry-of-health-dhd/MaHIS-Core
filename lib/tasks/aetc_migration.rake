@@ -13,6 +13,12 @@ namespace :aetc do
     AetcMigration::Cli.run(:load_dump, args[:path], args[:name])
   end
 
+  desc 'Check everything before migrating: AETC tables, mappings (loaded and validated), MaHIS metadata, ' \
+       'unmapped AETC data, and that MaHIS has no AETC data yet'
+  task check: :environment do
+    AetcMigration::Cli.run(:check)
+  end
+
   desc 'List the schemas this tool created (AETC staging copies and tracking schemas)'
   task schemas: :environment do
     AetcMigration::Cli.run(:schemas)

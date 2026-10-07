@@ -44,6 +44,10 @@ module AetcMigration
       DumpLoader.new(config: @config, terminal: terminal, schemas: Schemas.new(config: @config)).call(path, name: name)
     end
 
+    def check
+      Preflight.new(config: @config, terminal: terminal, schemas: Schemas.new(config: @config)).call
+    end
+
     def cleanup(only = nil)
       Cleanup.new(config: @config, terminal: terminal, schemas: Schemas.new(config: @config)).call(only: only)
     end
