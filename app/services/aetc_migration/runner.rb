@@ -5,7 +5,7 @@ module AetcMigration
   # stopped run continues from the checkpoints. DRY_RUN runs everything in one transaction and rolls it
   # back; LIMIT=n migrates only the next n AETC persons (and what belongs to them).
   class Runner
-    STEPS = [Steps::Users].freeze
+    STEPS = [Steps::Users, Steps::Persons].freeze
     DRY_RUN_DEFAULT_LIMIT = 1000
 
     def initialize(config:, terminal:, schemas:, dry_run: false, limit: nil, sql: Sql.new)
