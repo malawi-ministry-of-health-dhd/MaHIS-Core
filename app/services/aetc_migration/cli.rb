@@ -44,6 +44,10 @@ module AetcMigration
       DumpLoader.new(config: @config, terminal: terminal, schemas: Schemas.new(config: @config)).call(path, name: name)
     end
 
+    def cleanup(only = nil)
+      Cleanup.new(config: @config, terminal: terminal, schemas: Schemas.new(config: @config)).call(only: only)
+    end
+
     def schemas
       terminal.title('Schemas created by the AETC migration tool')
       entries = Schemas.new(config: @config).list

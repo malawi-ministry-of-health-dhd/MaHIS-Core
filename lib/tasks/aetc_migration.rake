@@ -17,4 +17,10 @@ namespace :aetc do
   task schemas: :environment do
     AetcMigration::Cli.run(:schemas)
   end
+
+  desc 'Drop schemas this tool created, after typing each name (tracking data is exported to CSV first). ' \
+       'Optional: rake "aetc:cleanup[schema_name]"'
+  task :cleanup, %i[schema] => :environment do |_task, args|
+    AetcMigration::Cli.run(:cleanup, args[:schema])
+  end
 end
