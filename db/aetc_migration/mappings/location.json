@@ -1,0 +1,48 @@
+{
+  "entity": "location",
+  "source_column": "patient_identifier.location_id",
+  "scope": "Only locations referenced by person/patient tables",
+  "mappings": [
+    {
+      "source_id": 614,
+      "source_name": "Queen Elizabeth Central Hospital",
+      "source_uuid": "ba1fb22c-8d80-11d8-abbb-0024217bb78e",
+      "target_id": 1291,
+      "target_name": "Queen Elizabeth Central Hospital",
+      "target_uuid": "7db557ff-2c98-4645-9c2e-4c835b577758",
+      "action": "map",
+      "match_method": "name",
+      "rows_in_source": 328917,
+      "reviewed": false
+    },
+    {
+      "source_id": 299,
+      "source_name": "Limbe Health Centre",
+      "source_uuid": "ba1b9390-8d80-11d8-abbb-0024217bb78e",
+      "target_id": 676,
+      "target_name": "Limbe Health Centre",
+      "target_uuid": "ab31d390-88a0-43f2-926a-d053b4e47dbb",
+      "action": "map",
+      "match_method": "name",
+      "rows_in_source": 109644,
+      "reviewed": false
+    }
+  ],
+  "clinical_overrides": {
+    "applies_to": [
+      "encounter.location_id",
+      "obs.location_id"
+    ],
+    "note": "MaHIS Locatable scopes encounters and obs by location_id, so a NULL location can hide them. AETC 1 'Unknown' loads as QECH for these two tables only (decision 2026-10-07); every override is logged.",
+    "mappings": [
+      {
+        "source_id": 1,
+        "source_name": "Unknown",
+        "target_id": 1291,
+        "target_name": "Queen Elizabeth Central Hospital",
+        "action": "map",
+        "match_method": "manual"
+      }
+    ]
+  }
+}

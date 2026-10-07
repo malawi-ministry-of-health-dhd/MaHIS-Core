@@ -1,0 +1,14 @@
+{
+  "entity": "visit_type",
+  "source_column": "visit.visit_type_id",
+  "note": "All 169,393 AETC visits are type 1 (AETC). MaHIS visit_type from Documents/mahis-core.sql.",
+  "mappings": [
+    {"source_id": 1, "source_name": "AETC", "source_uuid": "9f825d6a-50e6-44e1-a1a4-5cd343963ecc",
+     "target_id": 1, "target_name": "AETC", "target_uuid": "31ac8f44-449e-11f1-ba73-b2c6c99cb2a9",
+     "action": "map", "match_method": "name", "visits_in_source": 169393, "reviewed": false},
+    {"source_id": 2, "source_name": "InPatient", "source_uuid": "ed39c7c2-c99d-4809-8e08-e05d39567a16",
+     "target_id": 3, "target_name": "IPD", "target_uuid": "f80109a7-c9bf-42ba-beb5-665cfc05f3e6",
+     "action": "map", "match_method": "manual", "visits_in_source": 0, "reviewed": false,
+     "note": "not used by any AETC visit"}
+  ]
+}

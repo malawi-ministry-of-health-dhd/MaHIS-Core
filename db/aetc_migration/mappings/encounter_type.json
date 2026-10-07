@@ -1,0 +1,4795 @@
+{
+  "entity": "encounter_type",
+  "source_column": "encounter.encounter_type",
+  "sources": {
+    "aetc": "aetcdbprod.sql encounter_type + encounter usage counts",
+    "aetc_code": "hwis/aetc/constants/index.ts (encounters)",
+    "mahis": "Documents/mahis-core.sql encounter_type",
+    "mahis_code": "MAHIS/src/services/encounter_type.ts (EncounterTypeId) and src/apps/AETC"
+  },
+  "match_basis": "uuid (none match), then case-insensitive name, then MaHIS AETC module usage for the two sample-history types",
+  "summary": {
+    "aetc_types": 232,
+    "used_types": 54,
+    "encounters": 2147716,
+    "used_mapped_by_name": 52,
+    "used_mapped_by_mahis_code": 2,
+    "used_unmapped": 0
+  },
+  "related_for_encounter_migration": {
+    "mahis_program": {
+      "program_id": 30,
+      "name": "AETC PROGRAM",
+      "uuid": "f0c354a4-5921-11ee-a02c-0242ac110002"
+    },
+    "mahis_encounter_columns_to_decide": [
+      "provider_id (NOT NULL; MaHIS has no provider table)",
+      "location_id (varchar in MaHIS)",
+      "program_id (default 1)",
+      "visit_id"
+    ]
+  },
+  "mappings": [
+    {
+      "source_id": 209,
+      "source_name": "Initial Registration",
+      "source_uuid": "4186b2dd-0254-4226-965a-e77fcaa70bcf",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "INITIAL_REGISTRATION"
+      ],
+      "target_id": 227,
+      "target_name": "Initial registration",
+      "target_uuid": "07707171-ea7e-4832-82b3-bf503560cc61",
+      "mahis_enum_keys": [
+        "INITIAL_REGISTRATION"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 184251,
+      "voided_in_source": 31218,
+      "first_encounter": "2021-05-05",
+      "last_encounter": "2029-04-25",
+      "reviewed": false
+    },
+    {
+      "source_id": 210,
+      "source_name": "Screening",
+      "source_uuid": "6878ece0-a61b-4e49-83b9-0468dd9eacfc",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "SCREENING_ENCOUNTER"
+      ],
+      "target_id": 102,
+      "target_name": "Screening",
+      "target_uuid": "17997a3c-0a40-4cdc-a42b-31fc1db02146",
+      "mahis_enum_keys": [
+        "SCREENING"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 157598,
+      "voided_in_source": 27369,
+      "first_encounter": "2021-05-05",
+      "last_encounter": "2027-10-30",
+      "reviewed": false
+    },
+    {
+      "source_id": 84,
+      "source_name": "SOCIAL HISTORY",
+      "source_uuid": "ba063f0e-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "SOCIAL_HISTORY"
+      ],
+      "target_id": 79,
+      "target_name": "Social history",
+      "target_uuid": "e0d44ad3-f706-447f-bab8-ded771f88955",
+      "mahis_enum_keys": [
+        "SOCIAL_HISTORY"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 110455,
+      "voided_in_source": 64,
+      "first_encounter": "2021-05-07",
+      "last_encounter": "2029-04-25",
+      "reviewed": false
+    },
+    {
+      "source_id": 114,
+      "source_name": "REFERRAL",
+      "source_uuid": "ba068946-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "REFERRAL"
+      ],
+      "target_id": 103,
+      "target_name": "Referral",
+      "target_uuid": "d0399a2e-12cb-4d51-a335-b656a18a8545",
+      "mahis_enum_keys": [
+        "REFERRAL"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 110376,
+      "voided_in_source": 58,
+      "first_encounter": "2021-05-07",
+      "last_encounter": "2029-04-25",
+      "reviewed": false
+    },
+    {
+      "source_id": 211,
+      "source_name": "Financing",
+      "source_uuid": "ceec1aca-1bbb-427a-bc6d-ef8ae11f31b2",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "FINANCING"
+      ],
+      "target_id": 228,
+      "target_name": "Financing",
+      "target_uuid": "a7f20e8e-0cf6-4635-b371-2904a3acb81c",
+      "mahis_enum_keys": [
+        "FINANCING"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 110357,
+      "voided_in_source": 58,
+      "first_encounter": "2021-05-07",
+      "last_encounter": "2029-04-25",
+      "reviewed": false
+    },
+    {
+      "source_id": 6,
+      "source_name": "VITALS",
+      "source_uuid": "ba05bfc0-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "VITALS"
+      ],
+      "target_id": 6,
+      "target_name": "Vitals",
+      "target_uuid": "4fe5685e-7474-48e1-8f42-299ccbd3bfb4",
+      "mahis_enum_keys": [
+        "VITALS"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 99379,
+      "voided_in_source": 36,
+      "first_encounter": "2023-03-03",
+      "last_encounter": "2026-11-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 122,
+      "source_name": "PRESENTING COMPLAINTS",
+      "source_uuid": "ba069102-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "PRESENTING_COMPLAINTS"
+      ],
+      "target_id": 109,
+      "target_name": "Presenting complaints",
+      "target_uuid": "5895dc0b-e8e1-49a8-8e58-dd65f6209215",
+      "mahis_enum_keys": [
+        "PRESENTING_COMPLAINTS"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 95665,
+      "voided_in_source": 36,
+      "first_encounter": "2023-03-03",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 200,
+      "source_name": "AIRWAY BREATHING",
+      "source_uuid": "e8322627-662a-4a88-aa69-925ca5a39161",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "AIRWAY_BREATHING"
+      ],
+      "target_id": 219,
+      "target_name": "Airway breathing",
+      "target_uuid": "ca3e5fba-d516-4510-a248-7d65a204e001",
+      "mahis_enum_keys": [
+        "AIRWAY_BREATHING"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 94155,
+      "voided_in_source": 35,
+      "first_encounter": "2023-03-03",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 201,
+      "source_name": "Blood Circulation",
+      "source_uuid": "514ffff2-019e-4b3e-a85b-0df3dbd43228",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "BLOOD_CIRCULATION"
+      ],
+      "target_id": 220,
+      "target_name": "Blood circulation",
+      "target_uuid": "ba53cddd-7fbc-4022-a0c2-1fcc6d6ac86d",
+      "mahis_enum_keys": [
+        "BLOOD_CIRCULATION"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 94145,
+      "voided_in_source": 35,
+      "first_encounter": "2023-03-03",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 208,
+      "source_name": "DISABILITY-ASSESSMENT",
+      "source_uuid": "0ef8f652-7852-49a5-a9dd-c1ca74fe098c",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "DISABILITY_ASSESSMENT"
+      ],
+      "target_id": 226,
+      "target_name": "Disability-assessment",
+      "target_uuid": "1b93f995-1a49-4c53-b857-2920ae389868",
+      "mahis_enum_keys": [
+        "DISABILITY_ASSESSMENT"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 94134,
+      "voided_in_source": 35,
+      "first_encounter": "2023-03-03",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 204,
+      "source_name": "Persistent Pain",
+      "source_uuid": "5af651a4-de23-4a6e-84c4-60d7f98be243",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "PERSISTENT_PAIN"
+      ],
+      "target_id": 222,
+      "target_name": "Persistent pain",
+      "target_uuid": "f17c30fc-d27b-4f27-a178-e705a142656f",
+      "mahis_enum_keys": [
+        "PERSISTENT_PAIN"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 94120,
+      "voided_in_source": 35,
+      "first_encounter": "2023-03-03",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 212,
+      "source_name": "Triage Result",
+      "source_uuid": "27e4890f-1677-4098-aa85-c65cfe32359c",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "TRIAGE_RESULT"
+      ],
+      "target_id": 229,
+      "target_name": "Triage result",
+      "target_uuid": "20a1387e-3372-490f-bbbe-8f692f01cdd8",
+      "mahis_enum_keys": [
+        "TRIAGE_RESULT"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 94086,
+      "voided_in_source": 35,
+      "first_encounter": "2023-03-03",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 8,
+      "source_name": "OUTPATIENT DIAGNOSIS",
+      "source_uuid": "ba05c128-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "OUTPATIENT_DIAGNOSIS"
+      ],
+      "target_id": 8,
+      "target_name": "Outpatient diagnosis",
+      "target_uuid": "9fb1b509-5826-44d0-be3c-4c14fed35b1c",
+      "mahis_enum_keys": [
+        "OUTPATIENT_DIAGNOSIS"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 70033,
+      "voided_in_source": 4,
+      "first_encounter": "2025-04-28",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 230,
+      "source_name": "Disposition",
+      "source_uuid": "ef689dc1-364f-4e18-b44f-36c5938c78da",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "DISPOSITION"
+      ],
+      "target_id": 243,
+      "target_name": "Disposition",
+      "target_uuid": "848a5343-be27-4232-bc8e-a7202c0c1494",
+      "mahis_enum_keys": [
+        "DISPOSITION"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 59255,
+      "voided_in_source": 3,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2029-02-27",
+      "reviewed": false
+    },
+    {
+      "source_id": 105,
+      "source_name": "NOTES",
+      "source_uuid": "ba067294-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "CLINICAL_NOTES",
+        "NURSING_NOTES",
+        "TEMPLATE_NOTES"
+      ],
+      "target_id": 97,
+      "target_name": "Notes",
+      "target_uuid": "f0c41aeb-5d32-47aa-b655-4d23ef15240b",
+      "mahis_enum_keys": [
+        "NOTES"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 55094,
+      "voided_in_source": 3,
+      "first_encounter": "2024-07-16",
+      "last_encounter": "2029-05-15",
+      "reviewed": false
+    },
+    {
+      "source_id": 13,
+      "source_name": "LAB",
+      "source_uuid": "ba05c4c0-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "LAB"
+      ],
+      "target_id": 13,
+      "target_name": "Lab",
+      "target_uuid": "4de55021-e5d9-46c7-931a-f31bc4d2ba79",
+      "mahis_enum_keys": [
+        "LAB"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 49162,
+      "voided_in_source": 3,
+      "first_encounter": "2024-03-17",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 239,
+      "source_name": "LAB ORDERS PLAN",
+      "source_uuid": "b1183b2e-ffc5-4ec5-b035-7f8a0189e2c6",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "LAB_ORDERS_PLAN"
+      ],
+      "target_id": 252,
+      "target_name": "Lab orders plan",
+      "target_uuid": "2a94420d-3f78-4e4d-9146-2f29b898b1e3",
+      "mahis_enum_keys": [
+        "LAB_ORDERS_PLAN"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 35572,
+      "voided_in_source": 5,
+      "first_encounter": "2025-04-29",
+      "last_encounter": "2029-02-27",
+      "reviewed": false
+    },
+    {
+      "source_id": 161,
+      "source_name": "SUMMARY ASSESSMENT",
+      "source_uuid": "e5fec87c-9bea-42bb-a276-0469addccf99",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "SUMMARY_ASSESSMENT"
+      ],
+      "target_id": 147,
+      "target_name": "Summary assessment",
+      "target_uuid": "5c424dce-3bf5-43a0-8efa-ac2d02656bbb",
+      "mahis_enum_keys": [
+        "SUMMARY_ASSESSMENT"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 32023,
+      "voided_in_source": 3,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 232,
+      "source_name": "Surgical notes template",
+      "source_uuid": "6c44a2d9-953d-41dd-9b99-03b4214f85ba",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "SURGICAL_NOTES_TEMPLATE_FORM"
+      ],
+      "target_id": 245,
+      "target_name": "Surgical notes template",
+      "target_uuid": "762a5fc2-15de-401c-b149-7959d8403015",
+      "mahis_enum_keys": [
+        "SURGICAL_NOTES_TEMPLATE"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 26679,
+      "voided_in_source": 0,
+      "first_encounter": "2025-04-26",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 205,
+      "source_name": "Airway Assessment",
+      "source_uuid": "28fb4592-abc3-4b53-b13c-733595e2e504",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "AIRWAY_ASSESSMENT"
+      ],
+      "target_id": 223,
+      "target_name": "Airway assessment",
+      "target_uuid": "692732e2-f1cb-4916-a6c1-98aba9eb6431",
+      "mahis_enum_keys": [
+        "AIRWAY_ASSESSMENT"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 26149,
+      "voided_in_source": 5,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 206,
+      "source_name": "Breathing Assessment",
+      "source_uuid": "08d4b4e5-dfa7-436b-9062-aee1b076c3ea",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "BREATHING_ASSESSMENT"
+      ],
+      "target_id": 224,
+      "target_name": "Breathing assessment",
+      "target_uuid": "e136be82-d57f-4d80-a16c-fe30481a847a",
+      "mahis_enum_keys": [
+        "BREATHING_ASSESSMENT"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 25576,
+      "voided_in_source": 5,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 207,
+      "source_name": "CIRCULATION_ASSESSMENT",
+      "source_uuid": "bb16ef97-6ef7-414f-880c-dfc67e1601df",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "CIRCULATION_ASSESSMENT"
+      ],
+      "target_id": 225,
+      "target_name": "Circulation_assessment",
+      "target_uuid": "98b9cdb4-7610-467a-99c5-e86f4076bc58",
+      "mahis_enum_keys": [
+        "CIRCULATION_ASSESSMENT"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 25226,
+      "voided_in_source": 5,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 221,
+      "source_name": "EXPOSURE_ASSESSMENT",
+      "source_uuid": "00101c16-8441-43c6-a7f8-4bd20cf15cad",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "EXPOSURE_ASSESSMENT"
+      ],
+      "target_id": 237,
+      "target_name": "Exposure_assessment",
+      "target_uuid": "cdeef399-3ee2-4c12-856a-5e04b5d5ce73",
+      "mahis_enum_keys": [
+        "EXPOSURE_ASSESSMENT"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 25137,
+      "voided_in_source": 5,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 214,
+      "source_name": "GENERAL INFORMATION,",
+      "source_uuid": "dbda5bed-9326-4509-a4b2-760cb7862d5d",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "GENERAL_INFORMATION_ASSESSMENT"
+      ],
+      "target_id": 231,
+      "target_name": "General information,",
+      "target_uuid": "5b89f23d-a8b7-44ea-8e72-19c58e4b180a",
+      "mahis_enum_keys": [
+        "GENERAL_INFORMATION"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 24946,
+      "voided_in_source": 4,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 235,
+      "source_name": "Primary Disability Assessment",
+      "source_uuid": "d3608295-ea61-4864-b0c7-eb3bc062a0e2",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "PRIMARY_DISABILITY_ASSESSMENT"
+      ],
+      "target_id": 248,
+      "target_name": "Primary disability assessment",
+      "target_uuid": "a9f43786-9a5e-4d20-8236-885d4dc872a9",
+      "mahis_enum_keys": [
+        "PRIMARY_DISABILITY_ASSESSMENT"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 24934,
+      "voided_in_source": 5,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 216,
+      "source_name": "CHEST ASSESSMENT",
+      "source_uuid": "8caec6aa-22c4-41f3-b81d-9454cac03b49",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "CHEST_ASSESSMENT"
+      ],
+      "target_id": 233,
+      "target_name": "Chest assessment",
+      "target_uuid": "7466f148-257a-446a-8f2e-348cda379893",
+      "mahis_enum_keys": [
+        "CHEST_ASSESSMENT"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 24614,
+      "voided_in_source": 4,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 218,
+      "source_name": "EXTREMITIES ASSESSMENT",
+      "source_uuid": "5ddc1c09-8f2a-4e0a-ada7-fde717bd1f5b",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "EXTREMITIES_ASSESSMENT"
+      ],
+      "target_id": 235,
+      "target_name": "Extremities assessment",
+      "target_uuid": "221d45ac-b8a7-4bfa-bd0d-d5125a6ae017",
+      "mahis_enum_keys": [
+        "EXTREMITIES_ASSESSMENT"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 24560,
+      "voided_in_source": 4,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 219,
+      "source_name": "NEUROLOGICAL EXAMINATION",
+      "source_uuid": "0f568068-9591-4455-a7f8-8ae9f86ca397",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "NEUROLOGICAL_EXAMINATION_ASSESSMENT"
+      ],
+      "target_id": 236,
+      "target_name": "Neurological examination",
+      "target_uuid": "3be9eaa7-d278-4b9a-adb9-25633ca05641",
+      "mahis_enum_keys": [
+        "NEUROLOGICAL_EXAMINATION"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 24559,
+      "voided_in_source": 4,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 215,
+      "source_name": "HEAD AND NECK ASSESSMENT",
+      "source_uuid": "b43070c9-a4bf-4b05-84af-a8c45a37dfdd",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "HEAD_AND_NECK_ASSESSMENT"
+      ],
+      "target_id": 232,
+      "target_name": "Head and neck assessment",
+      "target_uuid": "cf16f6ad-0153-4052-aeb9-b354dc6dfe24",
+      "mahis_enum_keys": [
+        "HEAD_AND_NECK_ASSESSMENT"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 24175,
+      "voided_in_source": 4,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 217,
+      "source_name": "ABDOMEN AND PELVIS ASSESSMENT",
+      "source_uuid": "36e596a7-dcd3-481c-83d7-adb8d63ac565",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "ABDOMEN_AND_PELVIS_ASSESSMENT"
+      ],
+      "target_id": 234,
+      "target_name": "Abdomen and pelvis assessment",
+      "target_uuid": "1fa36fbe-e2b1-4762-8238-a616381726ba",
+      "mahis_enum_keys": [
+        "ABDOMEN_AND_PELVIS_ASSESSMENT"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 24105,
+      "voided_in_source": 4,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 171,
+      "source_name": "PRESCRIPTION",
+      "source_uuid": "88564b30-abaf-4744-8ea6-6e1c15465d9e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "PRESCRIPTIONS"
+      ],
+      "target_id": 157,
+      "target_name": "Prescription",
+      "target_uuid": "315dd8e5-5fb8-4d13-9e51-67e3b88433aa",
+      "mahis_enum_keys": [
+        "PRESCRIPTION"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 22410,
+      "voided_in_source": 3,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 240,
+      "source_name": "BEDSIDE INVESTIGATION PLAN",
+      "source_uuid": "7168c660-552a-4855-b07e-95958d71948d",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "BEDSIDE_INVESTIGATION_PLAN"
+      ],
+      "target_id": 253,
+      "target_name": "Bedside investigation plan",
+      "target_uuid": "79e3b1a0-45a0-4a74-b3bc-d55e2aea07cc",
+      "mahis_enum_keys": [
+        "BEDSIDE_INVESTIGATION_PLAN"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 19210,
+      "voided_in_source": 2,
+      "first_encounter": "2023-03-03",
+      "last_encounter": "2029-02-27",
+      "reviewed": false
+    },
+    {
+      "source_id": 222,
+      "source_name": "Patient Care Area",
+      "source_uuid": "d0d12af5-7f67-41fe-a856-db3b54ca6c0d",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "PATIENT_CARE_AREA"
+      ],
+      "target_id": 238,
+      "target_name": "Patient care area",
+      "target_uuid": "90713612-432d-4eff-9bb7-4d3a9c0318fc",
+      "mahis_enum_keys": [
+        "PATIENT_CARE_AREA"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 18860,
+      "voided_in_source": 2,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 224,
+      "source_name": "Review of Systems",
+      "source_uuid": "54e32e5d-51c5-4f16-8cff-9fc7da3c68ca",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "REVIEW_OF_SYSTEMS"
+      ],
+      "target_id": 240,
+      "target_name": "Review of systems",
+      "target_uuid": "54d8cab2-5f2b-467c-91b4-4c8a5ea88f68",
+      "mahis_enum_keys": [
+        "REVIEW_OF_SYSTEMS"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 18191,
+      "voided_in_source": 3,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 234,
+      "source_name": "Disposed Prescription",
+      "source_uuid": "a9ebe09e-0296-40d1-a9fa-3efcce85ea9e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "DISPOSED_PRESCRIPTIONS"
+      ],
+      "target_id": 247,
+      "target_name": "Disposed prescription",
+      "target_uuid": "88c22f47-ed40-4e62-a847-4919433a5e66",
+      "mahis_enum_keys": [
+        "DISPOSED_PRESCRIPTION"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 15407,
+      "voided_in_source": 0,
+      "first_encounter": "2025-05-02",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 41,
+      "source_name": "DIAGNOSIS",
+      "source_uuid": "ba05fbfc-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "DIAGNOSIS"
+      ],
+      "target_id": 38,
+      "target_name": "Diagnosis",
+      "target_uuid": "dd1fe4ba-ca8d-45e2-9532-74927040695a",
+      "mahis_enum_keys": [
+        "DIAGNOSIS"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 13478,
+      "voided_in_source": 1,
+      "first_encounter": "2025-04-29",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 241,
+      "source_name": "Awaiting Specialty",
+      "source_uuid": "4a10d674-9072-4385-b2e9-583d0524abe1",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "AWAITING_SPECIALTY"
+      ],
+      "target_id": 254,
+      "target_name": "Awaiting specialty",
+      "target_uuid": "104f05c2-d0d9-4369-b0bf-c55dacdba00f",
+      "mahis_enum_keys": [
+        "AWAITING_SPECIALTY"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 13361,
+      "voided_in_source": 0,
+      "first_encounter": "2022-07-09",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 223,
+      "source_name": "Non-pharmacological",
+      "source_uuid": "4b1f68fe-ea1b-4bde-bf97-e5f7a721c895",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "NON_PHARMACOLOGICAL"
+      ],
+      "target_id": 239,
+      "target_name": "Non-pharmacological",
+      "target_uuid": "3d9eb69a-850e-4089-9c28-f8af57fad959",
+      "mahis_enum_keys": [
+        "NON_PHARMACOLOGICAL"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 13049,
+      "voided_in_source": 2,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 213,
+      "source_name": "Allergies",
+      "source_uuid": "477f8110-ae4b-4caa-b608-c05b0f967b9e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "ALLERGIES"
+      ],
+      "target_id": 230,
+      "target_name": "Allergies",
+      "target_uuid": "ff53a181-e9ad-490e-a0fe-2aac207a8973",
+      "mahis_enum_keys": [
+        "ALLERGIES"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 12268,
+      "voided_in_source": 0,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 248,
+      "source_name": "Sample history Medication",
+      "source_uuid": "d4a76565-efac-46b3-9ac9-db6e1c76aec6",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "SAMPLE_HISTORY_MEDICATION"
+      ],
+      "target_id": 188,
+      "target_name": "Medications",
+      "target_uuid": "097b0601-0513-444f-8a66-f1f8ac379657",
+      "mahis_enum_keys": [
+        "MEDICATIONS"
+      ],
+      "action": "map",
+      "match_method": "mahis_aetc_code",
+      "encounters_in_source": 11468,
+      "voided_in_source": 0,
+      "first_encounter": "2026-02-26",
+      "last_encounter": "2026-09-26",
+      "reviewed": false,
+      "note": "Not in MaHIS by name. MaHIS AETC SAMPLE history saves medications under MEDICATIONS (188) (apps/AETC/components/SampleHistory/Medication.vue)."
+    },
+    {
+      "source_id": 245,
+      "source_name": "Sample history Presenting complaints",
+      "source_uuid": "507e775e-1905-4e9a-bba9-dddbe1946db6",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "SAMPLE_HISTORY_PRESENTING_COMPLAINTS"
+      ],
+      "target_id": 109,
+      "target_name": "Presenting complaints",
+      "target_uuid": "5895dc0b-e8e1-49a8-8e58-dd65f6209215",
+      "mahis_enum_keys": [
+        "PRESENTING_COMPLAINTS"
+      ],
+      "action": "map",
+      "match_method": "mahis_aetc_code",
+      "encounters_in_source": 10745,
+      "voided_in_source": 0,
+      "first_encounter": "2026-02-26",
+      "last_encounter": "2026-09-26",
+      "reviewed": false,
+      "note": "Not in MaHIS by name. MaHIS AETC SAMPLE history saves presenting complaints under PRESENTING_COMPLAINTS (109) (apps/AETC/components/SampleHistory/PresentingComplaints.vue). AETC 122 PRESENTING COMPLAINTS (triage) maps to the same MaHIS type."
+    },
+    {
+      "source_id": 238,
+      "source_name": "Gyneacology Ward",
+      "source_uuid": "7819932d-eea1-43d2-a543-35cb93f2da49",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "GYNEACOLOGY_WARD"
+      ],
+      "target_id": 251,
+      "target_name": "Gyneacology ward",
+      "target_uuid": "be52f403-0fbd-434a-b3c4-1bc21cc0b2cd",
+      "mahis_enum_keys": [
+        "GYNEACOLOGY_WARD"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 8527,
+      "voided_in_source": 0,
+      "first_encounter": "2025-04-29",
+      "last_encounter": "2029-02-27",
+      "reviewed": false
+    },
+    {
+      "source_id": 237,
+      "source_name": "Medical in Patient",
+      "source_uuid": "1aeb209d-8f1f-4367-8d9c-476134235545",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "MEDICAL_IN_PATIENT"
+      ],
+      "target_id": 250,
+      "target_name": "Medical in patient",
+      "target_uuid": "6d47ab34-b432-4f0a-9750-a6d0cf2a13ed",
+      "mahis_enum_keys": [
+        "MEDICAL_IN_PATIENT"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 7954,
+      "voided_in_source": 1,
+      "first_encounter": "2025-04-29",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 227,
+      "source_name": "Bedside Investigations",
+      "source_uuid": "7d4400bf-534b-4c06-8b20-f6a424beb64c",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "BED_SIDE_TEST"
+      ],
+      "target_id": 241,
+      "target_name": "Bedside investigations",
+      "target_uuid": "cab4c6b3-2728-4b94-9c70-2929572680cb",
+      "mahis_enum_keys": [
+        "BEDSIDE_INVESTIGATIONS"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 7283,
+      "voided_in_source": 0,
+      "first_encounter": "2023-03-02",
+      "last_encounter": "2029-02-27",
+      "reviewed": false
+    },
+    {
+      "source_id": 82,
+      "source_name": "OBSTETRIC HISTORY",
+      "source_uuid": "ba063da6-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "OBSTETRIC_HISTORY"
+      ],
+      "target_id": 77,
+      "target_name": "Obstetric history",
+      "target_uuid": "25d44d3a-a990-4d58-a8af-95eca6c93b09",
+      "mahis_enum_keys": [
+        "OBSTETRIC_HISTORY"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 4940,
+      "voided_in_source": 2,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-02-24",
+      "reviewed": false
+    },
+    {
+      "source_id": 99,
+      "source_name": "PROCEDURES DONE",
+      "source_uuid": "ba0656ec-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "PROCEDURES_DONE"
+      ],
+      "target_id": 91,
+      "target_name": "Procedures done",
+      "target_uuid": "7206c23f-24f2-4f21-846a-0e289a18e499",
+      "mahis_enum_keys": [
+        "PROCEDURES_DONE"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 4101,
+      "voided_in_source": 0,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 54,
+      "source_name": "DISPENSING",
+      "source_uuid": "ba0612c2-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "DISPENSING"
+      ],
+      "target_id": 50,
+      "target_name": "Dispensing",
+      "target_uuid": "199979a9-e83a-46a4-baa5-776607b90925",
+      "mahis_enum_keys": [
+        "DISPENSING"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 2493,
+      "voided_in_source": 0,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 97,
+      "source_name": "PATIENT ADMISSIONS",
+      "source_uuid": "ba0651ec-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "PATIENT_ADMISSIONS"
+      ],
+      "target_id": 89,
+      "target_name": "Patient admissions",
+      "target_uuid": "ee033563-a939-4f37-bf11-9b780d427275",
+      "mahis_enum_keys": [
+        "PATIENT_ADMISSIONS"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 1197,
+      "voided_in_source": 0,
+      "first_encounter": "2025-04-29",
+      "last_encounter": "2026-09-25",
+      "reviewed": false
+    },
+    {
+      "source_id": 83,
+      "source_name": "SURGICAL HISTORY",
+      "source_uuid": "ba063e50-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "SURGICAL_HISTORY"
+      ],
+      "target_id": 78,
+      "target_name": "Surgical history",
+      "target_uuid": "139a4413-74bb-4339-8adc-d75ca1e79499",
+      "mahis_enum_keys": [
+        "SURGICAL_HISTORY"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 880,
+      "voided_in_source": 0,
+      "first_encounter": "2025-04-26",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 139,
+      "source_name": "FAMILY MEDICAL HISTORY",
+      "source_uuid": "ba06b178-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "FAMILY_MEDICAL_HISTORY"
+      ],
+      "target_id": 126,
+      "target_name": "Family medical history",
+      "target_uuid": "953d828e-c583-4243-9d64-8326e1108dc6",
+      "mahis_enum_keys": [
+        "FAMILY_MEDICAL_HISTORY"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 679,
+      "voided_in_source": 1,
+      "first_encounter": "2025-04-26",
+      "last_encounter": "2026-02-12",
+      "reviewed": false
+    },
+    {
+      "source_id": 229,
+      "source_name": "Nursing Care Notes",
+      "source_uuid": "c7d8b240-04f0-48c1-8d83-10d95f571b92",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "NURSING_CARE_NOTES"
+      ],
+      "target_id": 242,
+      "target_name": "Nursing care notes",
+      "target_uuid": "88610e93-4578-41a1-a4de-62ff114d74a0",
+      "mahis_enum_keys": [
+        "NURSING_CARE_NOTES"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 318,
+      "voided_in_source": 0,
+      "first_encounter": "2025-04-25",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 236,
+      "source_name": "CPR",
+      "source_uuid": "31582078-729a-45ca-935c-43bd7d4b382c",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "CPR"
+      ],
+      "target_id": 249,
+      "target_name": "Cpr",
+      "target_uuid": "f563255c-acc3-4703-8a6c-de3408cf8a5b",
+      "mahis_enum_keys": [
+        "CPR"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 133,
+      "voided_in_source": 0,
+      "first_encounter": "2025-05-06",
+      "last_encounter": "2026-08-14",
+      "reviewed": false
+    },
+    {
+      "source_id": 244,
+      "source_name": "SOAPIER DISPENSING",
+      "source_uuid": "7def6325-4496-491a-a716-a9fca6e3c6df",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "SOAPIER_DISPENSING"
+      ],
+      "target_id": 256,
+      "target_name": "Soapier dispensing",
+      "target_uuid": "b275878b-508c-4a7f-b758-ae2b46be039d",
+      "mahis_enum_keys": [
+        "SOAPIER_DISPENSING"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 123,
+      "voided_in_source": 0,
+      "first_encounter": "2025-07-31",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 242,
+      "source_name": "SOAPIER PRESCRIPTION",
+      "source_uuid": "6e18d0c8-98b2-40fd-b116-25af7eef111d",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "SOAPIER_PRESCRIPTION"
+      ],
+      "target_id": 255,
+      "target_name": "Soapier prescription",
+      "target_uuid": "ed117ced-8a31-4322-9438-e5dcda4829f5",
+      "mahis_enum_keys": [
+        "SOAPIER_PRESCRIPTION"
+      ],
+      "action": "map",
+      "match_method": "name",
+      "encounters_in_source": 121,
+      "voided_in_source": 0,
+      "first_encounter": "2025-07-31",
+      "last_encounter": "2026-09-26",
+      "reviewed": false
+    },
+    {
+      "source_id": 1,
+      "source_name": "ADULTINITIAL",
+      "source_uuid": "8d5b27bc-c2cc-11de-8d13-0010c6dffd0f",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 1,
+      "target_name": "Adultinitial",
+      "target_uuid": "a07e5e82-6773-437a-8012-46e535d9c9a8",
+      "mahis_enum_keys": [
+        "ADULTINITIAL"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 2,
+      "source_name": "ADULTRETURN",
+      "source_uuid": "8d5b2be0-c2cc-11de-8d13-0010c6dffd0f",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 2,
+      "target_name": "Adultreturn",
+      "target_uuid": "ab33d0c1-1b56-4a52-b8ee-eca48a9b74ba",
+      "mahis_enum_keys": [
+        "ADULTRETURN"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 3,
+      "source_name": "PEDSINITIAL",
+      "source_uuid": "8d5b2dde-c2cc-11de-8d13-0010c6dffd0f",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 3,
+      "target_name": "Pedsinitial",
+      "target_uuid": "5ce92198-80f2-4b56-9745-06d602fb08c5",
+      "mahis_enum_keys": [
+        "PEDSINITIAL"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 4,
+      "source_name": "PEDSRETURN",
+      "source_uuid": "8d5b3108-c2cc-11de-8d13-0010c6dffd0f",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 4,
+      "target_name": "Pedsreturn",
+      "target_uuid": "5f775498-b7bb-4dc6-81b5-ad1e2f1e7ec5",
+      "mahis_enum_keys": [
+        "PEDSRETURN"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 5,
+      "source_name": "REGISTRATION",
+      "source_uuid": "ba05bf02-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 5,
+      "target_name": "Registration",
+      "target_uuid": "9e8dcaba-2f83-4a8f-b3f3-c63b566beca6",
+      "mahis_enum_keys": [
+        "REGISTRATION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 7,
+      "source_name": "APPOINTMENT",
+      "source_uuid": "ba05c074-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 7,
+      "target_name": "Appointment",
+      "target_uuid": "0889b2a0-f595-4665-883c-855bdee1dc44",
+      "mahis_enum_keys": [
+        "APPOINTMENT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 9,
+      "source_name": "HIV CLINIC REGISTRATION",
+      "source_uuid": "ba05c1dc-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 9,
+      "target_name": "Hiv clinic registration",
+      "target_uuid": "6f7ea163-9499-4929-b6ea-216ef854ebaf",
+      "mahis_enum_keys": [
+        "HIV_CLINIC_REGISTRATION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 10,
+      "source_name": "ART_FOLLOWUP",
+      "source_uuid": "ba05c29a-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 10,
+      "target_name": "Art_followup",
+      "target_uuid": "b1c8862e-2f56-4ed8-a457-294c4d921602",
+      "mahis_enum_keys": [
+        "ART_FOLLOWUP"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 11,
+      "source_name": "PART_INITIAL",
+      "source_uuid": "ba05c358-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 11,
+      "target_name": "Part_initial",
+      "target_uuid": "22b8b4d2-ec6a-4c81-97fe-01e8919c7f2d",
+      "mahis_enum_keys": [
+        "PART_INITIAL"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 12,
+      "source_name": "PART_FOLLOWUP",
+      "source_uuid": "ba05c40c-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 12,
+      "target_name": "Part_followup",
+      "target_uuid": "1017f28c-2213-4c86-a2a2-c68a19ac2615",
+      "mahis_enum_keys": [
+        "PART_FOLLOWUP"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 14,
+      "source_name": "TB_INITIAL",
+      "source_uuid": "ba05c574-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 14,
+      "target_name": "Tb_initial",
+      "target_uuid": "4f75cd1a-9d68-477e-92e8-aea72e9a070b",
+      "mahis_enum_keys": [
+        "TB_INITIAL"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 15,
+      "source_name": "TB_FOLLOWUP",
+      "source_uuid": "ba05c628-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 15,
+      "target_name": "Tb_followup",
+      "target_uuid": "b5eae468-0761-4364-807c-549a14257ffe",
+      "mahis_enum_keys": [
+        "TB_FOLLOWUP"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 17,
+      "source_name": "PATIENT EVALUATION",
+      "source_uuid": "ba05c6d2-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 16,
+      "target_name": "Patient evaluation",
+      "target_uuid": "01d2af08-ab44-42a8-bf1e-e20420095106",
+      "mahis_enum_keys": [
+        "PATIENT_EVALUATION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 20,
+      "source_name": "EID_INITIAL",
+      "source_uuid": "ba05c786-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 17,
+      "target_name": "Eid_initial",
+      "target_uuid": "666e0aa2-e7ce-4d0c-8f17-72d6c7da900b",
+      "mahis_enum_keys": [
+        "EID_INITIAL"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 21,
+      "source_name": "EID_FOLLOWUP",
+      "source_uuid": "ba05c844-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 18,
+      "target_name": "Eid_followup",
+      "target_uuid": "8462673e-c087-4300-b88e-31be2446783a",
+      "mahis_enum_keys": [
+        "EID_FOLLOWUP"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 22,
+      "source_name": "Bacteriology Result",
+      "source_uuid": "ba05c902-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 19,
+      "target_name": "Bacteriology result",
+      "target_uuid": "2b882d14-af21-4f41-826f-66a610e233b5",
+      "mahis_enum_keys": [
+        "BACTERIOLOGY_RESULT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 23,
+      "source_name": "DST Result",
+      "source_uuid": "ba05ec0c-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 20,
+      "target_name": "Dst result",
+      "target_uuid": "6987e198-cfdc-4cca-90ef-6809dd58017d",
+      "mahis_enum_keys": [
+        "DST_RESULT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 24,
+      "source_name": "CHEMOTHERAPY",
+      "source_uuid": "ba05ece8-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 21,
+      "target_name": "Chemotherapy",
+      "target_uuid": "8d526de6-40ff-464f-a2c3-dc48b814007a",
+      "mahis_enum_keys": [
+        "CHEMOTHERAPY"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 25,
+      "source_name": "TREATMENT",
+      "source_uuid": "ba05ed9c-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "TREATMENT"
+      ],
+      "target_id": 22,
+      "target_name": "Treatment",
+      "target_uuid": "1239e9f4-ea94-444b-b765-5f24f770a551",
+      "mahis_enum_keys": [
+        "TREATMENT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 26,
+      "source_name": "REQUEST",
+      "source_uuid": "ba05ee50-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 23,
+      "target_name": "Request",
+      "target_uuid": "af3ccc8b-683a-4ba5-aa87-ceee8a53a0ef",
+      "mahis_enum_keys": [
+        "REQUEST"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 27,
+      "source_name": "ADMINISTRATION",
+      "source_uuid": "ba05ef0e-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 24,
+      "target_name": "Administration",
+      "target_uuid": "bf5cc6a2-7ca7-4ee6-97b0-b0ac1e307015",
+      "mahis_enum_keys": [
+        "ADMINISTRATION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 28,
+      "source_name": "EXAMINATION",
+      "source_uuid": "ba05efcc-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 25,
+      "target_name": "Examination",
+      "target_uuid": "93d5f2d9-03f8-4d7d-941e-da3d301d8703",
+      "mahis_enum_keys": [
+        "EXAMINATION",
+        "FEEDING"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 29,
+      "source_name": "DIABETES HYPERTENSION INITIAL VISIT",
+      "source_uuid": "ba05f080-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 26,
+      "target_name": "Diabetes hypertension initial visit",
+      "target_uuid": "4369f63d-8363-4fc0-ba74-63668bc1f53e",
+      "mahis_enum_keys": [
+        "DIABETES_HYPERTENSION_INITIAL_VISIT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 30,
+      "source_name": "MEDICAL HISTORY",
+      "source_uuid": "ba05f13e-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "MEDICAL_HISTORY"
+      ],
+      "target_id": 27,
+      "target_name": "Medical history",
+      "target_uuid": "40d2e7a5-68d8-453e-bbea-5274c6810341",
+      "mahis_enum_keys": [
+        "MEDICAL_HISTORY"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 31,
+      "source_name": "COMPLICATIONS",
+      "source_uuid": "ba05f1e8-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 28,
+      "target_name": "Complications",
+      "target_uuid": "c4ac62e5-d224-426f-9e74-f7f9e6c1d1b7",
+      "mahis_enum_keys": [
+        "COMPLICATIONS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 32,
+      "source_name": "LAB RESULTS",
+      "source_uuid": "ba05f29c-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 29,
+      "target_name": "Lab results",
+      "target_uuid": "cb6c1c8a-4d45-4b3d-a766-6f58c4420a47",
+      "mahis_enum_keys": [
+        "LAB_RESULTS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 33,
+      "source_name": "EYE COMPLICATIONS",
+      "source_uuid": "ba05f346-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 30,
+      "target_name": "Eye complications",
+      "target_uuid": "3dca9c44-eb31-43eb-916f-807e3e2f83a3",
+      "mahis_enum_keys": [
+        "EYE_COMPLICATIONS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 34,
+      "source_name": "NEURALGIC COMPLICATIONS",
+      "source_uuid": "ba05f404-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 31,
+      "target_name": "Neuralgic complications",
+      "target_uuid": "d018b473-f130-46f5-bfaf-4616f58a5bfc",
+      "mahis_enum_keys": [
+        "NEURALGIC_COMPLICATIONS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 35,
+      "source_name": "CARDIOVASCULAR COMPLICATIONS",
+      "source_uuid": "ba05f79c-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 32,
+      "target_name": "Cardiovascular complications",
+      "target_uuid": "5db50017-e5fc-4002-9c1e-53d6861a7851",
+      "mahis_enum_keys": [
+        "CARDIOVASCULAR_COMPLICATIONS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 36,
+      "source_name": "RENAL COMPLICATIONS",
+      "source_uuid": "ba05f864-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 33,
+      "target_name": "Renal complications",
+      "target_uuid": "033074f6-0056-4a99-a050-d328fc034fcd",
+      "mahis_enum_keys": [
+        "RENAL_COMPLICATIONS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 37,
+      "source_name": "ENDOCRINE COMPLICATIONS",
+      "source_uuid": "ba05f918-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 34,
+      "target_name": "Endocrine complications",
+      "target_uuid": "888523d0-24d2-4895-8b37-aae99302fd25",
+      "mahis_enum_keys": [
+        "ENDOCRINE_COMPLICATIONS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 38,
+      "source_name": "DIABETES TEST",
+      "source_uuid": "ba05f9d6-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 35,
+      "target_name": "Diabetes test",
+      "target_uuid": "eb9b1d67-857f-4b31-b71e-72ded8174eb5",
+      "mahis_enum_keys": [
+        "DIABETES_TEST"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 39,
+      "source_name": "UPDATE HIV STATUS",
+      "source_uuid": "ba05fa94-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 36,
+      "target_name": "Update hiv status",
+      "target_uuid": "44e6a8a9-4b4e-4927-91ae-81f375ffcbaf",
+      "mahis_enum_keys": [
+        "UPDATE_HIV_STATUS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 40,
+      "source_name": "PATIENT OUTCOME",
+      "source_uuid": "ba05fb48-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 37,
+      "target_name": "Patient outcome",
+      "target_uuid": "b36130db-a828-4b1e-bbbb-a7f47eb33d0d",
+      "mahis_enum_keys": [
+        "PATIENT_OUTCOME"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 42,
+      "source_name": "ADMIT PATIENT",
+      "source_uuid": "ba05fcba-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 39,
+      "target_name": "Admit patient",
+      "target_uuid": "6296ba48-f235-4265-b4d5-836382610d9f",
+      "mahis_enum_keys": [
+        "ADMIT_PATIENT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 43,
+      "source_name": "DIABETES HISTORY",
+      "source_uuid": "ba05fd6e-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 40,
+      "target_name": "Diabetes history",
+      "target_uuid": "f8e67b39-4d96-4da0-9aaf-d286a24f13e0",
+      "mahis_enum_keys": [
+        "DIABETES_HISTORY"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 44,
+      "source_name": "DIABETES TREATMENTS",
+      "source_uuid": "ba05fe2c-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 41,
+      "target_name": "Diabetes treatments",
+      "target_uuid": "6105791c-65aa-47ce-bc66-caa001008bbd",
+      "mahis_enum_keys": [
+        "DIABETES_TREATMENTS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 45,
+      "source_name": "HOSPITAL ADMISSIONS",
+      "source_uuid": "ba05fed6-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": true,
+      "hwis_constant_keys": [],
+      "target_id": 42,
+      "target_name": "Hospital admissions",
+      "target_uuid": "16c94471-03f9-465f-b918-c33606654b8b",
+      "mahis_enum_keys": [
+        "HOSPITAL_ADMISSIONS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 46,
+      "source_name": "PAST DIABETES MEDICAL HISTORY",
+      "source_uuid": "ba05ff94-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 43,
+      "target_name": "Past diabetes medical history",
+      "target_uuid": "f2c5bdb7-f16b-43e7-b911-4727b8220a50",
+      "mahis_enum_keys": [
+        "PAST_DIABETES_MEDICAL_HISTORY"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 47,
+      "source_name": "INITIAL DIABETES COMPLICATIONS",
+      "source_uuid": "ba060048-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 44,
+      "target_name": "Initial diabetes complications",
+      "target_uuid": "cc2e6159-6bb4-4873-b43d-d9c6deb61243",
+      "mahis_enum_keys": [
+        "INITIAL_DIABETES_COMPLICATIONS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 48,
+      "source_name": "HYPERTENSION MANAGEMENT",
+      "source_uuid": "ba060106-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 45,
+      "target_name": "Hypertension management",
+      "target_uuid": "1f2447fb-651c-4057-bc2d-400dacb6ad9f",
+      "mahis_enum_keys": [
+        "HYPERTENSION_MANAGEMENT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 49,
+      "source_name": "GENERAL HEALTH",
+      "source_uuid": "ba060fd4-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 46,
+      "target_name": "General health",
+      "target_uuid": "c6d56b1a-cb09-4488-98a9-f6d2450594d5",
+      "mahis_enum_keys": [
+        "GENERAL_HEALTH"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 51,
+      "source_name": "HIV RECEPTION",
+      "source_uuid": "ba06109c-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 47,
+      "target_name": "Hiv reception",
+      "target_uuid": "3d013896-9468-4f8b-8798-68160f01e447",
+      "mahis_enum_keys": [
+        "HIV_RECEPTION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 52,
+      "source_name": "HIV STAGING",
+      "source_uuid": "ba061150-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 48,
+      "target_name": "Hiv staging",
+      "target_uuid": "43959490-bdaa-4318-b4b6-6bcb976b67fa",
+      "mahis_enum_keys": [
+        "HIV_STAGING"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 53,
+      "source_name": "HIV CLINIC CONSULTATION",
+      "source_uuid": "ba06120e-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 49,
+      "target_name": "Hiv clinic consultation",
+      "target_uuid": "44856f82-8401-4ef1-bb14-098be25e9ad2",
+      "mahis_enum_keys": [
+        "HIV_CLINIC_CONSULTATION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 55,
+      "source_name": "LABEL SPECIMENS",
+      "source_uuid": "ba061628-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 51,
+      "target_name": "Label specimens",
+      "target_uuid": "dee7ed52-1887-4bc8-afaf-a66f22690371",
+      "mahis_enum_keys": [
+        "LABEL_SPECIMENS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 56,
+      "source_name": "INFLUENZA DATA",
+      "source_uuid": "ba0616e6-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 52,
+      "target_name": "Influenza data",
+      "target_uuid": "1bdbd5a9-2e42-47d3-bbac-d0b2cfe1d022",
+      "mahis_enum_keys": [
+        "INFLUENZA_DATA"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 57,
+      "source_name": "LAB ORDERS",
+      "source_uuid": "ba0617ae-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 53,
+      "target_name": "Lab orders",
+      "target_uuid": "529d5dea-302d-41d8-b9ec-cc815e21db72",
+      "mahis_enum_keys": [
+        "LAB_ORDERS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 58,
+      "source_name": "CHRONIC CONDITIONS",
+      "source_uuid": "ba061858-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 54,
+      "target_name": "Chronic conditions",
+      "target_uuid": "06d287c1-1161-437a-87b9-071f1cadfda1",
+      "mahis_enum_keys": [
+        "CHRONIC_CONDITIONS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 59,
+      "source_name": "MATERNITY DIAGNOSIS",
+      "source_uuid": "ba061916-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 55,
+      "target_name": "Maternity diagnosis",
+      "target_uuid": "4fc0c679-5c3b-4c7f-9425-d280f7ab800d",
+      "mahis_enum_keys": [
+        "MATERNITY_DIAGNOSIS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 61,
+      "source_name": "MARTENITY VISIT",
+      "source_uuid": "ba0619c0-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 56,
+      "target_name": "Martenity visit",
+      "target_uuid": "8bfff786-73a2-41a3-bd81-29828a0d1380",
+      "mahis_enum_keys": [
+        "MARTENITY_VISIT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 62,
+      "source_name": "IS PATIENT REFERRED?",
+      "source_uuid": "ba061a7e-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 57,
+      "target_name": "Is patient referred?",
+      "target_uuid": "c1f0c144-4694-4ebe-af49-ec5de7f29cb8",
+      "mahis_enum_keys": [
+        "IS_PATIENT_REFERRED"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 63,
+      "source_name": "REFER PATIENT OUT?",
+      "source_uuid": "ba061b32-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 58,
+      "target_name": "Refer patient out?",
+      "target_uuid": "773fefde-dd00-4b35-a59c-525fc9a1201e",
+      "mahis_enum_keys": [
+        "REFER_PATIENT_OUT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 64,
+      "source_name": "ACTUAL DIAGNOSIS",
+      "source_uuid": "ba061bf0-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 59,
+      "target_name": "Actual diagnosis",
+      "target_uuid": "0a4c2062-1983-4245-8e90-d408890de2cf",
+      "mahis_enum_keys": [
+        "ACTUAL_DIAGNOSIS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 65,
+      "source_name": "DIABETES INITIAL QUESTIONS",
+      "source_uuid": "ba061ca4-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 60,
+      "target_name": "Diabetes initial questions",
+      "target_uuid": "a0cc3b37-c8de-49ea-81c1-70abe7b0c7b1",
+      "mahis_enum_keys": [
+        "DIABETES_INITIAL_QUESTIONS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 66,
+      "source_name": "TRANSFER OUT",
+      "source_uuid": "ba061d62-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 61,
+      "target_name": "Transfer out",
+      "target_uuid": "93662480-37b5-454b-9917-b6a78c2c0070",
+      "mahis_enum_keys": [
+        "TRANSFER_OUT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 67,
+      "source_name": "CHRONIC CARE VISIT",
+      "source_uuid": "ba061e16-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 62,
+      "target_name": "Chronic care visit",
+      "target_uuid": "0a941cea-eefd-407a-8eb8-bca3cfff6ee7",
+      "mahis_enum_keys": [
+        "CHRONIC_CARE_VISIT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 68,
+      "source_name": "ART ADHERENCE",
+      "source_uuid": "ba061ed4-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 63,
+      "target_name": "Art adherence",
+      "target_uuid": "dbd80db2-c1d2-44e1-b11a-0c7f0840bd8c",
+      "mahis_enum_keys": [
+        "ART_ADHERENCE"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 69,
+      "source_name": "CHRONIC_CARE_FOLLOWUP",
+      "source_uuid": "ba061f88-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 64,
+      "target_name": "Chronic_care_followup",
+      "target_uuid": "a49d3337-0f77-4f2d-9249-e9412180b4b2",
+      "mahis_enum_keys": [
+        "CHRONIC_CARE_FOLLOWUP"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 70,
+      "source_name": "SPUTUM SUBMISSION",
+      "source_uuid": "ba062302-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 65,
+      "target_name": "Sputum submission",
+      "target_uuid": "ef140fec-4ebc-44b6-863d-307f3a71f5bd",
+      "mahis_enum_keys": [
+        "SPUTUM_SUBMISSION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 71,
+      "source_name": "TIPS AND REMINDERS",
+      "source_uuid": "ba0623c0-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 66,
+      "target_name": "Tips and reminders",
+      "target_uuid": "db6fcb35-89a1-4927-aba1-c5eb8fd8bff4",
+      "mahis_enum_keys": [
+        "TIPS_AND_REMINDERS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 72,
+      "source_name": "MATERNAL HEALTH SYMPTOMS",
+      "source_uuid": "ba062474-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 67,
+      "target_name": "Maternal health symptoms",
+      "target_uuid": "1805bbdf-f21f-4de7-9a96-6143b444475f",
+      "mahis_enum_keys": [
+        "MATERNAL_HEALTH_SYMPTOMS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 73,
+      "source_name": "CHILD HEALTH SYMPTOMS",
+      "source_uuid": "ba062532-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 68,
+      "target_name": "Child health symptoms",
+      "target_uuid": "0ec82856-abd5-4cac-84a4-a53b69bdd775",
+      "mahis_enum_keys": [
+        "CHILD_HEALTH_SYMPTOMS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 74,
+      "source_name": "DEFAULTER TRACING START",
+      "source_uuid": "ba0625e6-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 69,
+      "target_name": "Defaulter tracing start",
+      "target_uuid": "b7803980-7b5a-4102-83ca-45c0c8e7e8aa",
+      "mahis_enum_keys": [
+        "DEFAULTER_TRACING_START"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 75,
+      "source_name": "DEFAULTER TRACING STOP",
+      "source_uuid": "ba0626a4-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 70,
+      "target_name": "Defaulter tracing stop",
+      "target_uuid": "8576cacd-7b3b-4f43-849b-16bab7d6fe03",
+      "mahis_enum_keys": [
+        "DEFAULTER_TRACING_STOP"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 76,
+      "source_name": "UPDATE PREGNANCY STATUS",
+      "source_uuid": "ba062758-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 71,
+      "target_name": "Update pregnancy status",
+      "target_uuid": "bfcb4a50-160f-4b8b-8fca-3baf2ed852fe",
+      "mahis_enum_keys": [
+        "UPDATE_PREGNANCY_STATUS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 77,
+      "source_name": "TB RECEPTION",
+      "source_uuid": "ba06373e-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 72,
+      "target_name": "Tb reception",
+      "target_uuid": "7f4e00f4-4fb8-4f5e-bf4a-43ed24812cbb",
+      "mahis_enum_keys": [
+        "TB_RECEPTION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 78,
+      "source_name": "TB REGISTRATION",
+      "source_uuid": "ba063806-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 73,
+      "target_name": "Tb registration",
+      "target_uuid": "1b1891cd-f3cb-46cd-9814-80266e126caf",
+      "mahis_enum_keys": [
+        "TB_REGISTRATION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 79,
+      "source_name": "ART Enrollment",
+      "source_uuid": "ba063b76-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 74,
+      "target_name": "Art enrollment",
+      "target_uuid": "067322b7-f3bc-4c2e-8e44-aeef93570a4c",
+      "mahis_enum_keys": [
+        "ART_ENROLLMENT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 80,
+      "source_name": "OUTPATIENT RECEPTION",
+      "source_uuid": "ba063c34-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 75,
+      "target_name": "Outpatient reception",
+      "target_uuid": "c111be37-7196-4b62-9439-84b9bafe3d24",
+      "mahis_enum_keys": [
+        "OUTPATIENT_RECEPTION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 81,
+      "source_name": "CURRENT PREGNANCY",
+      "source_uuid": "ba063ce8-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 76,
+      "target_name": "Current pregnancy",
+      "target_uuid": "4d854392-e4e6-4192-84cc-2b148150ba7e",
+      "mahis_enum_keys": [
+        "CURRENT_PREGNANCY"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 85,
+      "source_name": "TB VISIT",
+      "source_uuid": "ba063fb8-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 80,
+      "target_name": "Tb visit",
+      "target_uuid": "e8d30a12-6273-4063-805d-1f79258dde51",
+      "mahis_enum_keys": [
+        "TB_VISIT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 86,
+      "source_name": "TB CLINIC VISIT",
+      "source_uuid": "ba064328-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 81,
+      "target_name": "Tb clinic visit",
+      "target_uuid": "e8dc7e4d-4462-44a0-9129-5ba54873ab39",
+      "mahis_enum_keys": [
+        "TB_CLINIC_VISIT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 87,
+      "source_name": "TB ADHERENCE",
+      "source_uuid": "ba0643dc-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 82,
+      "target_name": "Tb adherence",
+      "target_uuid": "440cd7c2-e5eb-47fa-b306-95e5a1d24151",
+      "mahis_enum_keys": [
+        "TB_ADHERENCE"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 88,
+      "source_name": "GIVE LAB RESULTS",
+      "source_uuid": "ba06449a-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 83,
+      "target_name": "Give lab results",
+      "target_uuid": "f97456c9-e282-40ae-b8b5-7c9b6c312560",
+      "mahis_enum_keys": [
+        "GIVE_LAB_RESULTS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 90,
+      "source_name": "BABY DELIVERY",
+      "source_uuid": "ba06454e-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 84,
+      "target_name": "Baby delivery",
+      "target_uuid": "eb42d9dd-bffd-4674-8778-8cf233af8a2c",
+      "mahis_enum_keys": [
+        "BABY_DELIVERY"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 92,
+      "source_name": "EXPOSED_CHILD_INITIAL",
+      "source_uuid": "ba06460c-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 85,
+      "target_name": "Exposed_child_initial",
+      "target_uuid": "55a74635-6f8a-4a68-b942-62f4261f35ac",
+      "mahis_enum_keys": [
+        "EXPOSED_CHILD_INITIAL"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 93,
+      "source_name": "EXPOSED_CHILD_FOLLOWUP",
+      "source_uuid": "ba064986-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 86,
+      "target_name": "Exposed_child_followup",
+      "target_uuid": "a8d286ed-c7a2-4759-8164-7e83c9cbd152",
+      "mahis_enum_keys": [
+        "EXPOSED_CHILD_FOLLOWUP"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 94,
+      "source_name": "SOURCE OF REFERRAL",
+      "source_uuid": "ba064cc4-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 87,
+      "target_name": "Source of referral",
+      "target_uuid": "4cb8da7c-e738-422a-9b4a-f865c6dc23c4",
+      "mahis_enum_keys": [
+        "SOURCE_OF_REFERRAL"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 95,
+      "source_name": "MATERNITY EXAMINATION",
+      "source_uuid": "ba064df0-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 88,
+      "target_name": "Maternity examination",
+      "target_uuid": "439404f7-eb41-4218-88c9-592f5b9976a5",
+      "mahis_enum_keys": [
+        "MATERNITY_EXAMINATION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 98,
+      "source_name": "ANC EXAMINATION",
+      "source_uuid": "ba06530e-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 90,
+      "target_name": "ANC examination",
+      "target_uuid": "0d7542de-7978-4540-8e5d-752371ab8c8a",
+      "mahis_enum_keys": [
+        "ANC_EXAMINATION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 100,
+      "source_name": "ADMISSION DIAGNOSIS",
+      "source_uuid": "ba065804-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 92,
+      "target_name": "Admission diagnosis",
+      "target_uuid": "db4cbeee-feb7-46f6-974b-a08585d6c27c",
+      "mahis_enum_keys": [
+        "ADMISSION_DIAGNOSIS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 101,
+      "source_name": "DISCHARGE DIAGNOSIS",
+      "source_uuid": "ba065bd8-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 93,
+      "target_name": "Discharge diagnosis",
+      "target_uuid": "7da2ce77-58d3-4979-92df-619fa5a40cb7",
+      "mahis_enum_keys": [
+        "DISCHARGE_DIAGNOSIS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 102,
+      "source_name": "VAGINAL EXAMINATION",
+      "source_uuid": "ba065cdc-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 94,
+      "target_name": "Vaginal examination",
+      "target_uuid": "33bc0ebf-6474-4e7c-b336-d3fb2639bd01",
+      "mahis_enum_keys": [
+        "VAGINAL_EXAMINATION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 103,
+      "source_name": "PHYSICAL EXAMINATION",
+      "source_uuid": "ba0660c4-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 95,
+      "target_name": "Physical examination",
+      "target_uuid": "644099ae-7477-4c60-92df-0bb98573b9b0",
+      "mahis_enum_keys": [
+        "PHYSICAL_EXAMINATION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 104,
+      "source_name": "PATIENT REGISTRATION",
+      "source_uuid": "ba066498-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 96,
+      "target_name": "Patient registration",
+      "target_uuid": "65038f14-f70c-456e-a971-0bce963f0fe8",
+      "mahis_enum_keys": [
+        "PATIENT_REGISTRATION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 106,
+      "source_name": "DISCHARGE PATIENT",
+      "source_uuid": "ba06820c-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "DISCHARGE_PATIENT"
+      ],
+      "target_id": 98,
+      "target_name": "Discharge patient",
+      "target_uuid": "a51fbd78-b851-4e8c-9f04-83d586072283",
+      "mahis_enum_keys": [
+        "DISCHARGE_PATIENT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 107,
+      "source_name": "ANC VISIT TYPE",
+      "source_uuid": "ba06834c-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 99,
+      "target_name": "ANC visit type",
+      "target_uuid": "0a31b4d1-eba4-4b05-8401-2526cdcfbcfa",
+      "mahis_enum_keys": [
+        "ANC_VISIT_TYPE"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 111,
+      "source_name": "PREGNANCY STATUS",
+      "source_uuid": "ba0684a0-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 100,
+      "target_name": "Pregnancy status",
+      "target_uuid": "70477797-ae99-4dad-a96f-60843d4f7c93",
+      "mahis_enum_keys": [
+        "PREGNANCY_STATUS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 112,
+      "source_name": "FILM",
+      "source_uuid": "ba0685e0-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 101,
+      "target_name": "Film",
+      "target_uuid": "02e4ea21-cfea-405e-a806-aa62eaf05b63",
+      "mahis_enum_keys": [
+        "FILM"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 113,
+      "source_name": "SCREENING",
+      "source_uuid": "ba0687e8-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 102,
+      "target_name": "Screening",
+      "target_uuid": "17997a3c-0a40-4cdc-a42b-31fc1db02146",
+      "mahis_enum_keys": [
+        "SCREENING"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 115,
+      "source_name": "CURRENT BBA DELIVERY",
+      "source_uuid": "ba068a9a-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 104,
+      "target_name": "Current bba delivery",
+      "target_uuid": "9cb93374-264f-4383-bc44-649cee09d6b3",
+      "mahis_enum_keys": [
+        "CURRENT_BBA_DELIVERY"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 116,
+      "source_name": "ABDOMINAL EXAMINATION",
+      "source_uuid": "ba068bee-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 105,
+      "target_name": "Abdominal examination",
+      "target_uuid": "9a3b94fe-a09f-4b7e-82eb-4d4dc3c7d495",
+      "mahis_enum_keys": [
+        "ABDOMINAL_EXAMINATION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 117,
+      "source_name": "PHYSICAL EXAMINATION BABY",
+      "source_uuid": "ba068d2e-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 106,
+      "target_name": "Physical examination baby",
+      "target_uuid": "c2925f3b-3f17-4bfe-b56a-e8720f5bbc17",
+      "mahis_enum_keys": [
+        "PHYSICAL_EXAMINATION_BABY"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 119,
+      "source_name": "EXIT FROM HIV CARE",
+      "source_uuid": "ba068e64-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 107,
+      "target_name": "Exit from hiv care",
+      "target_uuid": "e28d6695-654c-4a32-9994-2bda5b6c81c7",
+      "mahis_enum_keys": [
+        "EXIT_FROM_HIV_CARE"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 121,
+      "source_name": "RADIOLOGY EXAMINATION",
+      "source_uuid": "ba068fb8-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "RADIOLOGY_EXAMINATON"
+      ],
+      "target_id": 108,
+      "target_name": "Radiology examination",
+      "target_uuid": "a8589aed-eabc-4b10-8ca3-bd5a4ada9581",
+      "mahis_enum_keys": [
+        "RADIOLOGY_EXAMINATION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 123,
+      "source_name": "SOCIAL DETERMINANTS",
+      "source_uuid": "ba069256-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 110,
+      "target_name": "Social determinants",
+      "target_uuid": "33eaf6f6-9327-40e2-946f-ed2759108f9a",
+      "mahis_enum_keys": [
+        "SOCIAL_DETERMINANTS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 124,
+      "source_name": "REFERRAL DIAGNOSIS",
+      "source_uuid": "ba0693a0-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 111,
+      "target_name": "Referral diagnosis",
+      "target_uuid": "682948c5-0c5d-4483-8900-37cd31c84d4d",
+      "mahis_enum_keys": [
+        "REFERRAL_DIAGNOSIS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 125,
+      "source_name": "INPATIENT DIAGNOSIS",
+      "source_uuid": "ba0694f4-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 112,
+      "target_name": "Inpatient diagnosis",
+      "target_uuid": "c1d6703f-d92b-4fc7-a5ee-8c67a2e6c265",
+      "mahis_enum_keys": [
+        "INPATIENT_DIAGNOSIS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 126,
+      "source_name": "PATIENT SENT HOME",
+      "source_uuid": "ba06963e-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": true,
+      "hwis_constant_keys": [],
+      "target_id": 113,
+      "target_name": "Patient sent home",
+      "target_uuid": "a07a640c-6dc2-42d6-8c71-0b569e051835",
+      "mahis_enum_keys": [
+        "PATIENT_SENT_HOME"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 127,
+      "source_name": "UPDATE BABY OUTCOME",
+      "source_uuid": "ba069792-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 114,
+      "target_name": "Update baby outcome",
+      "target_uuid": "68d4b9c3-6d66-4afd-922d-dcca8de075ea",
+      "mahis_enum_keys": [
+        "UPDATE_BABY_OUTCOME"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 128,
+      "source_name": "KANGAROO REVIEW VISIT",
+      "source_uuid": "ba0698dc-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 115,
+      "target_name": "Kangaroo review visit",
+      "target_uuid": "8abdcdf9-3955-44b0-aa9b-802427cce15b",
+      "mahis_enum_keys": [
+        "KANGAROO_REVIEW_VISIT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 129,
+      "source_name": "PMTCT HISTORY",
+      "source_uuid": "ba069a26-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 116,
+      "target_name": "Pmtct history",
+      "target_uuid": "f8113823-006e-48dc-a4af-81b5c4a2f74b",
+      "mahis_enum_keys": [
+        "PMTCT_HISTORY"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 130,
+      "source_name": "HIV STATUS AT ENROLLMENT",
+      "source_uuid": "ba069b7a-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 117,
+      "target_name": "Hiv status at enrollment",
+      "target_uuid": "927f48be-5837-484b-a585-97813df7eab4",
+      "mahis_enum_keys": [
+        "HIV_STATUS_AT_ENROLLMENT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 131,
+      "source_name": "RAPID ANTIBODY TEST",
+      "source_uuid": "ba069cc4-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 118,
+      "target_name": "Rapid antibody test",
+      "target_uuid": "6bd3f44b-966f-4fdd-8fc7-06cb268b6cb0",
+      "mahis_enum_keys": [
+        "RAPID_ANTIBODY_TEST"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 132,
+      "source_name": "DNA-PCR TEST",
+      "source_uuid": "ba069e0e-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 119,
+      "target_name": "Dna-pcr test",
+      "target_uuid": "06c67584-6340-426e-8298-b335ef922e2b",
+      "mahis_enum_keys": [
+        "DNA_PCR_TEST"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 133,
+      "source_name": "EID VISIT",
+      "source_uuid": "ba069ed6-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 120,
+      "target_name": "Eid visit",
+      "target_uuid": "a5e59042-f371-4dde-837f-a6e67ff8cb7f",
+      "mahis_enum_keys": [
+        "EID_VISIT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 134,
+      "source_name": "IMMUNIZATION RECORD",
+      "source_uuid": "ba069f94-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 121,
+      "target_name": "Immunization record",
+      "target_uuid": "1c05c505-e199-423a-bda6-df43badc495e",
+      "mahis_enum_keys": [
+        "IMMUNIZATION_RECORD"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 135,
+      "source_name": "VITAMIN A SUPPLEMENTATION AND DE-WORMING SCHEDULE",
+      "source_uuid": "ba06a05c-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 122,
+      "target_name": "Vitamin a supplementation and de-worming schedule",
+      "target_uuid": "6aaf737f-b83d-4459-b762-3c62ec66a013",
+      "mahis_enum_keys": [
+        "VITAMIN_A_SUPPLEMENTATION_AND_DE_WORMING_SCHEDULE"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 136,
+      "source_name": "REASON FOR SPECIAL CARE",
+      "source_uuid": "ba06a12e-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 123,
+      "target_name": "Reason for special care",
+      "target_uuid": "bd038d3b-5047-40ba-b8e9-c9ae25be3f67",
+      "mahis_enum_keys": [
+        "REASON_FOR_SPECIAL_CARE"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 137,
+      "source_name": "INITIAL NEW-BORN RECORD",
+      "source_uuid": "ba06afe8-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 124,
+      "target_name": "Initial new-born record",
+      "target_uuid": "0efbe43b-1ae5-4716-85d7-ea4dd1985ae2",
+      "mahis_enum_keys": [
+        "INITIAL_NEW_BORN_RECORD"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 138,
+      "source_name": "ASSESSMENT AT ONE WEEK POSTNATAL CHECK",
+      "source_uuid": "ba06b0b0-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 125,
+      "target_name": "Assessment at one week postnatal check",
+      "target_uuid": "22204e76-2765-4862-9aed-b6a7dda80507",
+      "mahis_enum_keys": [
+        "ASSESSMENT_AT_ONE_WEEK_POSTNATAL_CHECK"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 140,
+      "source_name": "UNDER 5 VISIT",
+      "source_uuid": "ba06b240-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 127,
+      "target_name": "Under 5 visit",
+      "target_uuid": "1423721e-7f77-4a4a-9242-3d3d8dd0a7f8",
+      "mahis_enum_keys": [
+        "UNDER_5_VISIT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 141,
+      "source_name": "ASSESSMENT",
+      "source_uuid": "ba06b2fe-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 128,
+      "target_name": "Assessment",
+      "target_uuid": "f7325d3e-8e92-477c-991d-415404c48c34",
+      "mahis_enum_keys": [
+        "ASSESSMENT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 142,
+      "source_name": "ASTHMA MEASURE",
+      "source_uuid": "ba06b3bc-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 129,
+      "target_name": "Asthma measure",
+      "target_uuid": "3ffa97fc-77cb-4951-8dcb-26259a200065",
+      "mahis_enum_keys": [
+        "ASTHMA_MEASURE"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 143,
+      "source_name": "DRUGS GIVEN",
+      "source_uuid": "ba06b484-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 130,
+      "target_name": "Drugs given",
+      "target_uuid": "2216f8a0-3f9f-456b-ad2f-c17f6b55a60e",
+      "mahis_enum_keys": [
+        "DRUGS_GIVEN"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 144,
+      "source_name": "EPILEPSY CLINIC VISIT",
+      "source_uuid": "ba06b54c-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 131,
+      "target_name": "Epilepsy clinic visit",
+      "target_uuid": "8d0dbf18-74ed-476a-8b47-3c6a4104c9e1",
+      "mahis_enum_keys": [
+        "EPILEPSY_CLINIC_VISIT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 145,
+      "source_name": "Referral Consent Confirmation",
+      "source_uuid": "ba06b61e-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 132,
+      "target_name": "Referral consent confirmation",
+      "target_uuid": "28bb24e5-7caf-49a6-8870-40efd61cd476",
+      "mahis_enum_keys": [
+        "REFERRAL_CONSENT_CONFIRMATION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 146,
+      "source_name": "HIV Testing",
+      "source_uuid": "ba06b6e6-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 133,
+      "target_name": "Hiv testing",
+      "target_uuid": "920f7be8-7ff4-4911-bce5-0a81ae782a3f",
+      "mahis_enum_keys": [
+        "HIV_TESTING"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 147,
+      "source_name": "IN WAITING",
+      "source_uuid": "ba06b7a4-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 134,
+      "target_name": "In waiting",
+      "target_uuid": "35d6c17b-6cfa-4125-9f55-ce480b14567e",
+      "mahis_enum_keys": [
+        "IN_WAITING"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 148,
+      "source_name": "IN SESSION",
+      "source_uuid": "ba06b862-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 135,
+      "target_name": "In session",
+      "target_uuid": "68c490be-c095-4d22-92fe-aeaff7470d39",
+      "mahis_enum_keys": [
+        "IN_SESSION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 149,
+      "source_name": "Counseling",
+      "source_uuid": "ba06b920-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 136,
+      "target_name": "Counseling",
+      "target_uuid": "262e2d18-b1b3-42ea-9959-511602f82ac9",
+      "mahis_enum_keys": [
+        "COUNSELING"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 150,
+      "source_name": "BIRTH PLAN",
+      "source_uuid": "ba06b9d4-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 137,
+      "target_name": "Birth plan",
+      "target_uuid": "d1dcb80c-bbda-4326-8ff7-84ff8ac99d7f",
+      "mahis_enum_keys": [
+        "BIRTH_PLAN"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 151,
+      "source_name": "ANC VISIT",
+      "source_uuid": "ba06baa6-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 138,
+      "target_name": "ANC visit",
+      "target_uuid": "ddfacc04-5875-41be-9cb6-39031167b4c4",
+      "mahis_enum_keys": [
+        "ANC_VISIT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 152,
+      "source_name": "HSA VISIT",
+      "source_uuid": "ba06bb6e-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 139,
+      "target_name": "Hsa visit",
+      "target_uuid": "9f1043db-005b-4e0c-b73b-b4b261b27442",
+      "mahis_enum_keys": [
+        "HSA_VISIT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 153,
+      "source_name": "QUALITY CONTROL TEST",
+      "source_uuid": "ba06bc36-8d80-11d8-abbb-0024217bb78e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 140,
+      "target_name": "Quality control test",
+      "target_uuid": "887bc4e7-e9d7-4052-b481-ee96fd447edd",
+      "mahis_enum_keys": [
+        "QUALITY_CONTROL_TEST"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 154,
+      "source_name": "CERVICAL CANCER SCREENING",
+      "source_uuid": "82842828-5307-11e6-bc96-3863bba995db",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 141,
+      "target_name": "Cervical cancer screening",
+      "target_uuid": "38552c08-327b-448c-92ad-5370c30569c6",
+      "mahis_enum_keys": [
+        "CERVICAL_CANCER_SCREENING"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 155,
+      "source_name": "CERVICAL CANCER SCREENING",
+      "source_uuid": "b9383624-4623-4cd1-bf5f-67accdbf709c",
+      "source_retired": true,
+      "hwis_constant_keys": [],
+      "target_id": 141,
+      "target_name": "Cervical cancer screening",
+      "target_uuid": "38552c08-327b-448c-92ad-5370c30569c6",
+      "mahis_enum_keys": [
+        "CERVICAL_CANCER_SCREENING"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 156,
+      "source_name": "FAST TRACK ASSESMENT",
+      "source_uuid": "41877df2-896f-4a0d-b590-8b10e59c1d7c",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 142,
+      "target_name": "Fast track assesment",
+      "target_uuid": "920b3c60-d602-4847-acae-8f16f6c7c915",
+      "mahis_enum_keys": [
+        "FAST_TRACK_ASSESMENT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 157,
+      "source_name": "GENITAL EXAMINATION",
+      "source_uuid": "7d616e73-843b-4f34-9264-08acbdc22173",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 143,
+      "target_name": "Genital examination",
+      "target_uuid": "222971c8-3f67-4a80-9d35-1e83f245d614",
+      "mahis_enum_keys": [
+        "GENITAL_EXAMINATION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 158,
+      "source_name": "CIRCUMCISION",
+      "source_uuid": "14392b18-e45b-4db7-9af0-709616d33796",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 144,
+      "target_name": "Circumcision",
+      "target_uuid": "cf1cfe07-8ddd-48e6-aaee-9488e416588d",
+      "mahis_enum_keys": [
+        "CIRCUMCISION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 159,
+      "source_name": "POST-OP REVIEW",
+      "source_uuid": "de6496e8-c980-4ae7-bce0-327a4c3c45cf",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 145,
+      "target_name": "Post-op review",
+      "target_uuid": "f8af3669-7ece-4f7e-add6-5b56d26019ba",
+      "mahis_enum_keys": [
+        "POST_OP_REVIEW"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 160,
+      "source_name": "FOLLOW UP",
+      "source_uuid": "19ee377a-e972-47d0-a111-281ed4e192c7",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 146,
+      "target_name": "Follow up",
+      "target_uuid": "d62085fd-fed9-4d1c-9d9b-078a1bc38d60",
+      "mahis_enum_keys": [
+        "FOLLOW_UP"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 162,
+      "source_name": "REGISTRATION CONSENT",
+      "source_uuid": "50489d4c-3935-4277-9739-51df6d0fa338",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 148,
+      "target_name": "Registration consent",
+      "target_uuid": "53f3c98d-71a8-40c6-a8ac-2cee48ad09b9",
+      "mahis_enum_keys": [
+        "REGISTRATION_CONSENT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 163,
+      "source_name": "HTS Visit",
+      "source_uuid": "4e7bfff4-3e00-40de-b0ba-0567eb4c9baf",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 149,
+      "target_name": "Hts visit",
+      "target_uuid": "0ad47811-71bc-42a4-bbee-97de9c51e9e7",
+      "mahis_enum_keys": [
+        "HTS_VISIT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 164,
+      "source_name": "Confirmatory HIV Testing",
+      "source_uuid": "11125196-b7db-4d51-abec-fb74dc2b39a6",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 150,
+      "target_name": "Confirmatory hiv testing",
+      "target_uuid": "ee334b4b-e1dd-4fb1-81fa-1a58511b0892",
+      "mahis_enum_keys": [
+        "CONFIRMATORY_HIV_TESTING"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 165,
+      "source_name": "POST-OP VITALS",
+      "source_uuid": "30e3d37f-1545-45e1-b44a-c0a2e1a87202",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 151,
+      "target_name": "Post-op vitals",
+      "target_uuid": "c8f97c86-8c64-4dd9-b62d-8996bafa5b84",
+      "mahis_enum_keys": [
+        "POST_OP_VITALS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 166,
+      "source_name": "SECOND POST-OP REVIEW",
+      "source_uuid": "b84dbf27-19d0-4ae4-8581-854b1c83e60e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 152,
+      "target_name": "Second post-op review",
+      "target_uuid": "5a7ecc6a-5a69-44bf-9302-4bedcc4f0f94",
+      "mahis_enum_keys": [
+        "SECOND_POST_OP_REVIEW"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 167,
+      "source_name": "THIRD POST-OP REVIEW",
+      "source_uuid": "ea725a27-972f-4bf9-b419-01f87566d832",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 153,
+      "target_name": "Third post-op review",
+      "target_uuid": "28e4eeda-cd1a-4472-a074-7227d00671a8",
+      "mahis_enum_keys": [
+        "THIRD_POST_OP_REVIEW"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 168,
+      "source_name": "General Consultation",
+      "source_uuid": "be9daed0-47fb-4b1c-991c-901103da9a22",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 154,
+      "target_name": "General consultation",
+      "target_uuid": "3f335fb7-4ed2-4fba-a540-4052d74360cf",
+      "mahis_enum_keys": [
+        "GENERAL_CONSULTATION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 169,
+      "source_name": "Obstetrics and Gynecology",
+      "source_uuid": "93e84b4c-a962-4ea5-84a9-6487218e6e44",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 155,
+      "target_name": "Obstetrics and gynecology",
+      "target_uuid": "86469f5f-babb-4cb9-9df4-c7d4edc2b3aa",
+      "mahis_enum_keys": [
+        "OBSTETRICS_AND_GYNECOLOGY"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 170,
+      "source_name": "ORTHOPEDIC VISIT",
+      "source_uuid": "e9e62819-d8ae-4137-bedb-e94b2c0ae186",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 156,
+      "target_name": "Orthopedic visit",
+      "target_uuid": "532d45b0-990e-47d9-bfee-949acf5e8acd",
+      "mahis_enum_keys": [
+        "ORTHOPEDIC_VISIT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 172,
+      "source_name": "SKIN VISIT",
+      "source_uuid": "2d3dfd41-25ed-494f-b062-ad5eff4b0803",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 158,
+      "target_name": "Skin visit",
+      "target_uuid": "10321e7e-ff9d-465e-86ee-5490c21d0be7",
+      "mahis_enum_keys": [
+        "SKIN_VISIT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 173,
+      "source_name": "INTENSIVE CARE UNIT",
+      "source_uuid": "c73c649d-52a6-48d2-a9be-dc66ce461d92",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 159,
+      "target_name": "Intensive care unit",
+      "target_uuid": "7a9bb204-3547-4b93-aa2f-2131def10408",
+      "mahis_enum_keys": [
+        "INTENSIVE_CARE_UNIT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 174,
+      "source_name": "DENTAL VISIT",
+      "source_uuid": "6ce47917-1705-4b9d-8aea-c53e6e092e75",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 160,
+      "target_name": "Dental visit",
+      "target_uuid": "e4584dd7-7aa4-48ea-b27c-ed8f25f3ba9d",
+      "mahis_enum_keys": [
+        "DENTAL_VISIT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 175,
+      "source_name": "ART VISIT",
+      "source_uuid": "3c50a67d-3c8c-4df0-95bc-d235aad959df",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 161,
+      "target_name": "Art visit",
+      "target_uuid": "52706c47-4cb5-4bb3-b86c-391ab224b8de",
+      "mahis_enum_keys": [
+        "ART_VISIT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 176,
+      "source_name": "VMMC VISIT",
+      "source_uuid": "c9015286-aacd-4046-9705-7a41e0c282ef",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 162,
+      "target_name": "Vmmc visit",
+      "target_uuid": "8ba4241d-ff0d-48c9-89a1-f9b6dd20b4df",
+      "mahis_enum_keys": [
+        "VMMC_VISIT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 177,
+      "source_name": "UNDER_FIVE VISIT",
+      "source_uuid": "3875ed80-fb39-4d56-b978-6ba26de6d230",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 163,
+      "target_name": "Under_five visit",
+      "target_uuid": "6d162d05-590d-446a-99fa-aa6dae6a3552",
+      "mahis_enum_keys": [
+        "UNDER_FIVE_VISIT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 178,
+      "source_name": "EXIT FROM CARE",
+      "source_uuid": "656a424f-2931-4d3a-8c2f-6694b673bfb3",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 164,
+      "target_name": "Exit from care",
+      "target_uuid": "03414ac4-faca-4498-8a1a-ce43d5390799",
+      "mahis_enum_keys": [
+        "EXIT_FROM_CARE"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 179,
+      "source_name": "REGIMEN INITIAL",
+      "source_uuid": "5b71cc70-02a4-47d1-8197-3d4ac5ac5b21",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 165,
+      "target_name": "Regimen initial",
+      "target_uuid": "d7478b25-cefa-4b5b-aafb-8acb4fa5e273",
+      "mahis_enum_keys": [
+        "REGIMEN_INITIAL"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 180,
+      "source_name": "REGIMEN CHANGE",
+      "source_uuid": "4380dc7a-3926-4b5d-8021-5d553b79bee0",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 166,
+      "target_name": "Regimen change",
+      "target_uuid": "0ab3263c-9fff-4fc9-902f-3223224b6664",
+      "mahis_enum_keys": [
+        "REGIMEN_CHANGE"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 181,
+      "source_name": "CxCa test",
+      "source_uuid": "b922377f-7a84-40d8-844e-cd8d9398e54e",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 167,
+      "target_name": "Cxca test",
+      "target_uuid": "e4d5c3dc-7cf0-4991-918b-ec8bbb77202e",
+      "mahis_enum_keys": [
+        "CXCA_TEST"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 182,
+      "source_name": "CxCa treatment",
+      "source_uuid": "590dab6e-c90f-4141-9939-650d924a5990",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 168,
+      "target_name": "Cxca treatment",
+      "target_uuid": "5429184f-72e8-484c-a039-76244f72f2c6",
+      "mahis_enum_keys": [
+        "CXCA_TREATMENT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 183,
+      "source_name": "CxCa reception",
+      "source_uuid": "39e7703d-e723-4458-b4e2-9bb4cf722bd0",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 169,
+      "target_name": "Cxca reception",
+      "target_uuid": "9d8be089-cc89-482f-9256-ff33c08d86ec",
+      "mahis_enum_keys": [
+        "CXCA_RECEPTION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 184,
+      "source_name": "CxCa referral feedback",
+      "source_uuid": "a65a1232-d406-47b1-a248-15e3ff7dbee6",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 170,
+      "target_name": "Cxca referral feedback",
+      "target_uuid": "064fdc34-6c46-4463-8758-7de88d59407c",
+      "mahis_enum_keys": [
+        "CXCA_REFERRAL_FEEDBACK"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 185,
+      "source_name": "CxCa results",
+      "source_uuid": "9d1475d4-5ac0-4d40-8a16-d31762365250",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 171,
+      "target_name": "Cxca results",
+      "target_uuid": "9ef79f9d-9516-4e74-baf6-85f3e92d726b",
+      "mahis_enum_keys": [
+        "CXCA_RESULTS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 186,
+      "source_name": "CxCa screening result",
+      "source_uuid": "5e9f206a-082a-4525-b7a5-31024d98bb95",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 172,
+      "target_name": "Cxca screening result",
+      "target_uuid": "9fcb73d7-033c-48c9-90f0-4776a8281101",
+      "mahis_enum_keys": [
+        "CXCA_SCREENING_RESULT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 187,
+      "source_name": "CxCa test",
+      "source_uuid": "5123a5ec-0abb-436b-b8cd-1eff9893e60d",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 167,
+      "target_name": "Cxca test",
+      "target_uuid": "e4d5c3dc-7cf0-4991-918b-ec8bbb77202e",
+      "mahis_enum_keys": [
+        "CXCA_TEST"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 188,
+      "source_name": "CxCa treatment",
+      "source_uuid": "b706da06-88d8-46c8-81d6-2b8eb24c363c",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 168,
+      "target_name": "Cxca treatment",
+      "target_uuid": "5429184f-72e8-484c-a039-76244f72f2c6",
+      "mahis_enum_keys": [
+        "CXCA_TREATMENT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 189,
+      "source_name": "CxCa reception",
+      "source_uuid": "bf4386d7-8de0-458c-990f-6c71774214bf",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 169,
+      "target_name": "Cxca reception",
+      "target_uuid": "9d8be089-cc89-482f-9256-ff33c08d86ec",
+      "mahis_enum_keys": [
+        "CXCA_RECEPTION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 190,
+      "source_name": "CxCa referral feedback",
+      "source_uuid": "0bf0b369-edfc-4fe0-aaf5-28c84cf73af1",
+      "source_retired": true,
+      "hwis_constant_keys": [],
+      "target_id": 170,
+      "target_name": "Cxca referral feedback",
+      "target_uuid": "064fdc34-6c46-4463-8758-7de88d59407c",
+      "mahis_enum_keys": [
+        "CXCA_REFERRAL_FEEDBACK"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 191,
+      "source_name": "CxCa results",
+      "source_uuid": "010c23cb-17ad-4521-a30c-3e08cb03fc2d",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 171,
+      "target_name": "Cxca results",
+      "target_uuid": "9ef79f9d-9516-4e74-baf6-85f3e92d726b",
+      "mahis_enum_keys": [
+        "CXCA_RESULTS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 192,
+      "source_name": "CxCa screening result",
+      "source_uuid": "b70cdded-5b40-44e1-ac45-43a14ce488ce",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 172,
+      "target_name": "Cxca screening result",
+      "target_uuid": "9fcb73d7-033c-48c9-90f0-4776a8281101",
+      "mahis_enum_keys": [
+        "CXCA_SCREENING_RESULT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 193,
+      "source_name": "TRIAGE PRESENTING COMPLAINTS",
+      "source_uuid": "0f3efa73-a8f7-11ec-929a-0242ac110003",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 173,
+      "target_name": "Triage presenting complaints",
+      "target_uuid": "13c0cdaf-ebb2-42bc-b233-70d7efb0b460",
+      "mahis_enum_keys": [
+        "TRIAGE_PRESENTING_COMPLAINTS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 194,
+      "source_name": "Partner Reception",
+      "source_uuid": "1d64e13b-2768-11ed-a571-0242ac110003",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 174,
+      "target_name": "Partner reception",
+      "target_uuid": "65b88a15-fd7b-4313-a6f7-adc5671d8145",
+      "mahis_enum_keys": [
+        "PARTNER_RECEPTION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 195,
+      "source_name": "HTS Contact",
+      "source_uuid": "1d64e34a-2768-11ed-a571-0242ac110003",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 175,
+      "target_name": "Hts contact",
+      "target_uuid": "ade950e1-a55e-457a-a0b0-1dcd11b8dfe6",
+      "mahis_enum_keys": [
+        "HTS_CONTACT"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 196,
+      "source_name": "ITEMS GIVEN",
+      "source_uuid": "2855262b-64ba-11ed-b200-0242ac110003",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 176,
+      "target_name": "Items given",
+      "target_uuid": "d7701392-8a4a-4af9-b176-5fc916641f85",
+      "mahis_enum_keys": [
+        "ITEMS_GIVEN"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 197,
+      "source_name": "Testing",
+      "source_uuid": "30612354-6fc9-11ed-9ffa-0242ac110003",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 177,
+      "target_name": "Testing",
+      "target_uuid": "666957dd-4a60-4780-8ce3-0af06b03e199",
+      "mahis_enum_keys": [
+        "TESTING"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 198,
+      "source_name": "RECENCY",
+      "source_uuid": "31612354-6fc9-11ed-9ffa-0242ac110003",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 178,
+      "target_name": "Recency",
+      "target_uuid": "c7bb0778-f761-4793-b3df-df87d0ad53c9",
+      "mahis_enum_keys": [
+        "RECENCY"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 199,
+      "source_name": "DBS ORDER",
+      "source_uuid": "31612354-6fc9-11ed-9ffa-0242ac110011",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 179,
+      "target_name": "Dbs order",
+      "target_uuid": "8c809d92-9b86-4d55-86ef-27108306b1d3",
+      "mahis_enum_keys": [
+        "DBS_ORDER"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 202,
+      "source_name": "Blood Circulation",
+      "source_uuid": "24001912-0402-4413-9cf9-e773a43bcfa9",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 220,
+      "target_name": "Blood circulation",
+      "target_uuid": "ba53cddd-7fbc-4022-a0c2-1fcc6d6ac86d",
+      "mahis_enum_keys": [
+        "BLOOD_CIRCULATION"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 203,
+      "source_name": "Consciousness",
+      "source_uuid": "42bfe0d5-d05d-49d4-81d1-7e760d2ac003",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "CONSCIOUSNESS"
+      ],
+      "target_id": 221,
+      "target_name": "Consciousness",
+      "target_uuid": "83349e4e-8682-47b3-9b7e-0b1b36721b31",
+      "mahis_enum_keys": [
+        "CONSCIOUSNESS"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 225,
+      "source_name": "Patient Care Area",
+      "source_uuid": "83773e87-b371-45be-a1ba-37691dc8bb65",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 238,
+      "target_name": "Patient care area",
+      "target_uuid": "90713612-432d-4eff-9bb7-4d3a9c0318fc",
+      "mahis_enum_keys": [
+        "PATIENT_CARE_AREA"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 226,
+      "source_name": "Non-pharmacological",
+      "source_uuid": "6bec3dcf-8559-4c17-8c54-df435b3c4d80",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 239,
+      "target_name": "Non-pharmacological",
+      "target_uuid": "3d9eb69a-850e-4089-9c28-f8af57fad959",
+      "mahis_enum_keys": [
+        "NON_PHARMACOLOGICAL"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 231,
+      "source_name": "Continuation Sheet",
+      "source_uuid": "dd12d7ad-f177-463a-9013-c135440c6cf9",
+      "source_retired": false,
+      "hwis_constant_keys": [
+        "CONTINUATION_SHEET"
+      ],
+      "target_id": 244,
+      "target_name": "Continuation sheet",
+      "target_uuid": "79905fb1-2a71-4428-9b93-b87069d39912",
+      "mahis_enum_keys": [
+        "CONTINUATION_SHEET"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 233,
+      "source_name": "Bedside test",
+      "source_uuid": "bf8cdda1-30d3-439e-96b0-50c9c36048da",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": 246,
+      "target_name": "Bedside test",
+      "target_uuid": "8cf0fb72-b973-4927-87dd-c0b58d1b6d18",
+      "mahis_enum_keys": [
+        "BEDSIDE_TEST"
+      ],
+      "action": "not_used",
+      "match_method": "name",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 246,
+      "source_name": "Sample history Medication",
+      "source_uuid": "d579480a-3d9a-499b-b919-41cb4c785807",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": null,
+      "target_name": null,
+      "target_uuid": null,
+      "mahis_enum_keys": [],
+      "action": "not_used",
+      "match_method": "none",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    },
+    {
+      "source_id": 247,
+      "source_name": "Sample history Medication",
+      "source_uuid": "ba8163f5-809e-41ff-9b5d-7c4f56a9d7ae",
+      "source_retired": false,
+      "hwis_constant_keys": [],
+      "target_id": null,
+      "target_name": null,
+      "target_uuid": null,
+      "mahis_enum_keys": [],
+      "action": "not_used",
+      "match_method": "none",
+      "encounters_in_source": 0,
+      "voided_in_source": 0,
+      "first_encounter": null,
+      "last_encounter": null,
+      "reviewed": false
+    }
+  ]
+}
