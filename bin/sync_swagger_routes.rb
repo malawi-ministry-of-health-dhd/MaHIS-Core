@@ -161,8 +161,7 @@ class SwaggerRouteSync
         next if generated == operation
 
         if @check
-          raise "#{file.relative_path_from(Rails.root)}: #{method.upcase} #{path} needs controller documentation sync\n" \
-                "Checked-in operation:\n#{YAML.dump(operation)}Generated operation:\n#{YAML.dump(generated)}"
+          raise "#{file.relative_path_from(Rails.root)}: #{method.upcase} #{path} needs controller documentation sync"
         end
 
         source = replace_operation(source, path, method, generated)

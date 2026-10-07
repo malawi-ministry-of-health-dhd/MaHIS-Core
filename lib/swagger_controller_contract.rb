@@ -555,10 +555,10 @@ class SwaggerControllerContract
 
   def controller_source_path
     file = Pathname.new(@file)
-    return file.relative_path_from(Rails.root).to_s if file.to_s.start_with?("#{Rails.root}/")
-
     gem = Gem.loaded_specs.values.find { |spec| file.to_s.start_with?("#{spec.full_gem_path}/") }
     return "gems/#{gem.full_name}/#{file.relative_path_from(Pathname.new(gem.full_gem_path))}" if gem
+
+    return file.relative_path_from(Rails.root).to_s if file.to_s.start_with?("#{Rails.root}/")
 
     file.to_s
   end

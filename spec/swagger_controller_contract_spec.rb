@@ -67,6 +67,21 @@ RSpec.describe SwaggerControllerContract do
       .to eq('gems/his_emr_api_lab-2.4.7/app/controllers/lab/orders_controller.rb:23')
   end
 
+  it 'keeps gem references stable when Bundler installs gems inside the project' do
+    source = Rails.root.join('vendor/bundle/ruby/3.2.0/gems/his_emr_api_lab-2.4.7/app/controllers/lab/orders_controller.rb')
+    gem = Struct.new(:full_gem_path, :full_name).new(
+      Rails.root.join('vendor/bundle/ruby/3.2.0/gems/his_emr_api_lab-2.4.7').to_s,
+      'his_emr_api_lab-2.4.7'
+    )
+    generator = described_class.new(method: 'patch', path: '/api/v1/lab/orders/{order_id}', action: 'lab/orders#update')
+    generator.instance_variable_set(:@file, source.to_s)
+
+    allow(Gem).to receive(:loaded_specs).and_return('his_emr_api_lab' => gem)
+
+    expect(generator.send(:controller_source_path))
+      .to eq('gems/his_emr_api_lab-2.4.7/app/controllers/lab/orders_controller.rb')
+  end
+
   it 'keeps every served route operation outside the route-only placeholder state' do
     %w[swagger/v1/swagger.yaml swagger/lab/v1/swagger.yaml].each do |filename|
       document = YAML.safe_load_file(Rails.root.join(filename), aliases: true)
