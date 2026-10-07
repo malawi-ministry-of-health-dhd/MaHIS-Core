@@ -37,5 +37,17 @@ module AetcMigration
         'Log file' => terminal.log_path.to_s
       )
     end
+
+    def schemas
+      terminal.title('Schemas created by the AETC migration tool')
+      entries = Schemas.new(config: @config).list
+      return terminal.info('None. rake "aetc:load[/path/to/dump.sql]" creates the first one.') if entries.empty?
+
+      terminal.table(%w[Schema Role Status Created Size Tables],
+                     entries.map do |e|
+                       [e.name, e.role, e.status, e.created_at&.strftime('%Y-%m-%d %H:%M'),
+                        terminal.number_to_size(e.size_bytes), e.tables]
+                     end)
+    end
   end
 end
