@@ -92,7 +92,9 @@ module AetcMigration
       end
       loaded = list.select { |e| e.role == 'staging' && e.status == 'loaded' }
       case loaded.size
-      when 0 then raise Error, 'No AETC schema is loaded yet. Run: rake "aetc:load[/path/to/aetc_dump.sql]"'
+      when 0
+        raise Error, 'No AETC schema is loaded yet. Run rake "aetc:load[/path/to/aetc_dump.sql]", or, if AETC is ' \
+                     'already restored on this MySQL server, set AETC_SOURCE_DB=<schema name>'
       when 1 then loaded.first.name
       else
         raise Error, "More than one AETC schema is loaded (#{loaded.map(&:name).join(', ')}). " \
