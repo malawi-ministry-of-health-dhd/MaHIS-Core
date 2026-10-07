@@ -32,7 +32,7 @@ module AetcMigration
         'Target database' => @config.target_db,
         'AETC source schema' => @config.source_db || '(the schema loaded by aetc:load)',
         'Mappings folder' => @config.mappings_dir.to_s,
-        'Batch size' => "#{@config.batch_size} patients",
+        'Batch size' => "#{@config.batch_size}#{' (AETC_BATCH_SIZE)' if @config.batch_size_set?}",
         'mysql client' => @config.mysql_client,
         'Log file' => terminal.log_path.to_s
       )

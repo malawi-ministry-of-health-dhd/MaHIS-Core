@@ -5,7 +5,7 @@ module AetcMigration
   # stopped run continues from the checkpoints. DRY_RUN runs everything in one transaction and rolls it
   # back; LIMIT=n migrates only the next n AETC persons (and what belongs to them).
   class Runner
-    STEPS = [Steps::Users, Steps::Persons, Steps::Patients, Steps::Relationships].freeze
+    STEPS = [Steps::Users, Steps::Persons, Steps::Patients, Steps::Relationships, Steps::Visits].freeze
     DRY_RUN_DEFAULT_LIMIT = 1000
 
     def initialize(config:, terminal:, schemas:, dry_run: false, limit: nil, sql: Sql.new)
@@ -69,7 +69,11 @@ module AetcMigration
         'Mode' => @dry_run ? 'DRY RUN: everything is rolled back at the end' : 'live (each batch is committed)',
         'Persons' => limit ? "next #{@terminal.number(limit)} AETC persons#{run.cap ? " (up to person_id #{run.cap})" : ' (all remaining)'}" : 'all',
         'Steps' => steps.map(&:key).join(' → '),
-        'Batch size' => "#{@config.batch_size} rows",
+        'Batch size' => if @config.batch_size_set?
+                          "#{@config.batch_size} (AETC_BATCH_SIZE)"
+                        else
+                          "#{@config.batch_size} rows; visits 1,000, encounters/orders 500, obs 100 patients"
+                        end,
         'Tracking' => run.tracking.name,
         'Log file' => @terminal.log_path.to_s
       )

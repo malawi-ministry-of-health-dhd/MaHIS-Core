@@ -154,7 +154,7 @@ module AetcMigration
       @terminal.section('Fresh run')
       overlap = @db.select_value(<<~SQL).to_i
         SELECT COUNT(*) FROM (SELECT 1 FROM #{qualified(source, 'encounter')} s
-        JOIN #{target('encounter')} t ON t.uuid = s.uuid
+        JOIN #{target('encounter')} t ON #{same_uuid('encounter')}
         LEFT JOIN #{tracking.table_name('id_map')} m ON m.entity = 'encounter' AND m.src_id = s.encounter_id
         WHERE m.src_id IS NULL LIMIT 1) x
       SQL
@@ -165,7 +165,7 @@ module AetcMigration
         @terminal.ok("#{@config.target_db} has no AETC encounters from an earlier migration")
       end
       persons = @db.select_value(<<~SQL).to_i
-        SELECT COUNT(*) FROM #{qualified(source, 'person')} s JOIN #{target('person')} t ON t.uuid = s.uuid
+        SELECT COUNT(*) FROM #{qualified(source, 'person')} s JOIN #{target('person')} t ON #{same_uuid('person')}
         LEFT JOIN #{tracking.table_name('id_map')} m ON m.entity = 'person' AND m.src_id = s.person_id
         WHERE m.src_id IS NULL
       SQL
@@ -199,6 +199,10 @@ module AetcMigration
     def sample(values, limit = 10)
       shown = values.first(limit).join(', ')
       values.size > limit ? "#{shown} … (+#{values.size - limit} more)" : shown
+    end
+
+    def same_uuid(table)
+      Sql.new(@db).same_text(@config.target_db, table, 'uuid', 't', 's')
     end
 
     def target(table)

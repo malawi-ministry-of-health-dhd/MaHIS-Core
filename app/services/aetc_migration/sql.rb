@@ -30,6 +30,11 @@ module AetcMigration
       @db.execute(sql)
     end
 
+    # Runs an INSERT ... SELECT / UPDATE and returns the number of rows it changed.
+    def write(sql)
+      @db.update(sql)
+    end
+
     def quote(value)
       case value
       when nil then 'NULL'
@@ -64,6 +69,25 @@ module AetcMigration
                     "VALUES #{values.join(', ')}")
       end
       rows.size
+    end
+
+    # SQL comparing target_alias.column with source_alias.column in the target column's own character set
+    # and collation, so the two databases' collations can differ and the target index is still used.
+    def same_text(schema, table, column, target_alias, source_alias)
+      charset, collation = column_collation(schema, table, column)
+      "#{target_alias}.#{column} = CONVERT(#{source_alias}.#{column} USING #{charset}) COLLATE #{collation}"
+    end
+
+    def column_collation(schema, table, column)
+      @collations ||= {}
+      @collations[[schema, table, column]] ||= begin
+        row = select('SELECT CHARACTER_SET_NAME AS cs, COLLATION_NAME AS co FROM information_schema.COLUMNS ' \
+                     "WHERE TABLE_SCHEMA = #{quote(schema)} AND TABLE_NAME = #{quote(table)} " \
+                     "AND COLUMN_NAME = #{quote(column)}").first
+        raise Error, "#{schema}.#{table}.#{column} not found" unless row && row['cs']
+
+        [row['cs'], row['co']]
+      end
     end
 
     # {uuid => id} for rows of table whose uuid is in uuids.

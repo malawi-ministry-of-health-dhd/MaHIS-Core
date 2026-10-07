@@ -7,7 +7,7 @@ module AetcMigration
   # Everything else can be overridden with environment variables:
   #   AETC_SOURCE_DB      AETC staging schema to migrate from (default: the one loaded by aetc:load)
   #   AETC_MAPPINGS_DIR   folder with the mapping files (default: db/aetc_migration/mappings)
-  #   AETC_BATCH_SIZE     AETC rows per batch/transaction (default: 500)
+  #   AETC_BATCH_SIZE     rows (or, for clinical steps, patients) per batch/transaction (default: 500)
   #   MYSQL_CLIENT        mysql command-line client used by aetc:load (default: mysql)
   #   AETC_CREATOR_USER_ID  MaHIS user recorded as creator of the aetc_migration user (default: 1)
   class Config
@@ -67,6 +67,12 @@ module AetcMigration
       Integer(value).tap { |n| raise Error, 'AETC_BATCH_SIZE must be greater than 0' unless n.positive? }
     rescue ArgumentError
       raise Error, "AETC_BATCH_SIZE must be a number, got #{value.inspect}"
+    end
+
+    # True when AETC_BATCH_SIZE is set; the clinical steps then use it instead of their own default
+    # (visits 1,000, encounters/orders 500, obs 100 patients per batch).
+    def batch_size_set?
+      @env['AETC_BATCH_SIZE'].present?
     end
 
     def creator_user_id
