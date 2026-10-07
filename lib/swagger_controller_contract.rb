@@ -530,7 +530,7 @@ class SwaggerControllerContract
       'tags' => [@path.split('/')[3].to_s.tr('_-', ' ').titleize],
       'description' => description,
       'x-rails-action' => @action,
-      'x-controller-source' => "#{Pathname.new(@file).relative_path_from(Rails.root)}:#{@ast.first_lineno}",
+      'x-controller-source' => "#{controller_source_path}:#{@ast.first_lineno}",
       'x-contract-source' => 'controller'
     }
     operation['security'] = [] if public_action? || !@controller.ancestors.include?(ApplicationController)
@@ -551,6 +551,16 @@ class SwaggerControllerContract
       operation['description'] = "#{summary}. #{input_note} #{output_note}".squish
     end
     operation
+  end
+
+  def controller_source_path
+    file = Pathname.new(@file)
+    return file.relative_path_from(Rails.root).to_s if file.to_s.start_with?("#{Rails.root}/")
+
+    gem = Gem.loaded_specs.values.find { |spec| file.to_s.start_with?("#{spec.full_gem_path}/") }
+    return "gems/#{gem.full_name}/#{file.relative_path_from(Pathname.new(gem.full_gem_path))}" if gem
+
+    file.to_s
   end
 
   def public_action?

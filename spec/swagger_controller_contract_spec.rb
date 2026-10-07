@@ -60,6 +60,13 @@ RSpec.describe SwaggerControllerContract do
     expect(proxy['responses']).to have_key('502')
   end
 
+  it 'records gem controller locations without the local Ruby installation path' do
+    operation = contract('patch', '/api/v1/lab/orders/{order_id}', 'lab/orders#update')
+
+    expect(operation['x-controller-source'])
+      .to eq('gems/his_emr_api_lab-2.4.7/app/controllers/lab/orders_controller.rb:23')
+  end
+
   it 'keeps every served route operation outside the route-only placeholder state' do
     %w[swagger/v1/swagger.yaml swagger/lab/v1/swagger.yaml].each do |filename|
       document = YAML.safe_load_file(Rails.root.join(filename), aliases: true)

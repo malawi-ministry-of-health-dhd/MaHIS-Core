@@ -3810,7 +3810,7 @@ paths:
       description: 'Update lab orders. Reads specimen, id, force_update. Serialized JSON
         result of `OrdersService.update_order(params[:id], specimen:, force_update: params[:force_update])`.'
       x-rails-action: lab/orders#update
-      x-controller-source: "../../../.rvm/gems/ruby-3.2.2/gems/his_emr_api_lab-2.4.7/app/controllers/lab/orders_controller.rb:23"
+      x-controller-source: gems/his_emr_api_lab-2.4.7/app/controllers/lab/orders_controller.rb:23
       x-contract-source: controller
       parameters:
       - name: order_id
@@ -31377,7 +31377,7 @@ paths:
       description: 'Order status lab orders. Reads tracking_number, status, status_time,
         comments, status_id, updated_by. JSON fields: message.'
       x-rails-action: lab/orders#order_status
-      x-controller-source: "../../../.rvm/gems/ruby-3.2.2/gems/his_emr_api_lab-2.4.7/app/controllers/lab/orders_controller.rb:79"
+      x-controller-source: gems/his_emr_api_lab-2.4.7/app/controllers/lab/orders_controller.rb:79
       x-contract-source: controller
       security: []
       parameters: []
@@ -31430,7 +31430,7 @@ paths:
       - Lab
       description: 'Order result lab orders. Reads data. JSON fields: message.'
       x-rails-action: lab/orders#order_result
-      x-controller-source: "../../../.rvm/gems/ruby-3.2.2/gems/his_emr_api_lab-2.4.7/app/controllers/lab/orders_controller.rb:86"
+      x-controller-source: gems/his_emr_api_lab-2.4.7/app/controllers/lab/orders_controller.rb:86
       x-contract-source: controller
       security: []
       parameters: []
@@ -31464,7 +31464,7 @@ paths:
         location_id. Serialized JSON result of `OrdersService.lab_orders(start_date, end_date,
         concept_id, include_data: include_data, location_id: location_id)`.'
       x-rails-action: lab/orders#summary
-      x-controller-source: "../../../.rvm/gems/ruby-3.2.2/gems/his_emr_api_lab-2.4.7/app/controllers/lab/orders_controller.rb:93"
+      x-controller-source: gems/his_emr_api_lab-2.4.7/app/controllers/lab/orders_controller.rb:93
       x-contract-source: controller
       security: []
       parameters:
@@ -31646,7 +31646,7 @@ paths:
       description: Print order label lab labels. Reads order_id, number_of_copies, use_small_specimen_label,
         raw. Barcode or label data. Use raw=true for a printable label stream.
       x-rails-action: lab/labels#print_order_label
-      x-controller-source: "../../../.rvm/gems/ruby-3.2.2/gems/his_emr_api_lab-2.4.7/app/controllers/lab/labels_controller.rb:8"
+      x-controller-source: gems/his_emr_api_lab-2.4.7/app/controllers/lab/labels_controller.rb:8
       x-contract-source: controller
       security: []
       parameters:
@@ -31692,7 +31692,7 @@ paths:
       description: 'Verify tracking number lab orders. Reads accession_number. JSON fields:
         exists.'
       x-rails-action: lab/orders#verify_tracking_number
-      x-controller-source: "../../../.rvm/gems/ruby-3.2.2/gems/his_emr_api_lab-2.4.7/app/controllers/lab/orders_controller.rb:58"
+      x-controller-source: gems/his_emr_api_lab-2.4.7/app/controllers/lab/orders_controller.rb:58
       x-contract-source: controller
       parameters:
       - name: accession_number
@@ -31742,7 +31742,7 @@ paths:
       description: List lab test methods. Reads nlims_code. Serialized JSON result of
         `ConceptsService.test_methods(params.require(:nlims_code))`.
       x-rails-action: lab/test_methods#index
-      x-controller-source: "../../../.rvm/gems/ruby-3.2.2/gems/his_emr_api_lab-2.4.7/app/controllers/lab/test_methods_controller.rb:5"
+      x-controller-source: gems/his_emr_api_lab-2.4.7/app/controllers/lab/test_methods_controller.rb:5
       x-contract-source: controller
       parameters:
       - name: nlims_code
@@ -31821,7 +31821,7 @@ paths:
       - Lab
       description: create a LIMS User that will be responsible for sending lab results
       x-rails-action: lab/users#create
-      x-controller-source: "../../../.rvm/gems/ruby-3.2.2/gems/his_emr_api_lab-2.4.7/app/controllers/lab/users_controller.rb:9"
+      x-controller-source: gems/his_emr_api_lab-2.4.7/app/controllers/lab/users_controller.rb:9
       x-contract-source: controller
       security: []
       parameters: []
