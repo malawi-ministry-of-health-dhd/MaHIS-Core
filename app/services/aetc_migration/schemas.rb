@@ -17,6 +17,7 @@ module AetcMigration
     end
 
     def list
+      @db.execute('SET SESSION information_schema_stats_expiry = 0') # sizes of freshly loaded tables
       names = @db.select_values(
         "SELECT TABLE_SCHEMA FROM information_schema.TABLES WHERE TABLE_NAME = #{@db.quote(MARKER)}"
       )

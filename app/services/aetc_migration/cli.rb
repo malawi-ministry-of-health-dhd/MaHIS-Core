@@ -38,6 +38,12 @@ module AetcMigration
       )
     end
 
+    def load_dump(path = nil, name = nil)
+      raise Error, 'Give the dump file: rake "aetc:load[/path/to/aetc_dump.sql]"' if path.blank?
+
+      DumpLoader.new(config: @config, terminal: terminal, schemas: Schemas.new(config: @config)).call(path, name: name)
+    end
+
     def schemas
       terminal.title('Schemas created by the AETC migration tool')
       entries = Schemas.new(config: @config).list
