@@ -48,6 +48,12 @@ module AetcMigration
       Preflight.new(config: @config, terminal: terminal, schemas: Schemas.new(config: @config)).call
     end
 
+    # DRY_RUN=1 and LIMIT=n come from the environment.
+    def migrate(step = nil)
+      Runner.new(config: @config, terminal: terminal, schemas: Schemas.new(config: @config),
+                 dry_run: ENV['DRY_RUN'].present? && ENV['DRY_RUN'] != '0', limit: limit).call(step)
+    end
+
     def cleanup(only = nil)
       Cleanup.new(config: @config, terminal: terminal, schemas: Schemas.new(config: @config)).call(only: only)
     end
@@ -62,6 +68,16 @@ module AetcMigration
                        [e.name, e.role, e.status, e.created_at&.strftime('%Y-%m-%d %H:%M'),
                         terminal.number_to_size(e.size_bytes), e.tables]
                      end)
+    end
+
+    private
+
+    def limit
+      return nil if ENV['LIMIT'].blank?
+
+      Integer(ENV['LIMIT']).tap { |n| raise Error, 'LIMIT must be greater than 0' unless n.positive? }
+    rescue ArgumentError
+      raise Error, "LIMIT must be a number, got #{ENV['LIMIT'].inspect}"
     end
   end
 end

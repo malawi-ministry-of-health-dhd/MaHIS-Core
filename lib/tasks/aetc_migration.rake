@@ -19,6 +19,12 @@ namespace :aetc do
     AetcMigration::Cli.run(:check)
   end
 
+  desc 'Migrate the AETC data into MaHIS: rake aetc:migrate, or one step: rake "aetc:migrate[persons]". ' \
+       'DRY_RUN=1 rolls everything back; LIMIT=n migrates only the next n AETC persons'
+  task :migrate, %i[step] => :environment do |_task, args|
+    AetcMigration::Cli.run(:migrate, args[:step])
+  end
+
   desc 'List the schemas this tool created (AETC staging copies and tracking schemas)'
   task schemas: :environment do
     AetcMigration::Cli.run(:schemas)

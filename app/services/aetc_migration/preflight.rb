@@ -41,7 +41,7 @@ module AetcMigration
       mappings = check_mappings(tracking)
       check_targets(tracking, mappings) if mappings
       check_coverage(source, tracking) if mappings
-      check_fresh_target(source)
+      check_fresh_target(source, tracking)
       finish(source, tracking)
     end
 
@@ -56,6 +56,12 @@ module AetcMigration
       return problem("Target database #{@config.target_db} has no tables") if tables.zero?
 
       @terminal.ok("Target database #{@config.target_db} (#{tables} tables)")
+      creator = @config.creator_user_id
+      if @db.select_value("SELECT COUNT(*) FROM #{target('users')} WHERE user_id = #{creator}").to_i.zero?
+        problem("MaHIS user #{creator} (creator of the aetc_migration user) does not exist; set AETC_CREATOR_USER_ID")
+      else
+        @terminal.ok("MaHIS user #{creator} will be recorded as creator of the aetc_migration user")
+      end
     end
 
     def check_source
@@ -143,20 +149,26 @@ module AetcMigration
       end
     end
 
-    def check_fresh_target(source)
+    # AETC rows already in MaHIS that this run did not put there (rows in its id_map are its own).
+    def check_fresh_target(source, tracking)
       @terminal.section('Fresh run')
       overlap = @db.select_value(<<~SQL).to_i
         SELECT COUNT(*) FROM (SELECT 1 FROM #{qualified(source, 'encounter')} s
-        JOIN #{target('encounter')} t ON t.uuid = s.uuid LIMIT 1) x
+        JOIN #{target('encounter')} t ON t.uuid = s.uuid
+        LEFT JOIN #{tracking.table_name('id_map')} m ON m.entity = 'encounter' AND m.src_id = s.encounter_id
+        WHERE m.src_id IS NULL LIMIT 1) x
       SQL
       if overlap.positive?
-        problem("#{@config.target_db} already contains AETC encounters (matching uuids). This tool needs a MaHIS " \
-                'database without a previous AETC migration: restore the backup taken before it.')
+        problem("#{@config.target_db} already contains AETC encounters (matching uuids) from an earlier migration. " \
+                'This tool needs a MaHIS database without one: restore the backup taken before it.')
       else
-        @terminal.ok("#{@config.target_db} has no AETC encounters yet")
+        @terminal.ok("#{@config.target_db} has no AETC encounters from an earlier migration")
       end
-      persons = @db.select_value("SELECT COUNT(*) FROM #{qualified(source, 'person')} s " \
-                                 "JOIN #{target('person')} t ON t.uuid = s.uuid").to_i
+      persons = @db.select_value(<<~SQL).to_i
+        SELECT COUNT(*) FROM #{qualified(source, 'person')} s JOIN #{target('person')} t ON t.uuid = s.uuid
+        LEFT JOIN #{tracking.table_name('id_map')} m ON m.entity = 'person' AND m.src_id = s.person_id
+        WHERE m.src_id IS NULL
+      SQL
       return if persons.zero?
 
       @terminal.warn("#{@terminal.number(persons)} AETC persons already exist in MaHIS (same uuid); " \
@@ -165,11 +177,14 @@ module AetcMigration
 
     def finish(source, tracking)
       @terminal.section('Result')
-      tracking.save_setting('checked_at', Time.current.to_fs(:db))
       if @problems.empty?
+        tracking.save_setting('check_passed_at', Time.current.to_fs(:db))
         @terminal.ok("Ready to migrate #{source} into #{@config.target_db}")
+        @terminal.detail('Next: DRY_RUN=1 rake aetc:migrate   (a rolled-back trial on the first 1,000 persons)')
         return true
       end
+
+      tracking.save_setting('check_passed_at', '') if tracking.setting('check_passed_at').present?
 
       @problems.each { |p| @terminal.error(p) }
       raise Error, "Preflight found #{@problems.size} problem(s). Fix them and run rake aetc:check again."

@@ -2,8 +2,8 @@
 
 module AetcMigration
   # The tracking schema of a run (<staging>_migration): which AETC row became which MaHIS row (id_map),
-  # every skipped or changed row with a reason (migration_log), how far each step got (checkpoint)
-  # and run settings such as the migration user's id.
+  # every skipped or changed row with a reason (migration_log), how far each step got (checkpoint),
+  # run settings such as the migration user's id, and the AETC users (users_lookup).
   class Tracking
     TABLES = {
       'id_map' => <<~SQL,
@@ -27,16 +27,25 @@ module AetcMigration
         reason VARCHAR(100) NOT NULL,
         detail VARCHAR(1000) NULL,
         KEY idx_log_reason (step, reason),
-        KEY idx_log_entity (entity, src_id)
+        UNIQUE KEY idx_log_once (step, entity, src_id, reason)
       SQL
       'checkpoint' => <<~SQL,
         step VARCHAR(40) NOT NULL PRIMARY KEY,
         last_src_id BIGINT NOT NULL,
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       SQL
-      'settings' => <<~SQL
+      'settings' => <<~SQL,
         name VARCHAR(50) NOT NULL PRIMARY KEY,
         value VARCHAR(255) NOT NULL
+      SQL
+      'users_lookup' => <<~SQL
+        source_user_id INT NOT NULL PRIMARY KEY,
+        username VARCHAR(50) NULL,
+        system_id VARCHAR(50) NULL,
+        source_person_id INT NULL,
+        uuid CHAR(38) NULL,
+        target_user_id INT NOT NULL,
+        audit_references INT NULL
       SQL
     }.freeze
 

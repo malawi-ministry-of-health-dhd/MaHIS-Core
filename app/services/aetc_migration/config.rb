@@ -7,8 +7,9 @@ module AetcMigration
   # Everything else can be overridden with environment variables:
   #   AETC_SOURCE_DB      AETC staging schema to migrate from (default: the one loaded by aetc:load)
   #   AETC_MAPPINGS_DIR   folder with the mapping files (default: db/aetc_migration/mappings)
-  #   AETC_BATCH_SIZE     patients per transaction (default: 500)
+  #   AETC_BATCH_SIZE     AETC rows per batch/transaction (default: 500)
   #   MYSQL_CLIENT        mysql command-line client used by aetc:load (default: mysql)
+  #   AETC_CREATOR_USER_ID  MaHIS user recorded as creator of the aetc_migration user (default: 1)
   class Config
     SCHEMA_NAME = /\A[A-Za-z0-9_]+\z/
     SYSTEM_SCHEMAS = %w[mysql sys information_schema performance_schema].freeze
@@ -66,6 +67,12 @@ module AetcMigration
       Integer(value).tap { |n| raise Error, 'AETC_BATCH_SIZE must be greater than 0' unless n.positive? }
     rescue ArgumentError
       raise Error, "AETC_BATCH_SIZE must be a number, got #{value.inspect}"
+    end
+
+    def creator_user_id
+      Integer(@env['AETC_CREATOR_USER_ID'].presence || 1)
+    rescue ArgumentError
+      raise Error, "AETC_CREATOR_USER_ID must be a number, got #{@env['AETC_CREATOR_USER_ID'].inspect}"
     end
 
     def mysql_client
