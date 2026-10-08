@@ -1,0 +1,102 @@
+# Registered API routes without a working action
+
+95 route methods are registered but unavailable in this build. Swagger marks them deprecated.
+The controller target is missing, not exposed as an action, or explicitly returns “Not implemented.”
+
+| Method | Path | Controller target | Reason |
+| --- | --- | --- | --- |
+| `PATCH` | `/api/v1/appointments/{id}` | `api/v1/appointments#update` | The controller explicitly returns Not implemented. |
+| `PUT` | `/api/v1/appointments/{id}` | `api/v1/appointments#update` | The controller explicitly returns Not implemented. |
+| `POST` | `/api/v1/concept/find_by_ids` | `api/v1/concepts#find_names_by_ids` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/dde/patients/import_by_name_and_gender` | `api/v1/dde#import_patients_by_name_and_gender` | The registered controller action is absent or not dispatchable in this build. |
+| `POST` | `/api/v1/diagnosis` | `api/v1/diagnosis#create` | The registered controller action is absent or not dispatchable in this build. |
+| `DELETE` | `/api/v1/diagnosis/{id}` | `api/v1/diagnosis#destroy` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/diagnosis/{id}` | `api/v1/diagnosis#show` | The registered controller action is absent or not dispatchable in this build. |
+| `PATCH` | `/api/v1/diagnosis/{id}` | `api/v1/diagnosis#update` | The registered controller action is absent or not dispatchable in this build. |
+| `PUT` | `/api/v1/diagnosis/{id}` | `api/v1/diagnosis#update` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/drug_orders/{id}` | `api/v1/drug_orders#show` | The registered controller action is absent or not dispatchable in this build. |
+| `POST` | `/api/v1/drugs` | `api/v1/drugs#create` | The registered controller action is absent or not dispatchable in this build. |
+| `DELETE` | `/api/v1/drugs/{id}` | `api/v1/drugs#destroy` | The registered controller action is absent or not dispatchable in this build. |
+| `PATCH` | `/api/v1/drugs/{id}` | `api/v1/drugs#update` | The registered controller action is absent or not dispatchable in this build. |
+| `PUT` | `/api/v1/drugs/{id}` | `api/v1/drugs#update` | The registered controller action is absent or not dispatchable in this build. |
+| `POST` | `/api/v1/facilities` | `api/v1/facilities#create` | The registered controller action is absent or not dispatchable in this build. |
+| `DELETE` | `/api/v1/facilities/{id}` | `api/v1/facilities#destroy` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/facilities/{id}` | `api/v1/facilities#show` | The registered controller action is absent or not dispatchable in this build. |
+| `PATCH` | `/api/v1/facilities/{id}` | `api/v1/facilities#update` | The registered controller action is absent or not dispatchable in this build. |
+| `PUT` | `/api/v1/facilities/{id}` | `api/v1/facilities#update` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/immunization_reports` | `api/v1/immunization_reports#index` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/impow/metrics` | `api/v1/impow#metrics` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/lab/orders/new` | `lab/orders#new` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/lab/orders/{id}/edit` | `lab/orders#edit` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/lab/orders/{order_id}` | `lab/orders#show` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/lab/tests/new` | `lab/tests#new` | The registered controller action is absent or not dispatchable in this build. |
+| `DELETE` | `/api/v1/lab/tests/{id}` | `lab/tests#destroy` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/lab/tests/{id}` | `lab/tests#show` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/lab/tests/{id}/edit` | `lab/tests#edit` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/lab/tests/{test_id}/results` | `lab/results#index` | The registered controller action is absent or not dispatchable in this build. |
+| `DELETE` | `/api/v1/lab/tests/{test_id}/results/{id}` | `lab/results#destroy` | The registered controller action is absent or not dispatchable in this build. |
+| `DELETE` | `/api/v1/locations/{id}` | `api/v1/locations#destroy` | The registered controller action is absent or not dispatchable in this build. |
+| `PATCH` | `/api/v1/people/{person_id}/relationships/{id}` | `api/v1/person_relationships#update` | The registered controller action is absent or not dispatchable in this build. |
+| `PUT` | `/api/v1/people/{person_id}/relationships/{id}` | `api/v1/person_relationships#update` | The registered controller action is absent or not dispatchable in this build. |
+| `DELETE` | `/api/v1/person_attributes/{id}` | `api/v1/person_attributes#destroy` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/person_attributes/{id}` | `api/v1/person_attributes#show` | The registered controller action is absent or not dispatchable in this build. |
+| `POST` | `/api/v1/pharmacy/items` | `api/v1/pharmacy/items#create` | The registered controller action is absent or not dispatchable in this build. |
+| `DELETE` | `/api/v1/programs/{program_id}/lab_tests/orders/{id}` | `api/v1/lab_test_orders#destroy` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/programs/{program_id}/lab_tests/orders/{id}` | `api/v1/lab_test_orders#show` | The registered controller action is absent or not dispatchable in this build. |
+| `PATCH` | `/api/v1/programs/{program_id}/lab_tests/orders/{id}` | `api/v1/lab_test_orders#update` | The registered controller action is absent or not dispatchable in this build. |
+| `PUT` | `/api/v1/programs/{program_id}/lab_tests/orders/{id}` | `api/v1/lab_test_orders#update` | The registered controller action is absent or not dispatchable in this build. |
+| `DELETE` | `/api/v1/programs/{program_id}/lab_tests/results/{id}` | `api/v1/lab_test_results#destroy` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/programs/{program_id}/lab_tests/results/{id}` | `api/v1/lab_test_results#show` | The registered controller action is absent or not dispatchable in this build. |
+| `PATCH` | `/api/v1/programs/{program_id}/lab_tests/results/{id}` | `api/v1/lab_test_results#update` | The registered controller action is absent or not dispatchable in this build. |
+| `PUT` | `/api/v1/programs/{program_id}/lab_tests/results/{id}` | `api/v1/lab_test_results#update` | The registered controller action is absent or not dispatchable in this build. |
+| `POST` | `/api/v1/programs/{program_id}/lab_tests/types` | `api/v1/lab_test_types#create` | The registered controller action is absent or not dispatchable in this build. |
+| `DELETE` | `/api/v1/programs/{program_id}/lab_tests/types/{id}` | `api/v1/lab_test_types#destroy` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/programs/{program_id}/lab_tests/types/{id}` | `api/v1/lab_test_types#show` | The registered controller action is absent or not dispatchable in this build. |
+| `PATCH` | `/api/v1/programs/{program_id}/lab_tests/types/{id}` | `api/v1/lab_test_types#update` | The registered controller action is absent or not dispatchable in this build. |
+| `PUT` | `/api/v1/programs/{program_id}/lab_tests/types/{id}` | `api/v1/lab_test_types#update` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/programs/{program_id}/patient_state` | `api/v1/patient_states#patient_state` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/programs/{program_id}/patients` | `api/v1/program_patients#index` | The registered controller action is absent or not dispatchable in this build. |
+| `POST` | `/api/v1/programs/{program_id}/patients` | `api/v1/program_patients#create` | The registered controller action is absent or not dispatchable in this build. |
+| `DELETE` | `/api/v1/programs/{program_id}/patients/{id}` | `api/v1/program_patients#destroy` | The registered controller action is absent or not dispatchable in this build. |
+| `PATCH` | `/api/v1/programs/{program_id}/patients/{id}` | `api/v1/program_patients#update` | The registered controller action is absent or not dispatchable in this build. |
+| `PUT` | `/api/v1/programs/{program_id}/patients/{id}` | `api/v1/program_patients#update` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/programs/{program_id}/patients/{program_patient_id}/states/{id}` | `api/v1/patient_states#show` | The registered controller action is absent or not dispatchable in this build. |
+| `PATCH` | `/api/v1/programs/{program_id}/patients/{program_patient_id}/states/{id}` | `api/v1/patient_states#update` | The registered controller action is absent or not dispatchable in this build. |
+| `PUT` | `/api/v1/programs/{program_id}/patients/{program_patient_id}/states/{id}` | `api/v1/patient_states#update` | The registered controller action is absent or not dispatchable in this build. |
+| `POST` | `/api/v1/programs/{program_id}/regimens` | `api/v1/program_regimens#create` | The registered controller action is absent or not dispatchable in this build. |
+| `DELETE` | `/api/v1/programs/{program_id}/regimens/{id}` | `api/v1/program_regimens#destroy` | The registered controller action is absent or not dispatchable in this build. |
+| `PATCH` | `/api/v1/programs/{program_id}/regimens/{id}` | `api/v1/program_regimens#update` | The registered controller action is absent or not dispatchable in this build. |
+| `PUT` | `/api/v1/programs/{program_id}/regimens/{id}` | `api/v1/program_regimens#update` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/programs/{program_id}/reports` | `api/v1/program_reports#index` | The registered controller action is absent or not dispatchable in this build. |
+| `POST` | `/api/v1/programs/{program_id}/reports` | `api/v1/program_reports#create` | The registered controller action is absent or not dispatchable in this build. |
+| `DELETE` | `/api/v1/programs/{program_id}/reports/{id}` | `api/v1/program_reports#destroy` | The registered controller action is absent or not dispatchable in this build. |
+| `PATCH` | `/api/v1/programs/{program_id}/reports/{id}` | `api/v1/program_reports#update` | The registered controller action is absent or not dispatchable in this build. |
+| `PUT` | `/api/v1/programs/{program_id}/reports/{id}` | `api/v1/program_reports#update` | The registered controller action is absent or not dispatchable in this build. |
+| `POST` | `/api/v1/programs/{program_id}/workflows` | `api/v1/program_workflows#create` | The registered controller action is absent or not dispatchable in this build. |
+| `DELETE` | `/api/v1/programs/{program_id}/workflows/{id}` | `api/v1/program_workflows#destroy` | The registered controller action is absent or not dispatchable in this build. |
+| `PATCH` | `/api/v1/programs/{program_id}/workflows/{id}` | `api/v1/program_workflows#update` | The registered controller action is absent or not dispatchable in this build. |
+| `PUT` | `/api/v1/programs/{program_id}/workflows/{id}` | `api/v1/program_workflows#update` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/search/properties` | `api/v1/properties#search` | The registered controller action is absent or not dispatchable in this build. |
+| `DELETE` | `/api/v1/stats/session` | `api/v1/session_stats#destroy` | The registered controller action is absent or not dispatchable in this build. |
+| `PATCH` | `/api/v1/stats/session` | `api/v1/session_stats#update` | The registered controller action is absent or not dispatchable in this build. |
+| `POST` | `/api/v1/stats/session` | `api/v1/session_stats#create` | The registered controller action is absent or not dispatchable in this build. |
+| `PUT` | `/api/v1/stats/session` | `api/v1/session_stats#update` | The registered controller action is absent or not dispatchable in this build. |
+| `POST` | `/api/v1/sync/patients_ids` | `api/v1/sync_patient_records#get_not_sync_ids` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/types/lab_tests` | `api/v1/types/lab_tests#index` | The registered controller action is absent or not dispatchable in this build. |
+| `POST` | `/api/v1/types/lab_tests` | `api/v1/types/lab_tests#create` | The registered controller action is absent or not dispatchable in this build. |
+| `DELETE` | `/api/v1/types/lab_tests/{id}` | `api/v1/types/lab_tests#destroy` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/types/lab_tests/{id}` | `api/v1/types/lab_tests#show` | The registered controller action is absent or not dispatchable in this build. |
+| `PATCH` | `/api/v1/types/lab_tests/{id}` | `api/v1/types/lab_tests#update` | The registered controller action is absent or not dispatchable in this build. |
+| `PUT` | `/api/v1/types/lab_tests/{id}` | `api/v1/types/lab_tests#update` | The registered controller action is absent or not dispatchable in this build. |
+| `POST` | `/api/v1/types/patient_identifiers` | `api/v1/types/patient_identifiers#create` | The registered controller action is absent or not dispatchable in this build. |
+| `DELETE` | `/api/v1/types/patient_identifiers/{id}` | `api/v1/types/patient_identifiers#destroy` | The registered controller action is absent or not dispatchable in this build. |
+| `PATCH` | `/api/v1/types/patient_identifiers/{id}` | `api/v1/types/patient_identifiers#update` | The registered controller action is absent or not dispatchable in this build. |
+| `PUT` | `/api/v1/types/patient_identifiers/{id}` | `api/v1/types/patient_identifiers#update` | The registered controller action is absent or not dispatchable in this build. |
+| `POST` | `/api/v1/types/relationships` | `api/v1/types/relationships#create` | The registered controller action is absent or not dispatchable in this build. |
+| `DELETE` | `/api/v1/types/relationships/{id}` | `api/v1/types/relationships#destroy` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/types/relationships/{id}` | `api/v1/types/relationships#show` | The registered controller action is absent or not dispatchable in this build. |
+| `PATCH` | `/api/v1/types/relationships/{id}` | `api/v1/types/relationships#update` | The registered controller action is absent or not dispatchable in this build. |
+| `PUT` | `/api/v1/types/relationships/{id}` | `api/v1/types/relationships#update` | The registered controller action is absent or not dispatchable in this build. |
+| `POST` | `/api/v1/user_roles` | `api/v1/user_roles#create` | The registered controller action is absent or not dispatchable in this build. |
+| `DELETE` | `/api/v1/user_roles/{id}` | `api/v1/user_roles#destroy` | The registered controller action is absent or not dispatchable in this build. |
+| `GET` | `/api/v1/visits/by_location` | `api/v1/visits#get_visits_by_location` | The registered controller action is absent or not dispatchable in this build. |

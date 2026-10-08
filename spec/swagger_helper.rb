@@ -21,6 +21,9 @@ RSpec.configure do |config|
         title: 'EMR API V1 DOCS',
         version: 'v1'
       },
+      tags: [
+        { name: 'Auth', description: 'Sign-in and authentication endpoints' }
+      ],
       paths: {},
       components: {
         securitySchemes: {
@@ -31,6 +34,29 @@ RSpec.configure do |config|
           }
         },
         schemas: {
+          multiple_identifiers: {
+            type: :object,
+            properties: {
+              patient_id: { type: :integer },
+              given_name: { type: :string },
+              family_name: { type: :string },
+              gender: { type: :string },
+              birthdate: { type: :string, format: :date },
+              latest_identifier: { type: :string },
+              identifiers: { type: :array, items: { type: :object, additionalProperties: true } }
+            }
+          },
+          patient: {
+            type: :object,
+            properties: {
+              patient_id: { type: :integer },
+              person: { type: :object, additionalProperties: true },
+              patient_identifiers: { type: :array, items: { type: :object, additionalProperties: true } },
+              merge_history: { type: :array, items: { type: :object, additionalProperties: true } },
+              art_start_date: { type: :string, format: :date, nullable: true }
+            },
+            additionalProperties: true
+          },
           aetc_total_registered_report: {
             type: :object,
             properties: {

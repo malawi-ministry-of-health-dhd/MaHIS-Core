@@ -11,12 +11,19 @@ describe 'Cleaning Tools API', type: :request, swagger_doc: 'v1/swagger.yaml' do
       description 'This shows the patients with data problems'
       produces 'application/json'
       security [api_key: []]
-      # parameter get from component schema
-      parameter name: :params, in: :query, schema: { '$ref': '#/components/schemas/data_cleaning_request' }
+      parameter name: :program_id, in: :query, required: true, schema: { type: :integer }
+      parameter name: :start_date, in: :query, required: true, schema: { type: :string, format: :date }
+      parameter name: :end_date, in: :query, required: true, schema: { type: :string, format: :date }
+      parameter name: :report_name, in: :query, required: true, schema: { type: :string }
+      parameter name: :page, in: :query, schema: { type: :integer }
+      parameter name: :per_page, in: :query, schema: { type: :integer }
 
-      response '200', 'You can cross check the different responses in the swagger documentation' do
-        # returns an array of objects from the component schema using oneOf
-        schema type: :array, items: { '$ref': '#/components/schemas/multiple_identifiers' }
+      response '200', 'Report-specific data, a paginated data/meta object, or an error string' do
+        schema oneOf: [
+          { type: :array, items: { type: :object, additionalProperties: true } },
+          { type: :object, additionalProperties: true },
+          { type: :string }
+        ]
         run_test!
       end
     end
@@ -32,10 +39,10 @@ describe 'Cleaning Tools API', type: :request, swagger_doc: 'v1/swagger.yaml' do
       parameter name: :params, in: :body, schema: {
         type: :object,
         properties: {
-          identifiers: { '$ref': '#/components/schemas/void_multiple_identifiers' },
+          identifiers: { type: :array, items: { type: :integer } },
           reason: { type: :string }
         },
-        required: %w[identifiers reason]
+        required: %w[identifiers]
       }
 
       response '204', 'Returns no content' do

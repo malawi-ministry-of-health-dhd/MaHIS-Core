@@ -5,7 +5,7 @@ require 'swagger_helper'
 TAGS_NAME = 'Pepfar Reports'
 
 describe 'Pepfar Reports API', type: :request, swagger_doc: 'v1/swagger.yaml' do
-  path 'api/v1/programs/1/reports/tx_tb' do
+  path '/api/v1/programs/1/reports/tx_tb' do
     get 'Retrieve TX_TB REPORT' do
       tags TAGS_NAME
       description 'This shows TX_TB report'
@@ -40,7 +40,7 @@ describe 'Pepfar Reports API', type: :request, swagger_doc: 'v1/swagger.yaml' do
     end
   end
 
-  path 'api/v1/programs/1/reports/sc_curr' do
+  path '/api/v1/programs/1/reports/sc_curr' do
     get 'Retrieve SC CURR REPORT' do
       tags TAGS_NAME
       description 'This shows ARV Bottles available'

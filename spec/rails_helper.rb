@@ -99,6 +99,8 @@ RSpec.configure do |config|
     'user_villages_spec.rb',
     'security_question_service_spec.rb',
     'security_questions_spec.rb',
+    'token_verification_spec.rb',
+    'swagger_controller_contract_spec.rb',
     'password_expiry_spec.rb',
     'account_expiry_spec.rb',
     'brought_in_dead_service_spec.rb',
