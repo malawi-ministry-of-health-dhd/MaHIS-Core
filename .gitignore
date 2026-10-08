@@ -79,3 +79,4 @@ db/data/facilities/backups/
 # Ignore key files for decrypting credentials and more.
 /config/*.key
 
+vendor/bundle/
