@@ -291,10 +291,7 @@ module ArtService
         *TimeUtils.day_bounds(@date)
       ).order(encounter_datetime: :desc).first
 
-      return false if encounter.nil?
-
-      # Check for non-voided orders with positive quantity
-      encounter.orders.where(voided: 0).where('quantity > 0').exists?
+      !encounter.nil? && encounter.orders.exists?
     end
 
     # Check if patient received A.R.T.s on previous visit
