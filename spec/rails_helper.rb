@@ -104,7 +104,8 @@ RSpec.configure do |config|
     'brought_in_dead_service_spec.rb',
     'lab_results_queue_service_spec.rb',
     'repair_obs_group_ids_spec.rb',
-    'data_verification_service_spec.rb'
+    'data_verification_service_spec.rb',
+    'aetc_migration_spec.rb'
   ].freeze
 
   # Wrap individual test execution to skip non-passing specs
