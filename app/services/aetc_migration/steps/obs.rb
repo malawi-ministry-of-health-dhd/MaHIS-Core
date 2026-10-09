@@ -39,6 +39,11 @@ module AetcMigration
 
       GATED = "(q.action = 'map' OR q.reviewed = 1)"
       TEXT_TO_CODED = "o.value_text IS NOT NULL AND r.rule = 'text_to_coded'"
+      # value_text without leading/trailing whitespace. Only anchored patterns: '[[:space:]]+$' backtracks
+      # on long runs of spaces inside a text and hits MySQL's regexp_time_limit, so the end is trimmed by
+      # trimming the start of the reversed text.
+      TRIMMED_TEXT = "REVERSE(REGEXP_REPLACE(REVERSE(REGEXP_REPLACE(o.value_text, '^[[:space:]]+', '')), " \
+                     "'^[[:space:]]+', ''))"
 
       def candidates(ids)
         <<~SQL
@@ -49,8 +54,7 @@ module AetcMigration
           LEFT JOIN #{trk('lookup_concept_answer')} a ON a.source_id = o.value_coded
           LEFT JOIN #{trk('lookup_concept_rule')} r ON r.source_id = o.concept_id AND r.value_column = 'value_text'
           LEFT JOIN #{trk('lookup_concept_value')} cv ON cv.source_id = o.concept_id AND #{TEXT_TO_CODED} AND #{GATED}
-            AND cv.value_text = CONVERT(REGEXP_REPLACE(o.value_text, '^[[:space:]]+|[[:space:]]+$', '') USING utf8mb4)
-                                COLLATE utf8mb4_bin
+            AND cv.value_text = CONVERT(#{TRIMMED_TEXT} USING utf8mb4) COLLATE utf8mb4_bin
           LEFT JOIN #{trk('lookup_location')} lo ON lo.scope = 'clinical' AND lo.source_id = o.location_id AND lo.action = 'map'
           LEFT JOIN #{trk('id_map')} om ON om.entity = 'order' AND om.src_id = o.order_id
           WHERE o.person_id IN (#{sql.list(ids)}) AND #{not_mapped('obs', 'o.obs_id')}
