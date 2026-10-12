@@ -107,6 +107,7 @@ GROUP BY step, entity, reason ORDER BY step, COUNT(*) DESC;
 - **Obs values:**
   - Coded answers are translated through `concept.json`. An answer with no MaHIS concept is kept as text (`answer_unmapped`).
   - Text answers of `text_to_coded` concepts become coded only when the concept is reviewed. Otherwise they stay as text (`conversion_not_reviewed`, `value_unmapped`).
+  - Lab tests whose results AETC stored partly as numbers and partly as text (the full blood count tests, urea, GGT, AST, ALT) go entirely into `value_text`: numbers are written as text (`250` → `'250'`), and text such as `NaN` or `^1.9` is kept as it is. This is the `numeric_to_text` rule in `concept.json`, decided on 2026-10-12.
   - Obs whose concept has no MaHIS concept are skipped (`concept_unmapped`).
 - **Lab orders:**
   - An empty start date becomes the date created (`start_date_filled`).

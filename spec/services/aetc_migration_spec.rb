@@ -114,11 +114,17 @@ RSpec.describe 'AETC migration' do # rubocop:disable RSpec/DescribeClass
     end
 
     it 'keeps as text what it cannot convert, and logs why' do
-      expect(row("SELECT value_text FROM tgt.obs WHERE uuid = 's-obs-6'")['value_text']).to eq('nil')
-      expect(logged?('obs', 6, 'conversion_not_reviewed')).to be(true)
       expect(row("SELECT value_text FROM tgt.obs WHERE uuid = 's-obs-12'")['value_text']).to eq('Positive')
       expect(logged?('obs', 12, 'value_unmapped')).to be(true)
       expect(logged?('obs', 9, 'answer_unmapped')).to be(true)
+    end
+
+    it 'stores every result of the AETC lab tests as text, numbers included (decision 2026-10-12)' do
+      number = row("SELECT value_numeric, value_text FROM tgt.obs WHERE uuid = 's-obs-17'")
+      expect(number.values_at('value_numeric', 'value_text')).to eq([nil, '4.3'])
+      text = row("SELECT value_numeric, value_text FROM tgt.obs WHERE uuid = 's-obs-6'")
+      expect(text.values_at('value_numeric', 'value_text')).to eq([nil, 'nil'])
+      expect(logged?('obs', 6, 'conversion_not_reviewed')).to be(false)
     end
 
     it 'handles a text with a long run of spaces (MySQL regexp_time_limit)' do

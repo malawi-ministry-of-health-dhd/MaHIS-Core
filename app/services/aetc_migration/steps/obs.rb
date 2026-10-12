@@ -9,6 +9,8 @@ module AetcMigration
     #   * text_to_coded concepts: the text is looked up in concept.json value maps plus the filled rows of
     #     concept_unmapped_values.csv; a hit becomes value_coded, a miss stays text (logged). Only for
     #     concepts with action map or reviewed = true; others keep the text (conversion_not_reviewed).
+    #   * numeric_to_text concepts (the AETC lab tests stored partly as numbers, partly as text): the number
+    #     is written as text in value_text, so every result of the test is text (decision 2026-10-12).
     #   * every other value is copied as it is (MaHIS datatype N/A decision).
     #   * obs groups keep their parent; order_id via id_map; location as text (AETC 1 -> 1291).
     #   * active rows only, except obs of voided patients (migrated as voided).
@@ -39,6 +41,7 @@ module AetcMigration
 
       GATED = "(q.action = 'map' OR q.reviewed = 1)"
       TEXT_TO_CODED = "o.value_text IS NOT NULL AND r.rule = 'text_to_coded'"
+      NUMERIC_TO_TEXT = "(o.value_numeric IS NOT NULL AND rn.rule = 'numeric_to_text')"
       # value_text without leading/trailing whitespace. Only anchored patterns: '[[:space:]]+$' backtracks
       # on long runs of spaces inside a text and hits MySQL's regexp_time_limit, so the end is trimmed by
       # trimming the start of the reversed text.
@@ -53,6 +56,7 @@ module AetcMigration
           LEFT JOIN #{trk('id_map')} em ON em.entity = 'encounter' AND em.src_id = o.encounter_id
           LEFT JOIN #{trk('lookup_concept_answer')} a ON a.source_id = o.value_coded
           LEFT JOIN #{trk('lookup_concept_rule')} r ON r.source_id = o.concept_id AND r.value_column = 'value_text'
+          LEFT JOIN #{trk('lookup_concept_rule')} rn ON rn.source_id = o.concept_id AND rn.value_column = 'value_numeric'
           LEFT JOIN #{trk('lookup_concept_value')} cv ON cv.source_id = o.concept_id AND #{TEXT_TO_CODED} AND #{GATED}
             AND cv.value_text = CONVERT(#{TRIMMED_TEXT} USING utf8mb4) COLLATE utf8mb4_bin
           LEFT JOIN #{trk('lookup_location')} lo ON lo.scope = 'clinical' AND lo.source_id = o.location_id AND lo.action = 'map'
@@ -87,10 +91,11 @@ module AetcMigration
           SELECT pm.tgt_id, q.target_id, em.tgt_id, om.tgt_id, #{dt_required('o.obs_datetime')},
             CAST(lo.target_id AS CHAR), NULL, o.accession_number, NULL, NULL,
             CASE WHEN cv.target_id IS NOT NULL THEN cv.target_id WHEN o.value_coded IS NOT NULL THEN a.target_id END,
-            NULL, NULL, #{dt('o.value_datetime')}, o.value_numeric, o.value_modifier,
+            NULL, NULL, #{dt('o.value_datetime')}, IF(#{NUMERIC_TO_TEXT} AND o.value_text IS NULL, NULL, o.value_numeric), o.value_modifier,
             CASE WHEN cv.target_id IS NOT NULL THEN NULL
                  WHEN o.value_coded IS NOT NULL AND a.target_id IS NULL AND o.value_text IS NULL
                    THEN COALESCE(NULLIF(a.source_name, ''), CAST(o.value_coded AS CHAR))
+                 WHEN #{NUMERIC_TO_TEXT} AND o.value_text IS NULL THEN CAST(o.value_numeric AS CHAR)
                  ELSE o.value_text END,
             NULL, NULL, o.comments, #{user}, #{dt_required('o.date_created')}, IF(o.voided, 1, 0),
             IF(o.voided, #{user}, NULL), #{dt('o.date_voided')}, o.void_reason, LEFT(o.value_complex, 255), o.uuid

@@ -18,7 +18,7 @@ module AetcMigrationFixture
   # orders and lab_lims_order_mappings include the MaHIS rows seeded by seed_target.
   FULL_RUN_COUNTS = {
     'users' => 1, 'person' => 7, 'person_name' => 5, 'person_address' => 4, 'person_attribute' => 2,
-    'patient' => 3, 'patient_identifier' => 5, 'relationship' => 2, 'visit' => 3, 'encounter' => 7, 'obs' => 13,
+    'patient' => 3, 'patient_identifier' => 5, 'relationship' => 2, 'visit' => 3, 'encounter' => 7, 'obs' => 14,
     'orders' => 5, 'order_extension' => 1, 'lab_lims_order_mappings' => 2
   }.freeze
 
@@ -230,7 +230,7 @@ module AetcMigrationFixture
     obs(3, 101, 1, 5088)                             # group parent
     obs(4, 101, 1, 5085, group: 3, value_numeric: 120) # child of 3
     obs(5, 101, 1, 12_772, value_text: 'Negative')   # text -> coded 37452
-    obs(6, 101, 1, 12_762, value_text: 'nil')        # conversion not reviewed: kept as text
+    obs(6, 101, 1, 12_762, value_text: 'nil')        # lab test stored as text: text kept as it is
     obs(7, 101, 1, 11_701, value_numeric: 40)        # concept with no MaHIS match -> skipped
     obs(8, 101, 3, 5242, value_text: '20')           # encounter not migrated -> skipped
     obs(9, 101, 1, 10_820, value_coded: 4)           # answer with no MaHIS match -> kept as text
@@ -239,6 +239,7 @@ module AetcMigrationFixture
     obs(12, 101, 1, 12_772, value_text: 'Positive')  # not in the value map -> kept as text
     obs(15, 101, 1, 12_772, value_text: "  Negative \n") # surrounding whitespace is ignored -> 37452
     obs(16, 101, 1, 12_772, value_text: "Neg#{' ' * 5000}ative") # long run of spaces (regexp_time_limit)
+    obs(17, 101, 1, 12_762, value_numeric: 4.3)      # lab test stored as text: the number becomes '4.3'
   end
 
   def order(oid, pid, eid, specimen, type_id: 4, voided: 0, **cols)

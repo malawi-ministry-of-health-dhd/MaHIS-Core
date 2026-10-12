@@ -108,5 +108,38 @@
   "decided_on": "2026-10-07",
   "choice": "AETC location 1 'Unknown' -> 1291 for encounters and obs (location.json clinical_overrides); visits and identifiers unchanged",
   "reason": "Locatable default scope hides rows with NULL location"
+ },
+ "lab_results_as_text": {
+  "decided_on": "2026-10-12",
+  "choice": "The 26 AETC lab tests whose results AETC stored partly as numbers and partly as text (full blood count, plus urea, GGT, AST, ALT): every result goes to value_text; numbers are written as text (rule numeric_to_text), text is kept as it is",
+  "concepts": [
+   12761,
+   12762,
+   12782,
+   12783,
+   12784,
+   12788,
+   12791,
+   12792,
+   12793,
+   12794,
+   12795,
+   12796,
+   12797,
+   12798,
+   12799,
+   12800,
+   12801,
+   12802,
+   12803,
+   12804,
+   12805,
+   12807,
+   12809,
+   12813,
+   12816,
+   12817
+  ],
+  "reason": "one consistent storage per test; the text results (NaN, ^ flagged values) cannot be converted"
  }
 }
