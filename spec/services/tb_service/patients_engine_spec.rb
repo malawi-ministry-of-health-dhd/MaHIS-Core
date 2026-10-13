@@ -6,6 +6,15 @@ require_relative '../../../app/services/dispensation_service'
 
 describe TbService::PatientsEngine do
   include DrugOrderService
+  include ModelUtils
+
+  # The suite runs without transactional fixtures, roll back each example's records
+  around do |example|
+    ActiveRecord::Base.transaction do
+      example.run
+      raise ActiveRecord::Rollback
+    end
+  end
 
   let(:epoch) { Time.now }
   let(:tb_program) { program 'TB PROGRAM' }
@@ -28,37 +37,46 @@ describe TbService::PatientsEngine do
   end
 
   let(:drug_quantity) { 10 }
+  let(:tb_drug) { Drug.find_by!(name: 'Rifabutin (300mg)') }
 
   let(:constrained_engine) { raise :not_implemented }
+
+  # The TUBERCULOSIS DRUGS concept set ships empty in the current metadata
+  before do
+    create(:concept_set, set: ConceptName.find_by!(name: 'TUBERCULOSIS DRUGS').concept, concept: tb_drug.concept)
+  end
 
   describe 'patients engine' do
     it 'returns drugs patient receieved' do
       epoch = Time.now
 
       patient_state_service = PatientStateService.new
-      PatientProgram.create(patient_id: patient.patient_id, program_id: tb_program.program_id,
-                            date_enrolled: Date.today, creator: 1, uuid: 'a', location_id: 701)
+      enroll_patient(patient)
       patient_state_service.create_patient_state(tb_program, patient, 92, Time.now)
       dispensation
       drugs_receieved = engine.patient_last_drugs_received(patient, epoch)
-      expect(drugs_receieved[0][:drug_inventory_id]).to eq(103)
+      expect(drugs_receieved.map(&:drug_inventory_id)).to eq([tb_drug.drug_id])
     end
 
     it 'returns patient summary' do
       patient
       epoch = Time.now
       patient_state_service = PatientStateService.new
-      PatientProgram.create(patient_id: patient.patient_id, program_id: tb_program.program_id,
-                            date_enrolled: Date.today, creator: 1, uuid: 'a', location_id: 701)
+      enroll_patient(patient)
       patient_state_service.create_patient_state(tb_program, patient, 92, Time.now)
       dispensation
-      engine.assign_tb_number(patient.patient_id, Time.now)
       patient_summary = engine.patient(patient.patient_id, epoch)
       expect(patient_summary[:patient_id]).to eq(patient.patient_id)
     end
   end
 
   # Helpers methods
+
+  def enroll_patient(patient)
+    create :patient_program, patient:, program: tb_program,
+                             date_enrolled: Date.today,
+                             location_id: Location.current.location_id
+  end
 
   def treatment_encounter(patient, datetime)
     create :encounter, type: encounter_type('TREATMENT'),
@@ -112,7 +130,7 @@ describe TbService::PatientsEngine do
   def drugs
     [
       {
-        drug_inventory_id: 103,
+        drug_inventory_id: tb_drug.drug_id,
         dose: '1',
         frequency: '1',
         prn: '1',

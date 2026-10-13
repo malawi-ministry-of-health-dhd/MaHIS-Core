@@ -3,6 +3,16 @@
 require 'rails_helper'
 
 RSpec.describe ArtService::AppointmentEngine do
+  include ModelUtils
+
+  # The suite runs without transactional fixtures, roll back each example's records
+  around do |example|
+    ActiveRecord::Base.transaction do
+      example.run
+      raise ActiveRecord::Rollback
+    end
+  end
+
   MINUTE = 60
 
   subject { ArtService::AppointmentEngine }
@@ -104,8 +114,9 @@ RSpec.describe ArtService::AppointmentEngine do
                                  person:)
       end
 
-      retrieved = appointment_service.appointments.collect(&:obs_id).sort
-      expect(retrieved).to eq(created.collect(&:obs_id).sort)
+      # The test database may hold appointments from other sources, only ours matter
+      retrieved = appointment_service.appointments.collect(&:obs_id)
+      expect(retrieved).to include(*created.collect(&:obs_id))
     end
 
     it 'retrieves all appointments for a given date' do
@@ -118,8 +129,8 @@ RSpec.describe ArtService::AppointmentEngine do
       end
 
       retrieved = appointment_service.appointments value_datetime: epoch + 2.days
-      expect(retrieved.size).to be(1)
-      expect(retrieved[0].obs_id).to eq(created[1].obs_id)
+      retrieved_ids = retrieved.collect(&:obs_id) & created.collect(&:obs_id)
+      expect(retrieved_ids).to eq([created[1].obs_id])
     end
 
     it 'retrieves all appointments for a given person' do
@@ -188,7 +199,7 @@ RSpec.describe ArtService::AppointmentEngine do
 
     it 'creates appointment on bound retro date' do
       created = appointment_service.create_appointment patient, epoch + 10.days
-      retrieved = Observation.where concept: concept('Appointment date')
+      retrieved = Observation.where concept: concept('Appointment date'), person: patient.person
 
       expect(retrieved.size).to be(1)
       expect(created.value_datetime).to be(created.value_datetime)

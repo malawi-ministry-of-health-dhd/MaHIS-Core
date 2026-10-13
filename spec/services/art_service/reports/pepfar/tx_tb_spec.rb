@@ -7,6 +7,7 @@ RSpec.describe ArtService::Reports::Pepfar::TxTb do
     it 'counts a TX_CURR patient with no CXR or MWRD method under symptom screening alone' do
       report = described_class.allocate
       report.instance_variable_set(:@report_type, 'pepfar')
+      report.instance_variable_set(:@end_date, Date.new(2026, 3, 31))
       report.instance_variable_set(:@tx_curr, [])
 
       allow(report).to receive(:drop_temporary_tables)

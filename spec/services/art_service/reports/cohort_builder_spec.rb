@@ -43,6 +43,8 @@ describe ArtService::Reports::CohortBuilder do
     # Clean database records from previous tests
     PatientState.unscoped.delete_all
     PatientProgram.unscoped.delete_all
+    # Grouped observations reference their parent observation
+    Observation.unscoped.where.not(obs_group_id: nil).update_all(obs_group_id: nil)
     Observation.unscoped.delete_all
     DrugOrder.unscoped.delete_all
     Order.unscoped.delete_all

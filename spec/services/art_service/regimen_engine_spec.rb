@@ -3,6 +3,16 @@
 require 'rails_helper'
 
 RSpec.describe ArtService::RegimenEngine do
+  include ModelUtils
+
+  # The suite runs without transactional fixtures, roll back each example's records
+  around do |example|
+    ActiveRecord::Base.transaction do
+      example.run
+      raise ActiveRecord::Rollback
+    end
+  end
+
   let(:regimen_service) { ArtService::RegimenEngine.new program: program('HIV Program') }
   let(:patient) { create :patient }
   let(:vitals_encounter) { create :encounter_vitals, patient: }
@@ -26,17 +36,21 @@ RSpec.describe ArtService::RegimenEngine do
     new_patient
   end
 
+  # Regimens available in the current MoH regimen metadata
+  let(:adult_regimens) { %w[4A 5A 7A 8A 9A 10A 11A 12A 13A 14A 15A 17A] }
+  let(:under_30_kilos_regimens) { %w[4PA 9PA 11PA 14A 15A 17PA] }
+  let(:under_6_kilos_regimens) { %w[9PP 11PP 14PP 15PP 15P] }
+
   describe :find_regimens do
-    it 'raises ArgumentError if weight and age are not provided' do
+    it 'raises ArgumentError if weight is not provided' do
       (expect { regimen_service.find_regimens }).to raise_error(ArgumentError)
     end
 
-    it 'retrieves [0P, 2P, 9P, 11P] regimens only for weights < 6' do
+    it 'retrieves paediatric regimens only for weights < 6' do
       created_patient = create_patient(weight: 5.9, age: 3, gender: 'M')
-      regimens = regimen_service.find_regimens created_patient
+      regimens = regimen_service.find_regimens_by_patient(patient: created_patient)
 
-      expected_regimens = %w[0P 2P 9P 11P]
-      expect(regimens.keys).to eq(expected_regimens)
+      expect(regimens.keys).to match_array(under_6_kilos_regimens)
     end
 
     it 'retrieves all regimens for women under 45 years' do
@@ -47,58 +61,44 @@ RSpec.describe ArtService::RegimenEngine do
       # be surprised when you another test that is very similar to
       # this one... It's not a duplicate.
       patient = create_patient(age: 30, weight: 50, gender: 'F')
-      regimens = regimen_service.find_regimens patient
-      expected_regimens = %w[0A 2A 4A 5A 6A 7A 8A 9A 10A 11A 12A 13A 14A 15A]
+      regimens = regimen_service.find_regimens_by_patient(patient:)
 
-      expect(regimens.size).to be expected_regimens.size
-      regimens.each_key { |k| expect(expected_regimens).to include k }
+      expect(regimens.keys).to match_array(adult_regimens)
     end
 
     it 'retrieves all regimens for women above 45 years' do
       patient = create_patient(age: 45, weight: 50, gender: 'F')
-      regimens = regimen_service.find_regimens patient
-      expected_regimens = %w[0A 2A 4A 5A 6A 7A 8A 9A 10A 11A 12A 13A 14A 15A]
+      regimens = regimen_service.find_regimens_by_patient(patient:)
 
-      expect(regimens.size).to be expected_regimens.size
-      regimens.each_key { |k| expect(expected_regimens).to include k }
+      expect(regimens.keys).to match_array(adult_regimens)
     end
 
-    it 'retrieves regimens [0A 2A 4P 9P 11P] for women under 30 kilos' do
+    it 'retrieves paediatric formulation regimens for women under 30 kilos' do
       patient = create_patient(age: 30, weight: '29', gender: 'F')
-      regimens = regimen_service.find_regimens patient
-      expected_regimens = Set.new(%w[0A 2A 4P 9P 11P])
+      regimens = regimen_service.find_regimens_by_patient(patient:)
 
-      expect(Set.new(regimens.keys)).to eq(expected_regimens)
+      expect(regimens.keys).to match_array(under_30_kilos_regimens)
     end
 
     it 'retrieves all regimens for women above 35 kilos' do
       patient = create_patient(age: 30, weight: 35, gender: 'F')
-      regimens = regimen_service.find_regimens(patient)
+      regimens = regimen_service.find_regimens_by_patient(patient:)
 
-      expected_regimens = %w[0A 2A 4A 5A 6A 7A 8A 9A 10A 11A 12A 13A 14A 15A]
-
-      expect(regimens.size).to be expected_regimens.size
-      regimens.each_key { |k| expect(expected_regimens).to include k }
+      expect(regimens.keys).to match_array(adult_regimens)
     end
 
-    it 'retrieves regimens [0A 2A 4P 9P 11P] for men under 30 kilos' do
+    it 'retrieves paediatric formulation regimens for men under 30 kilos' do
       patient = create_patient(age: 30, weight: 29, gender: 'M')
-      regimens = regimen_service.find_regimens(patient)
+      regimens = regimen_service.find_regimens_by_patient(patient:)
 
-      expected_regimens = Set.new(%w[0A 2A 4P 9P 11P])
-
-      expect(Set.new(regimens.keys)).to eq(expected_regimens)
-      regimens.each_key { |k| expect(expected_regimens).to include k }
+      expect(regimens.keys).to match_array(under_30_kilos_regimens)
     end
 
     it 'retrieves all regimens for men at least 35 kilos' do
       patient = create_patient(age: 30, weight: 35, gender: 'M')
-      regimens = regimen_service.find_regimens(patient)
+      regimens = regimen_service.find_regimens_by_patient(patient:)
 
-      expected_regimens = %w[0A 2A 4A 5A 6A 7A 8A 9A 10A 11A 12A 13A 14A 15A]
-
-      expect(regimens.size).to be expected_regimens.size
-      regimens.each_key { |k| expect(expected_regimens).to include k }
+      expect(regimens.keys).to match_array(adult_regimens)
     end
 
     def put_patient_on_tb_treatment(patient)
@@ -116,17 +116,17 @@ RSpec.describe ArtService::RegimenEngine do
 
     it 'does not double dose DTG for 13A patients not on TB treatment' do
       patient = create_patient(age: 30, weight: 55, gender: 'M')
-      regimen = regimen_service.find_regimens(patient)['13A']
+      regimen = regimen_service.find_regimens_by_patient(patient:)['13A']
 
       expect(regimen.size).to eq(1)
-      expect(dtg_ids).not_to include(regimen[0][:drug_id])
+      expect(dtg_ids).not_to include(regimen.first[:drug_id])
     end
 
     it 'double doses DTG for 13A patients on TB treatment' do
       patient = create_patient(age: 30, weight: 55, gender: 'M')
       put_patient_on_tb_treatment(patient)
 
-      regimen = regimen_service.find_regimens(patient)['13A']
+      regimen = regimen_service.find_regimens_by_patient(patient:)['13A']
       expect(regimen.size).to eq(2)
 
       regimen_dtgs = regimen.select { |drug| dtg_ids.include?(drug[:drug_id]) }
@@ -138,7 +138,7 @@ RSpec.describe ArtService::RegimenEngine do
 
     it 'does not double dose DTG for 14A patients not on TB treatment' do
       patient = create_patient(age: 40, weight: 60, gender: 'F')
-      regimen = regimen_service.find_regimens(patient)['14A']
+      regimen = regimen_service.find_regimens_by_patient(patient:)['14A']
       regimen_dtgs = regimen.select { |drug| dtg_ids.include?(drug[:drug_id]) }
 
       expect(regimen_dtgs.size).to eq(1)
@@ -150,7 +150,7 @@ RSpec.describe ArtService::RegimenEngine do
       patient = create_patient(age: 40, weight: 60, gender: 'F')
       put_patient_on_tb_treatment(patient)
 
-      regimen = regimen_service.find_regimens(patient)['14A']
+      regimen = regimen_service.find_regimens_by_patient(patient:)['14A']
       regimen_dtgs = regimen.select { |drug| dtg_ids.include?(drug[:drug_id]) }
 
       expect(regimen_dtgs.size).to eq(1)
@@ -161,7 +161,7 @@ RSpec.describe ArtService::RegimenEngine do
 
     it 'does not double dose DTG for 15A patients not on TB treatment' do
       patient = create_patient(age: 40, weight: 60, gender: 'F')
-      regimen = regimen_service.find_regimens(patient)['15A']
+      regimen = regimen_service.find_regimens_by_patient(patient:)['15A']
       regimen_dtgs = regimen.select { |drug| dtg_ids.include?(drug[:drug_id]) }
 
       expect(regimen_dtgs.size).to eq(1)
@@ -173,7 +173,7 @@ RSpec.describe ArtService::RegimenEngine do
       patient = create_patient(age: 40, weight: 60, gender: 'F')
       put_patient_on_tb_treatment(patient)
 
-      regimen = regimen_service.find_regimens(patient)['15A']
+      regimen = regimen_service.find_regimens_by_patient(patient:)['15A']
       regimen_dtgs = regimen.select { |drug| dtg_ids.include?(drug[:drug_id]) }
 
       expect(regimen_dtgs.size).to eq(1)
