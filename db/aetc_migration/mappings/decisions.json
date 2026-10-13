@@ -141,5 +141,23 @@
    12817
   ],
   "reason": "one consistent storage per test; the text results (NaN, ^ flagged values) cannot be converted"
+ },
+ "blood_gas_concepts": {
+  "decided_on": "2026-10-13",
+  "choice": "11 AETC blood-gas concepts mapped by id to the MaHIS concepts with the same names (value copied as text); AETC 12533 and 12534 (no name, 11 obs) stay unmapped",
+  "mapping": {
+   "11701": 48838,
+   "11702": 48840,
+   "11704": 48844,
+   "11707": 48850,
+   "11708": 48852,
+   "11710": 48856,
+   "11711": 48858,
+   "11712": 48860,
+   "12556": 50512,
+   "12559": 50518,
+   "12561": 50522
+  },
+  "reason": "the MaHIS names are stored with broken characters, so the name match missed them; Louis will fix the names"
  }
 }

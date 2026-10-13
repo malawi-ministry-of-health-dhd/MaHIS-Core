@@ -136,6 +136,14 @@ GROUP BY step, entity, reason ORDER BY step, COUNT(*) DESC;
 
 `aetc:migrate` reloads the mapping files every time it starts. Edits only affect rows that have not been migrated yet. To apply a mapping change to rows already migrated, restore the MaHIS backup and run again.
 
+Rows that were *skipped* (for example `concept_unmapped`) can be brought in after you map them, without restoring:
+
+1. Delete their `migration_log` rows.
+2. Set the step's `checkpoint` back to 0.
+3. Run that step again, for example `bin/rails "aetc:migrate[obs]"`.
+
+The step only inserts rows that are not in `id_map` yet. A fresh run gives the same result.
+
 ## Cleaning up
 
 ```bash

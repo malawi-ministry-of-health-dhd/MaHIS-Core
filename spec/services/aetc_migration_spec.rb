@@ -127,6 +127,11 @@ RSpec.describe 'AETC migration' do # rubocop:disable RSpec/DescribeClass
       expect(logged?('obs', 6, 'conversion_not_reviewed')).to be(false)
     end
 
+    it 'maps the AETC blood-gas concepts by id (decision 2026-10-13)' do
+      obs = row("SELECT concept_id, value_text FROM tgt.obs WHERE uuid = 's-obs-18'")
+      expect(obs.values_at('concept_id', 'value_text')).to eq([48_838, '40.2'])
+    end
+
     it 'handles a text with a long run of spaces (MySQL regexp_time_limit)' do
       expect(row("SELECT CHAR_LENGTH(value_text) len FROM tgt.obs WHERE uuid = 's-obs-16'")['len']).to eq(5008)
       expect(logged?('obs', 16, 'value_unmapped')).to be(true)

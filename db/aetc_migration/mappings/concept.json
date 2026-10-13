@@ -30,14 +30,14 @@
   "aetc_obs": 9482553,
   "question_concepts": 1055,
   "answer_concepts": 851,
-  "questions_mapped": 1042,
-  "questions_unmapped": 13,
-  "questions_needing_review": 26,
+  "questions_mapped": 1053,
+  "questions_unmapped": 2,
+  "questions_needing_review": 0,
   "answers_unmapped": 8,
   "conversion_rules": {
    "none": {
-    "question_columns": 895,
-    "obs": 6713189
+    "question_columns": 907,
+    "obs": 6555679
    },
    "coded": {
     "question_columns": 188,
@@ -47,15 +47,19 @@
     "question_columns": 11,
     "obs": 35206
    },
+   "numeric_to_text": {
+    "question_columns": 25,
+    "obs": 169081
+   },
    "text_to_coded": {
-    "question_columns": 30,
-    "obs": 7983
+    "question_columns": 4,
+    "obs": 5
    }
   },
   "mahis_storage_evidence": {
-   "mahis_datatype_na": 963,
+   "mahis_datatype_na": 974,
    "mahis_concept_datatype": 79,
-   "unmapped": 13
+   "unmapped": 2
   }
  },
  "questions": [
@@ -23800,16 +23804,24 @@
      "obs": 5
     }
    ],
-   "target_id": null,
-   "target_name": null,
-   "target_uuid": null,
-   "target_datatype": null,
-   "match_method": "none",
-   "action": "unmapped",
-   "suggestions": [],
-   "reviewed": false,
-   "review_reasons": [
-    "no MaHIS concept with this name"
+   "target_id": 48838,
+   "target_name": "pCO₂ (mmHg)",
+   "target_uuid": "df20e8c1-e1d3-40e1-8443-104cc063b09f",
+   "target_datatype": "N/A",
+   "match_method": "manual",
+   "action": "map",
+   "reviewed": true,
+   "mahis_storage": "same_as_aetc",
+   "mahis_storage_evidence": "mahis_datatype_na",
+   "conversions": {
+    "value_text": {
+     "rule": "none",
+     "obs": 423
+    }
+   },
+   "notes": [
+    "MaHIS concept datatype is N/A: AETC value copied as-is",
+    "decision 2026-10-13 (Louis): mapped by id to the MaHIS blood-gas concept with the same name; the MaHIS name is stored with broken characters (double-encoded UTF-8), which is why the name match missed it. Louis will fix the names."
    ]
   },
   {
@@ -23839,16 +23851,24 @@
      "obs": 5
     }
    ],
-   "target_id": null,
-   "target_name": null,
-   "target_uuid": null,
-   "target_datatype": null,
-   "match_method": "none",
-   "action": "unmapped",
-   "suggestions": [],
-   "reviewed": false,
-   "review_reasons": [
-    "no MaHIS concept with this name"
+   "target_id": 48840,
+   "target_name": "pO₂ (mmHg)",
+   "target_uuid": "482bfd8e-814c-4c47-bf10-6e3dbf0ce921",
+   "target_datatype": "N/A",
+   "match_method": "manual",
+   "action": "map",
+   "reviewed": true,
+   "mahis_storage": "same_as_aetc",
+   "mahis_storage_evidence": "mahis_datatype_na",
+   "conversions": {
+    "value_text": {
+     "rule": "none",
+     "obs": 423
+    }
+   },
+   "notes": [
+    "MaHIS concept datatype is N/A: AETC value copied as-is",
+    "decision 2026-10-13 (Louis): mapped by id to the MaHIS blood-gas concept with the same name; the MaHIS name is stored with broken characters (double-encoded UTF-8), which is why the name match missed it. Louis will fix the names."
    ]
   },
   {
@@ -24012,21 +24032,24 @@
      "obs": 6
     }
    ],
-   "target_id": null,
-   "target_name": null,
-   "target_uuid": null,
-   "target_datatype": null,
-   "match_method": "none",
-   "action": "unmapped",
-   "suggestions": [
-    {
-     "target_id": 37838,
-     "target_name": "cLac (mmol/L)"
+   "target_id": 48856,
+   "target_name": "cNa⁺ (mmol/L)",
+   "target_uuid": "c73e46e7-525c-4c93-8ac4-decb45a92b28",
+   "target_datatype": "N/A",
+   "match_method": "manual",
+   "action": "map",
+   "reviewed": true,
+   "mahis_storage": "same_as_aetc",
+   "mahis_storage_evidence": "mahis_datatype_na",
+   "conversions": {
+    "value_text": {
+     "rule": "none",
+     "obs": 407
     }
-   ],
-   "reviewed": false,
-   "review_reasons": [
-    "no MaHIS concept with this name"
+   },
+   "notes": [
+    "MaHIS concept datatype is N/A: AETC value copied as-is",
+    "decision 2026-10-13 (Louis): mapped by id to the MaHIS blood-gas concept with the same name; the MaHIS name is stored with broken characters (double-encoded UTF-8), which is why the name match missed it. Louis will fix the names."
    ]
   },
   {
@@ -24056,16 +24079,24 @@
      "obs": 6
     }
    ],
-   "target_id": null,
-   "target_name": null,
-   "target_uuid": null,
-   "target_datatype": null,
-   "match_method": "none",
-   "action": "unmapped",
-   "suggestions": [],
-   "reviewed": false,
-   "review_reasons": [
-    "no MaHIS concept with this name"
+   "target_id": 48858,
+   "target_name": "cCa²⁺ (mmol/L)",
+   "target_uuid": "dedd77dd-5c78-4107-9962-701b2ab3cd10",
+   "target_datatype": "N/A",
+   "match_method": "manual",
+   "action": "map",
+   "reviewed": true,
+   "mahis_storage": "same_as_aetc",
+   "mahis_storage_evidence": "mahis_datatype_na",
+   "conversions": {
+    "value_text": {
+     "rule": "none",
+     "obs": 407
+    }
+   },
+   "notes": [
+    "MaHIS concept datatype is N/A: AETC value copied as-is",
+    "decision 2026-10-13 (Louis): mapped by id to the MaHIS blood-gas concept with the same name; the MaHIS name is stored with broken characters (double-encoded UTF-8), which is why the name match missed it. Louis will fix the names."
    ]
   },
   {
@@ -24236,25 +24267,24 @@
      "obs": 6
     }
    ],
-   "target_id": null,
-   "target_name": null,
-   "target_uuid": null,
-   "target_datatype": null,
-   "match_method": "none",
-   "action": "unmapped",
-   "suggestions": [
-    {
-     "target_id": 37838,
-     "target_name": "cLac (mmol/L)"
-    },
-    {
-     "target_id": 37691,
-     "target_name": "cGlu (mmol/L)"
+   "target_id": 48860,
+   "target_name": "cCl⁻ (mmol/L)",
+   "target_uuid": "41719883-2221-428f-bcc8-56c95eaf96a1",
+   "target_datatype": "N/A",
+   "match_method": "manual",
+   "action": "map",
+   "reviewed": true,
+   "mahis_storage": "same_as_aetc",
+   "mahis_storage_evidence": "mahis_datatype_na",
+   "conversions": {
+    "value_text": {
+     "rule": "none",
+     "obs": 402
     }
-   ],
-   "reviewed": false,
-   "review_reasons": [
-    "no MaHIS concept with this name"
+   },
+   "notes": [
+    "MaHIS concept datatype is N/A: AETC value copied as-is",
+    "decision 2026-10-13 (Louis): mapped by id to the MaHIS blood-gas concept with the same name; the MaHIS name is stored with broken characters (double-encoded UTF-8), which is why the name match missed it. Louis will fix the names."
    ]
   },
   {
@@ -25690,21 +25720,24 @@
      "obs": 1
     }
    ],
-   "target_id": null,
-   "target_name": null,
-   "target_uuid": null,
-   "target_datatype": null,
-   "match_method": "none",
-   "action": "unmapped",
-   "suggestions": [
-    {
-     "target_id": 48854,
-     "target_name": "FHHb (%)"
+   "target_id": 48852,
+   "target_name": "FO₂Hb (%)",
+   "target_uuid": "6b00b8fb-e3f7-42cf-945f-a9a5691acf04",
+   "target_datatype": "N/A",
+   "match_method": "manual",
+   "action": "map",
+   "reviewed": true,
+   "mahis_storage": "same_as_aetc",
+   "mahis_storage_evidence": "mahis_datatype_na",
+   "conversions": {
+    "value_text": {
+     "rule": "none",
+     "obs": 293
     }
-   ],
-   "reviewed": false,
-   "review_reasons": [
-    "no MaHIS concept with this name"
+   },
+   "notes": [
+    "MaHIS concept datatype is N/A: AETC value copied as-is",
+    "decision 2026-10-13 (Louis): mapped by id to the MaHIS blood-gas concept with the same name; the MaHIS name is stored with broken characters (double-encoded UTF-8), which is why the name match missed it. Louis will fix the names."
    ]
   },
   {
@@ -25815,16 +25848,24 @@
      "obs": 67
     }
    ],
-   "target_id": null,
-   "target_name": null,
-   "target_uuid": null,
-   "target_datatype": null,
-   "match_method": "none",
-   "action": "unmapped",
-   "suggestions": [],
-   "reviewed": false,
-   "review_reasons": [
-    "no MaHIS concept with this name"
+   "target_id": 48844,
+   "target_name": "cHCO₃⁻ (P,st)c",
+   "target_uuid": "811d8dd1-d1f8-4850-8852-ecbd6ab1c207",
+   "target_datatype": "N/A",
+   "match_method": "manual",
+   "action": "map",
+   "reviewed": true,
+   "mahis_storage": "same_as_aetc",
+   "mahis_storage_evidence": "mahis_datatype_na",
+   "conversions": {
+    "value_text": {
+     "rule": "none",
+     "obs": 285
+    }
+   },
+   "notes": [
+    "MaHIS concept datatype is N/A: AETC value copied as-is",
+    "decision 2026-10-13 (Louis): mapped by id to the MaHIS blood-gas concept with the same name; the MaHIS name is stored with broken characters (double-encoded UTF-8), which is why the name match missed it. Louis will fix the names."
    ]
   },
   {
@@ -25896,16 +25937,24 @@
      "obs": 2
     }
    ],
-   "target_id": null,
-   "target_name": null,
-   "target_uuid": null,
-   "target_datatype": null,
-   "match_method": "none",
-   "action": "unmapped",
-   "suggestions": [],
-   "reviewed": false,
-   "review_reasons": [
-    "no MaHIS concept with this name"
+   "target_id": 48850,
+   "target_name": "sO₂ (%)",
+   "target_uuid": "9493dd5c-e200-461c-8569-488905c43c5e",
+   "target_datatype": "N/A",
+   "match_method": "manual",
+   "action": "map",
+   "reviewed": true,
+   "mahis_storage": "same_as_aetc",
+   "mahis_storage_evidence": "mahis_datatype_na",
+   "conversions": {
+    "value_text": {
+     "rule": "none",
+     "obs": 284
+    }
+   },
+   "notes": [
+    "MaHIS concept datatype is N/A: AETC value copied as-is",
+    "decision 2026-10-13 (Louis): mapped by id to the MaHIS blood-gas concept with the same name; the MaHIS name is stored with broken characters (double-encoded UTF-8), which is why the name match missed it. Louis will fix the names."
    ]
   },
   {
@@ -27048,16 +27097,24 @@
      "obs": 41
     }
    ],
-   "target_id": null,
-   "target_name": null,
-   "target_uuid": null,
-   "target_datatype": null,
-   "match_method": "none",
-   "action": "unmapped",
-   "suggestions": [],
-   "reviewed": false,
-   "review_reasons": [
-    "no MaHIS concept with this name"
+   "target_id": 50518,
+   "target_name": "ctBil (µmol/L)",
+   "target_uuid": "8ea9d974-247e-4666-9b02-f29d221b1df9",
+   "target_datatype": "N/A",
+   "match_method": "manual",
+   "action": "map",
+   "reviewed": true,
+   "mahis_storage": "same_as_aetc",
+   "mahis_storage_evidence": "mahis_datatype_na",
+   "conversions": {
+    "value_text": {
+     "rule": "none",
+     "obs": 233
+    }
+   },
+   "notes": [
+    "MaHIS concept datatype is N/A: AETC value copied as-is",
+    "decision 2026-10-13 (Louis): mapped by id to the MaHIS blood-gas concept with the same name; the MaHIS name is stored with broken characters (double-encoded UTF-8), which is why the name match missed it. Louis will fix the names."
    ]
   },
   {
@@ -27345,16 +27402,24 @@
      "obs": 32
     }
    ],
-   "target_id": null,
-   "target_name": null,
-   "target_uuid": null,
-   "target_datatype": null,
-   "match_method": "none",
-   "action": "unmapped",
-   "suggestions": [],
-   "reviewed": false,
-   "review_reasons": [
-    "no MaHIS concept with this name"
+   "target_id": 50522,
+   "target_name": "pCO₂ (T) mmHg",
+   "target_uuid": "b1bc140d-1da0-498b-b431-a7e3aad550e4",
+   "target_datatype": "N/A",
+   "match_method": "manual",
+   "action": "map",
+   "reviewed": true,
+   "mahis_storage": "same_as_aetc",
+   "mahis_storage_evidence": "mahis_datatype_na",
+   "conversions": {
+    "value_text": {
+     "rule": "none",
+     "obs": 220
+    }
+   },
+   "notes": [
+    "MaHIS concept datatype is N/A: AETC value copied as-is",
+    "decision 2026-10-13 (Louis): mapped by id to the MaHIS blood-gas concept with the same name; the MaHIS name is stored with broken characters (double-encoded UTF-8), which is why the name match missed it. Louis will fix the names."
    ]
   },
   {
@@ -27457,16 +27522,24 @@
      "obs": 28
     }
    ],
-   "target_id": null,
-   "target_name": null,
-   "target_uuid": null,
-   "target_datatype": null,
-   "match_method": "none",
-   "action": "unmapped",
-   "suggestions": [],
-   "reviewed": false,
-   "review_reasons": [
-    "no MaHIS concept with this name"
+   "target_id": 50512,
+   "target_name": "pO₂ (T) mmHg",
+   "target_uuid": "0ec8cb05-1632-4d12-bfb5-140ce19dd297",
+   "target_datatype": "N/A",
+   "match_method": "manual",
+   "action": "map",
+   "reviewed": true,
+   "mahis_storage": "same_as_aetc",
+   "mahis_storage_evidence": "mahis_datatype_na",
+   "conversions": {
+    "value_text": {
+     "rule": "none",
+     "obs": 216
+    }
+   },
+   "notes": [
+    "MaHIS concept datatype is N/A: AETC value copied as-is",
+    "decision 2026-10-13 (Louis): mapped by id to the MaHIS blood-gas concept with the same name; the MaHIS name is stored with broken characters (double-encoded UTF-8), which is why the name match missed it. Louis will fix the names."
    ]
   },
   {
