@@ -68,6 +68,7 @@ module ArtService
           #{dsd_query(dsd: @dsd, model: 'o') if @dsd}
           LEFT JOIN (#{current_occupation_query}) a ON a.person_id = o.patient_id
           WHERE o.start_date > #{end_date} - INTERVAL 18 MONTH AND o.start_date < #{end_date} + INTERVAL 1 DAY
+          AND o.start_date BETWEEN #{@start_date} AND #{@end_date}
           AND o.voided = 0 #{%w[Military Civilian].include?(@occupation) ? 'AND' : ''} #{occupation_filter(occupation: @occupation, field_name: 'value', table_name: 'a', include_clause: false)}
           AND o.order_type_id = #{@drug_order_type_id}
           GROUP BY o.patient_id
@@ -192,24 +193,18 @@ module ArtService
       def create_temp_patient_start_date
         ActiveRecord::Base.connection.execute <<~SQL
           CREATE TABLE #{temp_patient_start_date}
-          SELECT
-            `p`.`patient_id` AS `patient_id`,
-            cast(patient_date_enrolled(`p`.`patient_id`) as date) AS `date_enrolled`,
-            date_antiretrovirals_started(`p`.`patient_id`, min(`s`.`start_date`)) AS `earliest_start_date`
-           FROM
-              ((`patient_program` `p`
-              LEFT JOIN `person` `pe` ON ((`pe`.`person_id` = `p`.`patient_id`))
-              LEFT JOIN `patient_state` `s` ON ((`p`.`patient_program_id` = `s`.`patient_program_id`)))
-              LEFT JOIN `person` ON ((`person`.`person_id` = `p`.`patient_id`)))
-            #{dsd_query(dsd: @dsd, model: 'p') if @dsd}
-           WHERE
-            ((`p`.`voided` = 0)
-            AND (`s`.`voided` = 0)
-            AND (`p`.`program_id` = #{@hiv_program_id})
-            AND (`s`.`state` = #{@on_arv_state_id}))
-            AND (`s`.`start_date` < #{end_date} + INTERVAL 1 DAY)
+          SELECT p.patient_id,
+                 date_antiretrovirals_started(p.patient_id, MIN(s.start_date)) AS earliest_start_date
+          FROM patient_program p
+          INNER JOIN patient_state s ON s.patient_program_id = p.patient_program_id
+          #{dsd_query(dsd: @dsd, model: 'p') if @dsd}
+          WHERE p.voided = 0
+            AND s.voided = 0
+            AND p.program_id = #{@hiv_program_id}
+            AND s.state = #{@on_arv_state_id}
+            AND s.start_date < #{end_date} + INTERVAL 1 DAY
             AND p.patient_id IN (SELECT patient_id FROM #{temp_reg_outcome} WHERE outcome = 'On antiretrovirals')
-          GROUP BY `p`.`patient_id`;
+          GROUP BY p.patient_id;
         SQL
         ActiveRecord::Base.connection.execute "CREATE INDEX #{idx_start_date} ON #{temp_patient_start_date} (patient_id)"
       end
