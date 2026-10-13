@@ -11,13 +11,14 @@ module AetcMigrationFixture
   SOURCE = 'aetc_test_src'
   TARGET = 'aetc_test_tgt'
   TRACKING = "#{SOURCE}_migration".freeze
-  TARGET_TABLES = %w[users person person_name person_address person_attribute patient patient_identifier relationship
-                     visit encounter obs orders order_extension lab_lims_order_mappings].freeze
+  TARGET_TABLES = %w[users role user_role user_programs person person_name person_address person_attribute patient
+                     patient_identifier relationship visit encounter obs orders order_extension
+                     lab_lims_order_mappings].freeze
   T0 = '2024-01-01 08:00:00'
   # Target rows after a full run. person: 5 AETC persons, the migration user's person and MaHIS person 2;
   # orders and lab_lims_order_mappings include the MaHIS rows seeded by seed_target.
   FULL_RUN_COUNTS = {
-    'users' => 1, 'person' => 7, 'person_name' => 5, 'person_address' => 4, 'person_attribute' => 2,
+    'users' => 7, 'role' => 2, 'user_role' => 2, 'user_programs' => 3, 'person' => 8, 'person_name' => 5, 'person_address' => 4, 'person_attribute' => 2,
     'patient' => 3, 'patient_identifier' => 5, 'relationship' => 2, 'visit' => 3, 'encounter' => 7, 'obs' => 15,
     'orders' => 5, 'order_extension' => 1, 'lab_lims_order_mappings' => 2
   }.freeze
@@ -43,10 +44,17 @@ module AetcMigrationFixture
 
   def drop
     [SOURCE, TARGET, TRACKING].each { |schema| db.execute("DROP DATABASE IF EXISTS #{schema}") }
+    FileUtils.rm_rf(@root) if @root
+    @root = nil
+  end
+
+  # The folder the tool writes its log and CSV files to during a spec (removed by drop).
+  def root
+    @root ||= Dir.mktmpdir('aetc-migration-spec')
   end
 
   # Config, terminal and schemas pointing the tool at the fixture schemas. Output goes to a StringIO.
-  def tool(answers: [], root: Dir.mktmpdir('aetc-migration-spec'))
+  def tool(answers: [])
     env = { 'AETC_SOURCE_DB' => SOURCE, 'AETC_MAPPINGS_DIR' => Rails.root.join('db/aetc_migration/mappings').to_s }
     config = AetcMigration::Config.new(
       env: env, root: root,
@@ -90,6 +98,10 @@ module AetcMigrationFixture
 
   # MaHIS rows that clash with AETC rows (the target tables have no foreign keys, so no metadata is needed).
   def seed_target
+    ins("#{TARGET}.users", user_id: 1, system_id: 'admin', username: 'admin', creator: 1, uuid: 't-user-1')
+    ins("#{TARGET}.users", user_id: 2, system_id: 'nurse', username: 'nurse', creator: 1, uuid: 't-user-2')
+    ins("#{TARGET}.users", user_id: 3, system_id: 'nurse_aetc', username: 'nurse_aetc', creator: 1, uuid: 't-user-3')
+    %w[Clinician Provider].each { |role| ins("#{TARGET}.role", role: role, description: role, uuid: "t-role-#{role}") }
     ins("#{TARGET}.person", person_id: 2, creator: 1, date_created: T0, uuid: 's-person-106') # same uuid as AETC 106
     ins("#{TARGET}.orders", order_id: 1, order_type_id: 6, concept_id: 58_110, orderer: 1, creator: 1, date_created: T0,
                             patient_id: 1, accession_number: 'XBL0001', uuid: 't-order-1')
@@ -126,9 +138,16 @@ module AetcMigrationFixture
   end
 
   def seed_people
-    person(900, 'Male') # user-only person -> skipped
+    person(900, 'Male') # only a user: migrated as the user's person
     ins("#{SOURCE}.users", user_id: 88, system_id: '88-1', username: 'hdumira', creator: 1, date_created: T0,
                            person_id: 900, uuid: 's-user-88')
+    ins("#{SOURCE}.users", user_id: 89, system_id: 'admin', username: 'admin', creator: 1, date_created: T0,
+                           person_id: 102, uuid: 's-user-89')   # username taken in MaHIS -> admin_aetc
+    ins("#{SOURCE}.users", user_id: 90, system_id: 'nurse', username: 'nurse', creator: 1, date_created: T0,
+                           person_id: 104, uuid: 's-user-90')   # nurse and nurse_aetc taken -> nurse_aetc2
+    ins("#{SOURCE}.user_role", user_id: 88, role: 'Clinician')
+    ins("#{SOURCE}.user_role", user_id: 88, role: 'Patient Attendant') # not a MaHIS role -> logged
+    ins("#{SOURCE}.user_role", user_id: 89, role: 'Provider')
 
     person(101, 'Male') # active patient
     ins("#{SOURCE}.patient", patient_id: 101, creator: 88, date_created: T0)

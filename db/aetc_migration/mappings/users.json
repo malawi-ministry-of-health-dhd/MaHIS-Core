@@ -5,7 +5,7 @@
     "changed_by",
     "voided_by"
   ],
-  "strategy": "single_user",
+  "strategy": "per_user",
   "mappings": [
     {
       "source_user_id": 88,
@@ -4904,6 +4904,8 @@
       "reviewed": false
     }
   ],
-  "decision": "All creator/changed_by/voided_by -> new MaHIS user aetc_migration. Original AETC user ids stored in aetc_migration.id_map (src_creator, src_changed_by, src_voided_by) and resolved via aetc_migration.users_lookup (loaded from this file).",
-  "target_username": "aetc_migration"
+  "decision": "Decision 2026-10-13 (Louis): every AETC user becomes a MaHIS user. A username or system_id MaHIS already has gets _aetc appended (then _aetc2, ...); the renamed users are listed in log/aetc_migration/<tracking>-usernames-taken-<ts>.csv. No password (an admin sets one); AETC retired users stay retired; location_id = target_location_id; access to target_program_id; AETC roles that exist in MaHIS are copied. creator/changed_by/voided_by/orderer of every migrated row -> the AETC user's MaHIS user (users_lookup); the aetc_migration user owns the new accounts and stands in for AETC user ids that no longer exist. mappings[] below is reference only (audit_references).",
+  "target_username": "aetc_migration",
+  "target_location_id": 1291,
+  "target_program_id": 30
 }

@@ -4,7 +4,8 @@ module AetcMigration
   module Steps
     # encounter, for patients the visits step has covered.
     #   * encounter type from encounter_type.json; unmapped types are skipped and logged.
-    #   * provider_id = the migration user's person; program_id = AETC PROGRAM (30); form_id NULL.
+    #   * provider_id = the person of the AETC user who created it (AETC has no encounter providers);
+    #     program_id = AETC PROGRAM (30); form_id NULL.
     #   * visit_id via id_map; an encounter whose visit wasn't migrated loads without one (logged).
     #   * location from location.json, as text. AETC 1 "Unknown" becomes 1291 (clinical_overrides, logged)
     #     so Locatable doesn't hide it; any other unmapped location loads as NULL (logged).
@@ -20,8 +21,6 @@ module AetcMigration
 
       def call
         program = run.mappings.aetc_program_id.to_i
-        user = run.migration_user_id
-        provider = run.migration_person_id
         each_patient_batch do |ids, _rec|
           rows = <<~SQL
             FROM #{src('encounter')} e
@@ -46,16 +45,24 @@ module AetcMigration
             INSERT INTO #{tgt('encounter')} (encounter_type, patient_id, provider_id, location_id, form_id,
               encounter_datetime, creator, date_created, voided, voided_by, date_voided, void_reason, uuid,
               changed_by, date_changed, program_id, visit_id)
-            SELECT et.target_id, pm.tgt_id, #{provider}, CAST(lo.target_id AS CHAR), NULL,
-              #{dt_required('e.encounter_datetime')}, #{user}, #{dt_required('e.date_created')}, IF(e.voided, 1, 0),
-              IF(e.voided, #{user}, NULL), #{dt('e.date_voided')}, e.void_reason, e.uuid,
-              IF(e.changed_by IS NULL, NULL, #{user}), #{dt('e.date_changed')}, #{program}, vm.tgt_id
+            SELECT et.target_id, pm.tgt_id, #{provider_sql}, CAST(lo.target_id AS CHAR), NULL,
+              #{dt_required('e.encounter_datetime')}, #{run.user_sql('e.creator')}, #{dt_required('e.date_created')}, IF(e.voided, 1, 0),
+              IF(e.voided, #{run.user_sql('e.voided_by')}, NULL), #{dt('e.date_voided')}, e.void_reason, e.uuid,
+              IF(e.changed_by IS NULL, NULL, #{run.user_sql('e.changed_by')}), #{dt('e.date_changed')}, #{program}, vm.tgt_id
             #{loaded}
           SQL
           map_by_uuid('encounter', 'encounter', 'encounter_id', 'encounter', 'encounter_id',
                       "s.patient_id IN (#{sql.list(ids)})")
         end
         counts
+      end
+
+      private
+
+      # SQL: the MaHIS person of the encounter's creator (the aetc_migration person when there is none).
+      def provider_sql
+        "COALESCE((SELECT pu.person_id FROM #{tgt('users')} pu WHERE pu.user_id = #{run.user_sql('e.creator')}), " \
+          "#{run.migration_person_id})"
       end
     end
   end

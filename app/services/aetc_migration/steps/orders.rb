@@ -8,7 +8,7 @@ module AetcMigration
     #     order_type.json specimen_concepts; orders with an unmapped type/specimen are skipped and logged.
     #   * encounter via id_map; orders whose encounter wasn't migrated (incl. AETC 91-93) are skipped.
     #   * empty start_date -> date_created (logged); fractions of seconds are dropped, not rounded.
-    #   * orderer/creator/discontinued_by/voided_by -> migration user. AETC-only columns are dropped.
+    #   * orderer/creator/discontinued_by/voided_by -> the AETC user's MaHIS user. AETC-only columns are dropped.
     #   * an accession number MaHIS already uses is loaded and flagged.
     #   * order_extension / lab_lims_order_mappings follow their order (no uuid: id_map makes re-runs
     #     safe); a lims_id MaHIS already has is skipped (the lab engine needs it unique).
@@ -40,7 +40,6 @@ module AetcMigration
       private
 
       def migrate_orders(ids)
-        user = run.migration_user_id
         rows = <<~SQL
           FROM #{src('orders')} o
           JOIN #{trk('id_map')} pm ON pm.entity = 'patient' AND pm.src_id = o.patient_id
@@ -66,11 +65,12 @@ module AetcMigration
             auto_expire_date, discontinued, discontinued_date, discontinued_by, discontinued_reason, creator,
             date_created, voided, voided_by, date_voided, void_reason, patient_id, accession_number, obs_id, uuid,
             discontinued_reason_non_coded, comment_to_fulfiller, fulfiller_comment, fulfiller_status)
-          SELECT ot.target_id, sp.target_id, #{user}, em.tgt_id, o.instructions,
+          SELECT ot.target_id, sp.target_id, #{run.user_sql('o.orderer')}, em.tgt_id, o.instructions,
             COALESCE(#{whole_seconds('o.start_date')}, #{dt('o.date_created')}), #{dt('o.auto_expire_date')},
             IF(o.discontinued, 1, 0), #{whole_seconds('o.discontinued_date')},
-            IF(o.discontinued_by IS NULL, NULL, #{user}), NULL, #{user}, #{dt_required('o.date_created')},
-            IF(o.voided, 1, 0), IF(o.voided, #{user}, NULL), #{dt('o.date_voided')}, o.void_reason, pm.tgt_id,
+            IF(o.discontinued_by IS NULL, NULL, #{run.user_sql('o.discontinued_by')}), NULL, #{run.user_sql('o.creator')},
+            #{dt_required('o.date_created')},
+            IF(o.voided, 1, 0), IF(o.voided, #{run.user_sql('o.voided_by')}, NULL), #{dt('o.date_voided')}, o.void_reason, pm.tgt_id,
             o.accession_number, NULL, o.uuid, o.discontinued_reason_non_coded, o.comment_to_fulfiller,
             o.fulfiller_comment, o.fulfiller_status
           #{loaded}
@@ -101,9 +101,9 @@ module AetcMigration
             value = value[0, EXTENSION_VALUE_MAX]
           end
           voided = truthy?(e['voided'])
-          sql.insert(tgt('order_extension'), [{ 'order_id' => order_id, 'value' => value, 'creator' => run.migration_user_id,
+          sql.insert(tgt('order_extension'), [{ 'order_id' => order_id, 'value' => value, 'creator' => run.user_for(e['creator']),
                                                 'date_created' => e['date_created'] || EPOCH, 'voided' => voided ? 1 : 0,
-                                                'voided_by' => voided ? run.migration_user_id : nil,
+                                                'voided_by' => voided ? run.user_for(e['voided_by']) : nil,
                                                 'date_voided' => e['date_voided'], 'void_reason' => e['void_reason'] }])
           rec.mapped('order_extension', e, 'order_extension_id', last_insert_id, nil)
           count('order_extension', 1)

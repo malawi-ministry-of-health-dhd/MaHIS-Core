@@ -93,21 +93,21 @@ module AetcMigration
                    "AND src_id IN (#{sql.list(src_ids)})").to_h { |r| [r['src_id'], r['tgt_id']] }
       end
 
-      # AETC creator/voided_by -> migration user; dates kept.
+      # AETC creator/voided_by -> the AETC user's MaHIS user (users_lookup); dates kept.
       def audit(src)
         voided = truthy?(src['voided'])
         {
-          'creator' => run.migration_user_id,
+          'creator' => run.user_for(src['creator']),
           'date_created' => src['date_created'] || EPOCH,
           'voided' => voided ? 1 : 0,
-          'voided_by' => voided || !src['voided_by'].nil? ? run.migration_user_id : nil,
+          'voided_by' => voided || !src['voided_by'].nil? ? run.user_for(src['voided_by']) : nil,
           'date_voided' => src['date_voided'],
           'void_reason' => src['void_reason']
         }
       end
 
       def changed(src)
-        { 'changed_by' => src['changed_by'].nil? ? nil : run.migration_user_id, 'date_changed' => src['date_changed'] }
+        { 'changed_by' => src['changed_by'].nil? ? nil : run.user_for(src['changed_by']), 'date_changed' => src['date_changed'] }
       end
 
       def truthy?(value)

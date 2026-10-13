@@ -82,7 +82,6 @@ module AetcMigration
       end
 
       def insert(loaded)
-        user = run.migration_user_id
         sql.write(<<~SQL)
           INSERT INTO #{tgt('obs')} (person_id, concept_id, encounter_id, order_id, obs_datetime, location_id,
             obs_group_id, accession_number, value_group_id, value_boolean, value_coded, value_coded_name_id,
@@ -97,8 +96,8 @@ module AetcMigration
                    THEN COALESCE(NULLIF(a.source_name, ''), CAST(o.value_coded AS CHAR))
                  WHEN #{NUMERIC_TO_TEXT} AND o.value_text IS NULL THEN CAST(o.value_numeric AS CHAR)
                  ELSE o.value_text END,
-            NULL, NULL, o.comments, #{user}, #{dt_required('o.date_created')}, IF(o.voided, 1, 0),
-            IF(o.voided, #{user}, NULL), #{dt('o.date_voided')}, o.void_reason, LEFT(o.value_complex, 255), o.uuid
+            NULL, NULL, o.comments, #{run.user_sql('o.creator')}, #{dt_required('o.date_created')}, IF(o.voided, 1, 0),
+            IF(o.voided, #{run.user_sql('o.voided_by')}, NULL), #{dt('o.date_voided')}, o.void_reason, LEFT(o.value_complex, 255), o.uuid
           #{loaded}
         SQL
       end

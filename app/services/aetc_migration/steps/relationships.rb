@@ -67,9 +67,9 @@ module AetcMigration
           else
             voided = truthy?(r['voided'])
             [r, { 'person_a' => persons[r['person_a']], 'relationship' => @types[r['relationship']],
-                  'person_b' => persons[r['person_b']], 'creator' => run.migration_user_id,
+                  'person_b' => persons[r['person_b']], 'creator' => run.user_for(r['creator']),
                   'date_created' => r['date_created'] || EPOCH, 'voided' => voided ? 1 : 0,
-                  'voided_by' => voided ? run.migration_user_id : nil, 'date_voided' => r['date_voided'],
+                  'voided_by' => voided ? run.user_for(r['voided_by']) : nil, 'date_voided' => r['date_voided'],
                   'void_reason' => r['void_reason'], 'uuid' => r['uuid'] }]
           end
         end

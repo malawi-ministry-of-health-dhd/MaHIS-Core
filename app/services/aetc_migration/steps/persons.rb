@@ -3,7 +3,8 @@
 module AetcMigration
   module Steps
     # person, person_name, person_address, person_attribute, in batches of AETC persons.
-    #   * Persons that are only AETC users (not patients, in no relationship) are skipped.
+    #   * Persons of AETC users are migrated too; each batch then points the users step's MaHIS users at
+    #     their migrated person.
     #   * Child rows: active rows only, except that voided persons/patients bring all their rows.
     #   * Gender via value_normalization.json (unknown -> NULL). Persons without a name load without one.
     #   * The name marked preferred is the latest active one.
@@ -20,7 +21,6 @@ module AetcMigration
 
       def call
         load_rules
-        @user_only = user_only_persons
         each_batch('person', 'person_id', upto: run.cap) { |persons, rec| migrate(persons, rec) }
         counts
       end
@@ -43,15 +43,6 @@ module AetcMigration
                               .to_h { |m| [m['source_id'], m['target_id']] }
       end
 
-      def user_only_persons
-        sql.values(<<~SQL).to_set
-          SELECT u.person_id FROM #{src('users')} u
-          WHERE u.person_id NOT IN (SELECT patient_id FROM #{src('patient')})
-            AND NOT EXISTS (SELECT 1 FROM #{src('relationship')} r WHERE r.person_a = u.person_id)
-            AND NOT EXISTS (SELECT 1 FROM #{src('relationship')} r WHERE r.person_b = u.person_id)
-        SQL
-      end
-
       def migrate(persons, rec)
         already = mapped_ids('person', persons.map { |p| p['person_id'] })
         in_target = sql.ids_by_uuid(tgt('person'), 'person_id', persons.map { |p| p['uuid'] })
@@ -59,9 +50,7 @@ module AetcMigration
           id = p['person_id']
           next true if already.key?(id)
 
-          if @user_only.include?(id)
-            rec.logged('person', id, 'user_only_person')
-          elsif in_target.key?(p['uuid'])
+          if in_target.key?(p['uuid'])
             rec.logged('person', id, 'uuid_exists_in_target', "target person_id=#{in_target[p['uuid']]}")
           else
             next false
@@ -76,6 +65,18 @@ module AetcMigration
         insert_names(ids, person_map, owners, rec)
         insert_addresses(ids, person_map, owners, rec)
         insert_attributes(ids, person_map, owners, rec)
+        link_users(person_map)
+      end
+
+      # MaHIS users (from the users step) whose AETC person is in this batch get their migrated person.
+      def link_users(person_map)
+        users = sql.select("SELECT um.tgt_id AS user_id, su.person_id FROM #{src('users')} su " \
+                           "JOIN #{trk('id_map')} um ON um.entity = 'user' AND um.src_id = su.user_id " \
+                           "WHERE su.person_id IN (#{sql.list(person_map.keys)})")
+        users.each do |u|
+          sql.write("UPDATE #{tgt('users')} SET person_id = #{person_map.fetch(u['person_id']).to_i} " \
+                    "WHERE user_id = #{u['user_id'].to_i}")
+        end
       end
 
       def insert_persons(todo, rec)
@@ -173,9 +174,9 @@ module AetcMigration
         used = chosen.values.map(&:first)
         primary = (chosen['home'] || chosen['current']).first
         all_voided = used.all? { |r| truthy?(r['voided']) }
-        row = { 'person_id' => person_id, 'preferred' => 1, **target, 'creator' => run.migration_user_id,
+        row = { 'person_id' => person_id, 'preferred' => 1, **target, 'creator' => run.user_for(primary['creator']),
                 'date_created' => used.map { |r| r['date_created'] || EPOCH }.min,
-                'voided' => all_voided ? 1 : 0, 'voided_by' => all_voided ? run.migration_user_id : nil,
+                'voided' => all_voided ? 1 : 0, 'voided_by' => all_voided ? run.user_for(primary['voided_by']) : nil,
                 'date_voided' => all_voided ? primary['date_voided'] : nil,
                 'void_reason' => all_voided ? primary['void_reason'] : nil, 'uuid' => primary['uuid'] }
         [used, row]

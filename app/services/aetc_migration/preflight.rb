@@ -4,7 +4,7 @@ module AetcMigration
   # rake aetc:check: everything that can be verified before migrating, so problems show up now and
   # not halfway through the obs table. Loads the mappings into the tracking schema as a side effect.
   class Preflight
-    SOURCE_TABLES = %w[users person person_name person_address person_attribute patient patient_identifier
+    SOURCE_TABLES = %w[users user_role person person_name person_address person_attribute patient patient_identifier
                        relationship visit encounter obs orders order_extension lab_lims_order_mappings].freeze
 
     # What AETC uses, and the lookup that maps it: [label, AETC table, AETC column, lookup, extra condition]

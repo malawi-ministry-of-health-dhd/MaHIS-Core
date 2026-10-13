@@ -87,7 +87,7 @@ Each run writes to a tracking schema named `<AETC schema>_migration`, for exampl
 | `migration_log` | Every AETC row that was skipped, or loaded but changed or flagged, with a `reason` and `detail` |
 | `checkpoint` | How far each step got |
 | `settings` | The migration user's id; when `aetc:check` last passed |
-| `users_lookup` | The AETC users, all mapped to the one `aetc_migration` user |
+| `users_lookup` | Each AETC user and the MaHIS user it became |
 | `lookup_*` | The mapping files, loaded as tables |
 
 To see which reasons were logged and how often:
@@ -99,7 +99,14 @@ GROUP BY step, entity, reason ORDER BY step, COUNT(*) DESC;
 
 ### Main rules
 
-- **Users:** all AETC users become one MaHIS user, `aetc_migration`, which has no password. AETC persons that are only user accounts are skipped (`user_only_person`).
+- **Users:** every AETC user becomes a MaHIS user (decided 2026-10-13).
+  - A username MaHIS already has gets `_aetc` appended (`admin` → `admin_aetc`, then `_aetc2`, …). Each run lists the renamed users in `log/aetc_migration/<tracking>-usernames-taken-<timestamp>.csv` and logs them as `username_taken`.
+  - The accounts have no password: an admin sets one before the first login. Users retired in AETC stay retired.
+  - Facility QECH (1291) and access to the AETC program (30), from `users.json`.
+  - AETC roles that exist in MaHIS are copied; the others are logged (`role_not_in_mahis`).
+  - The user's AETC person is migrated and linked to the account, including persons who are only users.
+  - The creator, changer, voider and orderer of every migrated row is the AETC user's MaHIS account. An encounter's provider is the person of the user who created it, because AETC recorded no encounter providers.
+  - The `aetc_migration` user (no password) owns the new accounts and stands in for AETC user ids that no longer exist.
 - **Voided rows:** voided rows of active patients are not migrated. A voided patient comes over with its voided rows, still voided.
 - **Same uuid:** AETC rows whose uuid MaHIS already has are skipped (`uuid_exists_in_target`).
 - **Identifiers:** Dummy IDs are skipped (`identifier_type_skipped`). An identifier used by two AETC patients, or already used in MaHIS, is loaded and flagged (`duplicate_identifier`, `identifier_exists_in_target`).
@@ -129,7 +136,7 @@ GROUP BY step, entity, reason ORDER BY step, COUNT(*) DESC;
 | `person_address.json` | Address columns: which AETC column goes where, values treated as empty, which address is kept |
 | `person_attribute_type.json` | Person attribute types |
 | `relationship_type.json` | Relationship types |
-| `users.json` | AETC users (for `users_lookup`) |
+| `users.json` | How AETC users are migrated (`per_user`), their facility and program, and AETC user reference counts |
 | `value_normalization.json` | Gender and country values, and text treated as empty (`N/A`, …) |
 | `visit_type.json` | Visit types |
 | `decisions.json` | The decisions behind the mappings, for reference |

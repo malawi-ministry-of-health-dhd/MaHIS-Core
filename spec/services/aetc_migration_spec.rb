@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'rails_helper'
+require 'csv'
 require './spec/support/helpers/aetc_migration_fixture'
 
 # End-to-end test of the AETC -> MaHIS migration (rake aetc:migrate) on throwaway schemas.
@@ -43,16 +44,50 @@ RSpec.describe 'AETC migration' do # rubocop:disable RSpec/DescribeClass
       expect(fixture.counts).to eq(fixture::FULL_RUN_COUNTS)
     end
 
-    it 'creates one migration user, without a password, for all AETC users' do
-      user = row("SELECT user_id, password FROM tgt.users WHERE username = 'aetc_migration'")
-      expect(user['password']).to be_nil
-      lookup = row('SELECT COUNT(*) n, MIN(target_user_id) lo, MAX(target_user_id) hi FROM trk.users_lookup')
-      expect(lookup.values_at('n', 'lo', 'hi')).to eq([408, user['user_id'], user['user_id']])
+    it 'creates a MaHIS user for every AETC user, without a password, at QECH with the AETC program' do
+      users = fixture.query("SELECT username, password, salt, location_id FROM tgt.users WHERE user_id IN " \
+                            "(SELECT tgt_id FROM trk.id_map WHERE entity = 'user') ORDER BY username")
+      expect(users.map { |u| u['username'] }).to eq(%w[admin_aetc hdumira nurse_aetc2])
+      expect(users.map { |u| u.values_at('password', 'salt', 'location_id') }.uniq).to eq([[nil, nil, '1291']])
+      programs = fixture.query("SELECT DISTINCT program_id FROM tgt.user_programs WHERE user_id IN " \
+                               "(SELECT tgt_id FROM trk.id_map WHERE entity = 'user')")
+      expect(programs.map { |r| r['program_id'] }).to eq([30])
     end
 
-    it 'skips user-only persons and persons whose uuid MaHIS already has' do
-      expect(fixture.query("SELECT 1 FROM tgt.person WHERE uuid = 's-person-900'")).to be_empty
-      expect(logged?('person', 900, 'user_only_person')).to be(true)
+    it 'appends _aetc to usernames MaHIS already has, and lists them in a CSV' do
+      expect(logged?('user', 89, 'username_taken')).to be(true)
+      expect(logged?('user', 90, 'username_taken')).to be(true)
+      csv = Dir[File.join(fixture.root, 'log', 'aetc_migration', '*-usernames-taken-*.csv')]
+      expect(csv.size).to eq(1)
+      rows = CSV.read(csv.first, headers: true).map { |r| r.to_h.values_at('aetc_username', 'existing_mahis_user_id', 'new_username') }
+      expect(rows).to contain_exactly(%w[admin 1 admin_aetc], %w[nurse 2 nurse_aetc2])
+    end
+
+    it 'copies the AETC roles MaHIS has, and logs the others' do
+      roles = fixture.query('SELECT u.username, r.role FROM tgt.user_role r JOIN tgt.users u ON u.user_id = r.user_id')
+      expect(roles.map(&:values)).to contain_exactly(%w[hdumira Clinician], %w[admin_aetc Provider])
+      expect(logged?('user_role', 88, 'role_not_in_mahis')).to be(true)
+    end
+
+    it 'links each user to its migrated person, including persons who are only users' do
+      user = row("SELECT p.uuid FROM tgt.users u JOIN tgt.person p ON p.person_id = u.person_id WHERE u.username = 'hdumira'")
+      expect(user['uuid']).to eq('s-person-900')
+    end
+
+    it 'records the AETC user as creator, orderer and encounter provider' do
+      hdumira = row("SELECT user_id, person_id FROM tgt.users WHERE username = 'hdumira'")
+      encounter = row("SELECT creator, provider_id FROM tgt.encounter WHERE uuid = 's-enc-1'")
+      expect(encounter.values_at('creator', 'provider_id')).to eq(hdumira.values_at('user_id', 'person_id'))
+      %w[visit.s-visit-1 obs.s-obs-1 orders.s-order-1 person.s-person-101 relationship.s-rel-1].each do |name|
+        table, uuid = name.split('.', 2)
+        expect(row("SELECT creator FROM tgt.#{table} WHERE uuid = '#{uuid}'")['creator']).to eq(hdumira['user_id']), name
+      end
+      expect(row("SELECT orderer FROM tgt.orders WHERE uuid = 's-order-1'")['orderer']).to eq(hdumira['user_id'])
+      lookup = fixture.query('SELECT COUNT(*) n, COUNT(DISTINCT target_user_id) users FROM trk.users_lookup').first
+      expect(lookup.values_at('n', 'users')).to eq([3, 3])
+    end
+
+    it 'skips persons whose uuid MaHIS already has' do
       expect(logged?('person', 106, 'uuid_exists_in_target')).to be(true)
     end
 
@@ -174,6 +209,16 @@ RSpec.describe 'AETC migration' do # rubocop:disable RSpec/DescribeClass
 
     it 'ends with the same result as one full run' do
       expect(fixture.counts).to eq(fixture::FULL_RUN_COUNTS)
+    end
+  end
+
+  context 'with a tracking schema from a run that kept a single migration user' do
+    before(:all) { fixture.build }
+
+    it 'refuses to add the AETC users, so no rows are left unattributed' do
+      config, _terminal, schemas = fixture.tool
+      AetcMigration::Tracking.for(fixture::SOURCE, config: config, schemas: schemas).save_checkpoint('persons', 105)
+      expect { fixture.migrate('users') }.to raise_error(AetcMigration::Error, /Restore the MaHIS backup/)
     end
   end
 

@@ -20,7 +20,6 @@ module AetcMigration
 
       def call
         program = run.mappings.aetc_program_id.to_i
-        user = run.migration_user_id
         each_patient_batch do |ids, _rec|
           rows = <<~SQL
             FROM #{src('visit')} v
@@ -38,8 +37,9 @@ module AetcMigration
               date_stopped, voided, voided_by, date_voided, void_reason, creator, date_created, changed_by,
               date_changed, uuid, program_id)
             SELECT pm.tgt_id, vt.target_id, NULL, lo.target_id, #{dt_required('v.date_started')},
-              #{dt('v.date_stopped')}, IF(v.voided, 1, 0), IF(v.voided, #{user}, NULL), #{dt('v.date_voided')},
-              v.void_reason, #{user}, #{dt_required('v.date_created')}, IF(v.changed_by IS NULL, NULL, #{user}),
+              #{dt('v.date_stopped')}, IF(v.voided, 1, 0), IF(v.voided, #{run.user_sql('v.voided_by')}, NULL), #{dt('v.date_voided')},
+              v.void_reason, #{run.user_sql('v.creator')}, #{dt_required('v.date_created')},
+              IF(v.changed_by IS NULL, NULL, #{run.user_sql('v.changed_by')}),
               #{dt('v.date_changed')}, v.uuid, #{program}
             #{rows} AND vt.target_id IS NOT NULL
           SQL

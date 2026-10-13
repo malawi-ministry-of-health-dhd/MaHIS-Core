@@ -9,9 +9,10 @@
   "note": "Voided patients still bring their own rows"
  },
  "users": {
-  "choice": "single_user",
-  "target_username": "aetc_migration",
-  "audit": "aetc_migration.id_map + users_lookup"
+  "choice": "per_user",
+  "decided_on": "2026-10-13",
+  "detail": "every AETC user -> MaHIS user; taken username/system_id -> name_aetc (name_aetc2, ...), listed in a CSV; no password; retired kept; location 1291; AETC program 30; matching roles copied, others logged (role_not_in_mahis); encounter provider = person of the encounter's creator (AETC has no encounter providers)",
+  "previously": "single_user (aetc_migration), decided 2026-09-28"
  },
  "relationship_types": {
   "choice": "native_mahis_rows",

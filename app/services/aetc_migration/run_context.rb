@@ -30,6 +30,19 @@ module AetcMigration
       tracking.table_name(table)
     end
 
+    # MaHIS user for an AETC user id (users_lookup); the aetc_migration user when there is none.
+    def user_for(source_user_id)
+      @user_ids ||= sql.select("SELECT source_user_id, target_user_id FROM #{trk('users_lookup')}")
+                       .to_h { |r| [r['source_user_id'], r['target_user_id']] }
+      @user_ids.fetch(source_user_id.to_i, migration_user_id)
+    end
+
+    # SQL for the same, given an AETC user id column.
+    def user_sql(column)
+      "COALESCE((SELECT ul.target_user_id FROM #{trk('users_lookup')} ul WHERE ul.source_user_id = #{column}), " \
+        "#{migration_user_id})"
+    end
+
     private
 
     def setting!(name)

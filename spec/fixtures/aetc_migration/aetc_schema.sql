@@ -415,3 +415,10 @@ CREATE TABLE `lab_lims_order_mappings` (
   KEY `index_lab_lims_order_mappings_on_lims_id` (`lims_id`),
   KEY `fk_rails_0171384638` (`order_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE `user_role` (
+  `user_id` int NOT NULL DEFAULT '0',
+  `role` varchar(50) NOT NULL DEFAULT '',
+  PRIMARY KEY (`role`,`user_id`),
+  KEY `user_role_to_users` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3;
