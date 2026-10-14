@@ -86,5 +86,8 @@ jobs:
       - name: Seed database
         run: bundle exec rails db:seed
 
+      - name: Check Swagger route coverage
+        run: bundle exec ruby bin/sync_swagger_routes.rb --check
+
       - name: Run RSpec tests
         run: bundle exec rspec
