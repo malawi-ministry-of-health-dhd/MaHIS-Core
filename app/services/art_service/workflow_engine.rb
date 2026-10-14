@@ -68,9 +68,9 @@ module ArtService
       VITALS => SYMPTOM_SCREENING,
       SYMPTOM_SCREENING => HIV_STAGING,
       HIV_STAGING => AHD_SCREENING,
-      AHD_SCREENING => ART_ADHERENCE,
-      ART_ADHERENCE => HIV_CLINIC_CONSULTATION,
-      HIV_CLINIC_CONSULTATION => HIV_CLINIC_CONSULTATION_CLINICIAN,
+      AHD_SCREENING => HIV_CLINIC_CONSULTATION,
+      HIV_CLINIC_CONSULTATION => ART_ADHERENCE,
+      ART_ADHERENCE => HIV_CLINIC_CONSULTATION_CLINICIAN,
       HIV_CLINIC_CONSULTATION_CLINICIAN => TREATMENT,
       TREATMENT => FAST_TRACK,
       FAST_TRACK => DISPENSING,
@@ -173,19 +173,7 @@ module ArtService
       # of the actual vitals.
       return false if type.name == VITALS
 
-      # For TREATMENT encounters, check if they have valid non-voided orders
-      if type.name == TREATMENT
-        encounter = Encounter.unscoped.where(type:, patient: @patient, program: @program)\
-                            .where('encounter_datetime BETWEEN ? AND ?', *TimeUtils.day_bounds(@date))\
-                            .order(encounter_datetime: :desc)\
-                            .first
-        return false unless encounter
-        # Reload encounter to ensure we have latest data after void operations
-        encounter.reload
-        return encounter.orders.unscoped.where(voided: 0).where('quantity > 0').exists?
-      end
-
-      Encounter.unscoped.where(type:, patient: @patient, program: @program)\
+      Encounter.where(type:, patient: @patient, program: @program)\
                .where('encounter_datetime BETWEEN ? AND ?', *TimeUtils.day_bounds(@date))\
                .exists?
     end
@@ -354,17 +342,18 @@ module ArtService
 
     def dispensing_complete?
       prescription_type = EncounterType.find_by(name: TREATMENT).encounter_type_id
-      prescription = Encounter.where(encounter_type: prescription_type,
+      prescription = Encounter.find_by(encounter_type: prescription_type,
                                        patient_id: @patient.patient_id,
                                        program_id: @program.program_id)
-                              .where('encounter_datetime BETWEEN ? AND ?', *TimeUtils.day_bounds(@date)).last
 
       return false unless prescription
 
-      drug_orders = prescription.orders.includes(:drug_order).filter_map(&:drug_order)
-      return false if drug_orders.empty?
+      complete = false
 
-      complete = drug_orders.all? { |drug_order| drug_order.amount_needed <= 0 }
+      prescription.orders.each do |order|
+        complete = order.drug_order.amount_needed <= 0
+        break unless complete
+      end
 
       # TODO: Implement this regimen thingy below...
       # if complete
