@@ -66,6 +66,36 @@ RSpec.describe ArtService::Reports::RegimenDispensationData do
     end
   end
 
+  describe '#create_temp_regimen_patient_weight' do
+    it 'uses the Weight (kg) concept for the latest observation before the report end date' do
+      report = described_class.allocate
+      report.instance_variable_set(:@end_date, "'2026-01-31 23:59:59'")
+      allow(report).to receive_messages(temp_reg_outcome: 'temp_reg_outcome_test',
+                                        temp_regimen_patient_weight: 'temp_regimen_patient_weight_test',
+                                        idx_patient_weight: 'idx_patient_weight_test',
+                                        concept_name_to_id: 53_325)
+
+      expect(report).to receive(:create_indexed_temp_table) do |table, index, columns, sql|
+        expect([table, index, columns]).to eq(
+          ['temp_regimen_patient_weight_test', 'idx_patient_weight_test', 'patient_id']
+        )
+        expect(sql.scan('concept_id = 53325').length).to eq(2)
+        expect(sql).to include("o.obs_datetime < '2026-01-31 23:59:59' + INTERVAL 1 DAY")
+        expect(sql).to include("WHERE tro.outcome = 'On antiretrovirals'")
+      end
+
+      report.send(:create_temp_regimen_patient_weight)
+    end
+
+    it 'raises when the Weight (kg) concept is missing' do
+      report = described_class.allocate
+      allow(report).to receive(:concept_name_to_id).with('Weight (kg)').and_return(nil)
+
+      expect { report.send(:create_temp_regimen_patient_weight) }
+        .to raise_error(ActiveRecord::RecordNotFound, "Concept 'Weight (kg)' was not found")
+    end
+  end
+
   describe '#create_temp_vl_result' do
     it 'builds cohort-filtered candidates before joining concept names' do
       report = described_class.allocate
