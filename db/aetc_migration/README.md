@@ -52,15 +52,26 @@ Write the variable before the command with no comma: `AETC_SOURCE_DB=aetc_live_p
 
 ### How long it takes
 
-The full AETC production data took about an hour on a laptop with MySQL 9.5, in October 2026:
+The full AETC production data took 40 minutes on a laptop (MySQL 9.5, 8 GB buffer pool), in October 2026:
 
 | Step | Time | Rows |
 |---|---|---|
-| People (users, persons, patients, relationships) | 23 min | 322,876 persons, 153,708 patients |
-| Visits | 15 s | 169,393 visits |
-| Encounters | 3 min | 2.1 million encounters |
-| Lab orders | 32 s | 33,337 orders |
-| Obs | ~35 min | millions of obs (4.2 million for the last third of the patients) |
+| Users | 1 s | 564 users |
+| Persons, patients, relationships | 13 min | 322,876 persons, 153,708 patients, 168,562 relationships |
+| Visits | 21 s | 169,393 visits |
+| Encounters | 3.5 min | 2.1 million encounters |
+| Lab orders | 1 min | 33,337 orders |
+| Obs | 22 min | 9.4 million obs |
+
+**Give MySQL enough memory first.** With the default 128 MB buffer pool the same run took nearly 2 hours: obs slows down as the table outgrows the cache. Both settings below apply without a restart and are kept after one:
+
+```sql
+SELECT @@innodb_buffer_pool_size / 1024 / 1024 / 1024 AS gb;   -- check
+SET PERSIST innodb_buffer_pool_size = 8589934592;               -- 8 GB (about a quarter of the machine's memory)
+SET PERSIST innodb_redo_log_capacity = 2147483648;              -- 2 GB of disk for the redo log
+```
+
+Also make sure nothing else is using the MySQL server during the run (for example a Sidekiq CouchDB rebuild).
 
 ## After the run
 
