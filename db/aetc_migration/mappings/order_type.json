@@ -1,0 +1,21 @@
+{
+  "entity": "order_type",
+  "source_column": "orders.order_type_id",
+  "note": "Only AETC 4 'Lab ' (trailing space) is used: 33,407 orders. MaHIS 6 'Lab' is the type the lab engine (his_emr_api_lab) reads; existing MaHIS lab orders use it. No order_type rows are inserted.",
+  "mappings": [
+    {"source_id": 4, "source_name": "Lab ", "target_id": 6, "target_name": "Lab", "action": "map", "match_method": "name", "orders_in_source": 33407},
+    {"source_id": 1, "source_name": "Drug Order", "target_id": null, "action": "skip", "orders_in_source": 0},
+    {"source_id": 2, "source_name": "Drug", "target_id": null, "action": "skip", "orders_in_source": 0},
+    {"source_id": 3, "source_name": "Test", "target_id": null, "action": "skip", "orders_in_source": 0},
+    {"source_id": 5, "source_name": "Drug Given", "target_id": null, "action": "skip", "orders_in_source": 0},
+    {"source_id": 6, "source_name": "Drug Prescribed", "target_id": null, "action": "skip", "orders_in_source": 0},
+    {"source_id": 7, "source_name": "Common drug orders", "target_id": null, "action": "skip", "orders_in_source": 0},
+    {"source_id": 8, "source_name": "Radiology", "target_id": null, "action": "skip", "orders_in_source": 0}
+  ],
+  "specimen_concepts": {
+    "note": "orders.concept_id (the specimen) is mapped through concept.json. These are specimens concept.json does not cover (orders.concept_id never appears in obs).",
+    "mappings": [
+      {"source_id": 1002, "source_name": "Plasma", "target_id": 20697, "target_name": "Plasma", "match_method": "name", "orders_in_source": 26}
+    ]
+  }
+}

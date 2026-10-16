@@ -1,0 +1,34 @@
+{
+  "entity": "person_address",
+  "source": "AETC hwis/aetc hooks/patientReg.ts and app/registration/components/ddePatientRegistration.tsx: two rows per person",
+  "target": "MaHIS-core / EMR-API layout: one row per person",
+  "row_classification": {
+    "home": "row with any of address3, state_province, county_district filled (usually preferred = 1)",
+    "current": "row with only address1, address2, city_village filled (usually preferred = 0)",
+    "tie_break": "if a person has more than one row of the same kind, use the latest date_created",
+    "ignore": "rows that are voided or have every address field empty"
+  },
+  "column_map": [
+    {"field": "home_district",                "target": "address2",          "source": [{"row": "home", "column": "address1"}]},
+    {"field": "home_traditional_authority",   "target": "county_district",   "source": [{"row": "home", "column": "county_district"}, {"row": "home", "column": "city_village"}]},
+    {"field": "home_village",                 "target": "neighborhood_cell", "source": [{"row": "home", "column": "address2"}]},
+    {"field": "current_district",             "target": "state_province",    "source": [{"row": "home", "column": "address3"}],
+     "note": "AETC sends countryDistrict (typo) on the current row, so OpenMRS dropped it; home.address3 is the only copy"},
+    {"field": "current_traditional_authority","target": "township_division", "source": [{"row": "current", "column": "city_village"}, {"row": "home", "column": "state_province"}]},
+    {"field": "current_village",              "target": "city_village",      "source": [{"row": "current", "column": "address1"}]},
+    {"field": "closest_landmark",             "target": "address1",          "source": [{"row": "current", "column": "address2"}]},
+    {"field": "nationality",                  "target": "country",           "source": [{"row": "home", "column": "country"}], "value_map": "value_normalization.json#country"}
+  ],
+  "source_list_semantics": "take the first non-null value after null_values are applied",
+  "null_values": ["", "N/A", "n/a", "NA", "Unknown"],
+  "target_max_length": {"city_village": 50, "state_province": 50, "county_district": 50, "township_division": 50, "region": 50, "subregion": 50},
+  "row_fields": {
+    "uuid": "home row uuid (current row uuid if there is no home row)",
+    "preferred": 1,
+    "date_created": "earliest date_created of the merged rows",
+    "creator": "users.json",
+    "voided": 0
+  },
+  "dropped_source_columns": ["address4", "address5", "address6", "address7", "address8", "address9", "address10", "address11", "address12", "address13", "address14", "address15", "start_date", "end_date", "changed_by", "date_changed"],
+  "id_map": "record both AETC person_address_id values against the single new MaHIS person_address_id"
+}

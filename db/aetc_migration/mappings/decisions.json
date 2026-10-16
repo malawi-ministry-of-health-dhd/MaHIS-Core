@@ -1,0 +1,164 @@
+{
+ "decided_on": "2026-09-28",
+ "voided_patients": {
+  "choice": "migrate_as_voided",
+  "count": 33835
+ },
+ "voided_child_rows": {
+  "choice": "active_only",
+  "note": "Voided patients still bring their own rows"
+ },
+ "users": {
+  "choice": "per_user",
+  "decided_on": "2026-10-13",
+  "detail": "every AETC user -> MaHIS user; taken username/system_id -> name_aetc (name_aetc2, ...), listed in a CSV; no password; retired kept; location 1291; AETC program 30; matching roles copied, others logged (role_not_in_mahis); encounter provider = person of the encounter's creator (AETC has no encounter providers)",
+  "previously": "single_user (aetc_migration), decided 2026-09-28"
+ },
+ "relationship_types": {
+  "choice": "native_mahis_rows",
+  "fallback": "UUID rows for Sibling (30), Parent|Child (31), Child|Parent (37)"
+ },
+ "unknown_gender": {
+  "choice": "null_for_everyone"
+ },
+ "persons_without_name": {
+  "choice": "load_without_name",
+  "count": 27149
+ },
+ "person_name_code": {
+  "choice": "mahis_rebuild_task_after_load"
+ },
+ "duplicate_national_ids": {
+  "choice": "load_and_flag",
+  "count": 235
+ },
+ "malawi_national_id": {
+  "choice": "load_all_as_is",
+  "count": 120
+ },
+ "relationship_types_18_19": {
+  "choice": "skip_and_log",
+  "count": 16
+ },
+ "dangling_relationships": {
+  "choice": "skip_and_log",
+  "count": 367
+ },
+ "orphan_persons": {
+  "choice": "migrate_as_persons",
+  "count": 43
+ },
+ "dde": {
+  "choice": "different_dde",
+  "effect": "AETC National id (3) and DDE person document ID (27) load as Old identification number (2)"
+ },
+ "environment": {
+  "choice": "same_mysql_as_mahis_core",
+  "staging_schema": "aetc_staging",
+  "migration_schema": "aetc_migration"
+ },
+ "encounter_types": {
+  "choice": "approved",
+  "file": "encounter_type.json",
+  "decided_on": "2026-09-30"
+ },
+ "concepts": {
+  "decided_on": "2026-09-30",
+  "scope": "only concepts used in AETC obs (questions and coded answers)",
+  "base": "MaHIS-core concepts; matched by uuid, else MaHIS name lookup",
+  "value_storage": "MaHIS concept datatype decides. Datatype N/A (963 of 1,042 mapped concepts): copy the AETC value as-is. Datatype Coded (79, all lab tests): AETC coded stays coded; AETC text -> coded via value_map; AETC numeric lab results copied as-is.",
+  "unconverted_values": "stay in value_text and are logged unless filled in concept_unmapped_values.csv"
+ },
+ "visits": {
+  "decided_on": "2026-10-01",
+  "target_table": "visit (MaHIS model Visit)",
+  "visit_type": "AETC 1 AETC -> MaHIS 1 AETC (only type used)",
+  "program_id": 30,
+  "open_visits": "keep open (28,983 with no date_stopped)",
+  "voided": "skip, except visits of voided patients"
+ },
+ "encounters": {
+  "decided_on": "2026-10-01",
+  "provider_id": "migration user",
+  "program_id": 30,
+  "visit_id": "mapped via id_map visit",
+  "location": "614->1291, 299->676, 1 (Unknown)->NULL",
+  "voided": "skip, except encounters of voided patients"
+ },
+ "obs": {
+  "decided_on": "2026-10-01",
+  "concepts": "concept.json",
+  "order_id": "via id_map when the order is already migrated by 08; obs loaded before 08 are linked by 09_link_obs_orders.py (545,123 obs reference an order)",
+  "location": "as encounters",
+  "voided": "skip, except obs of voided patients"
+ },
+ "orders": {
+  "decided_on": "2026-10-06",
+  "order_type": "AETC 4 'Lab ' -> MaHIS 6 'Lab' (order_type.json); no order_type rows inserted",
+  "specimen": "concept.json, plus Plasma 1002 -> 20697 (order_type.json specimen_concepts)",
+  "users": "orderer/creator/discontinued_by/voided_by -> migration user",
+  "orders_without_encounter": "skip and log (AETC orders 91-93)",
+  "null_start_date": "fill from date_created and log (113 orders from 2024)",
+  "dropped_columns": "date_activated, urgency, order_number, order_action, care_setting and other AETC-only columns (empty/constant; order_number = accession_number where set)",
+  "duplicate_accession_number": "load and log",
+  "order_extension": "migrated with its order; created_at/updated_at dropped",
+  "lims_tables": "lab_lims_order_mappings migrated (stops the MaHIS LIMS push worker re-pushing old orders); lims_acknowledgement_statuses not migrated",
+  "voided": "skip, except rows of voided patients"
+ },
+ "unknown_location": {
+  "decided_on": "2026-10-07",
+  "choice": "AETC location 1 'Unknown' -> 1291 for encounters and obs (location.json clinical_overrides); visits and identifiers unchanged",
+  "reason": "Locatable default scope hides rows with NULL location"
+ },
+ "lab_results_as_text": {
+  "decided_on": "2026-10-12",
+  "choice": "The 26 AETC lab tests whose results AETC stored partly as numbers and partly as text (full blood count, plus urea, GGT, AST, ALT): every result goes to value_text; numbers are written as text (rule numeric_to_text), text is kept as it is",
+  "concepts": [
+   12761,
+   12762,
+   12782,
+   12783,
+   12784,
+   12788,
+   12791,
+   12792,
+   12793,
+   12794,
+   12795,
+   12796,
+   12797,
+   12798,
+   12799,
+   12800,
+   12801,
+   12802,
+   12803,
+   12804,
+   12805,
+   12807,
+   12809,
+   12813,
+   12816,
+   12817
+  ],
+  "reason": "one consistent storage per test; the text results (NaN, ^ flagged values) cannot be converted"
+ },
+ "blood_gas_concepts": {
+  "decided_on": "2026-10-13",
+  "choice": "11 AETC blood-gas concepts mapped by id to the MaHIS concepts with the same names (value copied as text); AETC 12533 and 12534 (no name, 11 obs) stay unmapped",
+  "mapping": {
+   "11701": 48838,
+   "11702": 48840,
+   "11704": 48844,
+   "11707": 48850,
+   "11708": 48852,
+   "11710": 48856,
+   "11711": 48858,
+   "11712": 48860,
+   "12556": 50512,
+   "12559": 50518,
+   "12561": 50522
+  },
+  "reason": "the MaHIS names are stored with broken characters, so the name match missed them; Louis will fix the names"
+ }
+}

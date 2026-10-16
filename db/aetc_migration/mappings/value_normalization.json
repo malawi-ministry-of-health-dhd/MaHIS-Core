@@ -1,0 +1,66 @@
+{
+  "gender": {
+    "column": "person.gender",
+    "map": {
+      "Male": "M",
+      "M": "M",
+      "Female": "F",
+      "F": "F"
+    },
+    "unmapped_values": [
+      "N/A",
+      "N",
+      "",
+      null
+    ],
+    "unmapped_target": null,
+    "decision": "Unknown gender stored as NULL for everyone"
+  },
+  "country": {
+    "column": "person_address.country",
+    "map": {
+      "Malawian": "Malawi",
+      "Mozambican": "Mozambique",
+      "Zimbabwean": "Zimbabwe",
+      "Indian": "India",
+      "Burundian": "Burundi",
+      "Rwandan": "Rwanda",
+      "Nigerian": "Nigeria",
+      "Afghan": "Afghanistan",
+      "South African": "South Africa",
+      "Kenyan": "Kenya",
+      "Tanzanian": "Tanzania",
+      "Zambian": "Zambia",
+      "Chinese": "China",
+      "Ugandan": "Uganda",
+      "Egyptian": "Egypt",
+      "Swazi": "Eswatini",
+      "Congolese": "Congo",
+      "Somali, Somalian": "Somalia",
+      "Pakistani": "Pakistan",
+      "French": "France",
+      "British, UK": "United Kingdom",
+      "Albanian": "Albania",
+      "Algerian": "Algeria",
+      "American Samoan": "American Samoa",
+      "Åland Island": "Åland Islands"
+    },
+    "null_values": [
+      "",
+      "N/A",
+      "Unknown"
+    ],
+    "unmapped_target": "keep value and log"
+  },
+  "text_null_values": {
+    "applies_to": [
+      "person_address.*",
+      "person_attribute.value"
+    ],
+    "values": [
+      "",
+      "N/A",
+      "n/a"
+    ]
+  }
+}
