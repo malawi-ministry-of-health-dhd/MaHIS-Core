@@ -171,7 +171,7 @@ describe 'Clinic Reports API', type: :request, swagger_doc: 'v1/swagger.yaml' do
     end
   end
 
-  path 'api/v1/programs/1/reports/lims_electronic_results' do
+  path '/api/v1/programs/1/reports/lims_electronic_results' do
     get 'Retrieve LIMS ELECTRONIC RESULTS report' do
       tags TAGS_NAME
       description 'This shows LIMS ELECTRONIC RESULTS report'
