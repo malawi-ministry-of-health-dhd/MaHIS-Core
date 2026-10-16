@@ -50,11 +50,12 @@ class CachedReport
     cols = batch_column_counts(
       temp_cohort_members, temp_earliest_start_date, temp_other_patient_types,
       temp_register_start_date, temp_order_details, temp_art_start_date,
+      temp_art_start_date_by_enrollment,
       temp_patient_tb_status, temp_latest_tb_status, tmp_max_adherence,
       temp_pregnant_obs, temp_patient_side_effects
     )
-    cols[temp_cohort_members]         == 12 &&
-      cols[temp_earliest_start_date]  == 11 &&
+    cols[temp_cohort_members]         == 13 &&
+      cols[temp_earliest_start_date]  == 12 &&
       cols[temp_other_patient_types]  == 1  &&
       cols[temp_register_start_date]  == 2  &&
       cols[temp_order_details]        == 2  &&

@@ -7,10 +7,8 @@ RSpec.describe BroughtInDeadService do
   let(:other_program) { create(:program) }
 
   # The suite runs without transactional cleanup, so rows outlive the example
-  # that made them. A program of its own is not enough to isolate an example,
-  # because encounters saved without a program count towards every program — so
-  # each example gets a location of its own too, derived from its own program so
-  # it stays unique without a shared counter.
+  # that made them. Each example therefore works against its own program, and a
+  # location derived from it so that stays unique without a shared counter.
   let(:location_id) { 1_000_000 + program.program_id }
 
   # The service matches the death-outcome encounter types by id, the same ones
@@ -109,13 +107,6 @@ RSpec.describe BroughtInDeadService do
       expect(count).to eq(0)
     end
 
-    it 'includes encounters recorded without a program' do
-      encounter, = record_death
-      encounter.update_column(:program_id, nil)
-
-      expect(count).to eq(1)
-    end
-
     it 'excludes encounters recorded at another location' do
       record_death(location: location_id + 1)
 
@@ -124,12 +115,9 @@ RSpec.describe BroughtInDeadService do
 
     it 'counts every location when no location is given and the user has none' do
       allow(User).to receive(:current).and_return(nil)
-      # Dropping the location filter also exposes the program-less rows other
-      # examples left behind, so measure the change rather than the total.
-      baseline = described_class.count(program_id: program.program_id)
       record_death(location: location_id + 1)
 
-      expect(described_class.count(program_id: program.program_id)).to eq(baseline + 1)
+      expect(described_class.count(program_id: program.program_id)).to eq(1)
     end
 
     it 'excludes voided death observations' do

@@ -27,6 +27,7 @@ module ArtTempTablesUtils
       ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_register_start_date}")
       ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_order_details}")
       ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_art_start_date}")
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_art_start_date_by_enrollment}")
       ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_patient_tb_status}")
       ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_latest_tb_status}")
       ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{tmp_max_adherence}")
@@ -39,6 +40,7 @@ module ArtTempTablesUtils
       create_temp_register_start_date_table
       create_temp_order_details
       create_art_start_date
+      create_temp_art_start_date_by_enrollment
       create_temp_patient_tb_status
       create_temp_latest_tb_status
       create_tmp_max_adherence
@@ -54,6 +56,7 @@ module ArtTempTablesUtils
     cols = batch_column_counts(
       temp_cohort_members, temp_earliest_start_date, temp_other_patient_types,
       temp_register_start_date, temp_order_details, temp_art_start_date,
+      temp_art_start_date_by_enrollment,
       temp_patient_tb_status, temp_latest_tb_status, tmp_max_adherence,
       temp_pregnant_obs, temp_patient_side_effects, tmp_first_registration
     )
@@ -61,12 +64,12 @@ module ArtTempTablesUtils
     if cols[temp_cohort_members] == 0
       create_temp_cohort_members_table
     else
-      (drop_temp_cohort_members_table unless cols[temp_cohort_members] == 12)
+      (drop_temp_cohort_members_table unless cols[temp_cohort_members] == 13)
     end
     if cols[temp_earliest_start_date] == 0
       create_tmp_patient_table
     else
-      (drop_tmp_patient_table unless cols[temp_earliest_start_date] == 11)
+      (drop_tmp_patient_table unless cols[temp_earliest_start_date] == 12)
     end
     if cols[temp_other_patient_types] == 0
       create_temp_other_patient_types
@@ -87,6 +90,11 @@ module ArtTempTablesUtils
       create_art_start_date
     else
       (drop_art_start_date unless cols[temp_art_start_date] == 2)
+    end
+    if cols[temp_art_start_date_by_enrollment] == 0
+      create_temp_art_start_date_by_enrollment
+    else
+      (drop_temp_art_start_date_by_enrollment unless cols[temp_art_start_date_by_enrollment] == 2)
     end
     if cols[temp_patient_tb_status] == 0
       create_temp_patient_tb_status
@@ -280,7 +288,8 @@ module ArtTempTablesUtils
         age_at_initiation INT DEFAULT NULL,
         age_in_days INT DEFAULT NULL,
         reason_for_starting_art INT DEFAULT NULL,
-        occupation VARCHAR(255) DEFAULT NULL
+        occupation VARCHAR(255) DEFAULT NULL,
+        earliest_start_date_by_enrollment DATE DEFAULT NULL
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
     SQL
     create_temp_cohort_members_index
@@ -308,6 +317,7 @@ module ArtTempTablesUtils
          patient_id INT PRIMARY KEY,
          date_enrolled DATE,
          earliest_start_date DATE,
+         earliest_start_date_by_enrollment DATE DEFAULT NULL,
          recorded_start_date DATE DEFAULT NULL,
          birthdate DATE DEFAULT NULL,
          birthdate_estimated BOOLEAN,
@@ -407,6 +417,20 @@ module ArtTempTablesUtils
       )
     SQL
     create_art_start_date_indexes
+  end
+
+  def drop_temp_art_start_date_by_enrollment
+    ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_art_start_date_by_enrollment}")
+    create_temp_art_start_date_by_enrollment
+  end
+
+  def create_temp_art_start_date_by_enrollment
+    ActiveRecord::Base.connection.execute <<~SQL
+      CREATE TABLE IF NOT EXISTS #{temp_art_start_date_by_enrollment} (
+        patient_id INT PRIMARY KEY,
+        earliest_start_date_by_enrollment DATE DEFAULT NULL
+      )
+    SQL
   end
 
   def create_art_start_date_indexes
@@ -738,6 +762,7 @@ module ArtTempTablesUtils
     ActiveRecord::Base.connection.execute("TRUNCATE #{temp_register_start_date}")
     ActiveRecord::Base.connection.execute("TRUNCATE #{temp_order_details}")
     ActiveRecord::Base.connection.execute("TRUNCATE #{temp_art_start_date}")
+    ActiveRecord::Base.connection.execute("TRUNCATE #{temp_art_start_date_by_enrollment}")
     ActiveRecord::Base.connection.execute("TRUNCATE #{temp_patient_tb_status}")
     ActiveRecord::Base.connection.execute("TRUNCATE #{temp_latest_tb_status}")
     ActiveRecord::Base.connection.execute("TRUNCATE #{tmp_max_adherence}")
@@ -785,6 +810,7 @@ module ArtTempTablesUtils
     ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_register_start_date}")
     ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_order_details}")
     ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_art_start_date}")
+    ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_art_start_date_by_enrollment}")
     ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_patient_tb_status}")
     ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{temp_latest_tb_status}")
     ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{tmp_max_adherence}")

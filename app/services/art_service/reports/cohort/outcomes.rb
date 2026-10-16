@@ -42,7 +42,7 @@ module ArtService
 
         def pill_count_concept_id
           @pill_count_concept_id ||= ConceptName.find_by(name: 'Amount of drug brought to clinic')&.concept_id ||
-            raise('Concept "Amount of drug brought to clinic" not found')
+                                     raise('Concept "Amount of drug brought to clinic" not found')
         end
 
         def program_states(*names)
@@ -298,33 +298,18 @@ module ArtService
           SQL
         end
 
-        # Handles patients not classified in steps 1-4.
-        # Patients with drug orders but no valid state within the reporting period
-        # are written as 'Unknown' instead of calling the stored function, which
-        # can incorrectly promote post-period states as active outcomes.
+        # Handles patients not classified in steps 1-4. The stored functions are
+        # date-bounded and apply the same fallback rules as BHT.
         def load_residual_outcomes(start: false)
           ActiveRecord::Base.connection.execute <<~SQL
             INSERT INTO #{temp_patient_outcomes(start: start)}
             SELECT tesd.patient_id,
-                   CASE
-                     WHEN cs.cum_outcome IN ('Patient died', 'Patient transferred out', 'Treatment stopped') THEN cs.cum_outcome
-                     ELSE 'Unknown'
-                   END AS moh_outcome,
-                   CASE
-                     WHEN cs.cum_outcome IN ('Patient died', 'Patient transferred out', 'Treatment stopped') THEN cs.outcome_date
-                     ELSE NULL
-                   END AS moh_outcome_date,
-                   CASE
-                     WHEN cs.cum_outcome IN ('Patient died', 'Patient transferred out', 'Treatment stopped') THEN cs.cum_outcome
-                     ELSE 'Unknown'
-                   END AS pepfar_outcome,
-                   CASE
-                     WHEN cs.cum_outcome IN ('Patient died', 'Patient transferred out', 'Treatment stopped') THEN cs.outcome_date
-                     ELSE NULL
-                   END AS pepfar_outcome_date,
+                   #{patient_outcome_function('tesd.patient_id', start)} AS moh_outcome,
+                   #{start ? "current_defaulter_date(tesd.patient_id, #{start_date})" : "current_defaulter_date(tesd.patient_id, #{end_date})"} AS moh_outcome_date,
+                   #{start ? "pepfar_patient_outcome(tesd.patient_id, #{start_date})" : "pepfar_patient_outcome(tesd.patient_id, #{end_date})"} AS pepfar_outcome,
+                   #{start ? "current_pepfar_defaulter_date(tesd.patient_id, #{start_date})" : "current_pepfar_defaulter_date(tesd.patient_id, #{end_date})"} AS pepfar_outcome_date,
                    5
             FROM #{temp_earliest_start_date} tesd
-            LEFT JOIN #{temp_current_state(start: start)} AS cs ON cs.patient_id = tesd.patient_id AND cs.outcomes = 1
             WHERE tesd.date_enrolled < DATE(#{start ? start_date : end_date}) + INTERVAL 1 DAY
               AND tesd.patient_id NOT IN (SELECT patient_id FROM #{temp_patient_outcomes(start: start)} WHERE step IN (1, 2, 3, 4))
             ON DUPLICATE KEY UPDATE moh_cum_outcome = VALUES(moh_cum_outcome), moh_outcome_date = VALUES(moh_outcome_date), pepfar_cum_outcome = VALUES(pepfar_cum_outcome), pepfar_outcome_date = VALUES(pepfar_outcome_date), step = VALUES(step)

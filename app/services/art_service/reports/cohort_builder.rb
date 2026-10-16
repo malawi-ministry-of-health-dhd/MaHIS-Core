@@ -95,6 +95,7 @@ module ArtService
           broadcast_cohort_progress(3, bcast_name, bcast_loc)
           load_art_start_date(end_date)
           broadcast_cohort_progress(4, bcast_name, bcast_loc)
+          load_art_start_date_by_enrollment(end_date)
           load_data_into_temp_earliest_start_date(end_date.to_date, occupation)
           broadcast_cohort_progress(5, bcast_name, bcast_loc)
         end
@@ -120,6 +121,7 @@ module ArtService
           broadcast_cohort_progress(3)
           load_art_start_date(end_date)
           broadcast_cohort_progress(4)
+          load_art_start_date_by_enrollment(end_date)
           load_data_into_temp_earliest_start_date(end_date.to_date, occupation)
           broadcast_cohort_progress(5)
         end
@@ -630,10 +632,14 @@ module ArtService
       def load_data_into_temp_earliest_start_date(end_date, occupation = nil)
         load_data_into_temp_cohort_members_table(end_date)
         ActiveRecord::Base.connection.execute <<~SQL
-          INSERT INTO #{temp_earliest_start_date}
-          SELECT patient_id, date_enrolled, earliest_start_date, recorded_start_date,#{' '}
-          birthdate, birthdate_estimated, death_date, gender, age_at_initiation,#{' '}
-          age_in_days, reason_for_starting_art
+          INSERT INTO #{temp_earliest_start_date} (
+            patient_id, date_enrolled, earliest_start_date, recorded_start_date,
+            birthdate, birthdate_estimated, death_date, gender, age_at_initiation,
+            age_in_days, reason_for_starting_art, earliest_start_date_by_enrollment
+          )
+          SELECT patient_id, date_enrolled, earliest_start_date, recorded_start_date,
+                 birthdate, birthdate_estimated, death_date, gender, age_at_initiation,
+                 age_in_days, reason_for_starting_art, earliest_start_date_by_enrollment
           FROM #{temp_cohort_members} #{occupation_filter(occupation:, field_name: 'occupation')}
         SQL
       end
@@ -658,18 +664,20 @@ module ArtService
               o.person_id,
               o.value_coded
             FROM obs o
+            INNER JOIN encounter e ON e.encounter_id = o.encounter_id AND e.location_id = #{Location.current.location_id}
             JOIN (
               -- build a deterministic sort key and take the max per person
               SELECT
-                person_id,
-                MAX(CONCAT(DATE_FORMAT(obs_datetime, '%Y-%m-%d %H:%i:%s'),
-                          LPAD(UNIX_TIMESTAMP(date_created), 20, '0'),
-                          LPAD(obs_id, 20, '0'))) AS sortkey
-              FROM obs
-              WHERE concept_id = (SELECT concept_id FROM reason_concept)
-                AND voided = 0
-                AND obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
-              GROUP BY person_id
+                o2.person_id,
+                MAX(CONCAT(DATE_FORMAT(o2.obs_datetime, '%Y-%m-%d %H:%i:%s'),
+                          LPAD(UNIX_TIMESTAMP(o2.date_created), 20, '0'),
+                          LPAD(o2.obs_id, 20, '0'))) AS sortkey
+              FROM obs o2
+              INNER JOIN encounter e2 ON e2.encounter_id = o2.encounter_id AND e2.location_id = #{Location.current.location_id}
+              WHERE o2.concept_id = (SELECT concept_id FROM reason_concept)
+                AND o2.voided = 0
+                AND o2.obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
+              GROUP BY o2.person_id
             ) m ON o.person_id = m.person_id
               AND CONCAT(DATE_FORMAT(o.obs_datetime, '%Y-%m-%d %H:%i:%s'),
                           LPAD(UNIX_TIMESTAMP(o.date_created), 20, '0'),
@@ -689,12 +697,14 @@ module ArtService
                 IF(person.birthdate IS NOT NULL, TIMESTAMPDIFF(YEAR, person.birthdate, DATE(COALESCE(art_start_date_obs.value_datetime, MIN(art_order.start_date)))), NULL) AS age_at_initiation,
                 IF(person.birthdate IS NOT NULL, TIMESTAMPDIFF(DAY, person.birthdate, DATE(COALESCE(art_start_date_obs.value_datetime, MIN(art_order.start_date)))), NULL) AS age_in_days,
                 lr.value_coded AS reason_for_starting_art,
-                pa.value AS occupation
+                pa.value AS occupation,
+                tasdbe.earliest_start_date_by_enrollment
           FROM patient_program
           INNER JOIN person ON person.person_id = patient_program.patient_id AND person.voided = 0
           LEFT JOIN (#{current_occupation_query}) pa ON pa.person_id = patient_program.patient_id
           LEFT JOIN patient_state AS outcome ON outcome.patient_program_id = patient_program.patient_program_id
           LEFT JOIN #{temp_art_start_date} AS art_start_date_obs ON art_start_date_obs.patient_id = patient_program.patient_id
+          LEFT JOIN #{temp_art_start_date_by_enrollment} AS tasdbe ON tasdbe.patient_id = patient_program.patient_id
             /* TODO: Re-enable the following condition. Has been removed because LLH and PIH
                 were noted to be dropping patients because of it. Seems these sites may have orders
                 without corresponding encounters. Adding this condition bumps up performance a bit. */
@@ -758,6 +768,7 @@ module ArtService
           FROM orders o
           INNER JOIN drug_order do ON do.order_id = o.order_id AND do.quantity > 0
           INNER JOIN arv_drug ad ON ad.drug_id = do.drug_inventory_id
+          INNER JOIN encounter e ON e.encounter_id = o.encounter_id AND e.location_id = #{Location.current.location_id}
           LEFT JOIN #{temp_register_start_date} trsd ON trsd.patient_id  = o.patient_id
           WHERE o.start_date < DATE('#{end_date}') + INTERVAL 1 DAY AND o.start_date >= COALESCE(trsd.start_date, DATE('1901-01-01'))
             AND o.order_type_id = 1 -- Drug order#{' '}
@@ -780,6 +791,41 @@ module ArtService
           AND e.location_id = #{Location.current.location_id}
           GROUP BY o.person_id
           HAVING value_datetime IS NOT NULL
+        SQL
+      end
+
+      def load_art_start_date_by_enrollment(end_date)
+        art_start_date_concept_id = concept('ART start date')&.concept_id || 2516
+        dispensed_concept_id = concept('AMOUNT DISPENSED')&.concept_id
+        arv_concept_id = concept('ANTIRETROVIRAL DRUGS')&.concept_id
+
+        ActiveRecord::Base.connection.execute <<~SQL
+          INSERT INTO #{temp_art_start_date_by_enrollment} (patient_id, earliest_start_date_by_enrollment)
+          SELECT o.person_id, DATE(MIN(o.value_datetime))
+          FROM obs o
+          INNER JOIN encounter e ON e.encounter_id = o.encounter_id AND e.location_id = #{Location.current.location_id}
+          WHERE o.concept_id = #{art_start_date_concept_id}
+            AND o.encounter_id > 0
+            AND o.value_datetime IS NOT NULL
+            AND o.value_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
+            AND o.voided = 0
+          GROUP BY o.person_id
+        SQL
+
+        return unless dispensed_concept_id && arv_concept_id
+
+        ActiveRecord::Base.connection.execute <<~SQL
+          INSERT IGNORE INTO #{temp_art_start_date_by_enrollment} (patient_id, earliest_start_date_by_enrollment)
+          SELECT o.person_id, DATE(MIN(o.obs_datetime))
+          FROM obs o
+          INNER JOIN drug d ON o.value_drug = d.drug_id
+          INNER JOIN concept_set cs ON d.concept_id = cs.concept_id
+          INNER JOIN encounter e ON e.encounter_id = o.encounter_id AND e.location_id = #{Location.current.location_id}
+          WHERE o.concept_id = #{dispensed_concept_id}
+            AND cs.concept_set = #{arv_concept_id}
+            AND o.obs_datetime < DATE(#{end_date}) + INTERVAL 1 DAY
+            AND o.voided = 0
+          GROUP BY o.person_id
         SQL
       end
 
